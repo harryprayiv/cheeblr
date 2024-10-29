@@ -9,7 +9,6 @@ import Data.Array (filter, sortBy)
 import Data.Either (Either(..))
 import Data.String (Pattern(..), replace, toLower)
 import Data.String.Pattern (Replacement(..))
--- import Data.String.Utils (toCharArray)
 import Data.Tuple.Nested ((/\))
 import Deku.Core (Nut, text_)
 import Deku.DOM as D
