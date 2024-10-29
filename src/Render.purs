@@ -2,129 +2,64 @@ module Render where
 
 import Prelude
 
-import BudView (Inventory(..), InventoryResponse(..), MenuItem(..), QueryMode(..), fetchInventory)
-import CSS.Color (Color) as CSS
-import CSS.Color (fromInt)
-import Data.Array (filter, sortBy)
-import Data.Either (Either(..))
-import Data.String (Pattern(..), replace, toLower)
-import Data.String.Pattern (Replacement(..))
+import BudView (Inventory(..), MenuItem(..))
+import Data.Array (mapWithIndex)
 import Data.Tuple.Nested ((/\))
 import Deku.Core (Nut, text_)
 import Deku.DOM as D
-import Deku.DOM.Attributes (klass_)
-import Deku.Effect (useState)
-import Deku.Hooks ((<#~>))
+import Deku.DOM.Attributes as DA
+import Deku.DOM.Listeners as DL
+import Deku.Hooks (useState)
 import Deku.Toplevel (runInBody)
 import Effect (Effect)
-import Effect.Aff (launchAff_)
-import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
-import FRP.Event (subscribe)
-import FRP.Event.Time (interval)
- 
-red:: CSS.Color
-red = fromInt 0xff0000
 
--- Sorting Configuration
-data SortField =  SortByName 
-                | SortByCategory 
-                | SortBySubCategory 
-                | SortBySpecies
-                | SortBySKU
-                | SortByPrice 
-                | SortByQuantity
+-- Define schema options for dropdowns
+categoryOptions :: Array String
+categoryOptions = ["Flower", "Vape"]
 
-data SortOrder = Ascending | Descending
+speciesOptions :: Array String
+speciesOptions = ["Indica", "Sativa", "Hybrid"]
 
-type Config =
-  { sortField :: SortField
-  , sortOrder :: SortOrder
-  , hideOutOfStock :: Boolean
-  , mode :: QueryMode
-  , refreshRate :: Int
-  , screens :: Int
-  }
-
-invertOrdering :: Ordering -> Ordering
-invertOrdering LT = GT
-invertOrdering EQ = EQ
-invertOrdering GT = LT
-
-compareMenuItems :: Config -> MenuItem -> MenuItem -> Ordering
-compareMenuItems config (MenuItem item1) (MenuItem item2) =
-  let
-    baseComparison = case config.sortField of
-      SortByName -> compare item1.name item2.name
-      SortByCategory -> compare item1.category item2.category
-      SortBySubCategory -> compare item1.subcategory item2.subcategory
-      SortBySpecies -> compare item1.species item2.species
-      SortBySKU -> compare item1.sku item2.sku
-      SortByPrice -> compare item1.price item2.price
-      SortByQuantity -> compare item1.quantity item2.quantity
-  in
-    case config.sortOrder of
-      Ascending -> baseComparison
-      Descending -> invertOrdering baseComparison
-
-renderInventory :: Config -> Inventory -> Nut
-renderInventory config (Inventory items) = D.div
-  [ klass_ "inventory-grid" ]
-  (map renderItem sortedItems)
-  where
-    filteredItems = if config.hideOutOfStock
-      then filter (\(MenuItem item) -> item.quantity > 0) items
-      else items
-    sortedItems = sortBy (compareMenuItems config) filteredItems
-
-renderItem :: MenuItem -> Nut
-renderItem (MenuItem item) = D.div
-  [ klass_ ("inventory-item-card " <> generateClassName { category: item.category, subcategory: item.subcategory, species: item.species }) ]
-  [ D.div [ klass_ "item-name" ] [ text_ ("'" <> item.name <> "'") ]
-  , D.div [ klass_ "item-category" ] [ text_ (item.category <> " - " <> item.subcategory) ]
-  , D.div [ klass_ "item-species" ] [ text_ ( item.species) ]
-  , D.div [ klass_ "item-price" ] [ text_ ("$" <> show item.price) ]
-  , D.div [ klass_ "item-quantity" ] [ text_ ("qty:" <> show item.quantity) ]
+-- Text input field
+renderTextInput :: String -> (String -> Effect Unit) -> Nut
+renderTextInput value setValue = D.textarea
+  [ DA.value value
+  , DA.placeholder "Enter item name"
+  , DL.runOn DL.input \event -> setValue event
   ]
+  []
 
-generateClassName :: { category :: String, subcategory :: String, species :: String } -> String
-generateClassName item =
-  "species-" <> toClassName item.species <> 
-  " category-" <> toClassName item.category <> 
-  " subcategory-" <> toClassName item.subcategory
+-- Dropdown component
+renderDropdown :: Array String -> String -> (String -> Effect Unit) -> Nut
+renderDropdown options selectedValue setValue = D.select
+  [ DL.runOn DL.change \event -> setValue event
+  ]
+  (map (\opt -> D.option [DA.value opt, DA.selected (opt == selectedValue)] [text_ opt]) options)
 
--- Helper function to convert strings to lowercase and replace spaces with hyphens
-toClassName :: String -> String
-toClassName str = toLower (replace (Pattern " ") (Replacement "-") str)
+-- Form to render both text input and dropdowns
+renderForm :: { name :: String, category :: String, species :: String } -> (String -> Effect Unit) -> (String -> Effect Unit) -> (String -> Effect Unit) -> Nut
+renderForm formState setName setCategory setSpecies = D.div_
+  [ D.div_ [renderTextInput formState.name setName]
+  , D.div_ [renderDropdown categoryOptions formState.category setCategory]
+  , D.div_ [renderDropdown speciesOptions formState.species setSpecies]
+  , D.button
+      [ DL.runOn DL.click \_ -> log ("Submitted: " <> show formState)
+      ]
+      [ text_ "Submit Item" ]
+  ]
 
 app :: Effect Unit
 app = do
-  setInventory /\ inventory <- useState (Inventory [])
-  let
-    config =
-      { sortField: SortByQuantity
-      , sortOrder: Descending
-      , hideOutOfStock: true
-      , mode: JsonMode
-      , refreshRate: 3000
-      , screens: 1
-      }
+  -- Define state for form fields
+  setName /\ name <- useState ""
+  setCategory /\ category <- useState (categoryOptions[0])
+  setSpecies /\ species <- useState (speciesOptions[0])
 
-    fetchAndUpdateInventory :: Effect Unit
-    fetchAndUpdateInventory = launchAff_ do
-      result <- fetchInventory config.mode
-      liftEffect $ case result of
-        Left err -> log ("Error fetching inventory: " <> err)
-        Right (InventoryData inv) -> setInventory inv
-        Right (Message msg) -> log ("Message: " <> msg)
-
-  _ <- fetchAndUpdateInventory
-
-  do
-    { event: tickEvent} <- interval config.refreshRate
-    void $ subscribe tickEvent \_ -> do
-      fetchAndUpdateInventory
-
-  -- Run Deku UI
+  -- Render form with bound input fields
   void $ runInBody $ Deku.do
-    D.div [] [ inventory <#~> renderInventory config ]
+    renderForm
+      { name, category, species }
+      setName
+      setCategory
+      setSpecies
