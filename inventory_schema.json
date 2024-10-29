@@ -1,0 +1,10 @@
+{
+    "schemaHash": "abc123",
+    "fields": {
+      "category": ["Flower", "Vape"],
+      "species": ["Indica", "Sativa", "Hybrid"],
+      "subcategory": ["Live Resin", "Live Rosin"],
+      "price": { "type": "number", "min": 0 },
+      "quantity": { "type": "number", "min": 0 }
+    }
+}

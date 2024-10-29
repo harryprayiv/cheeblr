@@ -5,7 +5,7 @@
     { "name": "Weed", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "c69bda02-e561-40ae-8d6f-32629c4bbbea", "price": 1, "quantity": 1 },
     { "name": "Durban Poison", "species": "Hybrid", "category": "Vape",  "subcategory": "Live Resin", "sku": "8e91ba59-0ffa-4c86-bbd8-013fcfd98d61", "price": 200, "quantity": 1 },
     { "name": "Malabsorbed Melvin", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "8b21869d-45b6-469b-9963-9f155b2cfb73", "price": 10, "quantity": 1 },
-    { "name": "Chatty Kathy", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "9e9bb80f-193a-48c3-a331-02126eaa64f5", "price": 4, "quantity": 1 },
+    { "name": "Chatty Kathy", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "9e9bb80f-193a-48c3-a331-02126eaa64f5", "price": 4, "quantity": 11 },
     { "name": "Super Crunky Tpunk", "species": "Indica", "category": "Vape",  "subcategory": "Live Rosin", "sku": "989031da-b290-4c14-96b9-2631225cbe66", "price": 5, "quantity": 1 },
     { "name": "Waifu", "species": "Sativa", "category": "Vape",  "subcategory": "Live Resin", "sku": "15b6ad32-7546-4213-89d4-6fcac66a834b", "price": 54.66, "quantity": 1 },
     { "name": "Totes Adorbs", "species": "Sativa", "category": "Vape",  "subcategory": "Live Resin", "sku": "0ce685aa-d309-47a3-99ff-dd701dc6bc08", "price": 23, "quantity": 1 },
@@ -27,5 +27,5 @@
     { "name": "Lemonenon Stene", "species": "Indica", "category": "Vape",  "subcategory": "Live Rosin", "sku": "25df1f1c-81af-4564-8591-16a0aaef1f1d", "price": 10, "quantity": 1 },
     { "name": "Stoner 5", "species": "Hybrid", "category": "Vape",  "subcategory": "Live Resin", "sku": "edca0eec-b5c6-4759-a648-103dcca69e91", "price": 30, "quantity": 1 },
     { "name": "Interlocuter", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "9f2a8646-4f1c-42da-a47a-5ff0c64870eb", "price": 30, "quantity": 1 },
-    { "name": "Somnambulist", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "956a3897-4bb7-42fc-bafb-fa463c422fe4", "price": 35, "quantity": 100 }
+    { "name": "Somnambulist", "species": "Indica", "category": "Vape",  "subcategory": "Live Resin", "sku": "956a3897-4bb7-42fc-bafb-fa463c422fe4", "price": 35, "quantity": 1 }
 ]
