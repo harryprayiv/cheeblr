@@ -2,64 +2,106 @@ module Render where
 
 import Prelude
 
-import BudView (Inventory(..), MenuItem(..))
-import Data.Array (mapWithIndex)
+import BudView (MenuItem(..), Inventory(..))
+import Data.Array (snoc)
 import Data.Tuple.Nested ((/\))
 import Deku.Core (Nut, text_)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
-import Deku.Hooks (useState)
+import Deku.Effect (useState)
 import Deku.Toplevel (runInBody)
 import Effect (Effect)
+import Effect.Aff (Aff)
+import Effect.Aff.Class (liftAff)
+import Effect.Class (liftEffect)
 import Effect.Class.Console (log)
+import Yoga.JSON (writeImpl)
 
--- Define schema options for dropdowns
+-- Inventory options
 categoryOptions :: Array String
-categoryOptions = ["Flower", "Vape"]
+categoryOptions =   [ "Flower"
+                    , "Pre-Rolls"
+                    , "Vaporizers"
+                    , "Edibles"
+                    , "Drinks"
+                    , "Concentrates"
+                    , "Topicals"
+                    , "Tinctures"
+                    , "Accessories"
+                    ]
+
 
 speciesOptions :: Array String
 speciesOptions = ["Indica", "Sativa", "Hybrid"]
 
--- Text input field
-renderTextInput :: String -> (String -> Effect Unit) -> Nut
-renderTextInput value setValue = D.textarea
-  [ DA.value value
-  , DA.placeholder "Enter item name"
-  , DL.runOn DL.input \event -> setValue event
-  ]
-  []
+-- Function to save to JSON file (stub implementation)
+saveInventory :: Inventory -> Aff Unit
+saveInventory inventory = do
+  let inventoryJson = writeImpl inventory
+  liftEffect $ log ("Saving inventory: " <> inventoryJson)
+  pure unit
 
--- Dropdown component
-renderDropdown :: Array String -> String -> (String -> Effect Unit) -> Nut
-renderDropdown options selectedValue setValue = D.select
-  [ DL.runOn DL.change \event -> setValue event
-  ]
-  (map (\opt -> D.option [DA.value opt, DA.selected (opt == selectedValue)] [text_ opt]) options)
-
--- Form to render both text input and dropdowns
-renderForm :: { name :: String, category :: String, species :: String } -> (String -> Effect Unit) -> (String -> Effect Unit) -> (String -> Effect Unit) -> Nut
-renderForm formState setName setCategory setSpecies = D.div_
-  [ D.div_ [renderTextInput formState.name setName]
-  , D.div_ [renderDropdown categoryOptions formState.category setCategory]
-  , D.div_ [renderDropdown speciesOptions formState.species setSpecies]
-  , D.button
-      [ DL.runOn DL.click \_ -> log ("Submitted: " <> show formState)
-      ]
-      [ text_ "Submit Item" ]
-  ]
-
+-- Main application form
 app :: Effect Unit
 app = do
-  -- Define state for form fields
+  -- Define state for each input field
   setName /\ name <- useState ""
   setCategory /\ category <- useState (categoryOptions[0])
+  setSubcategory /\ subcategory <- useState "Live Resin" -- default example subcategory
   setSpecies /\ species <- useState (speciesOptions[0])
+  setSku /\ sku <- useState ""
+  setPrice /\ price <- useState 0.0
+  setQuantity /\ quantity <- useState 1
 
-  -- Render form with bound input fields
-  void $ runInBody $ Deku.do
-    renderForm
-      { name, category, species }
-      setName
-      setCategory
-      setSpecies
+  -- Handle form submission to add a new item
+  let addItemToInventory :: Effect Unit
+      addItemToInventory = do
+        -- Create a new MenuItem from the form inputs
+        let newItem = MenuItem { name, category, subcategory, species, sku, price, quantity }
+
+        -- Update JSON with new item (appending to existing inventory)
+        liftAff do
+          -- Load current inventory (mocked as empty for simplicity)
+          let currentInventory = Inventory []
+          let updatedInventory = Inventory (snoc (case currentInventory of Inventory items -> items) newItem)
+          saveInventory updatedInventory
+
+        liftEffect $ log ("New item added: " <> show newItem)
+
+  -- Render form
+  void $ runInBody $ D.div []
+    [ D.textarea
+        [ DA.value_ name
+        , DA.placeholder "Enter item name"
+        , DL.runOn DL.input \e -> setName e
+        ]
+        []
+    , D.select
+        [ DL.runOn DL.change \e -> setCategory e ]
+        (map (\opt -> D.option [DA.value opt, DA.selected (opt == category)] [text_ opt]) categoryOptions)
+    , D.select
+        [ DL.runOn DL.change \e -> setSpecies e ]
+        (map (\opt -> D.option [DA.value opt, DA.selected (opt == species)] [text_ opt]) speciesOptions)
+    , D.textarea
+        [ DA.value_ sku
+        , DA.placeholder "Enter SKU"
+        , DL.runOn DL.input \e -> setSku e
+        ]
+        []
+    , D.textarea
+        [ DA.value_ (show price)
+        , DA.placeholder "Enter price"
+        , DL.runOn DL.input \e -> setPrice (read e :: Number)
+        ]
+        []
+    , D.textarea
+        [ DA.value_ (show quantity)
+        , DA.placeholder "Enter quantity"
+        , DL.runOn DL.input \e -> setQuantity (read e :: Int)
+        ]
+        []
+    , D.button
+        [ DL.runOn DL.click \_ -> addItemToInventory ]
+        [ text_ "Add Item to Inventory" ]
+    ]
