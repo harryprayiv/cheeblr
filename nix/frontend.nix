@@ -1,6 +1,8 @@
-{ pkgs, lib ? pkgs.lib, name }:
+{ pkgs, lib ? pkgs.lib, name, frontend ? null }:
 
 let
+  appConfig = import ./app-config.nix { inherit name; };
+
   vite-cleanup = pkgs.writeShellApplication {
     name = "vite-cleanup";
     runtimeInputs = with pkgs; [ lsof ];
@@ -47,7 +49,7 @@ let
     name = "vite";
     runtimeInputs = with pkgs; [ nodejs-slim lsof ];
     text = ''
-      VITE_PORT=5173  # Default Vite port
+      VITE_PORT=5173
 
       cleanup_port() {
         local port="$1"
@@ -86,7 +88,7 @@ let
         cleanup_port "$VITE_PORT"
       fi
 
-      export CHEEBLR_BASE_PATH="${toString ../.}"
+      export ${lib.toUpper name}_BASE_PATH="${toString ../.}"
       
       # Start Vite with specific port and host
       npx vite --port "$VITE_PORT" --host --open

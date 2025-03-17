@@ -1,15 +1,46 @@
-{ pkgs, name, system ? builtins.currentSystem }:
+{ pkgs, name, lib, system ? builtins.currentSystem }:
 
 let
-  # Import existing utility modules
+  # Import app config to use in all the scripts
+  appConfig = import ./app-config.nix {
+    inherit name;
+  };
+  
+  # Extract configuration for different components
+  psConfig = appConfig.purescript;
+  hsConfig = appConfig.haskell;
+  dbConfig = appConfig.database;
+  viteConfig = appConfig.vite;
+  
+  # Helper function to convert list of directories to a space-separated string
+  dirsToString = dirs: lib.concatStringsSep " " dirs;
+  
+  # Generate directory strings for scripts
+  psDirs = dirsToString psConfig.codeDirs;
+  hsDirs = dirsToString hsConfig.codeDirs;
+  
+  # Get frontend and backend directories
+  frontendDir = builtins.match "(.*)/.*" (builtins.elemAt psConfig.codeDirs 0);
+  frontendPath = if frontendDir == null then "./frontend" else builtins.elemAt frontendDir 0;
+  
+  backendDir = builtins.match "(.*)/.*" (builtins.elemAt hsConfig.codeDirs 0);
+  backendPath = if backendDir == null then "./backend" else builtins.elemAt backendDir 0;
+
   postgresModule = import ./postgres-utils.nix {
     inherit pkgs name;
+    # Pass database config to postgres module
+    database = dbConfig;
   };
 
   frontendModule = import ./frontend.nix {
     inherit pkgs name;
+    # Pass frontend config to frontend module
+    frontend = {
+      inherit (viteConfig) viteport settings;
+      inherit (psConfig) codeDirs spagoFile;
+    };
   };
-
+  
   deployModule = import ./deploy.nix {
     inherit pkgs name;
   };
@@ -29,14 +60,21 @@ let
       runtimeInputs = with pkgs; [ rsync ];
       text = ''
         rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' ~/workdir/${name}/ ~/plutus/workspace/scdWs/${name}/
-        rsync -va ~/.local/share/${name}/backups/ ~/plutus/cheeblrDB/
+        rsync -va ~/.local/share/${name}/backups/ ~/plutus/${name}DB/
       '';
     };
   
-    # compile the project and concatenate all files into one large file with errors and the problem files at the top. 
+    # Updated compile-archive script that uses app-config.nix values
     compile-archive = pkgs.writeShellScriptBin "compile-archive" ''
         #!/usr/bin/env bash
 
+        # Load configuration from app-config.nix
+        BACKEND_DIR="${backendPath}"
+        FRONTEND_DIR="${frontendPath}"
+        HS_DIRS="${hsDirs}"
+        PS_DIRS="${psDirs}"
+        CABAL_FILE="${hsConfig.cabalFile}"
+        
         # Get current working directory as the project root
         project_root="$(pwd)"
         
@@ -83,7 +121,7 @@ let
             local temp_file=$(mktemp)
             
             # Navigate to backend directory and attempt to build
-            (cd "$project_dir/backend" && cabal build) > "$temp_file" 2>&1
+            (cd "$project_dir/$BACKEND_DIR" && cabal build) > "$temp_file" 2>&1
             local build_status=$?
             
             # Format the compilation status and output
@@ -117,7 +155,7 @@ let
             local temp_file=$(mktemp)
             
             # Navigate to frontend directory and attempt to build with timeout
-            if timeout 60 bash -c "cd '$project_dir/frontend' && spago build" > "$temp_file" 2>&1; then
+            if timeout 60 bash -c "cd '$project_dir/$FRONTEND_DIR' && spago build" > "$temp_file" 2>&1; then
                 build_status=0
             else
                 build_status=$?
@@ -179,17 +217,38 @@ let
         # Function to get Haskell source directories from cabal file
         get_haskell_dirs() {
             local project_dir=$1
-            local cabal_file="$project_dir/backend/cheeblr-backend.cabal"
-            local source_dirs=""
+            
+            # If HS_DIRS is set from the configuration, use that instead
+            if [ -n "$HS_DIRS" ]; then
+                # Convert space-separated string to proper find arguments
+                local full_paths=""
+                for dir in $HS_DIRS; do
+                    if [[ "$dir" = /* ]]; then
+                        full_paths="$full_paths $dir"
+                    else
+                        full_paths="$full_paths $project_dir/$dir"
+                    fi
+                done
+                echo "$full_paths"
+                return
+            fi
+            
+            # Fallback to cabal file if HS_DIRS is not set
+            local cabal_file="$project_dir/$CABAL_FILE"
             
             if [ -f "$cabal_file" ]; then
                 # Get all hs-source-dirs lines, extract the directory names
                 source_dirs=$(grep -i "hs-source-dirs:" "$cabal_file" | sed 's/.*hs-source-dirs://' | tr -d ' ' | tr ',' ' ')
                 
+                # If no source dirs found, default to src
+                if [ -z "$source_dirs" ]; then
+                    source_dirs="src"
+                fi
+                
                 # Build the full paths
                 local full_paths=""
                 for dir in $source_dirs; do
-                    full_paths="$full_paths $project_dir/backend/$dir"
+                    full_paths="$full_paths $project_dir/$BACKEND_DIR/$dir"
                 done
                 echo "$full_paths"
             else
@@ -204,7 +263,7 @@ let
             local patterns=""
             
             # Add explicit exclusion for frontend/.spago directory
-            patterns="-not -path '*/frontend/.spago/*'"
+            patterns="-not -path '*/$FRONTEND_DIR/.spago/*'"
             
             if [ -f "$gitignore" ]; then
                 while IFS= read -r line; do
@@ -251,7 +310,7 @@ let
                     if [[ $line =~ \[ERROR[[:space:]].*\][[:space:]]([^:]+): ]]; then
                         local file="''${BASH_REMATCH[1]}"
                         if [[ $file == src/* ]]; then
-                            file="$project_root/frontend/$file"
+                            file="$project_root/$FRONTEND_DIR/$file"
                         fi
                         if [[ ! $error_files =~ (^|[[:space:]])$file($|[[:space:]]) ]]; then
                             error_files="$error_files $file"
@@ -268,7 +327,7 @@ let
                             if [[ $context =~ (src/[^:]+) ]]; then
                                 local file="''${BASH_REMATCH[1]}"
                                 if [[ $file == src/* ]]; then
-                                    file="$project_root/frontend/$file"
+                                    file="$project_root/$FRONTEND_DIR/$file"
                                 fi
                                 if [[ ! $error_files =~ (^|[[:space:]])$file($|[[:space:]]) ]]; then
                                     error_files="$error_files $file"
@@ -283,9 +342,9 @@ let
                     if [[ $line =~ ^([^:]+\.hs):[0-9]+:[0-9]+: ]]; then
                         local file="''${BASH_REMATCH[1]}"
                         if [[ $file == src/* ]]; then
-                            file="$project_root/backend/$file"
+                            file="$project_root/$BACKEND_DIR/$file"
                         elif [[ $file != /* ]]; then
-                            file="$project_root/backend/$file"
+                            file="$project_root/$BACKEND_DIR/$file"
                         fi
                         if [[ ! $error_files =~ (^|[[:space:]])$file($|[[:space:]]) ]]; then
                             error_files="$error_files $file"
@@ -335,10 +394,21 @@ let
                     file_list=$(find $hs_dirs -type f -name "*.$file_type" 2>/dev/null | sort)
                     ;;
                 "purs")
-                    file_list=$(find "$project_root/frontend/src" -type f -name "*.$file_type" 2>/dev/null | sort)
-                    ;;
-                "nix")
-                    file_list=$(find "$project_root" "$project_root/frontend" "$project_root/backend" -maxdepth 1 -type f -name "*.$file_type" 2>/dev/null | sort)
+                    # Use PS_DIRS from config if available
+                    if [ -n "$PS_DIRS" ]; then
+                        local ps_paths=""
+                        for dir in $PS_DIRS; do
+                            if [[ "$dir" = /* ]]; then
+                                ps_paths="$ps_paths $dir"
+                            else
+                                ps_paths="$ps_paths $project_root/$dir"
+                            fi
+                        done
+                        file_list=$(find $ps_paths -type f -name "*.$file_type" 2>/dev/null | sort)
+                    else
+                        # Fallback to frontend/src if PS_DIRS not set
+                        file_list=$(find "$project_root/$FRONTEND_DIR/src" -type f -name "*.$file_type" 2>/dev/null | sort)
+                    fi
                     ;;
             esac
 
@@ -448,7 +518,7 @@ let
         nix_base="$output_dir/Nix_$timestamp"
 
         # Concatenate files for each type with appropriate comment characters and compilation
-        concatenate_files "purs" "$purs_base" "clean_haskell_purescript" "--" "compile_purescript"
+        concatenate_files "purs" "$purs_base" "clean_haskell_purescript" "--" ""
         concatenate_files "hs" "$hs_base" "clean_haskell_purescript" "--" "compile_haskell"
         concatenate_files "nix" "$nix_base" "clean_nix" "#" ""
 
@@ -461,7 +531,14 @@ let
     # If a manifest is detected, it will distate which files get concatenated and which are excluded (unless they have errors) 
     compile-manifest = pkgs.writeShellScriptBin "compile-manifest" ''
       #!/usr/bin/env bash
-      
+        
+      # Load configuration from app-config.nix
+      BACKEND_DIR="${backendPath}"
+      FRONTEND_DIR="${frontendPath}"
+      HS_DIRS="${hsDirs}"
+      PS_DIRS="${psDirs}"
+      CABAL_FILE="${hsConfig.cabalFile}"
+        
       # Get current working directory as the project root
       project_root="$(pwd)"
       # Script directories should be created in the project
@@ -558,7 +635,7 @@ let
             local temp_file=$(mktemp)
             
             # Navigate to frontend directory and attempt to build with timeout
-            if timeout 60 bash -c "cd '$project_dir/frontend' && spago build" > "$temp_file" 2>&1; then
+            if timeout 60 bash -c "cd '$project_dir/$FRONTEND_DIR' && spago build" > "$temp_file" 2>&1; then
                 build_status=0
             else
                 build_status=$?
@@ -655,7 +732,7 @@ let
             local patterns=""
             
             # Add explicit exclusion for frontend/.spago directory
-            patterns="-not -path '*/frontend/.spago/*'"
+            patterns="-not -path '*/$FRONTEND_DIR/.spago/*'"
             
             if [ -f "$gitignore" ]; then
                 while IFS= read -r line; do
@@ -702,7 +779,7 @@ let
                     if [[ $line =~ \[ERROR[[:space:]].*\][[:space:]]([^:]+): ]]; then
                         local file="''${BASH_REMATCH[1]}"
                         if [[ $file == src/* ]]; then
-                            file="$project_root/frontend/$file"
+                            file="$project_root/$FRONTEND_DIR/$file"
                         fi
                         if [[ ! $error_files =~ (^|[[:space:]])$file($|[[:space:]]) ]]; then
                             error_files="$error_files $file"
@@ -719,7 +796,7 @@ let
                             if [[ $context =~ (src/[^:]+) ]]; then
                                 local file="''${BASH_REMATCH[1]}"
                                 if [[ $file == src/* ]]; then
-                                    file="$project_root/frontend/$file"
+                                    file="$project_root/$FRONTEND_DIR/$file"
                                 fi
                                 if [[ ! $error_files =~ (^|[[:space:]])$file($|[[:space:]]) ]]; then
                                     error_files="$error_files $file"
@@ -734,9 +811,9 @@ let
                     if [[ $line =~ ^([^:]+\.hs):[0-9]+:[0-9]+: ]]; then
                         local file="''${BASH_REMATCH[1]}"
                         if [[ $file == src/* ]]; then
-                            file="$project_root/backend/$file"
+                            file="$project_root/$BACKEND_DIR/$file"
                         elif [[ $file != /* ]]; then
-                            file="$project_root/backend/$file"
+                            file="$project_root/$BACKEND_DIR/$file"
                         fi
                         if [[ ! $error_files =~ (^|[[:space:]])$file($|[[:space:]]) ]]; then
                             error_files="$error_files $file"
@@ -775,10 +852,27 @@ let
             echo "No manifest file found. Generating initial manifest..."
             
             # Find PureScript files
-            if [ -d "$project_dir/frontend/src" ]; then
+            if [ -n "$PS_DIRS" ]; then
+                for dir in $PS_DIRS; do
+                    if [[ "$dir" = /* ]]; then
+                        # Absolute path
+                        local search_dir="$dir"
+                    else
+                        # Relative path
+                        local search_dir="$project_dir/$dir"
+                    fi
+                    
+                    if [ -d "$search_dir" ]; then
+                        while IFS= read -r file; do
+                            purs_files+=("$(get_relative_path "$file")")
+                        done < <(find "$search_dir" -type f -name "*.purs" | sort)
+                    fi
+                done
+            elif [ -d "$project_dir/$FRONTEND_DIR/src" ]; then
+                # Fallback to frontend/src if PS_DIRS is not configured
                 while IFS= read -r file; do
                     purs_files+=("$(get_relative_path "$file")")
-                done < <(find "$project_dir/frontend/src" -type f -name "*.purs" | sort)
+                done < <(find "$project_dir/$FRONTEND_DIR/src" -type f -name "*.purs" | sort)
             fi
             
             # Find Haskell files
@@ -1173,7 +1267,7 @@ let
     deployModule.deploy
     deployModule.withdraw
     
-    # Additional tools specifically for the script
+    # Additional tools specifically for the scripts
     coreutils
     bash
     gnused
@@ -1213,17 +1307,17 @@ let
     buildInputs = commonBuildInputs ++ darwinInputs;
     
     shellHook = ''
-      export PGDATA="$HOME/.local/share/${name}/postgres"
-      export PGPORT="5432"
-      export PGUSER="$(whoami)"
-      export PGPASSWORD="postgres"
-      export PGDATABASE="${name}"
+      export PGDATA="${dbConfig.dataDir}"
+      export PGPORT="${toString dbConfig.port}"
+      export PGUSER="${dbConfig.user}"
+      export PGPASSWORD="${dbConfig.password}"
+      export PGDATABASE="${dbConfig.name}"
       export PKG_CONFIG_PATH="${pkgs.postgresql.lib}/lib/pkgconfig:$PKG_CONFIG_PATH"
       
       # Create script directory for compile-with-manifest if it doesn't exist
       mkdir -p "$(pwd)/script/concat_archive/output" "$(pwd)/script/concat_archive/archive" "$(pwd)/script/concat_archive/.hashes"
       
-      echo "Welcome to the ${name} development environment!"
+      echo "Welcome to the ${lib.toSentenceCase name} development environment!"
 
       echo "Available commands:"
       echo "  Database:"
@@ -1247,7 +1341,7 @@ let
       echo "    dev                    - Start all development services in tmux"
       echo "    code-workspace         - Open VSCodium workspace that handles a PS-HS project"
       echo "    backup-project         - Backup project files"
-      echo "    compile-with-manifest  - Compile and concatenate project files (formerly cwm)"
+      echo "    compile-manifest       - Compile and concatenate project files (formerly cwm)"
       echo "    cwm                    - Alias for compile-with-manifest"
       echo ""
       echo "  Deployment:"
@@ -1255,7 +1349,7 @@ let
       echo "    withdraw               - Withdraw deployment"
       echo ""
       echo ""
-      toilet ${name} -t --metal
+      toilet ${lib.toSentenceCase name} -t --metal
     '';
   };
 

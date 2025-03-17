@@ -1,10 +1,15 @@
 { pkgs
 , lib ? pkgs.lib
 , name
-}: 
+, database ? null  # Allow database to be passed in from devShell.nix
+}:
 
 let
-  pgConfig = import ./postgresql-config.nix { inherit name; };
+  # Import app config if database not passed in
+  pgConfig = if database != null then 
+    { database = database; } 
+  else 
+    import ./app-config.nix { inherit name; };
 
   postgresql = pkgs.postgresql;
   bin = {
@@ -22,16 +27,29 @@ let
     password = pgConfig.database.password;
   };
 
+  # Ensure we handle the settings section properly
+  settings = pgConfig.database.settings or {};
+
+  # Get settings with defaults
+  listenAddresses = settings.listen_addresses or "localhost";
+  maxConnections = settings.max_connections or 100;
+  sharedBuffers = settings.shared_buffers or "128MB";
+  dynamicSharedMemoryType = settings.dynamic_shared_memory_type or "posix";
+  logDestination = settings.log_destination or "stderr";
+  logDirectory = settings.log_directory or "log";
+  logFilename = settings.log_filename or "postgresql-%Y-%m-%d_%H%M%S.log";
+
   mkPgConfig = ''
-    listen_addresses = '${pgConfig.database.settings.listen_addresses}'
+    listen_addresses = '${listenAddresses}'
     port = ${toString config.port}
     unix_socket_directories = '$PGDATA'
-    max_connections = ${toString pgConfig.database.settings.max_connections}
-    shared_buffers = '${pgConfig.database.settings.shared_buffers}'
-    dynamic_shared_memory_type = '${pgConfig.database.settings.dynamic_shared_memory_type}'
-    log_destination = 'stderr'
+    max_connections = ${toString maxConnections}
+    shared_buffers = '${sharedBuffers}'
+    dynamic_shared_memory_type = '${dynamicSharedMemoryType}'
+    log_destination = '${logDestination}'
     logging_collector = on
-    log_directory = 'log'
+    log_directory = '${logDirectory}'
+    log_filename = '${logFilename}'
   '';
 
   mkHbaConfig = ''
@@ -96,67 +114,68 @@ in {
     ${bin.pgctl} -D "$PGDATA" stop -m fast 2>/dev/null || true
     
     # Create user-owned data directory
-    REAL_PGDATA="$HOME/.local/share/${name}/postgres"
+    REAL_PGDATA=$(echo ${config.dataDir} | envsubst)
     mkdir -p "$REAL_PGDATA"
+    mkdir -p "$PGDATA"
 
-  echo "Initializing with user: $(whoami)"
-  ${bin.initdb} -D "$PGDATA" \
+    echo "Initializing with user: $(whoami)"
+    ${bin.initdb} -D "$PGDATA" \
         --auth=trust \
         --no-locale \
         --encoding=UTF8 \
         --username="$(whoami)"
 
-  # Write config files
-  cat > "$PGDATA/postgresql.conf" << EOF
+    # Write config files
+    cat > "$PGDATA/postgresql.conf" << EOF
 ${mkPgConfig}
 EOF
 
-  cat > "$PGDATA/pg_hba.conf" << EOF
+    cat > "$PGDATA/pg_hba.conf" << EOF
 ${mkHbaConfig}
 EOF
 
-  # Ensure all files in PGDATA are owned by current user
-  chown -R $(whoami) "$PGDATA"
+    # Ensure all files in PGDATA are owned by current user
+    chown -R $(whoami) "$PGDATA"
 
-  echo "Starting PostgreSQL..."
-  ${bin.pgctl} -D "$PGDATA" -l "$PGDATA/postgresql.log" start
+    echo "Starting PostgreSQL..."
+    ${bin.pgctl} -D "$PGDATA" -l "$PGDATA/postgresql.log" start
 
-  if [ $? -ne 0 ]; then
-    echo "PostgreSQL failed to start. Here's the log:"
-    cat "$PGDATA/postgresql.log"
-    exit 1
-  fi
-
-  echo "Waiting for PostgreSQL to be ready..."
-  RETRIES=0
-  while ! ${bin.pgIsReady} -h "$PGHOST" -p "$PGPORT" -q; do
-    RETRIES=$((RETRIES+1))
-    if [ $RETRIES -eq 10 ]; then
-      echo "PostgreSQL failed to become ready. Here's the log:"
+    if [ $? -ne 0 ]; then
+      echo "PostgreSQL failed to start. Here's the log:"
       cat "$PGDATA/postgresql.log"
       exit 1
     fi
-    sleep 1
-    echo "Still waiting... (attempt $RETRIES/10)"
-  done
 
-  echo "Creating database and user..."
-  ${bin.psql} -h "$PGHOST" -p "$PGPORT" postgres << EOF
-  DO \$\$
-  BEGIN
-    IF NOT EXISTS (SELECT FROM pg_user WHERE usename = '$(whoami)') THEN
-      CREATE USER "$(whoami)" WITH PASSWORD '${config.password}' SUPERUSER;
-    END IF;
-  END
-  \$\$;
+    echo "Waiting for PostgreSQL to be ready..."
+    RETRIES=0
+    while ! ${bin.pgIsReady} -h "$PGHOST" -p "$PGPORT" -q; do
+      RETRIES=$((RETRIES+1))
+      if [ $RETRIES -eq 10 ]; then
+        echo "PostgreSQL failed to become ready. Here's the log:"
+        cat "$PGDATA/postgresql.log"
+        exit 1
+      fi
+      sleep 1
+      echo "Still waiting... (attempt $RETRIES/10)"
+    done
 
-  DROP DATABASE IF EXISTS ${pgConfig.database.name};
-  CREATE DATABASE ${pgConfig.database.name};
-  GRANT ALL PRIVILEGES ON DATABASE ${pgConfig.database.name} TO "$(whoami)";
+    echo "Creating database and user..."
+    ${bin.psql} -h "$PGHOST" -p "$PGPORT" postgres << EOF
+    DO \$\$
+    BEGIN
+      IF NOT EXISTS (SELECT FROM pg_user WHERE usename = '$(whoami)') THEN
+        CREATE USER "$(whoami)" WITH PASSWORD '${config.password}' SUPERUSER;
+      END IF;
+    END
+    \$\$;
+
+    DROP DATABASE IF EXISTS ${pgConfig.database.name};
+    CREATE DATABASE ${pgConfig.database.name};
+    GRANT ALL PRIVILEGES ON DATABASE ${pgConfig.database.name} TO "$(whoami)";
 EOF
 
-  echo "PostgreSQL is ready at: postgresql://$(whoami):${config.password}@localhost:$PGPORT/${pgConfig.database.name}"
-'';
+    echo "PostgreSQL is ready at: postgresql://$(whoami):${config.password}@localhost:$PGPORT/${pgConfig.database.name}"
+  '';
 
   pg-connect = pkgs.writeShellScriptBin "pg-connect" ''
     ${envSetup}
@@ -282,5 +301,4 @@ EOF
       ORDER BY sum(table_size) DESC;
 EOF
   '';
-
 }

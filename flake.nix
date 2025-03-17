@@ -63,7 +63,7 @@
 
       # Import the shell module
       shellModule = import ./nix/devShell.nix {
-        inherit pkgs name system;
+        inherit pkgs name lib system;
       };
 
     in {

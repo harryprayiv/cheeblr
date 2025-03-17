@@ -54,7 +54,7 @@ let
     # Bottom (3): Interactive shell (80% height)
     
     # Configure each pane
-    tmux send-keys -t ${name}.0 'cd backend && cabal run cheeblr-backend' C-m
+    tmux send-keys -t ${name}.0 'cd backend && cabal run ${name}-backend' C-m
     tmux send-keys -t ${name}.1 'cd frontend && vite --open' C-m
     tmux send-keys -t ${name}.2 'watch -n 5 pg-stats' C-m
     tmux send-keys -t ${name}.3 'echo "Interactive shell ready for use"; echo' C-m

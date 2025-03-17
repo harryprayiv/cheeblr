@@ -2,13 +2,13 @@
 
 with lib;
 let
+  pgConfig = import ./app-config.nix { inherit name; };
   cfg = config.services.${pgConfig.database.name}.postgresql;
-  pgConfig = import ./postgresql-config.nix;
 
 in {
 
   options.services.${pgConfig.database.name}.postgresql = {
-    enable = mkEnableOption "Cheeblr PostgreSQL Service";
+    enable = mkEnableOption "${lib.toSentenceCase name} PostgreSQL Service";
     package = mkOption {
       type = types.package;
       default = pkgs.postgresql;
@@ -56,19 +56,7 @@ in {
         GRANT ALL PRIVILEGES ON DATABASE ${pgConfig.database.name} TO ${pgConfig.database.user};
       '';
 
-      settings = {
-        # Default config
-        max_connections = 100;
-        shared_buffers = "128MB";
-        dynamic_shared_memory_type = "posix";
-        log_destination = "stderr";
-        logging_collector = true;
-        log_directory = "log";
-        log_filename = "postgresql-%Y-%m-%d_%H%M%S.log";
-        log_min_messages = "info";
-        log_min_error_statement = "info";
-        log_connections = true;
-      };
+      settings = pgConfig.database.settings;
     };
 
     environment.systemPackages = [ cfg.package ];
