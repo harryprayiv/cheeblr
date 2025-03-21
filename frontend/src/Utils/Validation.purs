@@ -225,12 +225,6 @@ validatePercentage fieldName str =
     invalid [ fieldName <> " must be in the format XX.XX%" ]
   else pure str
 
--- validateNumber :: String -> String -> V (Array String) Number
--- validateNumber fieldName str =
---   case Number.fromString (String.trim str) of
---     Just n | n >= 0.0 -> pure n
---     _ -> invalid [ fieldName <> " must be a non-negative number" ]
-
 validateNumber :: String -> String -> V (Array String) Number
 validateNumber fieldName str =
   case Number.fromString (String.trim str) of
@@ -335,47 +329,6 @@ validateMenuItem input =
                                           , effects: parseCommaList input.effects
                                           , strain_lineage
                                           }
-
--- validateMenuItem :: MenuItemFormInput -> Either String MenuItem
--- validateMenuItem input =
---   case toEither validationResult of
---     Left errors -> Left (joinWith ", " errors)
---     Right result -> Right result
---   where
---   validationResult =
---     validateUUID "SKU" input.sku `andThen` \sku ->
---       validateString "Name" input.name `andThen` \name ->
---         validateString "Brand" input.brand `andThen` \brand ->
---           validateNumber "Price" input.price `andThen` \price ->
---             validateInt "Quantity" input.quantity `andThen` \quantity ->
---               validateString "Measure Unit" input.measure_unit `andThen`
---                 \measure_unit ->
---                   validateString "Per Package" input.per_package `andThen`
---                     \per_package ->
---                       validateCategory "Category" input.category `andThen`
---                         \category ->
---                           validateString "Subcategory" input.subcategory
---                             `andThen` \subcategory ->
---                               validateStrainLineage input.strain_lineage
---                                 `andThen` \strain_lineage ->
---                                   validateInt "Sort" input.sort `andThen`
---                                     \sort ->
---                                       pure $ MenuItem
---                                         { sort
---                                         , sku
---                                         , brand
---                                         , name
---                                         , price: fromDollars price
---                                         , measure_unit
---                                         , per_package
---                                         , quantity
---                                         , category
---                                         , subcategory
---                                         , description: input.description
---                                         , tags: parseCommaList input.tags
---                                         , effects: parseCommaList input.effects
---                                         , strain_lineage
---                                         }
 
 validateStrainLineage
   :: StrainLineageFormInput -> V (Array String) StrainLineage

@@ -20,7 +20,7 @@ data Route
   | Delete String 
   | CreateTransaction
   | TransactionHistory
-  | InventorySelector  -- Added new route
+  | InventorySelector
 
 derive instance Eq Route
 derive instance Ord Route
@@ -37,7 +37,7 @@ route = root $ G.sum
   , "Delete": "delete" / (string segment)
   , "CreateTransaction": "transaction" / "create" / G.noArgs
   , "TransactionHistory": "transaction" / "history" / G.noArgs
-  , "InventorySelector": "inventory" / "selector" / G.noArgs  -- Added route path
+  , "InventorySelector": "inventory" / "selector" / G.noArgs  
   }
 
 nav :: Poll Route -> Nut

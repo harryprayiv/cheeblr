@@ -1,4 +1,3 @@
-# ./nix/testbed.nix
 { pkgs, lib ? pkgs.lib, name }:
 
 let
@@ -36,40 +35,42 @@ let
     echo ""
     echo "Starting services..."
 
-    # Start new tmux session with the interactive shell as the main pane
-    tmux new-session -d -s ${name} -n "Services"
+    # Start completely fresh
+    tmux kill-session -t ${name} 2>/dev/null || true
+
+    # Create a new session with a single pane (this will be the interactive shell)
+    tmux new-session -d -s ${name} -n "Services" -x 120 -y 42
     
-    # Split the window for services (creating smaller panes at the top)
-    # Create backend pane
-    tmux split-window -v -b -p 20
-    # Create frontend pane
-    tmux split-window -h -p 50
-    # Create stats pane
-    tmux split-window -h -p 50
+    # Create three small panes at the top - 12 lines tall (splitting the difference)
+    # First create one small pane at the top
+    tmux split-window -v -b -l 12
     
-    # Now we have:
-    # Top left (0): Backend (20% height)
-    # Top middle (1): Frontend (20% height)
-    # Top right (2): pg-stats (20% height)
-    # Bottom (3): Interactive shell (80% height)
+    # Now split this top pane horizontally into three parts
+    tmux split-window -h -t ${name}:Services.0 -p 66
+    tmux split-window -h -t ${name}:Services.1 -p 50
     
-    # Configure each pane
-    tmux send-keys -t ${name}.0 'cd backend && cabal run ${name}-backend' C-m
-    tmux send-keys -t ${name}.1 'cd frontend && vite --open' C-m
-    tmux send-keys -t ${name}.2 'watch -n 5 pg-stats' C-m
-    tmux send-keys -t ${name}.3 'echo "Interactive shell ready for use"; echo' C-m
+    # At this point we should have:
+    # Pane 0: Top-left (backend)
+    # Pane 1: Top-middle (frontend)
+    # Pane 2: Top-right (stats)
+    # Pane 3: Bottom (interactive shell, taking most of the screen)
     
-    # Ensure the layout is set
-    tmux select-layout tiled
+    # Make absolutely sure our panes are correctly sized
+    tmux resize-pane -t ${name}:Services.0 -y 12
+    tmux resize-pane -t ${name}:Services.1 -y 12
+    tmux resize-pane -t ${name}:Services.2 -y 12
     
-    # Fine-tune the pane sizes
-    # Make top row shorter
-    tmux resize-pane -t ${name}.0 -y 10
-    tmux resize-pane -t ${name}.1 -y 10
-    tmux resize-pane -t ${name}.2 -y 10
+    # Send commands to each pane
+    tmux send-keys -t ${name}:Services.0 'cd backend && cabal run ${name}-backend' C-m
+    tmux send-keys -t ${name}:Services.1 'cd frontend && vite --open' C-m
+    tmux send-keys -t ${name}:Services.2 'watch -n 5 pg-stats' C-m
+    tmux send-keys -t ${name}:Services.3 'echo "Interactive shell ready for use"; echo' C-m
     
-    # Select the interactive shell pane (bottom)
-    tmux select-pane -t ${name}.3
+    # Make sure the layout is maintained when resizing
+    tmux set-hook -t ${name} client-resized 'resize-pane -t ${name}:Services.0 -y 12; resize-pane -t ${name}:Services.1 -y 12; resize-pane -t ${name}:Services.2 -y 12'
+    
+    # Select the interactive shell pane
+    tmux select-pane -t ${name}:Services.3
     
     # Attach to the session
     tmux attach-session -t ${name}

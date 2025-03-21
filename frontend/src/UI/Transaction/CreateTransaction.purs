@@ -3,8 +3,7 @@ module UI.Transaction.CreateTransaction where
 import Prelude
 
 import API.Inventory (readInventory)
--- import Control.Monad.List.Trans (filter)
-import Data.Array (find, foldl, length, null, (:))
+import Data.Array (find, filter, foldl, length, null, (:))
 import Data.Either (Either(..))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
@@ -28,16 +27,13 @@ import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
-import Types.Transaction (PaymentMethod(..), TaxCategory(..), TransactionItem(..))
-import UI.Inventory.LiveInventoryView (liveInventoryView)
+import UI.Transaction.LiveCart (liveCart)
 import Utils.Money (formatMoney', fromDollars, toDollars)
 import Utils.UUIDGen (genUUID)
 import Web.Event.Event (target)
 import API.Transaction (createTransaction) as API
-import Data.Array (filter, find, foldl, length, null, (:))
 import Data.DateTime.Instant (toDateTime)
 import Data.Tuple (Tuple(..))
-import Deku.Control (text_)
 import Effect.Now (now)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (parseUUID)
@@ -348,7 +344,7 @@ createTransaction = Deku.do
           -- Inventory container - now using LiveInventoryView component 
           D.div
             [ DA.klass_ "tx-inventory-container" ]
-            [ liveInventoryView handleUpdateItems inventoryValue ]
+            [ liveCart handleUpdateItems inventoryValue ]
         ],
       
       -- Bottom area with payment options

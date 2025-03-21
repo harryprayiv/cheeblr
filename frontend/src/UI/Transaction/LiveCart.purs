@@ -1,4 +1,4 @@
-module UI.Inventory.LiveInventoryView where
+module UI.Transaction.LiveCart where
 
 import Prelude
 
@@ -47,8 +47,8 @@ formatCentsToDollars cents =
   in
     show dollars <> "." <> centsStr
 
-liveInventoryView :: (Array TransactionItem -> Effect Unit) -> Poll Inventory -> Nut
-liveInventoryView updateTransactionItems inventoryPoll = Deku.do
+liveCart :: (Array TransactionItem -> Effect Unit) -> Poll Inventory -> Nut
+liveCart updateTransactionItems inventoryPoll = Deku.do
   -- State for filtering
   setSearchText /\ searchTextValue <- useState ""
   setActiveCategory /\ activeCategoryValue <- useState "All Items"

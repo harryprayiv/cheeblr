@@ -29,7 +29,7 @@ import Config.LiveView (defaultViewConfig)
 import Utils.UUIDGen (genUUID)
 import UI.Transaction.CreateTransaction (createTransaction)
 import UI.Transaction.TransactionHistory (transactionHistory)
-import UI.Inventory.LiveInventoryView (liveInventoryView)
+import UI.Transaction.LiveCart (liveCart)
 
 testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
@@ -192,7 +192,7 @@ main = do
                 Console.log $ "Selected " <> show (length items) <> " items"
           
           -- Create the component with the inventory poll
-          currentRoute.push $ Tuple r (liveInventoryView dummyUpdateFunction inventoryState.poll)
+          currentRoute.push $ Tuple r (liveCart dummyUpdateFunction inventoryState.poll)
           
           -- Fetch inventory data
           launchAff_ do
@@ -206,7 +206,7 @@ main = do
               
               Right (InventoryData inv@(Inventory items)) -> do
                 Console.log $ "Loaded inventory successfully"
-                inventoryState.push inv  -- This updates the Poll that's passed to the component
+                inventoryState.push inv 
                 loadingState.push false
               
               Right (Message msg) -> do
