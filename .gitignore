@@ -5,6 +5,7 @@ output/
 .vite/
 output-es/
 generated-docs/
+frontend/assets/
 .psc-package/
 .psc*
 .purs*
