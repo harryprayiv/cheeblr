@@ -20,7 +20,7 @@ data Route
   | Delete String 
   | CreateTransaction
   | TransactionHistory
-  | InventorySelector
+  | LiveCart
 
 derive instance Eq Route
 derive instance Ord Route
@@ -37,7 +37,7 @@ route = root $ G.sum
   , "Delete": "delete" / (string segment)
   , "CreateTransaction": "transaction" / "create" / G.noArgs
   , "TransactionHistory": "transaction" / "history" / G.noArgs
-  , "InventorySelector": "inventory" / "selector" / G.noArgs  
+  , "LiveCart": "inventory" / "selector" / G.noArgs  
   }
 
 nav :: Poll Route -> Nut
@@ -52,7 +52,7 @@ nav currentRoute = D.nav [ DA.klass_ "navbar navbar-light" ]
           , navItem CreateTransaction "/#/transaction/create" "New Transaction" currentRoute
           , navItem TransactionHistory "/#/transaction/history" "Transaction History" currentRoute
           , D.div [ DA.klass_ "border-l mx-2 h-6" ] []  -- Divider
-          , navItem InventorySelector "/#/inventory/selector" "Inventory Selector" currentRoute
+          , navItem LiveCart "/#/inventory/selector" "LiveCart" currentRoute
           ]
       ]
   ]

@@ -182,17 +182,17 @@ main = do
           Console.log "Navigating to Transaction History page"
           currentRoute.push $ Tuple r transactionHistory
           
-        InventorySelector -> do
+        LiveCart -> do
           Console.log "Navigating to Inventory Selector page"
           
           loadingState.push true
           errorState.push ""
           
-          let dummyUpdateFunction items = do
+          let showUpdateFunction items = do
                 Console.log $ "Selected " <> show (length items) <> " items"
           
           -- Create the component with the inventory poll
-          currentRoute.push $ Tuple r (liveCart dummyUpdateFunction inventoryState.poll)
+          currentRoute.push $ Tuple r (liveCart showUpdateFunction inventoryState.poll)
           
           -- Fetch inventory data
           launchAff_ do
