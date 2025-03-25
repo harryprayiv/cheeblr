@@ -55,6 +55,7 @@
       "nwolverson.ide-purescript",
       "nwolverson.language-purescript",
       "haskell.haskell",
+      "mkhl.direnv",
       "justusadam.language-haskell"
     ]
   }
