@@ -16,15 +16,18 @@ let
   dirsToString = dirs: lib.concatStringsSep " " dirs;
   
   # Generate directory strings for scripts
-  psDirs = dirsToString psConfig.codeDirs;
-  hsDirs = dirsToString hsConfig.codeDirs;
-  
+  psDirs = psConfig.codeDirs;
+  hsDirs = hsConfig.codeDirs;
+
   # Get frontend and backend directories
   frontendDir = builtins.match "(.*)/.*" (builtins.elemAt psConfig.codeDirs 0);
-  frontendPath = if frontendDir == null then "./frontend" else builtins.elemAt frontendDir 0;
-  
+  # frontendPath = if frontendDir == null then "./frontend" else builtins.elemAt frontendDir 0;
+  frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head psConfig.codeDirs));
+
+
   backendDir = builtins.match "(.*)/.*" (builtins.elemAt hsConfig.codeDirs 0);
-  backendPath = if backendDir == null then "./backend" else builtins.elemAt backendDir 0;
+  # backendPath = if backendDir == null then "./backend" else builtins.elemAt backendDir 0;
+  backendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head hsConfig.codeDirs));
 
   # Import modules
   postgresModule = import ./postgres-utils.nix {
@@ -46,9 +49,26 @@ let
     inherit pkgs name;
   };
 
-  # Import the dev scripts from the separate file
-  devScripts = import ./devScripts.nix {
-    inherit pkgs name lib backendPath frontendPath hsDirs psDirs hsConfig;
+  manifestModule = import ./manifest.nix {
+    inherit pkgs lib;
+    config = {
+      backendPath = backendPath;
+      frontendPath = frontendPath;
+      hsDirs = map (dir: builtins.replaceStrings ["${backendPath}/"] [""] dir) hsConfig.codeDirs;
+      psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
+      hsConfig = {
+        cabalFile = hsConfig.cabalFile;
+      };
+    };
+  };
+  
+  devScripts = import ./file-tools.nix {
+    inherit pkgs name lib;
+    backendPath = backendPath;
+    frontendPath = frontendPath;
+    hsDirs = map (dir: builtins.replaceStrings ["${backendPath}/"] [""] dir) hsConfig.codeDirs;
+    psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
+    hsConfig = hsConfig;
   };
 
   # VSCode extensions list
@@ -234,6 +254,7 @@ let
     rsync
     tmux
     workspaceModule.backup-project
+    manifestModule.generateScript
     devScripts.compile-manifest
     devScripts.compile-archive
 
