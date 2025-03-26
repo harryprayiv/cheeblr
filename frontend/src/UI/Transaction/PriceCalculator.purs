@@ -71,7 +71,7 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
       subtotalDiscrete = Discrete subtotalInCents
       subtotalAsMoney = fromDiscrete' subtotalDiscrete
       
-      taxRate = 0.0
+      taxRate = 0.15
       taxRateInt = Int.floor (taxRate * 100.0)
       taxAmountInCents = (subtotalInCents * taxRateInt) / 100
       taxDiscrete = Discrete taxAmountInCents

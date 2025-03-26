@@ -4,6 +4,8 @@ import Prelude
 
 import Data.Array (filter, find, null, sort)
 import Data.Array (nub) as Array
+import Data.Finance.Currency (USD)
+import Data.Finance.Money (Discrete)
 import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -44,25 +46,59 @@ formatCentsToDollars cents =
 getItemName :: MenuItem -> String
 getItemName (MenuItem item) = item.name
 
--- Helper function to find an item name by sku
 findItemNameBySku :: UUID -> Inventory -> String
-findItemNameBySku sku (Inventory items) = 
+findItemNameBySku sku (Inventory items) =
   case find (\(MenuItem item) -> item.sku == sku) items of
     Just (MenuItem item) -> item.name
     Nothing -> "Unknown Item"
 
-removeSelectedItem :: UUID -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Effect Unit
-removeSelectedItem itemId currentItems setItems =
-  setItems (filter (\(TransactionItem item) -> item.id /= itemId) currentItems)
+-- Modified version of addItemToTransaction that updates cart state
+addItemWithTotals :: 
+  MenuItem -> 
+  Number -> 
+  Array TransactionItem -> 
+  (Array TransactionItem -> Effect Unit) ->
+  (CartTotals -> Effect Unit) ->
+  Effect Unit
+addItemWithTotals menuItem qty currentItems setItems setTotals = do
+  addItemToTransaction menuItem qty currentItems \newItems -> do
+    -- When we add an item, update totals too
+    let newTotals = calculateCartTotals newItems
+    setTotals newTotals
+    setItems newItems
+    liftEffect $ Console.log $ "Updated cart with new item and totals"
+
+-- Modified version of removeItemFromTransaction that updates cart state
+removeItemWithTotals :: 
+  UUID -> 
+  Array TransactionItem -> 
+  (Array TransactionItem -> Effect Unit) ->
+  (CartTotals -> Effect Unit) ->
+  Effect Unit
+removeItemWithTotals itemId currentItems setItems setTotals = do
+  removeItemFromTransaction itemId currentItems \newItems -> do
+    -- When we remove an item, update totals too
+    let newTotals = calculateCartTotals newItems
+    setTotals newTotals
+    setItems newItems
+    liftEffect $ Console.log $ "Updated cart after removal"
+
+-- Reusing the CartTotals type from UI.Transaction.LiveCart.PriceCalculator
+type CartTotals =
+  { subtotal :: Discrete USD
+  , taxTotal :: Discrete USD
+  , total :: Discrete USD
+  , discountTotal :: Discrete USD
+  }
 
 liveCart :: (Array TransactionItem -> Effect Unit) -> Poll Inventory -> Nut
 liveCart updateTransactionItems inventoryPoll = Deku.do
   setSearchText /\ searchTextValue <- useState ""
   setActiveCategory /\ activeCategoryValue <- useState "All Items"
-  
+
   setSelectedItems /\ selectedItemsValue <- useState []
   setTotals /\ totalsValue <- useState emptyCartTotals
-  
+
   setStatusMessage /\ statusMessageValue <- useState ""
 
   D.div
@@ -116,6 +152,8 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
               inventoryPoll <#~> \(Inventory items) ->
                 (Tuple <$> searchTextValue <*> activeCategoryValue) <#~> \(Tuple searchText activeCategory) ->
                   let
+                    -- Get filtered items for display only
+                    -- This does NOT affect what's in the cart
                     categoryFiltered =
                       if activeCategory == "All Items"
                       then items
@@ -133,8 +171,16 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                     if null searchFiltered then
                       D.div [ DA.klass_ "inv-selector-empty-result" ] [ text_ "No items found" ]
                     else
-                      selectedItemsValue <#~> \selectedItems ->
-                        renderInventoryTable searchFiltered selectedItems setSelectedItems
+                      -- The key part: we need the latest selectedItems value
+                      selectedItemsValue <#~> \currentItems ->
+                        renderInventoryTable 
+                          searchFiltered 
+                          currentItems 
+                          \newItems -> do
+                            -- Update both items and totals when the cart changes
+                            let newTotals = calculateCartTotals newItems
+                            setTotals newTotals
+                            setSelectedItems newItems
             ],
 
           D.div
@@ -142,72 +188,64 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
             [
               D.h4 [ DA.klass_ "inv-selector-selected-items-header" ] [ text_ "Selected Items" ],
 
-              (Tuple <$> selectedItemsValue <*> inventoryPoll) <#~> \(Tuple items inventory) -> 
-                D.div_ [
-                  { effect: do
-                      -- Calculate totals and set them explicitly
-                      let newTotals = calculateCartTotals items
-                      liftEffect $ Console.log $ "Updating cart totals: " <> formatDiscretePrice newTotals.total
-                      setTotals newTotals
-                    , value: 
-                    if null items then 
-                      D.div [ DA.klass_ "inv-selector-empty-selection" ] [ text_ "No items selected" ]
-                    else
+              -- Use the cart items with inventory for proper display
+              (Tuple <$> selectedItemsValue <*> inventoryPoll) <#~> \(Tuple items inventory) ->
+                if null items then
+                  D.div [ DA.klass_ "inv-selector-empty-selection" ] [ text_ "No items selected" ]
+                else
+                  D.div
+                    [ DA.klass_ "inv-selector-selected-items-list" ]
+                    [
                       D.div
-                        [ DA.klass_ "inv-selector-selected-items-list" ]
+                        [ DA.klass_ "inv-selector-selected-item-header" ]
                         [
-                          D.div
-                            [ DA.klass_ "inv-selector-selected-item-header" ]
-                            [
-                              D.div [ DA.klass_ "inv-selector-col-item" ] [ text_ "Item" ],
-                              D.div [ DA.klass_ "inv-selector-col-qty" ] [ text_ "Qty" ],
-                              D.div [ DA.klass_ "inv-selector-col-price" ] [ text_ "Price" ],
-                              D.div [ DA.klass_ "inv-selector-col-total" ] [ text_ "Total" ],
-                              D.div [ DA.klass_ "inv-selector-col-actions" ] [ text_ "" ]
-                            ],
+                          D.div [ DA.klass_ "inv-selector-col-item" ] [ text_ "Item" ],
+                          D.div [ DA.klass_ "inv-selector-col-qty" ] [ text_ "Qty" ],
+                          D.div [ DA.klass_ "inv-selector-col-price" ] [ text_ "Price" ],
+                          D.div [ DA.klass_ "inv-selector-col-total" ] [ text_ "Total" ],
+                          D.div [ DA.klass_ "inv-selector-col-actions" ] [ text_ "" ]
+                        ],
 
-                          D.div
-                            [ DA.klass_ "inv-selector-selected-item-body" ]
-                            (items <#> \(TransactionItem itemData) ->
-                              let
-                                -- Get item name directly from inventory
-                                itemName = findItemNameBySku itemData.menuItemSku inventory
-                              in
+                      D.div
+                        [ DA.klass_ "inv-selector-selected-item-body" ]
+                        (items <#> \(TransactionItem itemData) ->
+                          let
+                            -- Look up item name from full inventory, not filtered view
+                            itemName = findItemNameBySku itemData.menuItemSku inventory
+                          in
+                            D.div
+                              [ DA.klass_ "inv-selector-selected-item-row" ]
+                              [
                                 D.div
-                                  [ DA.klass_ "inv-selector-selected-item-row" ]
+                                  [ DA.klass_ "inv-selector-col-item" ]
+                                  [ text_ itemName ],
+
+                                D.div
+                                  [ DA.klass_ "inv-selector-col-qty" ]
+                                  [ text_ (show itemData.quantity) ],
+
+                                D.div
+                                  [ DA.klass_ "inv-selector-col-price" ]
+                                  [ text_ (formatPrice itemData.pricePerUnit) ],
+
+                                D.div
+                                  [ DA.klass_ "inv-selector-col-total" ]
+                                  [ text_ (formatPrice itemData.total) ],
+
+                                D.div
+                                  [ DA.klass_ "inv-selector-col-actions" ]
                                   [
-                                    D.div
-                                      [ DA.klass_ "inv-selector-col-item" ]
-                                      [ text_ itemName ],
-
-                                    D.div
-                                      [ DA.klass_ "inv-selector-col-qty" ]
-                                      [ text_ (show itemData.quantity) ],
-
-                                    D.div
-                                      [ DA.klass_ "inv-selector-col-price" ]
-                                      [ text_ (formatPrice itemData.pricePerUnit) ],
-
-                                    D.div
-                                      [ DA.klass_ "inv-selector-col-total" ]
-                                      [ text_ (formatPrice itemData.total) ],
-
-                                    D.div
-                                      [ DA.klass_ "inv-selector-col-actions" ]
-                                      [
-                                        D.button
-                                          [ DA.klass_ "inv-selector-remove-btn"
-                                          , DL.click_ \_ -> do
-                                              removeItemFromTransaction itemData.id items setSelectedItems
-                                              liftEffect $ Console.log "Item removed from cart"
-                                          ]
-                                          [ text_ "✕" ]
+                                    D.button
+                                      [ DA.klass_ "inv-selector-remove-btn"
+                                      , DL.click_ \_ -> do
+                                          -- Use the helper function to remove item and update totals
+                                          removeItemWithTotals itemData.id items setSelectedItems setTotals
                                       ]
+                                      [ text_ "✕" ]
                                   ]
-                            )
-                        ]
-                  }.value
-                ],
+                              ]
+                        )
+                    ],
 
               D.div
                 [ DA.klass_ "price-calculation-panel" ]
@@ -237,7 +275,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                             [ text_ "Tax:" ],
                           D.div
                             [ DA.klass_ "price-summary-value" ]
-                            [ totalsValue <#~> \totals -> 
+                            [ totalsValue <#~> \totals ->
                                 let totalsStr = formatDiscretePrice totals.taxTotal
                                 in text_ totalsStr
                             ]
@@ -251,7 +289,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                             [ text_ "Total:" ],
                           D.div
                             [ DA.klass_ "price-summary-value" ]
-                            [ totalsValue <#~> \totals -> 
+                            [ totalsValue <#~> \totals ->
                                 let totalsStr = formatDiscretePrice totals.total
                                 in text_ totalsStr
                             ]
@@ -295,7 +333,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
     ]
 
 renderInventoryTable :: Array MenuItem -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Nut
-renderInventoryTable items selectedItems setSelectedItems =
+renderInventoryTable items selectedItems setItems =
   D.div
     [ DA.klass_ "inv-selector-inventory-table" ]
     [
@@ -312,20 +350,20 @@ renderInventoryTable items selectedItems setSelectedItems =
 
       D.div
         [ DA.klass_ "inv-selector-inventory-table-body" ]
-        (map (\item -> renderInventoryRow item selectedItems setSelectedItems) items)
+        (map (\item -> renderInventoryRow item selectedItems setItems) items)
     ]
 
 renderInventoryRow :: MenuItem -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Nut
-renderInventoryRow menuItem@(MenuItem record) selectedItems setSelectedItems =
+renderInventoryRow menuItem@(MenuItem record) selectedItems setItems =
   let
     formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
     stockClass = if record.quantity <= 5 then "low-stock" else ""
 
-    isSelected = find
+    existingItem = find
       (\(TransactionItem item) -> item.menuItemSku == record.sku)
       selectedItems
-
-    currentQty = case isSelected of
+    
+    currentQty = case existingItem of
       Just (TransactionItem item) -> item.quantity
       Nothing -> 0.0
   in
@@ -361,8 +399,10 @@ renderInventoryRow menuItem@(MenuItem record) selectedItems setSelectedItems =
                     [ DA.klass_ "inv-selector-add-btn"
                     , DL.click_ \evt -> do
                         Event.stopPropagation (PointerEvent.toEvent evt)
-                        addItemToTransaction menuItem 1.0 selectedItems setSelectedItems
-                        liftEffect $ Console.log $ "Added item: " <> getItemName menuItem
+                        -- Add item using the FULL current state, not just what's visible
+                        addItemToTransaction menuItem 1.0 selectedItems \newItems -> do
+                          setItems newItems
+                          liftEffect $ Console.log $ "Added item: " <> getItemName menuItem
                     ]
                     [ text_ "Add" ]
                 ]
