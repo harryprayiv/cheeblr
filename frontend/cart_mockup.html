@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en" data-framework="purescript">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveCart Inventory Selector</title>
+  <link rel="stylesheet" href="app-styles.css">
+</head>
+<body>
+  <div class="app-container">
+    <div class="app-content">
+      <!-- LiveCart Component -->
+      <div class="inv-selector-inventory-main-container">
+        <!-- Header with title -->
+        <div class="inv-selector-inventory-header">
+          <h3>Select Items</h3>
+          <div class="inv-selector-inventory-controls">
+            <!-- Empty now -->
+          </div>
+        </div>
+        
+        <!-- Category tabs -->
+        <div class="inv-selector-inventory-tabs">
+          <div class="category-tab active">All Items</div>
+          <div class="category-tab">Flower</div>
+          <div class="category-tab">PreRolls</div>
+          <div class="category-tab">Edibles</div>
+          <div class="category-tab">Concentrates</div>
+          <div class="category-tab">Vaporizers</div>
+          <div class="category-tab">Accessories</div>
+        </div>
+        
+        <!-- Content layout with inventory table and selected items -->
+        <div class="inv-selector-inventory-content-layout">
+          <!-- Inventory table container -->
+          <div class="inv-selector-inventory-table-container">
+            <!-- Action row with search and quantity control -->
+            <div class="inv-selector-inventory-actions">
+              <div class="inv-selector-search-control">
+                <input class="inv-selector-search-input" placeholder="Search inventory..." type="text">
+              </div>
+              
+              <!-- Quantity control stays with the inventory table -->
+              <div class="inv-selector-right-controls">
+                <div class="inv-selector-quantity-control">
+                  <div class="qty-label">Quantity:</div>
+                  <input class="qty-input" type="number" min="1" step="1" value="1">
+                </div>
+              </div>
+            </div>
+            
+            <!-- Inventory table -->
+            <div class="inv-selector-inventory-table">
+              <div class="inv-selector-inventory-table-header">
+                <div class="inv-selector-col name-col">Name</div>
+                <div class="inv-selector-col brand-col">Brand</div>
+                <div class="inv-selector-col category-col">Category</div>
+                <div class="inv-selector-col price-col">Price</div>
+                <div class="inv-selector-col stock-col">In Stock</div>
+                <div class="inv-selector-col actions-col">Actions</div>
+              </div>
+              
+              <!-- Inventory table body with items -->
+              <div class="inv-selector-inventory-table-body">
+                <!-- Sample Item 1 -->
+                <div class="inventory-row">
+                  <div class="inv-selector-col name-col">Blue Dream</div>
+                  <div class="inv-selector-col brand-col">Canopy Growth</div>
+                  <div class="inv-selector-col category-col">Flower - Hybrid</div>
+                  <div class="inv-selector-col price-col">$35.00</div>
+                  <div class="inv-selector-col stock-col">24</div>
+                  <div class="inv-selector-col actions-col">
+                    <div class="inv-selector-quantity-controls">
+                      <button class="inv-selector-add-btn">Add</button>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Sample Item 2 -->
+                <div class="inventory-row">
+                  <div class="inv-selector-col name-col">OG Kush</div>
+                  <div class="inv-selector-col brand-col">Tilray</div>
+                  <div class="inv-selector-col category-col">Flower - Indica</div>
+                  <div class="inv-selector-col price-col">$40.00</div>
+                  <div class="inv-selector-col stock-col">18</div>
+                  <div class="inv-selector-col actions-col">
+                    <div class="inv-selector-quantity-controls">
+                      <div class="inv-selector-quantity-indicator">2</div>
+                      <button class="inv-selector-add-btn">Add</button>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Sample Item 3 with low stock -->
+                <div class="inventory-row">
+                  <div class="inv-selector-col name-col">Sour Diesel</div>
+                  <div class="inv-selector-col brand-col">Aurora</div>
+                  <div class="inv-selector-col category-col">Flower - Sativa</div>
+                  <div class="inv-selector-col price-col">$38.50</div>
+                  <div class="inv-selector-col stock-col low-stock">3</div>
+                  <div class="inv-selector-col actions-col">
+                    <div class="inv-selector-quantity-controls">
+                      <button class="inv-selector-add-btn">Add</button>
+                    </div>
+                  </div>
+                </div>
+                
+                <!-- Sample Item 4 out of stock -->
+                <div class="inventory-row out-of-stock">
+                  <div class="inv-selector-col name-col">GSC</div>
+                  <div class="inv-selector-col brand-col">Aphria</div>
+                  <div class="inv-selector-col category-col">Flower - Hybrid</div>
+                  <div class="inv-selector-col price-col">$42.00</div>
+                  <div class="inv-selector-col stock-col">0</div>
+                  <div class="inv-selector-col actions-col">
+                    <button class="inv-selector-add-btn disabled" disabled>Out of Stock</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Selected items container -->
+          <div class="inv-selector-selected-items-container">
+            <h4 class="inv-selector-selected-items-header">Selected Items</h4>
+            
+            <!-- Selected items list -->
+            <div class="inv-selector-selected-items-list">
+              <div class="inv-selector-selected-item-header">
+                <div class="inv-selector-col-item">Item</div>
+                <div class="inv-selector-col-qty">Qty</div>
+                <div class="inv-selector-col-price">Price</div>
+                <div class="inv-selector-col-total">Total</div>
+                <div class="inv-selector-col-actions"></div>
+              </div>
+              
+              <div class="inv-selector-selected-item-body">
+                <!-- Sample selected item 1 -->
+                <div class="inv-selector-selected-item-row">
+                  <div class="inv-selector-col-item">OG Kush</div>
+                  <div class="inv-selector-col-qty">2</div>
+                  <div class="inv-selector-col-price">$40.00</div>
+                  <div class="inv-selector-col-total">$80.00</div>
+                  <div class="inv-selector-col-actions">
+                    <button class="inv-selector-remove-btn">✕</button>
+                  </div>
+                </div>
+                
+                <!-- Sample selected item 2 -->
+                <div class="inv-selector-selected-item-row">
+                  <div class="inv-selector-col-item">Blue Dream</div>
+                  <div class="inv-selector-col-qty">1</div>
+                  <div class="inv-selector-col-price">$35.00</div>
+                  <div class="inv-selector-col-total">$35.00</div>
+                  <div class="inv-selector-col-actions">
+                    <button class="inv-selector-remove-btn">✕</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Price calculation panel -->
+            <div class="price-calculation-panel">
+              <div class="price-summary">
+                <div class="price-summary-row">
+                  <div class="price-summary-label">Subtotal:</div>
+                  <div class="price-summary-value">$115.00</div>
+                </div>
+                <div class="price-summary-row">
+                  <div class="price-summary-label">Tax:</div>
+                  <div class="price-summary-value">$11.50</div>
+                </div>
+                <div class="price-summary-row total-row">
+                  <div class="price-summary-label">Total:</div>
+                  <div class="price-summary-value">$126.50</div>
+                </div>
+              </div>
+              
+              <div class="inv-selector-action-buttons">
+                <button class="inv-selector-clear-btn">Clear Selection</button>
+                <button class="inv-selector-update-btn">Update Transaction</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Status message - appears when needed -->
+        <div class="inv-selector-status-message">Item added to cart</div>
+      </div>
+      
+      <!-- Navigation container at bottom of page -->
+      <div class="navigation-container">
+        <a href="#/" class="nav-link">LiveView</a>
+        <a href="#/create" class="nav-link">Create Item</a>
+        <a href="#/edit/test" class="nav-link">Edit Test Item</a>
+        <a href="#/transaction/create" class="nav-link active">New Transaction</a>
+        <a href="#/transaction/history" class="nav-link">Transaction History</a>
+        <a href="#/inventory/selector" class="nav-link">LiveCart</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

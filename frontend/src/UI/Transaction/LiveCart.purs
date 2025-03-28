@@ -7,8 +7,10 @@ import Data.Array (nub) as Array
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete)
 import Data.Foldable (for_)
+import Data.Int (floor)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
+import Data.Number (fromString)
 import Data.String (Pattern(..), contains)
 import Data.String as String
 import Data.Tuple (Tuple(..))
@@ -52,38 +54,40 @@ findItemNameBySku sku (Inventory items) =
     Just (MenuItem item) -> item.name
     Nothing -> "Unknown Item"
 
--- Modified version of addItemToTransaction that updates cart state
-addItemWithTotals :: 
-  MenuItem -> 
-  Number -> 
-  Array TransactionItem -> 
+addItemWithTotals ::
+  MenuItem ->
+  Number ->
+  Array TransactionItem ->
   (Array TransactionItem -> Effect Unit) ->
   (CartTotals -> Effect Unit) ->
+  (String -> Effect Unit) ->
   Effect Unit
-addItemWithTotals menuItem qty currentItems setItems setTotals = do
-  addItemToTransaction menuItem qty currentItems \newItems -> do
-    -- When we add an item, update totals too
-    let newTotals = calculateCartTotals newItems
-    setTotals newTotals
-    setItems newItems
-    liftEffect $ Console.log $ "Updated cart with new item and totals"
+addItemWithTotals menuItem@(MenuItem record) qty currentItems setItems setTotals setStatusMessage = do
+  if qty <= 0.0 then
+    setStatusMessage "Quantity must be greater than 0"
+  else if floor qty > record.quantity then
+    setStatusMessage $ "Not enough inventory. Only " <> show record.quantity <> " available."
+  else
+    addItemToTransaction menuItem qty currentItems \newItems -> do
+      let newTotals = calculateCartTotals newItems
+      setTotals newTotals
+      setItems newItems
+      liftEffect $ Console.log $ "Updated cart with new item and totals"
+      setStatusMessage "Item added to cart"
 
--- Modified version of removeItemFromTransaction that updates cart state
-removeItemWithTotals :: 
-  UUID -> 
-  Array TransactionItem -> 
+removeItemWithTotals ::
+  UUID ->
+  Array TransactionItem ->
   (Array TransactionItem -> Effect Unit) ->
   (CartTotals -> Effect Unit) ->
   Effect Unit
 removeItemWithTotals itemId currentItems setItems setTotals = do
   removeItemFromTransaction itemId currentItems \newItems -> do
-    -- When we remove an item, update totals too
     let newTotals = calculateCartTotals newItems
     setTotals newTotals
     setItems newItems
     liftEffect $ Console.log $ "Updated cart after removal"
 
--- Reusing the CartTotals type from UI.Transaction.LiveCart.PriceCalculator
 type CartTotals =
   { subtotal :: Discrete USD
   , taxTotal :: Discrete USD
@@ -95,6 +99,7 @@ liveCart :: (Array TransactionItem -> Effect Unit) -> Poll Inventory -> Nut
 liveCart updateTransactionItems inventoryPoll = Deku.do
   setSearchText /\ searchTextValue <- useState ""
   setActiveCategory /\ activeCategoryValue <- useState "All Items"
+  setQuantity /\ quantityValue <- useState 1.0
 
   setSelectedItems /\ selectedItemsValue <- useState []
   setTotals /\ totalsValue <- useState emptyCartTotals
@@ -114,34 +119,23 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
           D.h3_ [ text_ "Select Items" ],
           D.div
             [ DA.klass_ "inv-selector-inventory-controls" ]
-            [
-              D.input
-                [ DA.klass_ "inv-selector-search-input"
-                , DA.placeholder_ "Search inventory..."
-                , DA.value_ ""
-                , DL.input_ \evt -> do
-                  for_ (Event.target evt >>= Input.fromEventTarget) \el -> do
-                    value <- Input.value el
-                    setSearchText value
-                ]
-                []
-            ]
+            [] -- Empty now, search moved below
         ],
 
+      -- Category tabs - modified to make sure they display horizontally
       inventoryPoll <#~> \(Inventory items) ->
         let categories = ["All Items"] <> (sort $ Array.nub $ map (\(MenuItem i) -> show i.category) items)
         in
           D.div
             [ DA.klass_ "inv-selector-inventory-tabs" ]
-            [ D.div_ (categories <#> \cat ->
-                D.div
-                  [ DA.klass $ activeCategoryValue <#> \active ->
-                      "category-tab" <> if active == cat then " active" else ""
-                  , DL.click_ \_ -> setActiveCategory cat
-                  ]
-                  [ text_ cat ]
-              )
-            ],
+            (categories <#> \cat ->
+              D.div
+                [ DA.klass $ activeCategoryValue <#> \active ->
+                    "category-tab" <> if active == cat then " active" else ""
+                , DL.click_ \_ -> setActiveCategory cat
+                ]
+                [ text_ cat ]
+            ),
 
       D.div
         [ DA.klass_ "inv-selector-inventory-content-layout" ]
@@ -149,11 +143,58 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
           D.div
             [ DA.klass_ "inv-selector-inventory-table-container" ]
             [
+              D.div
+                [ DA.klass_ "inv-selector-inventory-actions" ]
+                [
+                  -- Search input on the left
+                  D.div
+                    [ DA.klass_ "inv-selector-search-control" ]
+                    [
+                      D.input
+                        [ DA.klass_ "inv-selector-search-input"
+                        , DA.placeholder_ "Search inventory..."
+                        , DA.value_ ""
+                        , DL.input_ \evt -> do
+                          for_ (Event.target evt >>= Input.fromEventTarget) \el -> do
+                            value <- Input.value el
+                            setSearchText value
+                        ]
+                        []
+                    ],
+                  
+                  -- Quantity control on the right side
+                  D.div
+                    [ DA.klass_ "inv-selector-right-controls" ]
+                    [
+                      D.div
+                        [ DA.klass_ "inv-selector-quantity-control" ]
+                        [
+                          D.div
+                            [ DA.klass_ "qty-label" ]
+                            [ text_ "Quantity:" ],
+                          D.input
+                            [ DA.klass_ "qty-input"
+                            , DA.xtype_ "number"
+                            , DA.min_ "1"
+                            , DA.step_ "1"
+                            , DA.value_ "1"
+                            , DL.input_ \evt -> do
+                                for_ (Event.target evt >>= Input.fromEventTarget) \el -> do
+                                  val <- Input.value el
+                                  case fromString val of
+                                    Just num -> 
+                                      if num > 0.0 then setQuantity num
+                                      else pure unit
+                                    Nothing -> pure unit
+                            ]
+                            []
+                        ]
+                    ]
+                ],
+
               inventoryPoll <#~> \(Inventory items) ->
                 (Tuple <$> searchTextValue <*> activeCategoryValue) <#~> \(Tuple searchText activeCategory) ->
                   let
-                    -- Get filtered items for display only
-                    -- This does NOT affect what's in the cart
                     categoryFiltered =
                       if activeCategory == "All Items"
                       then items
@@ -171,16 +212,76 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                     if null searchFiltered then
                       D.div [ DA.klass_ "inv-selector-empty-result" ] [ text_ "No items found" ]
                     else
-                      -- The key part: we need the latest selectedItems value
-                      selectedItemsValue <#~> \currentItems ->
-                        renderInventoryTable 
-                          searchFiltered 
-                          currentItems 
-                          \newItems -> do
-                            -- Update both items and totals when the cart changes
-                            let newTotals = calculateCartTotals newItems
-                            setTotals newTotals
-                            setSelectedItems newItems
+                      (Tuple <$> selectedItemsValue <*> quantityValue) <#~> \(Tuple currentItems defaultQty) ->
+                        D.div
+                          [ DA.klass_ "inv-selector-inventory-table" ]
+                          [
+                            D.div
+                              [ DA.klass_ "inv-selector-inventory-table-header" ]
+                              [
+                                D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ "Name" ],
+                                D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ "Brand" ],
+                                D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ "Category" ],
+                                D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ "Price" ],
+                                D.div [ DA.klass_ "inv-selector-col stock-col" ] [ text_ "In Stock" ],
+                                D.div [ DA.klass_ "inv-selector-col actions-col" ] [ text_ "Actions" ]
+                              ],
+
+                            D.div
+                              [ DA.klass_ "inv-selector-inventory-table-body" ]
+                              (map (\menuItem@(MenuItem record) ->
+                                let
+                                  formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
+                                  stockClass = if record.quantity <= 5 then "low-stock" else ""
+
+                                  existingItem = find
+                                    (\(TransactionItem item) -> item.menuItemSku == record.sku)
+                                    currentItems
+
+                                  currentQty = case existingItem of
+                                    Just (TransactionItem item) -> item.quantity
+                                    Nothing -> 0.0
+                                in
+                                  D.div
+                                    [ DA.klass_ ("inventory-row " <> if record.quantity <= 0 then "out-of-stock" else "") ]
+                                    [
+                                      D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ record.name ],
+                                      D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ record.brand ],
+                                      D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ (show record.category <> " - " <> record.subcategory) ],
+                                      D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ formattedPrice ],
+                                      D.div [ DA.klass_ ("inv-selector-col stock-col " <> stockClass) ] [ text_ (show record.quantity) ],
+                                      D.div
+                                        [ DA.klass_ "inv-selector-col actions-col" ]
+                                        [
+                                          if record.quantity <= 0
+                                          then
+                                            D.button
+                                              [ DA.klass_ "inv-selector-add-btn disabled"
+                                              , DA.disabled_ "true"
+                                              ]
+                                              [ text_ "Out of Stock" ]
+                                          else
+                                            D.div
+                                              [ DA.klass_ "inv-selector-quantity-controls" ]
+                                              [
+                                                if currentQty > 0.0
+                                                then D.div
+                                                  [ DA.klass_ "inv-selector-quantity-indicator" ]
+                                                  [ text_ (show currentQty) ]
+                                                else D.span_ [],
+
+                                                D.button
+                                                  [ DA.klass_ "inv-selector-add-btn"
+                                                  , DL.click_ \evt -> do
+                                                      Event.stopPropagation (PointerEvent.toEvent evt)
+                                                      addItemWithTotals menuItem defaultQty currentItems setSelectedItems setTotals setStatusMessage
+                                                  ]
+                                                  [ text_ "Add" ]
+                                              ]
+                                        ]
+                                    ]
+                              ) searchFiltered)
+                          ]
             ],
 
           D.div
@@ -188,7 +289,6 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
             [
               D.h4 [ DA.klass_ "inv-selector-selected-items-header" ] [ text_ "Selected Items" ],
 
-              -- Use the cart items with inventory for proper display
               (Tuple <$> selectedItemsValue <*> inventoryPoll) <#~> \(Tuple items inventory) ->
                 if null items then
                   D.div [ DA.klass_ "inv-selector-empty-selection" ] [ text_ "No items selected" ]
@@ -210,7 +310,6 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                         [ DA.klass_ "inv-selector-selected-item-body" ]
                         (items <#> \(TransactionItem itemData) ->
                           let
-                            -- Look up item name from full inventory, not filtered view
                             itemName = findItemNameBySku itemData.menuItemSku inventory
                           in
                             D.div
@@ -238,7 +337,6 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                     D.button
                                       [ DA.klass_ "inv-selector-remove-btn"
                                       , DL.click_ \_ -> do
-                                          -- Use the helper function to remove item and update totals
                                           removeItemWithTotals itemData.id items setSelectedItems setTotals
                                       ]
                                       [ text_ "✕" ]
@@ -331,130 +429,3 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
           [ DA.klass_ "inv-selector-status-message" ]
           [ text_ msg ]
     ]
-
-renderInventoryTable :: Array MenuItem -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Nut
-renderInventoryTable items selectedItems setItems =
-  D.div
-    [ DA.klass_ "inv-selector-inventory-table" ]
-    [
-      D.div
-        [ DA.klass_ "inv-selector-inventory-table-header" ]
-        [
-          D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ "Name" ],
-          D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ "Brand" ],
-          D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ "Category" ],
-          D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ "Price" ],
-          D.div [ DA.klass_ "inv-selector-col stock-col" ] [ text_ "In Stock" ],
-          D.div [ DA.klass_ "inv-selector-col actions-col" ] [ text_ "Actions" ]
-        ],
-
-      D.div
-        [ DA.klass_ "inv-selector-inventory-table-body" ]
-        (map (\item -> renderInventoryRow item selectedItems setItems) items)
-    ]
-
-renderInventoryRow :: MenuItem -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Nut
-renderInventoryRow menuItem@(MenuItem record) selectedItems setItems =
-  let
-    formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
-    stockClass = if record.quantity <= 5 then "low-stock" else ""
-
-    existingItem = find
-      (\(TransactionItem item) -> item.menuItemSku == record.sku)
-      selectedItems
-    
-    currentQty = case existingItem of
-      Just (TransactionItem item) -> item.quantity
-      Nothing -> 0.0
-  in
-    D.div
-      [ DA.klass_ ("inventory-row " <> if record.quantity <= 0 then "out-of-stock" else "") ]
-      [
-        D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ record.name ],
-        D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ record.brand ],
-        D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ (show record.category <> " - " <> record.subcategory) ],
-        D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ formattedPrice ],
-        D.div [ DA.klass_ ("inv-selector-col stock-col " <> stockClass) ] [ text_ (show record.quantity) ],
-        D.div
-          [ DA.klass_ "inv-selector-col actions-col" ]
-          [
-            if record.quantity <= 0
-            then
-              D.button
-                [ DA.klass_ "inv-selector-add-btn disabled"
-                , DA.disabled_ "true"
-                ]
-                [ text_ "Out of Stock" ]
-            else
-              D.div
-                [ DA.klass_ "inv-selector-quantity-controls" ]
-                [
-                  if currentQty > 0.0
-                  then D.div
-                    [ DA.klass_ "inv-selector-quantity-indicator" ]
-                    [ text_ (show currentQty) ]
-                  else D.span_ [],
-
-                  D.button
-                    [ DA.klass_ "inv-selector-add-btn"
-                    , DL.click_ \evt -> do
-                        Event.stopPropagation (PointerEvent.toEvent evt)
-                        -- Add item using the FULL current state, not just what's visible
-                        addItemToTransaction menuItem 1.0 selectedItems \newItems -> do
-                          setItems newItems
-                          liftEffect $ Console.log $ "Added item: " <> getItemName menuItem
-                    ]
-                    [ text_ "Add" ]
-                ]
-          ]
-      ]
-
-styles :: String
-styles = """
-/* LiveCart Styles for Price Totals */
-
-.price-calculation-panel {
-  border-top: 1px solid #ddd;
-  padding: 1rem;
-  background: #f9f9f9;
-  border-radius: 0 0 4px 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.price-summary {
-  margin-bottom: 1rem;
-}
-
-.price-summary-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid #eee;
-}
-
-.price-summary-row:last-child {
-  border-bottom: none;
-}
-
-.price-summary-row.total-row {
-  font-weight: bold;
-  font-size: 1.2em;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 2px solid #ddd;
-}
-
-.price-summary-label {
-  color: #555;
-}
-
-.price-summary-value {
-  font-weight: 600;
-}
-
-.inv-selector-col-total {
-  flex: 1;
-  text-align: right;
-  font-weight: 600;
-}
-"""

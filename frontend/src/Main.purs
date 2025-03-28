@@ -181,34 +181,34 @@ main = do
         TransactionHistory -> do
           Console.log "Navigating to Transaction History page"
           currentRoute.push $ Tuple r transactionHistory
-          
+
         LiveCart -> do
           Console.log "Navigating to Inventory Selector page"
-          
+
           loadingState.push true
           errorState.push ""
-          
+
           let showUpdateFunction items = do
                 Console.log $ "Selected " <> show (length items) <> " items"
-          
-          -- Create the component with the inventory poll
+
+
           currentRoute.push $ Tuple r (liveCart showUpdateFunction inventoryState.poll)
-          
-          -- Fetch inventory data
+
+
           launchAff_ do
             result <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
-            
+
             liftEffect $ case result of
               Left err -> do
                 Console.error $ "Error fetching inventory: " <> err
                 loadingState.push false
                 errorState.push $ "Error: " <> err
-              
+
               Right (InventoryData inv@(Inventory items)) -> do
                 Console.log $ "Loaded inventory successfully"
-                inventoryState.push inv 
+                inventoryState.push inv
                 loadingState.push false
-              
+
               Right (Message msg) -> do
                 Console.log $ "Received message: " <> msg
                 loadingState.push false

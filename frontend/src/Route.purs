@@ -41,17 +41,17 @@ route = root $ G.sum
   }
 
 nav :: Poll Route -> Nut
-nav currentRoute = D.nav [ DA.klass_ "navbar navbar-light" ]
+nav currentRoute = D.nav [ DA.klass_ "navbar" ]
   [ D.div [ DA.klass_ "container" ]
       [ D.div
-          [ DA.klass_ "nav navbar-nav pull-xs-right d-flex" ]
+          [ DA.klass_ "nav" ]
           [ navItem LiveView "/#/" "LiveView" currentRoute
           , navItem Create "/#/create" "Create Item" currentRoute
           , navItem (Edit "test") "/#/edit/test" "Edit Test Item" currentRoute
-          , D.div [ DA.klass_ "border-l mx-2 h-6" ] []  -- Divider
+          , D.div [ DA.klass_ "border-l mx-2 h-6" ] []
           , navItem CreateTransaction "/#/transaction/create" "New Transaction" currentRoute
           , navItem TransactionHistory "/#/transaction/history" "Transaction History" currentRoute
-          , D.div [ DA.klass_ "border-l mx-2 h-6" ] []  -- Divider
+          , D.div [ DA.klass_ "border-l mx-2 h-6" ] []
           , navItem LiveCart "/#/inventory/selector" "LiveCart" currentRoute
           ]
       ]
