@@ -15,7 +15,6 @@ import Deku.Hooks (useState, (<#~>))
 import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import UI.Common.Form (buttonClass)
 import Types.Inventory (InventoryResponse(..))
 
 deleteItem :: String -> String -> Nut
@@ -44,7 +43,7 @@ deleteItem itemId itemName = Deku.do
     , D.div
         [ DA.klass_ "flex space-x-4" ]
         [ D.button
-            [ DA.klass_ $ buttonClass "red"
+            [ DA.klass_ "form-button form-button-red"
             , DA.disabled $ map show submittingEvent
             , DL.click_ \_ -> do
                 setSubmitting true

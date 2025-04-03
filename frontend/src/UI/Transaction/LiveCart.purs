@@ -21,7 +21,7 @@ import Deku.DOM as D
 import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
-import Deku.Hooks (useState, (<#~>))
+import Deku.Hooks (useHot, useState, (<#~>))
 import Effect (Effect)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
@@ -54,39 +54,9 @@ findItemNameBySku sku (Inventory items) =
     Just (MenuItem item) -> item.name
     Nothing -> "Unknown Item"
 
-addItemWithTotals ::
-  MenuItem ->
-  Number ->
-  Array TransactionItem ->
-  (Array TransactionItem -> Effect Unit) ->
-  (CartTotals -> Effect Unit) ->
-  (String -> Effect Unit) ->
-  Effect Unit
-addItemWithTotals menuItem@(MenuItem record) qty currentItems setItems setTotals setStatusMessage = do
-  if qty <= 0.0 then
-    setStatusMessage "Quantity must be greater than 0"
-  else if floor qty > record.quantity then
-    setStatusMessage $ "Not enough inventory. Only " <> show record.quantity <> " available."
-  else
-    addItemToTransaction menuItem qty currentItems \newItems -> do
-      let newTotals = calculateCartTotals newItems
-      setTotals newTotals
-      setItems newItems
-      liftEffect $ Console.log $ "Updated cart with new item and totals"
-      setStatusMessage "Item added to cart"
-
-removeItemWithTotals ::
-  UUID ->
-  Array TransactionItem ->
-  (Array TransactionItem -> Effect Unit) ->
-  (CartTotals -> Effect Unit) ->
-  Effect Unit
-removeItemWithTotals itemId currentItems setItems setTotals = do
-  removeItemFromTransaction itemId currentItems \newItems -> do
-    let newTotals = calculateCartTotals newItems
-    setTotals newTotals
-    setItems newItems
-    liftEffect $ Console.log $ "Updated cart after removal"
+findItemBySku :: UUID -> Inventory -> Maybe MenuItem
+findItemBySku sku (Inventory items) =
+  find (\(MenuItem item) -> item.sku == sku) items
 
 type CartTotals =
   { subtotal :: Discrete USD
@@ -95,22 +65,23 @@ type CartTotals =
   , discountTotal :: Discrete USD
   }
 
+-- The main LiveCart component
 liveCart :: (Array TransactionItem -> Effect Unit) -> Poll Inventory -> Nut
 liveCart updateTransactionItems inventoryPoll = Deku.do
+  -- UI state for filtering
   setSearchText /\ searchTextValue <- useState ""
   setActiveCategory /\ activeCategoryValue <- useState "All Items"
   setQuantity /\ quantityValue <- useState 1.0
-
-  setSelectedItems /\ selectedItemsValue <- useState []
-  setTotals /\ totalsValue <- useState emptyCartTotals
-
   setStatusMessage /\ statusMessageValue <- useState ""
+  
+  -- Cart state - keep isolated from the filtering mechanism
+  setCartItems /\ cartItemsValue <- useHot []
+  setCartTotals /\ cartTotalsValue <- useHot emptyCartTotals
 
   D.div
     [ DA.klass_ "inv-selector-inventory-main-container"
     , DL.load_ \_ -> do
         liftEffect $ Console.log "LiveCart component loading"
-        setTotals emptyCartTotals
     ]
     [
       D.div
@@ -119,10 +90,10 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
           D.h3_ [ text_ "Select Items" ],
           D.div
             [ DA.klass_ "inv-selector-inventory-controls" ]
-            [] -- Empty now, search moved below
+            []
         ],
 
-      -- Category tabs - modified to make sure they display horizontally
+      -- Category navigation
       inventoryPoll <#~> \(Inventory items) ->
         let categories = ["All Items"] <> (sort $ Array.nub $ map (\(MenuItem i) -> show i.category) items)
         in
@@ -140,13 +111,14 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
       D.div
         [ DA.klass_ "inv-selector-inventory-content-layout" ]
         [
+          -- Left side: Inventory table with filters
           D.div
             [ DA.klass_ "inv-selector-inventory-table-container" ]
             [
+              -- Search and quantity controls
               D.div
                 [ DA.klass_ "inv-selector-inventory-actions" ]
                 [
-                  -- Search input on the left
                   D.div
                     [ DA.klass_ "inv-selector-search-control" ]
                     [
@@ -162,7 +134,6 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                         []
                     ],
                   
-                  -- Quantity control on the right side
                   D.div
                     [ DA.klass_ "inv-selector-right-controls" ]
                     [
@@ -192,105 +163,119 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                     ]
                 ],
 
-              inventoryPoll <#~> \(Inventory items) ->
-                (Tuple <$> searchTextValue <*> activeCategoryValue) <#~> \(Tuple searchText activeCategory) ->
-                  let
-                    categoryFiltered =
-                      if activeCategory == "All Items"
-                      then items
-                      else filter (\(MenuItem i) -> show i.category == activeCategory) items
-
-                    searchFiltered =
-                      if searchText == ""
-                      then categoryFiltered
-                      else filter
-                            (\(MenuItem item) ->
-                              contains (Pattern (String.toLower searchText))
-                                      (String.toLower item.name))
-                            categoryFiltered
-                  in
-                    if null searchFiltered then
-                      D.div [ DA.klass_ "inv-selector-empty-result" ] [ text_ "No items found" ]
-                    else
-                      (Tuple <$> selectedItemsValue <*> quantityValue) <#~> \(Tuple currentItems defaultQty) ->
-                        D.div
-                          [ DA.klass_ "inv-selector-inventory-table" ]
-                          [
+              -- Filtered inventory table
+              D.div_
+                [
+                  -- First transform: get the inventory and apply both filters
+                  inventoryPoll <#~> \(Inventory allItems) -> 
+                    searchTextValue <#~> \searchText ->
+                      activeCategoryValue <#~> \activeCategory ->
+                        let
+                          -- Apply category filter
+                          categoryFiltered = 
+                            if activeCategory == "All Items" 
+                            then allItems
+                            else filter (\(MenuItem i) -> show i.category == activeCategory) allItems
+                          
+                          -- Apply search filter
+                          filteredItems = 
+                            if searchText == ""
+                            then categoryFiltered
+                            else filter 
+                                (\(MenuItem item) -> 
+                                  contains (Pattern (String.toLower searchText))
+                                          (String.toLower item.name))
+                                categoryFiltered
+                        in
+                          if null filteredItems then
+                            D.div [ DA.klass_ "inv-selector-empty-result" ] [ text_ "No items found" ]
+                          else
                             D.div
-                              [ DA.klass_ "inv-selector-inventory-table-header" ]
+                              [ DA.klass_ "inv-selector-inventory-table" ]
                               [
-                                D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ "Name" ],
-                                D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ "Brand" ],
-                                D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ "Category" ],
-                                D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ "Price" ],
-                                D.div [ DA.klass_ "inv-selector-col stock-col" ] [ text_ "In Stock" ],
-                                D.div [ DA.klass_ "inv-selector-col actions-col" ] [ text_ "Actions" ]
-                              ],
+                                D.div
+                                  [ DA.klass_ "inv-selector-inventory-table-header" ]
+                                  [
+                                    D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ "Name" ],
+                                    D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ "Brand" ],
+                                    D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ "Category" ],
+                                    D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ "Price" ],
+                                    D.div [ DA.klass_ "inv-selector-col stock-col" ] [ text_ "In Stock" ],
+                                    D.div [ DA.klass_ "inv-selector-col actions-col" ] [ text_ "Actions" ]
+                                  ],
 
-                            D.div
-                              [ DA.klass_ "inv-selector-inventory-table-body" ]
-                              (map (\menuItem@(MenuItem record) ->
-                                let
-                                  formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
-                                  stockClass = if record.quantity <= 5 then "low-stock" else ""
+                                D.div
+                                  [ DA.klass_ "inv-selector-inventory-table-body" ]
+                                  (filteredItems <#> \menuItem@(MenuItem record) ->
+                                    -- For each item in the filtered results, 
+                                    -- we need to check if it's in the cart
+                                    cartItemsValue <#~> \cartItems ->
+                                      quantityValue <#~> \qtyVal ->
+                                        let
+                                          formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
+                                          stockClass = if record.quantity <= 5 then "low-stock" else ""
 
-                                  existingItem = find
-                                    (\(TransactionItem item) -> item.menuItemSku == record.sku)
-                                    currentItems
+                                          -- Find if this item is already in the cart
+                                          existingItem = find
+                                            (\(TransactionItem item) -> item.menuItemSku == record.sku)
+                                            cartItems
 
-                                  currentQty = case existingItem of
-                                    Just (TransactionItem item) -> item.quantity
-                                    Nothing -> 0.0
-                                in
-                                  D.div
-                                    [ DA.klass_ ("inventory-row " <> if record.quantity <= 0 then "out-of-stock" else "") ]
-                                    [
-                                      D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ record.name ],
-                                      D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ record.brand ],
-                                      D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ (show record.category <> " - " <> record.subcategory) ],
-                                      D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ formattedPrice ],
-                                      D.div [ DA.klass_ ("inv-selector-col stock-col " <> stockClass) ] [ text_ (show record.quantity) ],
-                                      D.div
-                                        [ DA.klass_ "inv-selector-col actions-col" ]
-                                        [
-                                          if record.quantity <= 0
-                                          then
-                                            D.button
-                                              [ DA.klass_ "inv-selector-add-btn disabled"
-                                              , DA.disabled_ "true"
-                                              ]
-                                              [ text_ "Out of Stock" ]
-                                          else
-                                            D.div
-                                              [ DA.klass_ "inv-selector-quantity-controls" ]
-                                              [
-                                                if currentQty > 0.0
-                                                then D.div
-                                                  [ DA.klass_ "inv-selector-quantity-indicator" ]
-                                                  [ text_ (show currentQty) ]
-                                                else D.span_ [],
+                                          currentQty = case existingItem of
+                                            Just (TransactionItem item) -> item.quantity
+                                            Nothing -> 0.0
+                                        in
+                                          D.div
+                                            [ DA.klass_ ("inventory-row " <> if record.quantity <= 0 then "out-of-stock" else "") ]
+                                            [
+                                              D.div [ DA.klass_ "inv-selector-col name-col" ] [ text_ record.name ],
+                                              D.div [ DA.klass_ "inv-selector-col brand-col" ] [ text_ record.brand ],
+                                              D.div [ DA.klass_ "inv-selector-col category-col" ] [ text_ (show record.category <> " - " <> record.subcategory) ],
+                                              D.div [ DA.klass_ "inv-selector-col price-col" ] [ text_ formattedPrice ],
+                                              D.div [ DA.klass_ ("inv-selector-col stock-col " <> stockClass) ] [ text_ (show record.quantity) ],
+                                              D.div
+                                                [ DA.klass_ "inv-selector-col actions-col" ]
+                                                [
+                                                  if record.quantity <= 0
+                                                  then
+                                                    D.button
+                                                      [ DA.klass_ "inv-selector-add-btn disabled"
+                                                      , DA.disabled_ "true"
+                                                      ]
+                                                      [ text_ "Out of Stock" ]
+                                                  else
+                                                    D.div
+                                                      [ DA.klass_ "inv-selector-quantity-controls" ]
+                                                      [
+                                                        if currentQty > 0.0
+                                                        then D.div
+                                                          [ DA.klass_ "inv-selector-quantity-indicator" ]
+                                                          [ text_ (show currentQty) ]
+                                                        else D.span_ [],
 
-                                                D.button
-                                                  [ DA.klass_ "inv-selector-add-btn"
-                                                  , DL.click_ \evt -> do
-                                                      Event.stopPropagation (PointerEvent.toEvent evt)
-                                                      addItemWithTotals menuItem defaultQty currentItems setSelectedItems setTotals setStatusMessage
-                                                  ]
-                                                  [ text_ "Add" ]
-                                              ]
-                                        ]
-                                    ]
-                              ) searchFiltered)
-                          ]
+                                                        D.button
+                                                          [ DA.klass_ "inv-selector-add-btn"
+                                                          , DL.click_ \evt -> do
+                                                              Event.stopPropagation (PointerEvent.toEvent evt)
+                                                              addItemToCart menuItem qtyVal cartItems setCartItems setCartTotals setStatusMessage
+                                                          ]
+                                                          [ text_ "Add" ]
+                                                      ]
+                                                ]
+                                            ]
+                                  )
+                                ]
+                ]
             ],
 
+          -- Right side: Cart
           D.div
             [ DA.klass_ "inv-selector-selected-items-container" ]
             [
               D.h4 [ DA.klass_ "inv-selector-selected-items-header" ] [ text_ "Selected Items" ],
 
-              (Tuple <$> selectedItemsValue <*> inventoryPoll) <#~> \(Tuple items inventory) ->
-                if null items then
+              (Tuple <$> cartItemsValue <*> inventoryPoll) <#~> \(Tuple cartItems inventory) ->
+                if null cartItems 
+                then
                   D.div [ DA.klass_ "inv-selector-empty-selection" ] [ text_ "No items selected" ]
                 else
                   D.div
@@ -308,7 +293,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
 
                       D.div
                         [ DA.klass_ "inv-selector-selected-item-body" ]
-                        (items <#> \(TransactionItem itemData) ->
+                        (cartItems <#> \(TransactionItem itemData) ->
                           let
                             itemName = findItemNameBySku itemData.menuItemSku inventory
                           in
@@ -337,7 +322,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                     D.button
                                       [ DA.klass_ "inv-selector-remove-btn"
                                       , DL.click_ \_ -> do
-                                          removeItemWithTotals itemData.id items setSelectedItems setTotals
+                                          removeItemFromCart itemData.id cartItems setCartItems setCartTotals
                                       ]
                                       [ text_ "✕" ]
                                   ]
@@ -359,9 +344,8 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                             [ text_ "Subtotal:" ],
                           D.div
                             [ DA.klass_ "price-summary-value" ]
-                            [ totalsValue <#~> \totals ->
-                                let totalsStr = formatDiscretePrice totals.subtotal
-                                in text_ totalsStr
+                            [ cartTotalsValue <#~> \totals ->
+                                text_ (formatDiscretePrice totals.subtotal)
                             ]
                         ],
 
@@ -373,9 +357,8 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                             [ text_ "Tax:" ],
                           D.div
                             [ DA.klass_ "price-summary-value" ]
-                            [ totalsValue <#~> \totals ->
-                                let totalsStr = formatDiscretePrice totals.taxTotal
-                                in text_ totalsStr
+                            [ cartTotalsValue <#~> \totals ->
+                                text_ (formatDiscretePrice totals.taxTotal)
                             ]
                         ],
 
@@ -387,9 +370,8 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                             [ text_ "Total:" ],
                           D.div
                             [ DA.klass_ "price-summary-value" ]
-                            [ totalsValue <#~> \totals ->
-                                let totalsStr = formatDiscretePrice totals.total
-                                in text_ totalsStr
+                            [ cartTotalsValue <#~> \totals ->
+                                text_ (formatDiscretePrice totals.total)
                             ]
                         ]
                     ],
@@ -400,17 +382,17 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                       D.button
                         [ DA.klass_ "inv-selector-clear-btn"
                         , DL.click_ \_ -> do
-                            setSelectedItems []
-                            setTotals emptyCartTotals
+                            setCartItems []
+                            setCartTotals emptyCartTotals
                             setStatusMessage "Selection cleared"
                             liftEffect $ Console.log "Selection cleared"
                         ]
                         [ text_ "Clear Selection" ],
 
-                      selectedItemsValue <#~> \items ->
+                      cartItemsValue <#~> \items ->
                         D.button
                           [ DA.klass_ "inv-selector-update-btn"
-                          , DA.klass $ pure $ if null items then "disabled" else ""
+                          , DA.klass_ $ if null items then "disabled" else ""
                           , DA.disabled_ $ if null items then "disabled" else ""
                           , DL.click_ \_ -> do
                               updateTransactionItems items
@@ -429,3 +411,40 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
           [ DA.klass_ "inv-selector-status-message" ]
           [ text_ msg ]
     ]
+
+  where
+    -- Helper function to add items to cart
+    addItemToCart :: 
+      MenuItem -> 
+      Number -> 
+      Array TransactionItem -> 
+      (Array TransactionItem -> Effect Unit) -> 
+      (CartTotals -> Effect Unit) -> 
+      (String -> Effect Unit) -> 
+      Effect Unit
+    addItemToCart menuItem@(MenuItem record) qty currentItems setItems setTotals setStatusMessage = do
+      if qty <= 0.0 then
+        setStatusMessage "Quantity must be greater than 0"
+      else if floor qty > record.quantity then
+        setStatusMessage $ "Not enough inventory. Only " <> show record.quantity <> " available."
+      else
+        addItemToTransaction menuItem qty currentItems \newItems -> do
+          let newTotals = calculateCartTotals newItems
+          setTotals newTotals
+          setItems newItems
+          liftEffect $ Console.log $ "Added item to cart: " <> record.name
+          setStatusMessage "Item added to cart"
+
+    -- Helper function to remove items from cart
+    removeItemFromCart :: 
+      UUID -> 
+      Array TransactionItem -> 
+      (Array TransactionItem -> Effect Unit) -> 
+      (CartTotals -> Effect Unit) -> 
+      Effect Unit
+    removeItemFromCart itemId currentItems setItems setTotals = do
+      removeItemFromTransaction itemId currentItems \newItems -> do
+        let newTotals = calculateCartTotals newItems
+        setTotals newTotals
+        setItems newItems
+        liftEffect $ Console.log $ "Removed item with ID: " <> show itemId

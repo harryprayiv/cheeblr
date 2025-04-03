@@ -9,6 +9,22 @@
 <body>
   <div class="app-container">
     <div class="app-content">
+      <!-- Top Navigation Tabs (Routes) -->
+      <nav class="navbar navbar-light">
+        <div class="container">
+          <div class="nav navbar-nav pull-xs-right d-flex">
+            <div class="nav-item mx-2"><a href="#/" class="nav-link">LiveView</a></div>
+            <div class="nav-item mx-2"><a href="#/create" class="nav-link">Create Item</a></div>
+            <div class="nav-item mx-2"><a href="#/edit/test" class="nav-link">Edit Test Item</a></div>
+            <div class="border-l mx-2 h-6"></div>
+            <div class="nav-item mx-2"><a href="#/transaction/create" class="nav-link">New Transaction</a></div>
+            <div class="nav-item mx-2"><a href="#/transaction/history" class="nav-link">Transaction History</a></div>
+            <div class="border-l mx-2 h-6"></div>
+            <div class="nav-item mx-2"><a href="#/inventory/selector" class="nav-link active">LiveCart</a></div>
+          </div>
+        </div>
+      </nav>
+      
       <!-- LiveCart Component -->
       <div class="inv-selector-inventory-main-container">
         <!-- Header with title -->
@@ -193,9 +209,9 @@
         <a href="#/" class="nav-link">LiveView</a>
         <a href="#/create" class="nav-link">Create Item</a>
         <a href="#/edit/test" class="nav-link">Edit Test Item</a>
-        <a href="#/transaction/create" class="nav-link active">New Transaction</a>
+        <a href="#/transaction/create" class="nav-link">New Transaction</a>
         <a href="#/transaction/history" class="nav-link">Transaction History</a>
-        <a href="#/inventory/selector" class="nav-link">LiveCart</a>
+        <a href="#/inventory/selector" class="nav-link active">LiveCart</a>
       </div>
     </div>
   </div>

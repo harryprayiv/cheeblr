@@ -23,7 +23,7 @@ import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Types.Inventory (InventoryResponse(..), MenuItem(..), StrainLineage(..))
-import UI.Common.Form (buttonClass, makeDescriptionField, makeDropdown, makeTextField)
+import UI.Common.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber, formatCentsToDecimal)
 import Utils.Validation (validateMenuItem)
 
@@ -207,11 +207,9 @@ editItem (MenuItem item) = Deku.do
         false
     , makeDropdown customCategoryConfig setCategory setValidCategory
         validCategoryEvent
-
     , makeDescriptionField item.description setDescription
         setValidDescription
         validDescriptionEvent
-
     , makeTextField (tagsConfig (joinWith ", " item.tags)) setTags setValidTags
         validTagsEvent
         false
@@ -253,7 +251,7 @@ editItem (MenuItem item) = Deku.do
         false
 
     , D.button
-        [ DA.klass_ $ buttonClass "green"
+        [ DA.klass_ "form-button form-button-green"
         , DA.disabled $ map show $ (||) <$> submittingEvent <*> map not
             isFormValid
         , runOn DL.click $
@@ -281,7 +279,6 @@ editItem (MenuItem item) = Deku.do
                leaflyUrl
                img -> do
 
-                -- debug logging for description
                 liftEffect $ Console.log $
                   "Description value before submission: '" <> description <> "'"
 
@@ -392,16 +389,16 @@ editItem (MenuItem item) = Deku.do
         [ DA.klass_ "mt-4 text-center" ]
         [ text statusMessageEvent ]
 
-    -- debug information for description handling
-    , D.div
-        [ DA.klass_ "mt-4 p-4 border rounded bg-gray-50" ]
-        [ D.h3 [ DA.klass_ "text-lg font-bold" ] [ text_ "Debug Info" ]
-        , D.div [ DA.klass_ "text-sm" ]
-            [ D.div_ [ text_ "Current description value: " ]
-            , D.pre [ DA.klass_ "bg-gray-100 p-2 rounded" ]
-                [ text descriptionEvent ]
-            ]
-        ]
+    -- debug
+    -- , D.div
+    --     [ DA.klass_ "mt-4 p-4 border rounded bg-gray-50" ]
+    --     [ D.h3 [ DA.klass_ "text-lg font-bold" ] [ text_ "Debug Info" ]
+    --     , D.div [ DA.klass_ "text-sm" ]
+    --         [ D.div_ [ text_ "Current description value: " ]
+    --         , D.pre [ DA.klass_ "bg-gray-100 p-2 rounded" ]
+    --             [ text descriptionEvent ]
+    --         ]
+    --     ]
     ]
 
 renderError :: String -> Nut

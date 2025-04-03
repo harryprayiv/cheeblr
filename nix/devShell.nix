@@ -268,7 +268,7 @@ let
     # Workspace and deployment tools
     workspaceModule.code-workspace
     deployModule.deploy
-    deployModule.withdraw
+    deployModule.stop
     
     # Additional tools specifically for the scripts
     coreutils

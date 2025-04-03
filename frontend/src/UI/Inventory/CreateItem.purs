@@ -19,7 +19,7 @@ import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Types.Inventory (InventoryResponse(..))
-import UI.Common.Form (buttonClass, makeDescriptionField, makeDropdown, makeTextField)
+import UI.Common.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber)
 import Utils.UUIDGen (genUUID)
 import Utils.Validation (validateMenuItem)
@@ -281,7 +281,7 @@ createItem initialUUID = Deku.do
         , makeTextField (imgConfig "") setImg setValidImg validImgEvent false
         ]
     , D.button
-        [ DA.klass_ $ buttonClass "green"
+        [ DA.klass_ "form-button form-button-green"
         , DA.disabled $ map show $ (||) <$> submittingEvent <*> map not
             isFormValid
         , DL.runOn DL.click $
@@ -372,11 +372,6 @@ createItem initialUUID = Deku.do
                         }
                     }
 
-                -- Add additional description debug logging
-                liftEffect $ Console.log $ "Description in formInput: '"
-                  <> formInput.description
-                  <> "'"
-
                 liftEffect $ Console.group "Form Submission"
                 liftEffect $ Console.log "Form data:"
                 liftEffect $ Console.logShow formInput
@@ -433,11 +428,6 @@ createItem initialUUID = Deku.do
             [ DA.klass_ "debug-form-state mb-2 text-sm" ]
             [ D.strong_ [ text_ "Form valid: " ]
             , text $ map show isFormValid
-            ]
-        , D.div
-            [ DA.klass_ "debug-description-value text-sm my-2" ]
-            [ D.strong_ [ text_ "Description value: " ]
-            , text descriptionValue
             ]
         ]
     ]

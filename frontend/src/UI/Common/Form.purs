@@ -78,7 +78,7 @@ makePasswordField config setValue setValid validEvent =
                     setValue formatted
                     setValid
                       (Just (runValidation config.validation formatted))
-            , DA.klass_ inputKls
+            , DA.klass_ "form-input-field"
             ]
             []
         , D.span
@@ -186,7 +186,7 @@ makeTextField config setValue setValid validEvent isPw =
                         liftEffect $ Console.log $ "Description input: '"
                           <> formatted
                           <> "'"
-              , DA.klass_ (inputKls <> " resize-y")
+              , DA.klass_ "form-textarea"
               ]
               [ text_ config.defaultValue ]
           else
@@ -211,7 +211,7 @@ makeTextField config setValue setValid validEvent isPw =
                       setValue formatted
                       setValid
                         (Just (runValidation config.validation formatted))
-              , DA.klass_ inputKls
+              , DA.klass_ "form-input-field"
               ]
               []
         , D.span
@@ -269,7 +269,7 @@ makeDropdown config setValue setValid validEvent =
         [ D.label_
             [ text_ config.label ]
         , D.select
-            [ DA.klass_ inputKls
+            [ DA.klass_ "form-input-field"
             , DL.load_ \_ -> do
                 setValue config.defaultValue
                 let
@@ -347,24 +347,3 @@ makeEnumDropdown { label, defaultValue, includeEmptyOption } =
       if includeEmptyOption then Just { value: "", label: "Select..." }
       else Nothing
   }
-
--- Style classes
-inputKls :: String
-inputKls =
-  """
-  rounded-md border-gray-300 shadow-sm
-  border-2 mr-2 border-solid
-  focus:border-indigo-500 focus:ring-indigo-500
-  sm:text-sm
-"""
-
-buttonClass :: String -> String
-buttonClass color =
-  replaceAll (Pattern "COLOR") (Replacement color)
-    """
-    mb-3 inline-flex items-center rounded-md
-    border border-transparent bg-COLOR-600 px-3 py-2
-    text-sm font-medium leading-4 text-white shadow-sm
-    hover:bg-COLOR-700 focus:outline-none focus:ring-2
-    focus:ring-COLOR-500 focus:ring-offset-2
-"""

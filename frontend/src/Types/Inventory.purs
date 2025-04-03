@@ -29,6 +29,8 @@ instance showInventoryResponse :: Show InventoryResponse where
 
 newtype Inventory = Inventory (Array MenuItem)
 
+derive instance eqInventory :: Eq Inventory
+
 type MenuItemRecord =
   { sort :: Int
   , sku :: UUID

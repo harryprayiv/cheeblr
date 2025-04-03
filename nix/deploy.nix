@@ -76,26 +76,27 @@ let
     tmux attach-session -t ${name}
   '';
 
-  withdraw = pkgs.writeShellScriptBin "withdraw" ''
+  stop = pkgs.writeShellScriptBin "stop" ''
     #!/usr/bin/env bash
     set -euo pipefail
 
     echo "Creating database backup..."
     pg-backup
-
-    echo "Stopping services..."
-    tmux kill-session -t ${name} 2>/dev/null || true
+    # sleep 10
     
     echo "Stopping database..."
     pg-stop || { echo "Failed to stop PostgreSQL completely"; exit 1; }
-    sleep 10  # Wait for processes to fully terminate
-
+    
+    echo "Stopping vite..."
     vite-cleanup
-    sleep 10  # Wait for processes to fully terminate
+    # sleep 2
+
+    echo "Stopping services..."
+    tmux kill-session -t ${name} 2>/dev/null || true
 
     echo "All services stopped."
   '';
 
 in {
-  inherit deploy withdraw;
+  inherit deploy stop;
 }

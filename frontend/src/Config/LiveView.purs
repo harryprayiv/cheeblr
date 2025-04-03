@@ -19,7 +19,7 @@ defaultViewConfig =
       , SortByCategory /\ Ascending
       , SortBySpecies /\ Descending
       ]
-  , hideOutOfStock: true
+  , hideOutOfStock: false
   , mode: HttpMode
   , refreshRate: 5000
   , screens: 1
