@@ -13,11 +13,11 @@ import Routing.Duplex (RouteDuplex', root, segment, string)
 import Routing.Duplex.Generic as G
 import Routing.Duplex.Generic.Syntax ((/))
 
-data Route 
-  = LiveView 
-  | Create 
-  | Edit String 
-  | Delete String 
+data Route
+  = LiveView
+  | Create
+  | Edit String
+  | Delete String
   -- | CreateTransaction
   -- | TransactionHistory
   | LiveCart
@@ -35,7 +35,7 @@ route = root $ G.sum
   , "Create": "create" / G.noArgs
   , "Edit": "edit" / (string segment)
   , "Delete": "delete" / (string segment)
-  , "LiveCart": "inventory" / "selector" / G.noArgs  
+  , "LiveCart": "inventory" / "selector" / G.noArgs
   -- , "CreateTransaction": "transaction" / "create" / G.noArgs
   -- , "TransactionHistory": "transaction" / "history" / G.noArgs
   }

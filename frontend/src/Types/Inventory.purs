@@ -278,7 +278,8 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
       Nothing -> fail $ ForeignError "Invalid UUID format for sku"
     brand <- readProp "brand" json >>= readImpl
     name <- readProp "name" json >>= readImpl
-    priceValue <- readProp "price" json >>= readImpl :: F Int  -- Expect Int from backend
+    priceValue <-
+      readProp "price" json >>= readImpl :: F Int -- Expect Int from backend
     measure_unit <- readProp "measure_unit" json >>= readImpl
     per_package <- readProp "per_package" json >>= readImpl
     quantity <- readProp "quantity" json >>= readImpl
@@ -299,14 +300,14 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
     tags <- readProp "tags" json >>= readImpl
     effects <- readProp "effects" json >>= readImpl
     strain_lineage <- readProp "strain_lineage" json >>= readImpl
-    
+
     -- The backend is sending price as Int (cents), create Discrete USD directly
     pure $ MenuItem
       { sort
       , sku
       , brand
       , name
-      , price: Discrete priceValue  -- Create Discrete USD directly from the Int value
+      , price: Discrete priceValue -- Create Discrete USD directly from the Int value
       , measure_unit
       , per_package
       , quantity
@@ -321,7 +322,7 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
 -- Helper function to check if a number has no decimal component
 isWholeNumber :: Number -> Boolean
 isWholeNumber n = n == Int.toNumber (Int.floor n)
-      
+
 -- Helper function to determine if a value is an integer
 isInt :: Number -> Boolean
 isInt n = n == Int.toNumber (Int.floor n)

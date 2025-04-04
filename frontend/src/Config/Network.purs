@@ -21,7 +21,6 @@ localConfig =
 --   , appOrigin: "http://192.168.8.248:5174"
 --   }
 
-
 -- Toggle between configurations
 -- Set this to networkConfig for LAN testing
 currentConfig :: EnvironmentConfig

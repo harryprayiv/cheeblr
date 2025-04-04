@@ -124,15 +124,9 @@ instance readForeignPaymentMethod :: ReadForeign PaymentMethod where
         if take 6 other == "OTHER:" then pure $ Other (drop 6 other)
         else pure $ Other other
 
--- data DiscountType
---   = PercentOff Number
---   | AmountOff String
---   | BuyOneGetOne
---   | Custom String String
-
 data DiscountType
-  = PercentOff Number -- Keep as Number (0.0-1.0 or 0-100)
-  | AmountOff (Discrete USD) -- Use actual money type
+  = PercentOff Number
+  | AmountOff (Discrete USD)
   | BuyOneGetOne
   | Custom String (Discrete USD)
 
@@ -143,7 +137,6 @@ instance writeForeignDiscountType :: WriteForeign DiscountType where
   writeImpl (PercentOff pct) = writeImpl
     { type: "PERCENT_OFF", percent: pct, amount: 0.0 }
   writeImpl (AmountOff amount) = writeImpl
-    -- First convert to Number, then divide, then show
     { type: "AMOUNT_OFF"
     , percent: 0.0
     , amount: show ((Int.toNumber (unwrap amount)) / 100.0)
@@ -151,7 +144,6 @@ instance writeForeignDiscountType :: WriteForeign DiscountType where
   writeImpl BuyOneGetOne = writeImpl
     { type: "BUY_ONE_GET_ONE", percent: 0.0, amount: 0.0 }
   writeImpl (Custom name amount) = writeImpl
-    -- Same for Custom
     { type: "CUSTOM"
     , name
     , percent: 0.0
@@ -266,6 +258,13 @@ instance writeForeignPaymentTransaction :: WriteForeign PaymentTransaction where
 
 instance readForeignPaymentTransaction :: ReadForeign PaymentTransaction where
   readImpl f = PaymentTransaction <$> readImpl f
+
+type CartTotals =
+  { subtotal :: Discrete USD
+  , taxTotal :: Discrete USD
+  , total :: Discrete USD
+  , discountTotal :: Discrete USD
+  }
 
 newtype Transaction = Transaction
   { id :: UUID

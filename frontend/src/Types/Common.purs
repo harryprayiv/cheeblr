@@ -18,7 +18,7 @@ import Yoga.JSON (class WriteForeign, writeImpl)
 
 newtype ForeignRequestBody = ForeignRequestBody Foreign
 
-data ServiceError 
+data ServiceError
   = APIError String
   | ServiceValidationError String
   | NotFoundError String

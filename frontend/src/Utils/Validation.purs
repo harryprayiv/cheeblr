@@ -310,8 +310,9 @@ validateMenuItem input =
                                   validateInt "Sort" input.sort `andThen`
                                     \sort ->
                                       -- Convert dollars to cents and create Discrete value
-                                      let 
-                                        priceCents = Int.floor (priceValue * 100.0)
+                                      let
+                                        priceCents = Int.floor
+                                          (priceValue * 100.0)
                                       in
                                         pure $ MenuItem
                                           { sort
@@ -326,7 +327,8 @@ validateMenuItem input =
                                           , subcategory
                                           , description: input.description
                                           , tags: parseCommaList input.tags
-                                          , effects: parseCommaList input.effects
+                                          , effects: parseCommaList
+                                              input.effects
                                           , strain_lineage
                                           }
 

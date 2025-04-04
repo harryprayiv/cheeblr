@@ -45,11 +45,11 @@ main = do
   inventoryState <- liftST Poll.create
   loadingState <- liftST Poll.create
   errorState <- liftST Poll.create
-  
+
   -- Create Live View component
   let
-    menuLiveView = createMenuLiveView 
-      inventoryState.poll 
+    menuLiveView = createMenuLiveView
+      inventoryState.poll
       loadingState.poll
       errorState.poll
 
@@ -61,7 +61,7 @@ main = do
       case r of
         LiveView -> do
           currentRoute.push $ Tuple r menuLiveView
-          
+
           -- Show loading state while fetching inventory
           loadingState.push true
           errorState.push ""
@@ -188,16 +188,19 @@ main = do
           loadingState.push true
           errorState.push ""
 
-          let showUpdateFunction items = do
-                Console.log $ "Selected " <> show (length items) <> " items"
+          let
+            showUpdateFunction items = do
+              Console.log $ "Selected " <> show (length items) <> " items"
 
           -- Create the LiveCart component with the current inventory state
-          currentRoute.push $ Tuple r (liveCart showUpdateFunction inventoryState.poll)
+          currentRoute.push $ Tuple r
+            (liveCart showUpdateFunction inventoryState.poll)
 
           -- Fetch the inventory data (even if already loaded elsewhere)
           -- This ensures the LiveCart always has the latest inventory
           launchAff_ do
-            result <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
+            result <- fetchInventory defaultViewConfig.fetchConfig
+              defaultViewConfig.mode
 
             liftEffect $ case result of
               Left err -> do

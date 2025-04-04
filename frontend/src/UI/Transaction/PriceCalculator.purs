@@ -37,18 +37,20 @@ calculateCartTotals :: Array TransactionItem -> CartTotals
 calculateCartTotals items =
   foldl addItemToTotals emptyCartTotals items
   where
-    addItemToTotals :: CartTotals -> TransactionItem -> CartTotals
-    addItemToTotals totals (TransactionItem item) =
-      let
-        itemSubtotal = toDiscrete item.subtotal
-        itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.amount)) (Discrete 0) item.taxes
-        itemTotal = toDiscrete item.total
-      in
-        { subtotal: totals.subtotal + itemSubtotal
-        , taxTotal: totals.taxTotal + itemTaxTotal
-        , total: totals.total + itemTotal
-        , discountTotal: totals.discountTotal
-        }
+  addItemToTotals :: CartTotals -> TransactionItem -> CartTotals
+  addItemToTotals totals (TransactionItem item) =
+    let
+      itemSubtotal = toDiscrete item.subtotal
+      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.amount))
+        (Discrete 0)
+        item.taxes
+      itemTotal = toDiscrete item.total
+    in
+      { subtotal: totals.subtotal + itemSubtotal
+      , taxTotal: totals.taxTotal + itemTaxTotal
+      , total: totals.total + itemTotal
+      , discountTotal: totals.discountTotal
+      }
 
 formatPrice :: DiscreteMoney USD -> String
 formatPrice = formatMoney'
@@ -56,7 +58,12 @@ formatPrice = formatMoney'
 formatDiscretePrice :: Discrete USD -> String
 formatDiscretePrice = formatMoney' <<< fromDiscrete'
 
-addItemToTransaction :: MenuItem -> Number -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Effect Unit
+addItemToTransaction
+  :: MenuItem
+  -> Number
+  -> Array TransactionItem
+  -> (Array TransactionItem -> Effect Unit)
+  -> Effect Unit
 addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
   launchAff_ do
     itemId <- liftEffect genUUID
@@ -64,23 +71,23 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
 
     let
       priceAsMoney = fromDiscrete' item.price
-      
+
       qtyAsInt = Int.floor qty
       priceInCents = unwrap item.price
       subtotalInCents = priceInCents * qtyAsInt
       subtotalDiscrete = Discrete subtotalInCents
       subtotalAsMoney = fromDiscrete' subtotalDiscrete
-      
+
       taxRate = 0.15
       taxRateInt = Int.floor (taxRate * 100.0)
       taxAmountInCents = (subtotalInCents * taxRateInt) / 100
       taxDiscrete = Discrete taxAmountInCents
       taxAsMoney = fromDiscrete' taxDiscrete
-      
+
       totalInCents = subtotalInCents + taxAmountInCents
       totalDiscrete = Discrete totalInCents
       totalAsMoney = fromDiscrete' totalDiscrete
-      
+
       newItem = TransactionItem
         { id: itemId
         , transactionId: transactionId
@@ -100,60 +107,66 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
         }
 
     liftEffect do
-      let existingItem = find 
-            (\(TransactionItem i) -> i.menuItemSku == item.sku) 
-            currentItems
-      
+      let
+        existingItem = find
+          (\(TransactionItem i) -> i.menuItemSku == item.sku)
+          currentItems
+
       case existingItem of
         Just (TransactionItem existing) ->
           let
             newQty = existing.quantity + qty
             newQtyInt = Int.floor newQty
-            
+
             existingPriceDiscrete = toDiscrete existing.pricePerUnit
             existingPriceInCents = unwrap existingPriceDiscrete
-            
+
             newSubtotalInCents = existingPriceInCents * newQtyInt
             newTaxInCents = (newSubtotalInCents * taxRateInt) / 100
             newTotalInCents = newSubtotalInCents + newTaxInCents
-            
+
             newSubtotalDiscrete = Discrete newSubtotalInCents
             newTaxDiscrete = Discrete newTaxInCents
             newTotalDiscrete = Discrete newTotalInCents
-            
+
             newSubtotalAsMoney = fromDiscrete' newSubtotalDiscrete
             newTaxAsMoney = fromDiscrete' newTaxDiscrete
             newTotalAsMoney = fromDiscrete' newTotalDiscrete
-            
-            newTaxRecord = 
+
+            newTaxRecord =
               { category: RegularSalesTax
               , rate: taxRate
               , amount: newTaxAsMoney
               , description: "Sales Tax"
               }
-            
+
             updatedItem = TransactionItem $ existing
               { quantity = newQty
               , subtotal = newSubtotalAsMoney
               , total = newTotalAsMoney
-              , taxes = [newTaxRecord]
+              , taxes = [ newTaxRecord ]
               }
-            
+
             updatedItems = map
-              (\i@(TransactionItem currItem) ->
-                if currItem.menuItemSku == item.sku
-                then updatedItem
-                else i)
+              ( \i@(TransactionItem currItem) ->
+                  if currItem.menuItemSku == item.sku then updatedItem
+                  else i
+              )
               currentItems
           in
             updateItems updatedItems
-            
+
         Nothing ->
           updateItems (newItem : currentItems)
 
-removeItemFromTransaction :: UUID -> Array TransactionItem -> (Array TransactionItem -> Effect Unit) -> Effect Unit
+removeItemFromTransaction
+  :: UUID
+  -> Array TransactionItem
+  -> (Array TransactionItem -> Effect Unit)
+  -> Effect Unit
 removeItemFromTransaction itemId currentItems updateItems = do
-  updateItems (filter (\(TransactionItem item) -> item.id /= itemId) currentItems)
+  updateItems
+    (filter (\(TransactionItem item) -> item.id /= itemId) currentItems)
 
 findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
 findExistingItem (MenuItem menuItem) items =

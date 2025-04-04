@@ -58,9 +58,9 @@ runMockService (MockService aff) = aff
 -- Environment-dependent service
 newtype AppService a = AppService (ReaderT AppEnv Aff a)
 
-type AppEnv = {
-  useReals :: Boolean
-}
+type AppEnv =
+  { useReals :: Boolean
+  }
 
 derive newtype instance functorAppService :: Functor AppService
 derive newtype instance applyAppService :: Apply AppService
@@ -72,10 +72,11 @@ derive newtype instance monadAffAppService :: MonadAff AppService
 
 instance monadServiceAppService :: MonadService AppService where
   addMenuItem menuItem = do
-    AppService (ReaderT \env -> do
-      if env.useReals
-        then runLiveService (addMenuItem menuItem)
-        else runMockService (addMenuItem menuItem))
+    AppService
+      ( ReaderT \env -> do
+          if env.useReals then runLiveService (addMenuItem menuItem)
+          else runMockService (addMenuItem menuItem)
+      )
 
 runAppService :: forall a. AppEnv -> AppService a -> Aff a
 runAppService env (AppService reader) = runReaderT reader env
