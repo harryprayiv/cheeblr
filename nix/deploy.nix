@@ -79,20 +79,87 @@ let
   stop = pkgs.writeShellScriptBin "stop" ''
     #!/usr/bin/env bash
     set -euo pipefail
-
+    
+    # Store our own PID so we don't kill ourselves
+    OUR_PID=$$
+    PARENT_PID=$PPID
+    
     echo "Creating database backup..."
     pg-backup
-    # sleep 10
+    echo "Database backup completed."
     
     echo "Stopping database..."
     pg-stop || { echo "Failed to stop PostgreSQL completely"; exit 1; }
+    echo "Database stopped successfully."
     
     echo "Stopping vite..."
-    vite-cleanup
-    # sleep 2
+    vite-cleanup || true
+    
+    echo "Ensuring all vite processes are stopped..."
+    # Get vite PIDs but exclude our script and its parent
+    VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
+    if [ -n "$VITE_PIDS" ]; then
+      echo "Found remaining vite processes: $VITE_PIDS"
+      for pid in $VITE_PIDS; do
+        echo "Killing vite process $pid"
+        kill -9 "$pid" 2>/dev/null || true
+      done
+    fi
+    
+    # Check port 5173 but protect our process
+    PORT_PIDS=$(lsof -i :5173 -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
+    if [ -n "$PORT_PIDS" ]; then
+      echo "Found processes still using port 5173: $PORT_PIDS"
+      for pid in $PORT_PIDS; do
+        echo "Killing process $pid on port 5173"
+        kill -9 "$pid" 2>/dev/null || true
+      done
+    fi
 
-    echo "Stopping services..."
-    tmux kill-session -t ${name} 2>/dev/null || true
+    echo "Stopping tmux services..."
+    if tmux has-session -t ${name} 2>/dev/null; then
+      echo "Sending interrupt signal to tmux panes..."
+      for pane_index in 0 1 2 3; do
+        tmux send-keys -t ${name}:Services.$pane_index C-c 2>/dev/null || true
+      done
+      
+      sleep 2
+      
+      echo "Detaching all clients from tmux session..."
+      tmux detach-client -s ${name} 2>/dev/null || true
+      
+      echo "Killing tmux session..."
+      # Use a subshell for the kill operation to prevent killing our own script
+      (
+        tmux kill-session -t ${name} 2>/dev/null || true
+        sleep 1
+      ) &
+      
+      # Wait for the subshell to complete
+      wait
+      
+      # Check if the session still exists
+      if tmux has-session -t ${name} 2>/dev/null; then
+        echo "Session still exists, using last resort measures..."
+        (
+          # Run kill-server in a subshell to prevent it from killing our script
+          tmux kill-server 2>/dev/null || true
+        ) &
+        wait
+      fi
+    fi
+
+    # Final verification that doesn't kill our script
+    BACKEND_PIDS=$(pgrep -f "${name}-backend" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
+    VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
+    
+    if [ -n "$BACKEND_PIDS" ] || [ -n "$VITE_PIDS" ]; then
+      echo "Final cleanup of remaining processes..."
+      for pid in $BACKEND_PIDS $VITE_PIDS; do
+        echo "Force killing process $pid"
+        kill -9 "$pid" 2>/dev/null || true
+      done
+    fi
 
     echo "All services stopped."
   '';

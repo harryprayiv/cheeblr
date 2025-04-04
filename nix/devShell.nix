@@ -335,7 +335,7 @@ let
       }
       EOF
       
-      echo "Welcome to the ${lib.toSentenceCase name} development environment!"
+      echo "Welcome to the ${lib.toSentenceCase name} dev environment!"
 
       echo "Available commands:"
       echo "  Database:"
@@ -364,7 +364,7 @@ let
       echo ""
       echo "  Deployment:"
       echo "    deploy                 - Deploy to server"
-      echo "    withdraw               - Withdraw deployment"
+      echo "    stop                   - Withdraw deployment"
       echo ""
       echo ""
       toilet ${lib.toSentenceCase name} -t --metal
