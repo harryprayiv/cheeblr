@@ -27,7 +27,7 @@ import FRP.Poll (Poll)
 import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Transaction (TransactionItem(..), CartTotals)
 import Types.UUID (UUID)
-import UI.Transaction.LiveCart.PriceCalculator (addItemToTransaction, calculateCartTotals, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromTransaction)
+import Utils.CartUtils (addItemToTransaction, calculateCartTotals, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromTransaction)
 import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input

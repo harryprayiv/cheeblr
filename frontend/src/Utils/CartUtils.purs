@@ -1,4 +1,4 @@
-module UI.Transaction.LiveCart.PriceCalculator where
+module Utils.CartUtils where
 
 import Prelude
 
@@ -6,24 +6,19 @@ import Data.Array (filter, find, foldl, (:))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (DiscreteMoney, fromDiscrete', toDiscrete)
+import Data.Int (toNumber)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
+import Effect.Class.Console as Console
 import Types.Inventory (MenuItem(..))
-import Types.Transaction (TransactionItem(..), TaxCategory(..))
+import Types.Transaction (TaxCategory(..), TransactionItem(..), CartTotals)
 import Types.UUID (UUID)
 import Utils.Money (formatMoney')
 import Utils.UUIDGen (genUUID)
-
-type CartTotals =
-  { subtotal :: Discrete USD
-  , taxTotal :: Discrete USD
-  , total :: Discrete USD
-  , discountTotal :: Discrete USD
-  }
 
 emptyCartTotals :: CartTotals
 emptyCartTotals =
@@ -171,3 +166,45 @@ removeItemFromTransaction itemId currentItems updateItems = do
 findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
 findExistingItem (MenuItem menuItem) items =
   find (\(TransactionItem txItem) -> txItem.menuItemSku == menuItem.sku) items
+
+
+addItemToCart :: MenuItem -> Number -> Array TransactionItem -> 
+                    (Array TransactionItem -> Effect Unit) -> 
+                    (CartTotals -> Effect Unit) -> 
+                    (String -> Effect Unit) -> 
+                    Effect Unit
+addItemToCart menuItem@(MenuItem record) qty currentItems setItems setTotals setStatusMessage = do
+    if qty <= 0.0 then
+        setStatusMessage "Quantity must be greater than 0"
+    else do
+        let
+            currentQtyInCart = 
+                case find (\(TransactionItem item) -> item.menuItemSku == record.sku) currentItems of
+                    Just (TransactionItem item) -> item.quantity
+                    Nothing -> 0.0
+            
+            totalRequestedQty = currentQtyInCart + qty
+        
+        if totalRequestedQty > toNumber record.quantity then
+            setStatusMessage $ "Cannot add " <> show qty <> " more items. Only " <> 
+                            show (record.quantity - Int.floor currentQtyInCart) <> 
+                            " more available."
+        else
+            addItemToTransaction menuItem qty currentItems \newItems -> do
+                let newTotals = calculateCartTotals newItems
+                setTotals newTotals
+                setItems newItems
+                liftEffect $ Console.log $ "Added item to cart: " <> record.name
+                setStatusMessage "Item added to cart"
+    
+-- Helper function to remove items from cart
+removeItemFromCart :: UUID -> Array TransactionItem -> 
+                        (Array TransactionItem -> Effect Unit) -> 
+                        (CartTotals -> Effect Unit) -> 
+                        Effect Unit
+removeItemFromCart itemId currentItems setItems setTotals = do
+    removeItemFromTransaction itemId currentItems \newItems -> do
+        let newTotals = calculateCartTotals newItems
+        setTotals newTotals
+        setItems newItems
+        liftEffect $ Console.log $ "Removed item with ID: " <> show itemId

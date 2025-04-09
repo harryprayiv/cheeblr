@@ -10,7 +10,6 @@ import Data.Either (Either(..))
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Foldable (for_)
-import Data.Int (toNumber)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -26,16 +25,15 @@ import Deku.DOM.Listeners (runOn)
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot, useState, (<#~>))
-import Effect (Effect)
 import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Now (now)
 import FRP.Poll (Poll)
 import Types.Inventory (Inventory(..), MenuItem(..))
-import Types.Transaction (CartTotals, PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
-import Types.UUID (UUID, parseUUID)
-import UI.Transaction.LiveCart.PriceCalculator (addItemToTransaction, calculateCartTotals, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromTransaction)
+import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
+import Types.UUID (parseUUID)
+import Utils.CartUtils (addItemToCart, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromCart)
 import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
 import Utils.Money (formatMoney')
 import Utils.UUIDGen (genUUID)
@@ -694,45 +692,3 @@ createTransaction inventoryPoll = Deku.do
             [ text_ msg ]
     ]
   
-  where
-    -- Helper function to add items to cart
-    addItemToCart :: MenuItem -> Number -> Array TransactionItem -> 
-                     (Array TransactionItem -> Effect Unit) -> 
-                     (CartTotals -> Effect Unit) -> 
-                     (String -> Effect Unit) -> 
-                     Effect Unit
-    addItemToCart menuItem@(MenuItem record) qty currentItems setItems setTotals setStatusMessage = do
-      if qty <= 0.0 then
-        setStatusMessage "Quantity must be greater than 0"
-      else do
-        let
-          currentQtyInCart = 
-            case find (\(TransactionItem item) -> item.menuItemSku == record.sku) currentItems of
-              Just (TransactionItem item) -> item.quantity
-              Nothing -> 0.0
-              
-          totalRequestedQty = currentQtyInCart + qty
-          
-        if totalRequestedQty > toNumber record.quantity then
-          setStatusMessage $ "Cannot add " <> show qty <> " more items. Only " <> 
-                             show (record.quantity - Int.floor currentQtyInCart) <> 
-                             " more available."
-        else
-          addItemToTransaction menuItem qty currentItems \newItems -> do
-            let newTotals = calculateCartTotals newItems
-            setTotals newTotals
-            setItems newItems
-            liftEffect $ Console.log $ "Added item to cart: " <> record.name
-            setStatusMessage "Item added to cart"
-    
-    -- Helper function to remove items from cart
-    removeItemFromCart :: UUID -> Array TransactionItem -> 
-                          (Array TransactionItem -> Effect Unit) -> 
-                          (CartTotals -> Effect Unit) -> 
-                          Effect Unit
-    removeItemFromCart itemId currentItems setItems setTotals = do
-      removeItemFromTransaction itemId currentItems \newItems -> do
-        let newTotals = calculateCartTotals newItems
-        setTotals newTotals
-        setItems newItems
-        liftEffect $ Console.log $ "Removed item with ID: " <> show itemId
