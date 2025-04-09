@@ -3,13 +3,14 @@ module Main where
 import Prelude
 
 import API.Inventory (fetchInventory, readInventory)
+import Config.LiveView (defaultViewConfig)
 import Control.Monad.ST.Class (liftST)
 import CreateItem (createItem)
 import Data.Array (find, length)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst, snd)
-import Deku.Core (fixed)
+import Deku.Core (fixed, text_)
 import Deku.DOM as D
 import Deku.Hooks (cycle)
 import Deku.Toplevel (runInBody)
@@ -25,35 +26,29 @@ import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
-import Config.LiveView (defaultViewConfig)
-import Utils.UUIDGen (genUUID)
+import UI.Transaction.CreateTransaction (createTransaction)
 import UI.Transaction.LiveCart (liveCart)
+import Utils.UUIDGen (genUUID)
 
 testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
 
--- Helper function for running async operations and updating state
 run :: forall a r. Aff a -> { push :: a -> Effect Unit | r } -> Aff Unit
 run aff { push } = aff >>= liftEffect <<< push
 
 main :: Effect Unit
 main = do
-  Console.log "Application starting"
-
-  -- Setup core application state
   currentRoute <- liftST Poll.create
   inventoryState <- liftST Poll.create
   loadingState <- liftST Poll.create
   errorState <- liftST Poll.create
 
-  -- Create Live View component
   let
     menuLiveView = createMenuLiveView
       inventoryState.poll
       loadingState.poll
       errorState.poll
 
-  -- Define route matching and navigation
   let
     matcher _ r = do
       Console.log $ "Route changed to: " <> show r
@@ -62,7 +57,6 @@ main = do
         LiveView -> do
           currentRoute.push $ Tuple r menuLiveView
 
-          -- Show loading state while fetching inventory
           loadingState.push true
           errorState.push ""
 
@@ -192,12 +186,9 @@ main = do
             showUpdateFunction items = do
               Console.log $ "Selected " <> show (length items) <> " items"
 
-          -- Create the LiveCart component with the current inventory state
           currentRoute.push $ Tuple r
             (liveCart showUpdateFunction inventoryState.poll)
 
-          -- Fetch the inventory data (even if already loaded elsewhere)
-          -- This ensures the LiveCart always has the latest inventory
           launchAff_ do
             result <- fetchInventory defaultViewConfig.fetchConfig
               defaultViewConfig.mode
@@ -217,11 +208,41 @@ main = do
                 Console.log $ "Received message: " <> msg
                 loadingState.push false
                 errorState.push msg
+                
+        CreateTransaction -> do
+          Console.log "Navigating to Create Transaction page"
+          
+          loadingState.push true
+          errorState.push ""
+          
+          currentRoute.push $ Tuple r (createTransaction inventoryState.poll)
+          
+          launchAff_ do
+            result <- fetchInventory defaultViewConfig.fetchConfig
+              defaultViewConfig.mode
+              
+            liftEffect $ case result of
+              Left err -> do
+                Console.error $ "Error fetching inventory: " <> err
+                loadingState.push false
+                errorState.push $ "Error: " <> err
+                
+              Right (InventoryData inv) -> do
+                Console.log $ "Loaded inventory successfully for CreateTransaction"
+                inventoryState.push inv
+                loadingState.push false
+                
+              Right (Message msg) -> do
+                Console.log $ "Received message: " <> msg
+                loadingState.push false
+                errorState.push msg
+                
+        TransactionHistory -> do
+          Console.log "Navigating to Transaction History page"
+          currentRoute.push $ Tuple r (D.div_ [ text_ "Transaction History - Coming Soon" ])
 
-  -- Setup route matching
   void $ matchesWith (parse route) matcher
 
-  -- Run the application in the body
   void $ runInBody
     ( fixed
         [ nav (fst <$> currentRoute.poll)
@@ -229,5 +250,4 @@ main = do
         ]
     )
 
-  -- Initialize with LiveView
   matcher Nothing LiveView
