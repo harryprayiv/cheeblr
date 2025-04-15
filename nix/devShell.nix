@@ -203,6 +203,7 @@ let
       text = ''
         rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' ~/workdir/${name}/ ~/plutus/workspace/scdWs/${name}/
         rsync -va ~/.local/share/${name}/backups/ ~/plutus/${name}DB/
+        rsync -va script/concat_archive/ ~/plutus/workspace/scdWs/${name}/script/concat_archive/
       '';
     };
   };
