@@ -3,6 +3,7 @@ module Utils.CartUtils where
 import Prelude
 
 import Data.Array (filter, find, foldl, (:))
+import Data.Either (Either(..))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (DiscreteMoney, fromDiscrete', toDiscrete)
@@ -14,12 +15,14 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Services.TransactionService as TransactionService
 import Types.Inventory (MenuItem(..))
 import Types.Transaction (TaxCategory(..), TransactionItem(..), CartTotals)
 import Types.UUID (UUID)
 import Utils.Money (formatMoney')
 import Utils.UUIDGen (genUUID)
 
+-- Base cart totals structure
 emptyCartTotals :: CartTotals
 emptyCartTotals =
   { subtotal: Discrete 0
@@ -28,6 +31,7 @@ emptyCartTotals =
   , discountTotal: Discrete 0
   }
 
+-- Calculate cart totals from transaction items
 calculateCartTotals :: Array TransactionItem -> CartTotals
 calculateCartTotals items =
   foldl addItemToTotals emptyCartTotals items
@@ -47,6 +51,7 @@ calculateCartTotals items =
       , discountTotal: totals.discountTotal
       }
 
+-- Format price helpers
 formatPrice :: DiscreteMoney USD -> String
 formatPrice = formatMoney'
 
@@ -167,44 +172,113 @@ findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
 findExistingItem (MenuItem menuItem) items =
   find (\(TransactionItem txItem) -> txItem.menuItemSku == menuItem.sku) items
 
+addItemToCart
+  :: MenuItem
+  -> Number
+  -> Array TransactionItem
+  -> UUID -- Transaction ID
+  -> (Array TransactionItem -> Effect Unit)
+  -> (CartTotals -> Effect Unit)
+  -> (String -> Effect Unit) -- For status messages
+  -> (Boolean -> Effect Unit) -- For loading state
+  -> Effect Unit
+addItemToCart
+  menuItem@(MenuItem record)
+  qty
+  currentItems
+  transactionId
+  setItems
+  setTotals
+  setStatusMessage
+  setIsProcessing = do
 
-addItemToCart :: MenuItem -> Number -> Array TransactionItem -> 
-                    (Array TransactionItem -> Effect Unit) -> 
-                    (CartTotals -> Effect Unit) -> 
-                    (String -> Effect Unit) -> 
-                    Effect Unit
-addItemToCart menuItem@(MenuItem record) qty currentItems setItems setTotals setStatusMessage = do
-    if qty <= 0.0 then
-        setStatusMessage "Quantity must be greater than 0"
+  if qty <= 0.0 then
+    setStatusMessage "Quantity must be greater than 0"
+  else do
+    -- Check current cart quantity first
+    let
+      currentQtyInCart =
+        case
+          find (\(TransactionItem item) -> item.menuItemSku == record.sku)
+            currentItems
+          of
+          Just (TransactionItem item) -> item.quantity
+          Nothing -> 0.0
+
+      totalRequestedQty = currentQtyInCart + qty
+
+    if totalRequestedQty > toNumber record.quantity then
+      setStatusMessage $ "Cannot add " <> show qty <> " more items. Only "
+        <> show (record.quantity - Int.floor currentQtyInCart)
+        <> " more available."
     else do
+      -- Set loading state
+      setIsProcessing true
+
+      -- Make a backend call to reserve the item
+      void $ launchAff_ do
+        result <- TransactionService.createTransactionItem
+          transactionId
+          record.sku
+          qty
+          (unwrap record.price)
+
+        liftEffect $ case result of
+          Right addedItem -> do
+            -- Item successfully reserved, update the cart
+            let newItems = addedItem : currentItems
+
+            -- Recalculate totals
+            let newTotals = calculateCartTotals newItems
+
+            -- Update state
+            setTotals newTotals
+            setItems newItems
+            setStatusMessage "Item added to transaction and reserved"
+            Console.log $ "Added and reserved item: " <> record.name
+
+          Left err -> do
+            -- Handle error (likely inventory unavailable)
+            setStatusMessage $ "Error: " <> err
+            Console.error $ "Failed to reserve item: " <> err
+
+        -- End loading state
+        liftEffect $ setIsProcessing false
+
+removeItemFromCart
+  :: UUID
+  -> Array TransactionItem
+  -> (Array TransactionItem -> Effect Unit)
+  -> (CartTotals -> Effect Unit)
+  -> (Boolean -> Effect Unit) -- For loading state
+  -> Effect Unit
+removeItemFromCart itemId currentItems setItems setTotals setIsProcessing = do
+  -- Set loading state
+  setIsProcessing true
+
+  -- Make a backend call to release the reservation
+  void $ launchAff_ do
+    -- Call backend to remove the transaction item
+    result <- TransactionService.removeTransactionItem itemId
+
+    liftEffect $ case result of
+      Right _ -> do
+        -- Item reservation released, update the cart
         let
-            currentQtyInCart = 
-                case find (\(TransactionItem item) -> item.menuItemSku == record.sku) currentItems of
-                    Just (TransactionItem item) -> item.quantity
-                    Nothing -> 0.0
-            
-            totalRequestedQty = currentQtyInCart + qty
-        
-        if totalRequestedQty > toNumber record.quantity then
-            setStatusMessage $ "Cannot add " <> show qty <> " more items. Only " <> 
-                            show (record.quantity - Int.floor currentQtyInCart) <> 
-                            " more available."
-        else
-            addItemToTransaction menuItem qty currentItems \newItems -> do
-                let newTotals = calculateCartTotals newItems
-                setTotals newTotals
-                setItems newItems
-                liftEffect $ Console.log $ "Added item to cart: " <> record.name
-                setStatusMessage "Item added to cart"
-    
--- Helper function to remove items from cart
-removeItemFromCart :: UUID -> Array TransactionItem -> 
-                        (Array TransactionItem -> Effect Unit) -> 
-                        (CartTotals -> Effect Unit) -> 
-                        Effect Unit
-removeItemFromCart itemId currentItems setItems setTotals = do
-    removeItemFromTransaction itemId currentItems \newItems -> do
+          newItems = filter (\(TransactionItem item) -> item.id /= itemId)
+            currentItems
+
+        -- Recalculate totals  
         let newTotals = calculateCartTotals newItems
+
+        -- Update state
         setTotals newTotals
         setItems newItems
-        liftEffect $ Console.log $ "Removed item with ID: " <> show itemId
+        Console.log $ "Removed item and released reservation with ID: " <> show
+          itemId
+
+      Left err -> do
+        Console.error $ "Error removing item: " <> err
+
+    -- End loading state  
+    liftEffect $ setIsProcessing false

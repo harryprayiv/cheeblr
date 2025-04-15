@@ -39,8 +39,6 @@ instance showLedgerError :: Show LedgerError where
   show AuthorizationFailed = "User not authorized for this operation"
   show (SystemError msg) = "System error: " <> msg
 
-type EntityId = UUID
-
 data TransactionStatus
   = Created
   | InProgress

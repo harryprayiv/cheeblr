@@ -1,23 +1,110 @@
 module API.Transaction where
 
 import Prelude
-import Types.Common
-import Types.Transaction
 
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(..))
 import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import NetworkConfig (currentConfig)
-import Types.UUID (UUID(..))
+import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
+import Types.System (CloseRegisterRequest, CloseRegisterResult, OpenRegisterRequest, Register)
+import Types.UUID (UUID)
 import Yoga.JSON (writeJSON)
 
 baseUrl :: String
 baseUrl = currentConfig.apiBaseUrl
 
+-- Get a register by ID
+getRegister :: UUID -> Aff (Either String Register)
+getRegister registerId = do
+  result <- attempt do
+    liftEffect $ Console.log $ "Fetching register: " <> show registerId
+
+    response <- fetch (baseUrl <> "/register/" <> show registerId)
+      { method: GET
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          }
+      }
+    fromJSON response.json
+
+  pure case result of
+    Left err -> Left $ "Get register error: " <> show err
+    Right response -> Right response
+
+-- Create a new register
+createRegister :: Register -> Aff (Either String Register)
+createRegister register = do
+  result <- attempt do
+    let content = writeJSON register
+    liftEffect $ Console.log "Creating new register..."
+
+    response <- fetch (baseUrl <> "/register")
+      { method: POST
+      , body: content
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          }
+      }
+    fromJSON response.json
+
+  pure case result of
+    Left err -> Left $ "Create register error: " <> show err
+    Right response -> Right response
+
+-- Open a register
+openRegister :: OpenRegisterRequest -> UUID -> Aff (Either String Register)
+openRegister request registerId = do
+  result <- attempt do
+    let content = writeJSON request
+    liftEffect $ Console.log $ "Opening register: " <> show registerId
+
+    response <- fetch (baseUrl <> "/register/open/" <> show registerId)
+      { method: POST
+      , body: content
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          }
+      }
+    fromJSON response.json
+
+  pure case result of
+    Left err -> Left $ "Open register error: " <> show err
+    Right response -> Right response
+
+-- Close a register
+closeRegister
+  :: CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
+closeRegister request registerId = do
+  result <- attempt do
+    let content = writeJSON request
+    liftEffect $ Console.log $ "Closing register: " <> show registerId
+
+    response <- fetch (baseUrl <> "/register/close/" <> show registerId)
+      { method: POST
+      , body: content
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          }
+      }
+    fromJSON response.json
+
+  pure case result of
+    Left err -> Left $ "Close register error: " <> show err
+    Right response -> Right response
+
+-- Create a new transaction
 createTransaction :: Transaction -> Aff (Either String Transaction)
 createTransaction transaction = do
   result <- attempt do
@@ -40,6 +127,7 @@ createTransaction transaction = do
     Left err -> Left $ "Create transaction error: " <> show err
     Right response -> Right response
 
+-- Add an item to a transaction
 addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)
 addTransactionItem item = do
   result <- attempt do
@@ -61,6 +149,7 @@ addTransactionItem item = do
     Left err -> Left $ "Add item error: " <> show err
     Right response -> Right response
 
+-- Remove an item from a transaction
 removeTransactionItem :: UUID -> Aff (Either String Unit)
 removeTransactionItem itemId = do
   result <- attempt do
@@ -80,6 +169,7 @@ removeTransactionItem itemId = do
     Left err -> Left $ "Remove item error: " <> show err
     Right _ -> Right unit
 
+-- Add a payment to a transaction
 addPaymentTransaction
   :: PaymentTransaction -> Aff (Either String PaymentTransaction)
 addPaymentTransaction payment = do
@@ -102,6 +192,7 @@ addPaymentTransaction payment = do
     Left err -> Left $ "Add payment error: " <> show err
     Right response -> Right response
 
+-- Remove a payment from a transaction
 removePaymentTransaction :: UUID -> Aff (Either String Unit)
 removePaymentTransaction paymentId = do
   result <- attempt do
@@ -122,6 +213,7 @@ removePaymentTransaction paymentId = do
     Left err -> Left $ "Remove payment error: " <> show err
     Right _ -> Right unit
 
+-- Finalize a transaction
 finalizeTransaction :: UUID -> Aff (Either String Transaction)
 finalizeTransaction transactionId = do
   result <- attempt do
@@ -142,6 +234,7 @@ finalizeTransaction transactionId = do
     Left err -> Left $ "Finalize transaction error: " <> show err
     Right response -> Right response
 
+-- Get a transaction by ID
 getTransaction :: UUID -> Aff (Either String Transaction)
 getTransaction transactionId = do
   result <- attempt do
@@ -161,34 +254,14 @@ getTransaction transactionId = do
     Left err -> Left $ "Get transaction error: " <> show err
     Right response -> Right response
 
-getAllTransactions :: Aff (Either String (Array Transaction))
-getAllTransactions = do
-  result <- attempt do
-    liftEffect $ Console.log "Fetching all transactions..."
-
-    response <- fetch (baseUrl <> "/transaction")
-      { method: GET
-      , headers:
-          { "Content-Type": "application/json"
-          , "Accept": "application/json"
-          , "Origin": currentConfig.appOrigin
-          }
-      }
-    fromJSON response.json
-
-  pure case result of
-    Left err -> Left $ "Get all transactions error: " <> show err
-    Right response -> Right response
-
 voidTransaction :: UUID -> String -> Aff (Either String Transaction)
 voidTransaction transactionId reason = do
   result <- attempt do
-    let content = writeJSON { reason }
     liftEffect $ Console.log $ "Voiding transaction: " <> show transactionId
 
     response <- fetch (baseUrl <> "/transaction/void/" <> show transactionId)
       { method: POST
-      , body: content
+      , body: writeJSON reason
       , headers:
           { "Content-Type": "application/json"
           , "Accept": "application/json"
@@ -199,25 +272,4 @@ voidTransaction transactionId reason = do
 
   pure case result of
     Left err -> Left $ "Void transaction error: " <> show err
-    Right response -> Right response
-
-refundTransaction :: UUID -> String -> Aff (Either String Transaction)
-refundTransaction transactionId reason = do
-  result <- attempt do
-    let content = writeJSON { reason }
-    liftEffect $ Console.log $ "Refunding transaction: " <> show transactionId
-
-    response <- fetch (baseUrl <> "/transaction/refund/" <> show transactionId)
-      { method: POST
-      , body: content
-      , headers:
-          { "Content-Type": "application/json"
-          , "Accept": "application/json"
-          , "Origin": currentConfig.appOrigin
-          }
-      }
-    fromJSON response.json
-
-  pure case result of
-    Left err -> Left $ "Refund transaction error: " <> show err
     Right response -> Right response
