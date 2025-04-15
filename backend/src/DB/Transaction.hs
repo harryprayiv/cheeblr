@@ -1,5 +1,6 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 {-# OPTIONS_GHC -Wno-unused-matches #-}
@@ -58,6 +59,13 @@ type DBAction a = Connection -> IO a
 withConnection :: ConnectionPool -> (Connection -> IO a) -> IO a
 withConnection = withResource
 
+data InventoryReservation = InventoryReservation
+  { reservationItemSku :: UUID
+  , reservationTransactionId :: UUID
+  , reservationQuantity :: Int
+  , reservationStatus :: Text
+  } deriving (Show, Eq)
+
 createTransactionTables :: ConnectionPool -> IO ()
 createTransactionTables pool = withConnection pool $ \conn -> do
   hPutStrLn stderr "Creating transaction tables..."
@@ -88,6 +96,17 @@ createTransactionTables pool = withConnection pool $ \conn -> do
               refund_reason TEXT,
               reference_transaction_id UUID,
               notes TEXT
+            )
+          |]
+        void $ execute_ conn
+          [sql|
+            CREATE TABLE IF NOT EXISTS inventory_reservation (
+              id UUID PRIMARY KEY,
+              item_sku UUID NOT NULL,
+              transaction_id UUID NOT NULL,
+              quantity INTEGER NOT NULL,
+              status TEXT NOT NULL,
+              created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
             )
           |]
       _ -> do
@@ -617,17 +636,52 @@ finalizeTransaction pool transactionId = withConnection pool $ \conn -> do
     Just updatedTransaction -> pure updatedTransaction
     Nothing -> error $ "Transaction not found after finalization: " ++ show transactionId
 
--- | Add an item to a transaction
+insertInventoryReservation :: Connection -> InventoryReservation -> IO ()
+insertInventoryReservation conn InventoryReservation{..} = do
+  reservationId <- liftIO nextRandom
+  void $ execute conn [sql|
+    INSERT INTO inventory_reservation
+    (id, item_sku, transaction_id, quantity, status)
+    VALUES (?, ?, ?, ?, ?)
+  |] (
+    reservationId,
+    reservationItemSku,
+    reservationTransactionId,
+    reservationQuantity,
+    reservationStatus
+    )
+
 addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
 addTransactionItem pool item = withConnection pool $ \conn -> do
-  -- Insert the transaction item
-  newItem <- insertTransactionItem conn item
-
-  -- Update transaction totals
-  updateTransactionTotals conn (transactionItemTransactionId item)
-
-  -- Return the new item
-  pure newItem
+  -- Check if there's enough inventory for this item
+  let quantity = transactionItemQuantity item
+      menuItemSku = transactionItemMenuItemSku item
+  
+  [Only availableQuantity] <- query conn 
+    "SELECT quantity FROM menu_items WHERE sku = ?" 
+    (Only menuItemSku)
+  
+  if availableQuantity < quantity
+    then error $ "Not enough inventory. Only " ++ show availableQuantity ++ " available."
+    else do
+      -- Temporarily decrement inventory
+      execute conn 
+        "UPDATE menu_items SET quantity = quantity - ? WHERE sku = ?" 
+        (quantity, menuItemSku)
+      
+      -- Add the transaction item
+      newItem <- insertTransactionItem conn item
+      
+      -- Add inventory record
+      let reservation = InventoryReservation
+            { reservationItemSku = menuItemSku
+            , reservationTransactionId = transactionItemTransactionId item
+            , reservationQuantity = quantity
+            , reservationStatus = "Reserved"
+            }
+      insertInventoryReservation conn reservation
+      
+      pure newItem
 
 -- | Delete a transaction item
 deleteTransactionItem :: ConnectionPool -> UUID -> IO ()
