@@ -1,8 +1,6 @@
 module UI.Transaction.CreateTransaction where
 
 import Prelude
-import Services.TransactionService (startTransaction)
-import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 
 import Data.Array (filter, find, null, (:))
 import Data.Array as Array
@@ -29,10 +27,12 @@ import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import FRP.Poll (Poll)
-import Services.CashRegister (dummyTransactionId)
+import Services.CashRegister (dummyEmployeeId, dummyLocationId, dummyRegisterId, dummyTransactionId)
 import Services.RegisterService as RegisterService
+import Services.TransactionService (startTransaction)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..))
+import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (parseUUID)
 import Utils.CartUtils (addItemToCart, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromCart)
 import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
@@ -960,9 +960,9 @@ createTransaction inventoryPoll = Deku.do
                         created: bottom, -- Or current date if needed, but not likely needed for calculation
                         completed: Nothing,
                         customer: Nothing,
-                        employee: dummyTransactionId,
-                        register: dummyTransactionId,
-                        location: dummyTransactionId,
+                        employee: dummyEmployeeId,
+                        register: dummyRegisterId,
+                        location: dummyLocationId,
                         items: [],
                         payments: [],
                         subtotal: fromDiscrete' totals.subtotal,

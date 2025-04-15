@@ -591,9 +591,9 @@ calculateTaxes amount menuItem =
     if cannabisTaxAmount > Discrete 0 then [ salesTax, cannabisTax ]
     else [ salesTax ]
 
+
 processRefund
-  :: forall t
-   . { id :: UUID | t }
+  :: { id :: UUID }
   -> Array UUID
   -> String
   -> UUID
@@ -605,7 +605,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
   timestamp <- liftEffect nowDateTime
 
   let txId = originalTransaction.id
-  -- We need to create a minimally viable Transaction that has all required fields
+
   -- Creating a placeholder transaction with all required fields
   let
     txData = unwrap
@@ -615,9 +615,9 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
           , created: timestamp
           , completed: Just timestamp
           , customer: Nothing
-          , employee: employeeId
-          , register: dummyTransactionId
-          , location: dummyTransactionId
+          , employee: dummyEmployeeId
+          , register: dummyRegisterId
+          , location: dummyLocationId
           , items: []
           , payments: []
           , subtotal: fromDiscrete' (Discrete 0)
@@ -708,7 +708,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
     pure $ Right (Transaction refundTransaction)
   where
 
-  contains :: forall a. Array UUID -> UUID -> Boolean
+  contains :: Array UUID -> UUID -> Boolean  -- Fixed: Removed unused type variable
   contains ids targetId =
     case Array.uncons ids of
       Nothing -> false
@@ -730,10 +730,19 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
       }
 
 dummyAccountId :: UUID
-dummyAccountId = UUID "00000000-0000-0000-0000-000000000001"
+dummyAccountId = UUID "a1c802dd-5651-4b2b-8242-d47ece4d7918"
 
 dummyPaymentId :: UUID
-dummyPaymentId = UUID "00000000-0000-0000-0000-000000000003"
+dummyPaymentId = UUID "71bf2156-9234-46c8-b427-01d330cacb80"
 
 dummyTransactionId :: UUID
-dummyTransactionId = UUID "00000000-0000-0000-0000-000000000002"
+dummyTransactionId = UUID "84bb27ce-c438-4c62-b73d-a72999c50911"
+
+dummyEmployeeId :: UUID
+dummyEmployeeId = UUID "bc36a386-03eb-442b-b607-b7212346577d"
+
+dummyRegisterId :: UUID  -- Fixed capitalization of 'R'
+dummyRegisterId = UUID "91123908-92d8-4bb6-bc3c-c369378f74ff"
+
+dummyLocationId :: UUID  -- Added this new dummy ID
+dummyLocationId = UUID "e5f1b94d-7b7c-4a55-8d64-5ac12542a2a8"
