@@ -208,38 +208,40 @@ main = do
                 Console.log $ "Received message: " <> msg
                 loadingState.push false
                 errorState.push msg
-                
+
         CreateTransaction -> do
           Console.log "Navigating to Create Transaction page"
-          
+
           loadingState.push true
           errorState.push ""
-          
+
           currentRoute.push $ Tuple r (createTransaction inventoryState.poll)
-          
+
           launchAff_ do
             result <- fetchInventory defaultViewConfig.fetchConfig
               defaultViewConfig.mode
-              
+
             liftEffect $ case result of
               Left err -> do
                 Console.error $ "Error fetching inventory: " <> err
                 loadingState.push false
                 errorState.push $ "Error: " <> err
-                
+
               Right (InventoryData inv) -> do
-                Console.log $ "Loaded inventory successfully for CreateTransaction"
+                Console.log $
+                  "Loaded inventory successfully for CreateTransaction"
                 inventoryState.push inv
                 loadingState.push false
-                
+
               Right (Message msg) -> do
                 Console.log $ "Received message: " <> msg
                 loadingState.push false
                 errorState.push msg
-                
+
         TransactionHistory -> do
           Console.log "Navigating to Transaction History page"
-          currentRoute.push $ Tuple r (D.div_ [ text_ "Transaction History - Coming Soon" ])
+          currentRoute.push $ Tuple r
+            (D.div_ [ text_ "Transaction History - Coming Soon" ])
 
   void $ matchesWith (parse route) matcher
 

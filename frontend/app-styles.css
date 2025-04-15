@@ -1347,8 +1347,8 @@ button.tx-delete-btn:hover {
 .inv-selector-quantity-controls {
   display: flex;
   justify-content: flex-end;
-  align-items: center;
-  gap: 0.5rem;
+  align-items: right;
+  gap: 2.8rem;
 }
 
 .inv-selector-quantity-indicator {
@@ -1359,7 +1359,7 @@ button.tx-delete-btn:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 20%;
   font-size: 0.8rem;
   font-weight: bold;
 }
@@ -1768,7 +1768,7 @@ button.tx-delete-btn:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 20%;
   font-size: 0.8rem;
   font-weight: bold;
 }
@@ -2159,14 +2159,14 @@ button.tx-delete-btn:hover {
 
 .quantity-controls {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: right;
+  gap: 50px;
 }
 
 .quantity-indicator {
   background-color: var(--blue);
   color: var(--fg-light);
-  border-radius: 50%;
+  border-radius: 20%;
   width: 24px;
   height: 24px;
   display: flex;

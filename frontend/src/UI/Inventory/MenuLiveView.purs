@@ -108,7 +108,7 @@ renderItem (MenuItem record) =
               )
           ]
       , D.div [ DA.klass_ "item-description" ]
-          [ text_ ("Description: " <> formattedDescription) ]
+          [ text_ (formattedDescription) ]
       , D.div [ DA.klass_ "item-quantity" ]
           [ text_ ("in stock: " <> show record.quantity) ]
       , D.div [ DA.klass_ "item-actions" ]
