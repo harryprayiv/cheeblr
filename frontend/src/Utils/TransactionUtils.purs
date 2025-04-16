@@ -12,13 +12,13 @@ import Data.Newtype (unwrap)
 import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
+import Effect.Class.Console as Console
 import Services.TransactionService (getTransaction)
 import Types.Inventory (MenuItem(..))
 import Types.Transaction (PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..))
 import Types.UUID (UUID)
 import Utils.UUIDGen (genUUID)
 
--- Convert menu item to transaction item
 menuItemToTransactionItem
   :: MenuItem
   -> Number
@@ -28,29 +28,23 @@ menuItemToTransactionItem (MenuItem item) quantity transactionId = do
   itemId <- liftEffect genUUID
 
   let
-    -- Get price in cents
     priceInCents = unwrap item.price
-
-    -- Calculate tax (8% sales tax)
+    
     salesTaxRate = 0.08
     salesTaxAmount = floor
       (toNumber (priceInCents * floor quantity) * salesTaxRate)
-
-    -- Create sales tax record
+      
     salesTax =
       { category: RegularSalesTax
       , rate: salesTaxRate
       , amount: fromDiscrete' (Discrete salesTaxAmount)
       , description: "Sales Tax"
       }
-
-    -- Calculate subtotal
+      
     subtotalInCents = priceInCents * floor quantity
-
-    -- Calculate total (with tax)
+      
     totalInCents = subtotalInCents + salesTaxAmount
-
-  -- Create and return the transaction item
+      
   pure $ TransactionItem
     { id: itemId
     , transactionId: transactionId
@@ -63,7 +57,6 @@ menuItemToTransactionItem (MenuItem item) quantity transactionId = do
     , total: fromDiscrete' (Discrete totalInCents)
     }
 
--- Calculate total amount of all payments
 calculateTotalPayments :: Array PaymentTransaction -> Discrete USD
 calculateTotalPayments payments =
   foldl
@@ -73,28 +66,28 @@ calculateTotalPayments payments =
     (Discrete 0)
     payments
 
--- Check if payments cover the transaction total
 paymentsCoversTotal :: Array PaymentTransaction -> Transaction -> Boolean
 paymentsCoversTotal payments (Transaction tx) =
   calculateTotalPayments payments >= toDiscrete tx.total
 
--- Calculate remaining balance after payments
 getRemainingBalance :: Array PaymentTransaction -> Transaction -> Discrete USD
 getRemainingBalance payments (Transaction tx) =
   max (Discrete 0) (toDiscrete tx.total - calculateTotalPayments payments)
 
--- Get items from a transaction
 getTransactionItems :: Transaction -> Array TransactionItem
 getTransactionItems (Transaction tx) = tx.items
 
--- Update transaction data from backend
 updateTransactionData
   :: Transaction
   -> (Transaction -> Effect Unit)
   -> Aff Unit
 updateTransactionData (Transaction tx) setTransaction = do
-  -- Fetch the latest transaction data from the backend
+  liftEffect $ Console.log $ "Updating transaction data for ID: " <> show tx.id
   result <- getTransaction tx.id
   liftEffect $ case result of
-    Right updatedTx -> setTransaction updatedTx
-    Left _ -> pure unit
+    Right updatedTx -> do
+      Console.log "Successfully fetched updated transaction data"
+      setTransaction updatedTx
+    Left err -> do
+      Console.error $ "Failed to update transaction data: " <> err
+      pure unit

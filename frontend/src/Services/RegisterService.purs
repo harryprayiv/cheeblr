@@ -16,35 +16,34 @@ import Web.HTML (window)
 import Web.HTML.Window (localStorage)
 import Web.Storage.Storage (getItem, setItem)
 
--- Get or create a register ID
 initializeRegister
   :: (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
 initializeRegister setRegister setError = do
-  -- Try to get saved register ID
+
   w <- window
   storage <- localStorage w
   storedRegId <- getItem "register_id" storage
 
-  -- Parse the stored ID or generate a new one
+
   registerId <- case storedRegId >>= parseUUID of
     Just id -> pure id
     Nothing -> do
-      -- No stored ID, generate a new one
+
       newId <- genUUID
       w' <- window
       storage' <- localStorage w'
       setItem "register_id" (show newId) storage'
       pure newId
 
-  -- Open the register with the backend
-  launchAff_ do
-    employeeId <- liftEffect genUUID -- TODO: should come from authentication
 
-    -- Request to open the register
+  launchAff_ do
+    employeeId <- liftEffect genUUID
+
+
     let
       openRequest =
         { openRegisterEmployeeId: employeeId
-        , openRegisterStartingCash: 0 -- TODO: should prompt for amount
+        , openRegisterStartingCash: 0
         }
 
     result <- API.openRegister openRequest registerId
@@ -56,7 +55,6 @@ initializeRegister setRegister setError = do
       Left err -> do
         setError ("Failed to open register: " <> err)
 
--- Create a new register
 createRegister
   :: String
   -> UUID
@@ -65,10 +63,11 @@ createRegister
   -> Effect Unit
 createRegister name locationId setRegister setError = do
   launchAff_ do
-    employeeId <- liftEffect genUUID
+    -- Fixed warning: Using "_" to ignore the unused employeeId
+    _ <- liftEffect genUUID
     registerId <- liftEffect genUUID
 
-    -- Create a new register object
+
     let
       newRegister =
         { registerId: registerId
@@ -91,7 +90,6 @@ createRegister name locationId setRegister setError = do
       Left err -> do
         setError ("Failed to create register: " <> err)
 
--- Close a register
 closeRegister :: UUID -> UUID -> Int -> (String -> Effect Unit) -> Effect Unit
 closeRegister registerId employeeId countedCash setMessage = do
   launchAff_ do

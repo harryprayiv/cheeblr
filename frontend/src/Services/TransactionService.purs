@@ -3,19 +3,20 @@ module Services.TransactionService where
 import Prelude
 
 import API.Transaction as API
-import Data.Either (Either)
+import Data.Either (Either(..))
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (fromDiscrete')
 import Data.Int (floor, toNumber)
 import Data.Maybe (Maybe(..))
+import Data.Newtype (unwrap)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
+import Effect.Class.Console as Console
 import Effect.Now (nowDateTime)
 import Types.Transaction (PaymentMethod, PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID)
 import Utils.UUIDGen (genUUID)
 
--- Initialize and start a new transaction
 startTransaction
   :: { employeeId :: UUID
      , registerId :: UUID
@@ -23,13 +24,18 @@ startTransaction
      }
   -> Aff (Either String Transaction)
 startTransaction params = do
-  -- Generate a new UUID for the transaction
   transactionId <- liftEffect genUUID
-  -- Get the current timestamp
   timestamp <- liftEffect nowDateTime
 
-  -- Create the initial transaction object
+  liftEffect $ Console.log $ "Starting transaction with params: "
+    <> "\nemployeeId: " <> show params.employeeId
+    <> "\nregisterId: " <> show params.registerId
+    <> "\nlocationId: " <> show params.locationId
+
   let
+    -- Convert integers to DiscreteMoney USD using fromDiscrete'
+    zeroMoney = fromDiscrete' (Discrete 0)
+    
     transaction = Transaction
       { id: transactionId
       , status: Created
@@ -41,10 +47,10 @@ startTransaction params = do
       , location: params.locationId
       , items: []
       , payments: []
-      , subtotal: fromDiscrete' (Discrete 0)
-      , discountTotal: fromDiscrete' (Discrete 0)
-      , taxTotal: fromDiscrete' (Discrete 0)
-      , total: fromDiscrete' (Discrete 0)
+      , subtotal: zeroMoney       
+      , discountTotal: zeroMoney  
+      , taxTotal: zeroMoney       
+      , total: zeroMoney
       , transactionType: Sale
       , isVoided: false
       , voidReason: Nothing
@@ -54,84 +60,89 @@ startTransaction params = do
       , notes: Nothing
       }
 
-  -- Send the transaction to the backend
-  API.createTransaction transaction
+  liftEffect $ Console.log "About to call API.createTransaction"
+  result <- API.createTransaction transaction
+
+  liftEffect $ case result of
+    Right tx -> Console.log $ "Transaction created successfully with ID: " <> show (unwrap tx).id
+    Left err -> Console.error $ "Failed to create transaction: " <> err
+
+  pure result
+
+getTransaction :: UUID -> Aff (Either String Transaction)
+getTransaction transactionId = do
+  liftEffect $ Console.log $ "Getting transaction: " <> show transactionId
+  API.getTransaction transactionId
 
 createTransactionItem
-  :: UUID -- Transaction ID
-  -> UUID -- Menu Item SKU
-  -> Number -- Quantity
-  -> Int -- Price per unit in cents
+  :: UUID
+  -> UUID
+  -> Number
+  -> Int
   -> Aff (Either String TransactionItem)
 createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
-  -- Generate a new item ID
   itemId <- liftEffect genUUID
 
-  -- Prepare the transaction item
+  liftEffect $ Console.log $ "Creating transaction item: "
+    <> "\ntransactionId: " <> show transactionId
+    <> "\nmenuItemSku: " <> show menuItemSku
+    <> "\nquantity: " <> show quantity
+    <> "\npricePerUnit: " <> show pricePerUnit
+
   let
-    -- Calculate price values
-    ppu = fromDiscrete' (Discrete pricePerUnit)
-
-    -- Convert quantity to appropriate number
-    quantityAsNumber = quantity
-    subtotalValue = Discrete (pricePerUnit * (floor quantityAsNumber))
-    subtotal = fromDiscrete' subtotalValue
-
-    -- Calculate tax (this might vary based on your business rules)
-    taxRate = 0.08
-    taxAmount = fromDiscrete'
-      ( Discrete
-          (floor (toNumber (pricePerUnit * (floor quantityAsNumber)) * taxRate))
-      )
-
-    -- Calculate total with tax
-    total = fromDiscrete'
-      ( Discrete
-          ( (floor quantityAsNumber) * pricePerUnit +
-              ( floor
-                  (toNumber (pricePerUnit * (floor quantityAsNumber)) * taxRate)
-              )
-          )
-      )
-
-    -- Prepare sales tax record
+    quantityAsInt = floor quantity
+    salesTaxRate = 0.08
+    
+    -- Calculate subtotal
+    subtotalInt = pricePerUnit * quantityAsInt
+    subtotalMoney = fromDiscrete' (Discrete subtotalInt)
+    
+    -- Calculate tax
+    taxAmountInt = floor (toNumber subtotalInt * salesTaxRate)
+    taxMoney = fromDiscrete' (Discrete taxAmountInt)
+    
+    -- Calculate total
+    totalInt = subtotalInt + taxAmountInt
+    totalMoney = fromDiscrete' (Discrete totalInt)
+    
+    -- Create tax record
     salesTax =
       { category: RegularSalesTax
-      , rate: 0.08
-      , amount: taxAmount
+      , rate: salesTaxRate
+      , amount: taxMoney
       , description: "Sales Tax"
       }
-
-    -- Create the transaction item
+    
+    -- Create transaction item
     transactionItem = TransactionItem
       { id: itemId
       , transactionId: transactionId
       , menuItemSku: menuItemSku
-      , quantity: quantity
-      , pricePerUnit: ppu
+      , quantity: toNumber quantityAsInt
+      , pricePerUnit: fromDiscrete' (Discrete pricePerUnit)
       , discounts: []
       , taxes: [ salesTax ]
-      , subtotal: subtotal
-      , total: total
+      , subtotal: subtotalMoney
+      , total: totalMoney
       }
 
-  -- Send to backend to reserve inventory
   API.addTransactionItem transactionItem
 
--- Add transaction item to an existing transaction
 addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)
-addTransactionItem = API.addTransactionItem
+addTransactionItem item = do
+  liftEffect $ Console.log $ "Adding transaction item: " <> show (unwrap item).id
+  API.addTransactionItem item
 
--- Remove a transaction item
 removeTransactionItem :: UUID -> Aff (Either String Unit)
-removeTransactionItem = API.removeTransactionItem
+removeTransactionItem itemId = do
+  liftEffect $ Console.log $ "Removing transaction item: " <> show itemId
+  API.removeTransactionItem itemId
 
--- Void a transaction
 voidTransaction :: UUID -> String -> Aff (Either String Transaction)
 voidTransaction transactionId reason = do
+  liftEffect $ Console.log $ "Voiding transaction: " <> show transactionId
   API.voidTransaction transactionId reason
 
--- Add a payment to a transaction
 addPayment
   :: UUID
   -> PaymentMethod
@@ -140,34 +151,37 @@ addPayment
   -> Maybe String
   -> Aff (Either String PaymentTransaction)
 addPayment transactionId method amount tendered reference = do
-  -- Generate a payment ID
   paymentId <- liftEffect genUUID
 
-  -- Create payment transaction object
+  liftEffect $ Console.log $ "Adding payment: "
+    <> "\ntransactionId: " <> show transactionId
+    <> "\nmethod: " <> show method
+    <> "\namount: " <> show amount
+    <> "\ntendered: " <> show tendered
+
   let
+    change = max 0 (tendered - amount)
+    
     payment = PaymentTransaction
       { id: paymentId
       , transactionId: transactionId
       , method: method
       , amount: fromDiscrete' (Discrete amount)
       , tendered: fromDiscrete' (Discrete tendered)
-      , change: fromDiscrete' (Discrete (max 0 (tendered - amount)))
+      , change: fromDiscrete' (Discrete change)
       , reference: reference
       , approved: true
       , authorizationCode: Nothing
       }
 
-  -- Send payment to the backend
   API.addPaymentTransaction payment
 
--- Remove a payment transaction
 removePaymentTransaction :: UUID -> Aff (Either String Unit)
-removePaymentTransaction = API.removePaymentTransaction
+removePaymentTransaction paymentId = do
+  liftEffect $ Console.log $ "Removing payment transaction: " <> show paymentId
+  API.removePaymentTransaction paymentId
 
--- Finalize a transaction
 finalizeTransaction :: UUID -> Aff (Either String Transaction)
-finalizeTransaction = API.finalizeTransaction
-
--- Get a transaction by ID
-getTransaction :: UUID -> Aff (Either String Transaction)
-getTransaction = API.getTransaction
+finalizeTransaction transactionId = do
+  liftEffect $ Console.log $ "Finalizing transaction: " <> show transactionId
+  API.finalizeTransaction transactionId

@@ -591,7 +591,6 @@ calculateTaxes amount menuItem =
     if cannabisTaxAmount > Discrete 0 then [ salesTax, cannabisTax ]
     else [ salesTax ]
 
-
 processRefund
   :: { id :: UUID }
   -> Array UUID
@@ -708,7 +707,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
     pure $ Right (Transaction refundTransaction)
   where
 
-  contains :: Array UUID -> UUID -> Boolean  -- Fixed: Removed unused type variable
+  contains :: Array UUID -> UUID -> Boolean -- Fixed: Removed unused type variable
   contains ids targetId =
     case Array.uncons ids of
       Nothing -> false
@@ -741,8 +740,8 @@ dummyTransactionId = UUID "84bb27ce-c438-4c62-b73d-a72999c50911"
 dummyEmployeeId :: UUID
 dummyEmployeeId = UUID "bc36a386-03eb-442b-b607-b7212346577d"
 
-dummyRegisterId :: UUID  -- Fixed capitalization of 'R'
+dummyRegisterId :: UUID -- Fixed capitalization of 'R'
 dummyRegisterId = UUID "91123908-92d8-4bb6-bc3c-c369378f74ff"
 
-dummyLocationId :: UUID  -- Added this new dummy ID
+dummyLocationId :: UUID -- Added this new dummy ID
 dummyLocationId = UUID "e5f1b94d-7b7c-4a55-8d64-5ac12542a2a8"

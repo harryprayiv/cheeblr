@@ -25,9 +25,11 @@ import MenuLiveView (createMenuLiveView)
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
+import Services.TransactionService (startTransaction)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
 import UI.Transaction.CreateTransaction (createTransaction)
 import UI.Transaction.LiveCart (liveCart)
+
 import Utils.UUIDGen (genUUID)
 
 testItemUUID :: String
@@ -215,28 +217,74 @@ main = do
           loadingState.push true
           errorState.push ""
 
-          currentRoute.push $ Tuple r (createTransaction inventoryState.poll)
 
-          launchAff_ do
-            result <- fetchInventory defaultViewConfig.fetchConfig
-              defaultViewConfig.mode
+          transactionState <- liftST Poll.create
 
-            liftEffect $ case result of
-              Left err -> do
-                Console.error $ "Error fetching inventory: " <> err
-                loadingState.push false
-                errorState.push $ "Error: " <> err
 
-              Right (InventoryData inv) -> do
-                Console.log $
-                  "Loaded inventory successfully for CreateTransaction"
-                inventoryState.push inv
-                loadingState.push false
+          void $ launchAff_ do
 
-              Right (Message msg) -> do
-                Console.log $ "Received message: " <> msg
-                loadingState.push false
-                errorState.push msg
+            employeeId <- liftEffect genUUID
+            locationId <- liftEffect genUUID
+
+
+            registerResult <- liftEffect $ do
+
+
+              registerId <- genUUID
+              pure $ Right { registerId, registerLocationId: locationId }
+
+            case registerResult of
+              Left regErr ->
+                liftEffect $ do
+                  Console.error $ "Failed to get register: " <> regErr
+                  loadingState.push false
+                  errorState.push $ "Error: " <> regErr
+
+                  currentRoute.push $ Tuple r (renderError $ "Failed to initialize register: " <> regErr)
+
+              Right register -> do
+
+                txResult <- startTransaction
+                  { employeeId: employeeId
+                  , registerId: register.registerId
+                  , locationId: register.registerLocationId
+                  }
+
+                liftEffect $ case txResult of
+                  Left txErr -> do
+
+                    Console.error $ "Failed to create transaction: " <> txErr
+                    loadingState.push false
+                    errorState.push $ "Error: " <> txErr
+
+                    currentRoute.push $ Tuple r (renderError $ "Failed to initialize transaction: " <> txErr)
+
+                  Right transaction -> do
+
+                    -- Console.log $ "Transaction initialized with ID: " <> show (transactionId transaction)
+
+                    transactionState.push transaction
+
+                    currentRoute.push $ Tuple r (createTransaction inventoryState.poll transactionState.poll)
+
+
+                    launchAff_ do
+                      invResult <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
+                      liftEffect $ case invResult of
+                        Left err -> do
+                          Console.error $ "Error fetching inventory: " <> err
+                          loadingState.push false
+                          errorState.push $ "Error: " <> err
+
+                        Right (InventoryData inv) -> do
+                          Console.log $ "Loaded inventory successfully for CreateTransaction"
+                          inventoryState.push inv
+                          loadingState.push false
+
+                        Right (Message msg) -> do
+                          Console.log $ "Received message: " <> msg
+                          loadingState.push false
+                          errorState.push msg
 
         TransactionHistory -> do
           Console.log "Navigating to Transaction History page"
