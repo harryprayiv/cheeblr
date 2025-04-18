@@ -30,6 +30,7 @@ common shared-properties
                 , uuid
                 , time
                 , mtl
+                , split
                 , scientific
                 , vector
                 , resource-pool

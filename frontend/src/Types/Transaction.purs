@@ -50,23 +50,29 @@ derive instance eqTransactionStatus :: Eq TransactionStatus
 derive instance ordTransactionStatus :: Ord TransactionStatus
 
 instance showTransactionStatus :: Show TransactionStatus where
-  show Created = "Created"
-  show InProgress = "In Progress"
-  show Completed = "Completed"
-  show Voided = "Voided"
-  show Refunded = "Refunded"
+  show Created = "CREATED"
+  show InProgress = "IN_PROGRESS"
+  show Completed = "COMPLETED"
+  show Voided = "VOIDED"
+  show Refunded = "REFUNDED"
 
 instance writeForeignTransactionStatus :: WriteForeign TransactionStatus where
-  writeImpl Created = writeImpl "CREATED"
-  writeImpl InProgress = writeImpl "IN_PROGRESS"
-  writeImpl Completed = writeImpl "COMPLETED"
-  writeImpl Voided = writeImpl "VOIDED"
-  writeImpl Refunded = writeImpl "REFUNDED"
+  writeImpl Created = writeImpl "Created"
+  writeImpl InProgress = writeImpl "InProgress"
+  writeImpl Completed = writeImpl "Completed"
+  writeImpl Voided = writeImpl "Voided"
+  writeImpl Refunded = writeImpl "Refunded"
 
 instance readForeignTransactionStatus :: ReadForeign TransactionStatus where
   readImpl f = do
     status <- readImpl f
     case status of
+      "Created" -> pure Created
+      "InProgress" -> pure InProgress
+      "Completed" -> pure Completed
+      "Voided" -> pure Voided
+      "Refunded" -> pure Refunded
+      -- backward compatibility with uppercase format
       "CREATED" -> pure Created
       "IN_PROGRESS" -> pure InProgress
       "COMPLETED" -> pure Completed
@@ -98,14 +104,14 @@ instance showPaymentMethod :: Show PaymentMethod where
   show (Other s) = "Other: " <> s
 
 instance writeForeignPaymentMethod :: WriteForeign PaymentMethod where
-  writeImpl Cash = writeImpl "CASH"
-  writeImpl Debit = writeImpl "DEBIT"
-  writeImpl Credit = writeImpl "CREDIT"
-  writeImpl ACH = writeImpl "ACH"
-  writeImpl GiftCard = writeImpl "GIFT_CARD"
-  writeImpl StoredValue = writeImpl "STORED_VALUE"
-  writeImpl Mixed = writeImpl "MIXED"
-  writeImpl (Other s) = writeImpl ("OTHER:" <> s)
+  writeImpl Cash = writeImpl "Cash"
+  writeImpl Debit = writeImpl "Debit"
+  writeImpl Credit = writeImpl "Credit"
+  writeImpl ACH = writeImpl "ACH"  -- This one might stay uppercase as an acronym
+  writeImpl GiftCard = writeImpl "GiftCard"
+  writeImpl StoredValue = writeImpl "StoredValue"
+  writeImpl Mixed = writeImpl "Mixed"
+  writeImpl (Other s) = writeImpl ("Other:" <> s)
 
 instance readForeignPaymentMethod :: ReadForeign PaymentMethod where
   readImpl f = do
@@ -180,12 +186,12 @@ derive instance eqTaxCategory :: Eq TaxCategory
 derive instance ordTaxCategory :: Ord TaxCategory
 
 instance writeForeignTaxCategory :: WriteForeign TaxCategory where
-  writeImpl RegularSalesTax = writeImpl "REGULAR_SALES_TAX"
-  writeImpl ExciseTax = writeImpl "EXCISE_TAX"
-  writeImpl CannabisTax = writeImpl "CANNABIS_TAX"
-  writeImpl LocalTax = writeImpl "LOCAL_TAX"
-  writeImpl MedicalTax = writeImpl "MEDICAL_TAX"
-  writeImpl NoTax = writeImpl "NO_TAX"
+  writeImpl RegularSalesTax = writeImpl "RegularSalesTax"
+  writeImpl ExciseTax = writeImpl "ExciseTax"
+  writeImpl CannabisTax = writeImpl "CannabisTax"
+  writeImpl LocalTax = writeImpl "LocalTax"
+  writeImpl MedicalTax = writeImpl "MedicalTax"
+  writeImpl NoTax = writeImpl "NoTax"
 
 instance readForeignTaxCategory :: ReadForeign TaxCategory where
   readImpl f = do
@@ -265,27 +271,27 @@ type CartTotals =
   }
 
 newtype Transaction = Transaction
-  { id :: UUID
-  , status :: TransactionStatus
-  , created :: DateTime
-  , completed :: Maybe DateTime
-  , customer :: Maybe UUID
-  , employee :: UUID
-  , register :: UUID
-  , location :: UUID
-  , items :: Array TransactionItem
-  , payments :: Array PaymentTransaction
-  , subtotal :: DiscreteMoney USD
-  , discountTotal :: DiscreteMoney USD
-  , taxTotal :: DiscreteMoney USD
-  , total :: DiscreteMoney USD
+  { transactionId :: UUID
+  , transactionStatus :: TransactionStatus
+  , transactionCreated :: DateTime
+  , transactionCompleted :: Maybe DateTime
+  , transactionCustomerId :: Maybe UUID
+  , transactionEmployeeId :: UUID
+  , transactionRegisterId :: UUID
+  , transactionLocationId :: UUID
+  , transactionItems :: Array TransactionItem
+  , transactionPayments :: Array PaymentTransaction
+  , transactionSubtotal :: DiscreteMoney USD
+  , transactionDiscountTotal :: DiscreteMoney USD
+  , transactionTaxTotal :: DiscreteMoney USD
+  , transactionTotal :: DiscreteMoney USD
   , transactionType :: TransactionType
-  , isVoided :: Boolean
-  , voidReason :: Maybe String
-  , isRefunded :: Boolean
-  , refundReason :: Maybe String
-  , referenceTransactionId :: Maybe UUID
-  , notes :: Maybe String
+  , transactionIsVoided :: Boolean
+  , transactionVoidReason :: Maybe String
+  , transactionIsRefunded :: Boolean
+  , transactionRefundReason :: Maybe String
+  , transactionReferenceTransactionId :: Maybe UUID
+  , transactionNotes :: Maybe String
   }
 
 derive instance newtypeTransaction :: Newtype Transaction _
@@ -294,27 +300,27 @@ derive instance ordTransaction :: Ord Transaction
 
 instance writeForeignTransaction :: WriteForeign Transaction where
   writeImpl (Transaction tx) = writeImpl
-    { id: tx.id
-    , status: tx.status
-    , created: tx.created
-    , completed: tx.completed
-    , customer: tx.customer
-    , employee: tx.employee
-    , register: tx.register
-    , location: tx.location
-    , items: tx.items
-    , payments: tx.payments
-    , subtotal: tx.subtotal
-    , discountTotal: tx.discountTotal
-    , taxTotal: tx.taxTotal
-    , total: tx.total
+    { transactionId: tx.transactionId
+    , transactionStatus: tx.transactionStatus
+    , transactionCreated: tx.transactionCreated
+    , transactionCompleted: tx.transactionCompleted
+    , transactionCustomerId: tx.transactionCustomerId
+    , transactionEmployeeId: tx.transactionEmployeeId
+    , transactionRegisterId: tx.transactionRegisterId
+    , transactionLocationId: tx.transactionLocationId
+    , transactionItems: tx.transactionItems
+    , transactionPayments: tx.transactionPayments
+    , transactionSubtotal: tx.transactionSubtotal
+    , transactionDiscountTotal: tx.transactionDiscountTotal
+    , transactionTaxTotal: tx.transactionTaxTotal
+    , transactionTotal: tx.transactionTotal
     , transactionType: tx.transactionType
-    , isVoided: tx.isVoided
-    , voidReason: tx.voidReason
-    , isRefunded: tx.isRefunded
-    , refundReason: tx.refundReason
-    , referenceTransactionId: tx.referenceTransactionId
-    , notes: tx.notes
+    , transactionIsVoided: tx.transactionIsVoided
+    , transactionVoidReason: tx.transactionVoidReason
+    , transactionIsRefunded: tx.transactionIsRefunded
+    , transactionRefundReason: tx.transactionRefundReason
+    , transactionReferenceTransactionId: tx.transactionReferenceTransactionId
+    , transactionNotes: tx.transactionNotes
     }
 
 instance readForeignTransaction :: ReadForeign Transaction where
@@ -340,17 +346,24 @@ instance showTransactionType :: Show TransactionType where
   show Administrative = "Administrative"
 
 instance writeForeignTransactionType :: WriteForeign TransactionType where
-  writeImpl Sale = writeImpl "SALE"
-  writeImpl Return = writeImpl "RETURN"
-  writeImpl Exchange = writeImpl "EXCHANGE"
-  writeImpl InventoryAdjustment = writeImpl "INVENTORY_ADJUSTMENT"
-  writeImpl ManagerComp = writeImpl "MANAGER_COMP"
-  writeImpl Administrative = writeImpl "ADMINISTRATIVE"
+  writeImpl Sale = writeImpl "Sale"
+  writeImpl Return = writeImpl "Return" 
+  writeImpl Exchange = writeImpl "Exchange"
+  writeImpl InventoryAdjustment = writeImpl "InventoryAdjustment"
+  writeImpl ManagerComp = writeImpl "ManagerComp"
+  writeImpl Administrative = writeImpl "Administrative"
 
 instance readForeignTransactionType :: ReadForeign TransactionType where
   readImpl f = do
     txType <- readImpl f
     case txType of
+      "Sale" -> pure Sale
+      "Return" -> pure Return
+      "Exchange" -> pure Exchange
+      "InventoryAdjustment" -> pure InventoryAdjustment
+      "ManagerComp" -> pure ManagerComp
+      "Administrative" -> pure Administrative
+      -- For backward compatibility
       "SALE" -> pure Sale
       "RETURN" -> pure Return
       "EXCHANGE" -> pure Exchange
@@ -404,14 +417,14 @@ instance showLedgerEntryType :: Show LedgerEntryType where
   show Fee = "Fee"
 
 instance writeForeignLedgerEntryType :: WriteForeign LedgerEntryType where
-  writeImpl SaleEntry = writeImpl "SALE"
-  writeImpl Tax = writeImpl "TAX"
-  writeImpl Discount = writeImpl "DISCOUNT"
-  writeImpl Payment = writeImpl "PAYMENT"
-  writeImpl Refund = writeImpl "REFUND"
-  writeImpl Void = writeImpl "VOID"
-  writeImpl Adjustment = writeImpl "ADJUSTMENT"
-  writeImpl Fee = writeImpl "FEE"
+  writeImpl SaleEntry = writeImpl "SaleEntry"
+  writeImpl Tax = writeImpl "Tax"
+  writeImpl Discount = writeImpl "Discount"
+  writeImpl Payment = writeImpl "Payment"
+  writeImpl Refund = writeImpl "Refund"
+  writeImpl Void = writeImpl "Void"
+  writeImpl Adjustment = writeImpl "Adjustment"
+  writeImpl Fee = writeImpl "Fee"
 
 instance readForeignLedgerEntryType :: ReadForeign LedgerEntryType where
   readImpl f = do
@@ -445,11 +458,11 @@ instance showAccountType :: Show AccountType where
   show Expense = "Expense"
 
 instance writeForeignAccountType :: WriteForeign AccountType where
-  writeImpl Asset = writeImpl "ASSET"
-  writeImpl Liability = writeImpl "LIABILITY"
-  writeImpl Equity = writeImpl "EQUITY"
-  writeImpl Revenue = writeImpl "REVENUE"
-  writeImpl Expense = writeImpl "EXPENSE"
+  writeImpl Asset = writeImpl "Asset"
+  writeImpl Liability = writeImpl "Liability"
+  writeImpl Equity = writeImpl "Equity"
+  writeImpl Revenue = writeImpl "Revenue"
+  writeImpl Expense = writeImpl "Expense"
 
 instance readForeignAccountType :: ReadForeign AccountType where
   readImpl f = do
@@ -483,11 +496,11 @@ instance readForeignAccount :: ReadForeign Account where
 
 instance showTransaction :: Show Transaction where
   show (Transaction t) =
-    "Transaction { id: " <> show t.id
+    "Transaction { id: " <> show t.transactionId
       <> ", total: "
-      <> show t.total
+      <> show t.transactionTotal
       <> ", status: "
-      <> show t.status
+      <> show t.transactionStatus
       <> " }"
 
 instance showTransactionItem :: Show TransactionItem where

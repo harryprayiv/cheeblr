@@ -32,39 +32,38 @@ startTransaction params = do
     <> "\nregisterId: " <> show params.registerId
     <> "\nlocationId: " <> show params.locationId
 
-  let
-    -- Convert integers to DiscreteMoney USD using fromDiscrete'
-    zeroMoney = fromDiscrete' (Discrete 0)
-    
-    transaction = Transaction
-      { id: transactionId
-      , status: Created
-      , created: timestamp
-      , completed: Nothing
-      , customer: Nothing
-      , employee: params.employeeId
-      , register: params.registerId
-      , location: params.locationId
-      , items: []
-      , payments: []
-      , subtotal: zeroMoney       
-      , discountTotal: zeroMoney  
-      , taxTotal: zeroMoney       
-      , total: zeroMoney
-      , transactionType: Sale
-      , isVoided: false
-      , voidReason: Nothing
-      , isRefunded: false
-      , refundReason: Nothing
-      , referenceTransactionId: Nothing
-      , notes: Nothing
-      }
+  let zeroMoney = fromDiscrete' (Discrete 0)
+
+  -- Create transaction with the Transaction constructor to match Haskell backend
+  let transaction = Transaction
+        { transactionId: transactionId
+        , transactionStatus: Created
+        , transactionCreated: timestamp
+        , transactionCompleted: Nothing
+        , transactionCustomerId: Nothing
+        , transactionEmployeeId: params.employeeId
+        , transactionRegisterId: params.registerId
+        , transactionLocationId: params.locationId
+        , transactionItems: []
+        , transactionPayments: []
+        , transactionSubtotal: zeroMoney
+        , transactionDiscountTotal: zeroMoney
+        , transactionTaxTotal: zeroMoney
+        , transactionTotal: zeroMoney
+        , transactionType: Sale
+        , transactionIsVoided: false
+        , transactionVoidReason: Nothing
+        , transactionIsRefunded: false
+        , transactionRefundReason: Nothing
+        , transactionReferenceTransactionId: Nothing
+        , transactionNotes: Nothing
+        }
 
   liftEffect $ Console.log "About to call API.createTransaction"
   result <- API.createTransaction transaction
 
   liftEffect $ case result of
-    Right tx -> Console.log $ "Transaction created successfully with ID: " <> show (unwrap tx).id
+    Right tx -> Console.log $ "Transaction created successfully with ID: " <> show (unwrap tx).transactionId
     Left err -> Console.error $ "Failed to create transaction: " <> err
 
   pure result
@@ -93,19 +92,15 @@ createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
     quantityAsInt = floor quantity
     salesTaxRate = 0.08
     
-    -- Calculate subtotal
     subtotalInt = pricePerUnit * quantityAsInt
     subtotalMoney = fromDiscrete' (Discrete subtotalInt)
     
-    -- Calculate tax
     taxAmountInt = floor (toNumber subtotalInt * salesTaxRate)
     taxMoney = fromDiscrete' (Discrete taxAmountInt)
     
-    -- Calculate total
     totalInt = subtotalInt + taxAmountInt
     totalMoney = fromDiscrete' (Discrete totalInt)
     
-    -- Create tax record
     salesTax =
       { category: RegularSalesTax
       , rate: salesTaxRate
@@ -113,7 +108,6 @@ createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
       , description: "Sales Tax"
       }
     
-    -- Create transaction item
     transactionItem = TransactionItem
       { id: itemId
       , transactionId: transactionId

@@ -282,27 +282,27 @@ instance FromJSON InventoryStatus
 instance FromRow Transaction where
   fromRow =
     Transaction
-      <$> field  -- transactionId
-      <*> (read <$> field) -- transactionStatus
-      <*> field  -- transactionCreated
-      <*> field  -- transactionCompleted
-      <*> field  -- transactionCustomerId
-      <*> field  -- transactionEmployeeId
-      <*> field  -- transactionRegisterId
-      <*> field  -- transactionLocationId
-      <*> pure [] -- transactionItems (populated later)
-      <*> pure [] -- transactionPayments (populated later)
-      <*> field  -- transactionSubtotal
-      <*> field  -- transactionDiscountTotal
-      <*> field  -- transactionTaxTotal
-      <*> field  -- transactionTotal
-      <*> (read <$> field) -- transactionType
-      <*> field  -- transactionIsVoided
-      <*> field  -- transactionVoidReason
-      <*> field  -- transactionIsRefunded
-      <*> field  -- transactionRefundReason
-      <*> field  -- transactionReferenceTransactionId
-      <*> field  -- transactionNotes
+      <$> field
+      <*> (parseTransactionStatus <$> field)
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> pure []
+      <*> pure []
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> (parseTransactionType <$> field)
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
 
 -- FromRow instance for TransactionItem
 instance FromRow TransactionItem where
@@ -360,3 +360,20 @@ instance FromRow PaymentTransaction where
       <*> field  -- paymentReference
       <*> field  -- paymentApproved
       <*> field  -- paymentAuthorizationCode
+
+parseTransactionStatus :: String -> TransactionStatus
+parseTransactionStatus "CREATED" = Created
+parseTransactionStatus "IN_PROGRESS" = InProgress
+parseTransactionStatus "COMPLETED" = Completed
+parseTransactionStatus "VOIDED" = Voided
+parseTransactionStatus "REFUNDED" = Refunded
+parseTransactionStatus s = error $ "Invalid transaction status: " ++ s
+
+parseTransactionType :: String -> TransactionType
+parseTransactionType "SALE" = Sale
+parseTransactionType "RETURN" = Return
+parseTransactionType "EXCHANGE" = Exchange
+parseTransactionType "INVENTORY_ADJUSTMENT" = InventoryAdjustment
+parseTransactionType "MANAGER_COMP" = ManagerComp
+parseTransactionType "ADMINISTRATIVE" = Administrative
+parseTransactionType s = error $ "Invalid transaction type: " ++ s

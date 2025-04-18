@@ -68,22 +68,22 @@ calculateTotalPayments payments =
 
 paymentsCoversTotal :: Array PaymentTransaction -> Transaction -> Boolean
 paymentsCoversTotal payments (Transaction tx) =
-  calculateTotalPayments payments >= toDiscrete tx.total
+  calculateTotalPayments payments >= toDiscrete tx.transactionTotal
 
 getRemainingBalance :: Array PaymentTransaction -> Transaction -> Discrete USD
 getRemainingBalance payments (Transaction tx) =
-  max (Discrete 0) (toDiscrete tx.total - calculateTotalPayments payments)
+  max (Discrete 0) (toDiscrete tx.transactionTotal - calculateTotalPayments payments)
 
 getTransactionItems :: Transaction -> Array TransactionItem
-getTransactionItems (Transaction tx) = tx.items
+getTransactionItems (Transaction tx) = tx.transactionItems
 
 updateTransactionData
   :: Transaction
   -> (Transaction -> Effect Unit)
   -> Aff Unit
 updateTransactionData (Transaction tx) setTransaction = do
-  liftEffect $ Console.log $ "Updating transaction data for ID: " <> show tx.id
-  result <- getTransaction tx.id
+  liftEffect $ Console.log $ "Updating transaction data for ID: " <> show tx.transactionId
+  result <- getTransaction tx.transactionId
   liftEffect $ case result of
     Right updatedTx -> do
       Console.log "Successfully fetched updated transaction data"

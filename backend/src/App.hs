@@ -3,13 +3,14 @@ module App where
 import API.Inventory (api)
 import DB.Database (initializeDB, createTables, DBConfig(..))
 import DB.Transaction (createTransactionTables)
-import Network.HTTP.Types.Header
-import Network.HTTP.Types.Method
 import qualified Network.Wai.Handler.Warp as Warp
-import Network.Wai.Middleware.Cors
 import Servant
 import Server (combinedServer)
 import System.Posix.User (getLoginName)
+import Network.HTTP.Types.Header (hContentType, hAccept, hAuthorization, hOrigin, hContentLength)
+import Network.HTTP.Types.Method (methodGet, methodPost, methodPut, methodDelete, methodOptions)
+import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy, CorsResourcePolicy(..), cors)
+import qualified Data.ByteString.Char8 as B8
 
 data AppConfig = AppConfig
   { dbConfig :: DBConfig
@@ -46,16 +47,13 @@ run = do
   putStrLn "=================================="
 
   let
-    corsPolicy =
-      CorsResourcePolicy
-        { corsOrigins = Nothing
-        , corsMethods = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
+    corsPolicy = simpleCorsResourcePolicy
+        { corsOrigins = Just ([B8.pack "http://localhost:5173", B8.pack "http://localhost:5174"], True)
         , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength]
-        , corsExposedHeaders = Nothing
+        , corsMethods = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
         , corsMaxAge = Just 3600
-        , corsVaryOrigin = False
-        , corsRequireOrigin = False
-        , corsIgnoreFailures = False
+        , corsVaryOrigin = True
+        , corsExposedHeaders = Just [hContentType]
         }
 
     app = cors (const $ Just corsPolicy) $ serve api (combinedServer pool)

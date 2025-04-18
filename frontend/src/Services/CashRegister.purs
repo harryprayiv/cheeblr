@@ -23,6 +23,24 @@ import Types.UUID (UUID(..))
 import Utils.Formatting (uuidToString)
 import Utils.UUIDGen (genUUID)
 
+dummyAccountId :: UUID
+dummyAccountId = UUID "5d4c879c-fc9b-4635-9737-11391094fede"
+
+dummyPaymentId :: UUID
+dummyPaymentId = UUID "62e29012-d735-41f8-bec3-36c4834588cf"
+
+dummyTransactionId :: UUID
+dummyTransactionId = UUID "88dc4fbb-7aa5-417c-aae6-d18bc71b9e2f"
+
+dummyEmployeeId :: UUID
+dummyEmployeeId = UUID "8b3ae5bf-9c21-41c0-8554-1292f0827455"
+
+dummyRegisterId :: UUID 
+dummyRegisterId = UUID "f046b434-c7f1-44cd-9946-fe047fd20ac6"
+
+dummyLocationId :: UUID 
+dummyLocationId = UUID "b2bd4b3a-d50f-4c04-90b1-01266735876b"
+
 data RegisterError
   = InvalidTransaction
   | PaymentRequired
@@ -313,7 +331,6 @@ finalizeTransaction builder = do
     liftEffect $ log "Cannot finalize transaction with no items"
     pure $ Left InvalidTransaction
   else do
-    -- Get the total payments using PaymentTransaction directly
     let
       totalPayments = foldl
         ( \acc payment ->
@@ -355,27 +372,27 @@ finalizeTransaction builder = do
           builder.payments
 
         transaction = Transaction
-          { id: transactionId
-          , status: Completed
-          , created: timestamp
-          , completed: Just timestamp
-          , customer: builder.customer
-          , employee: builder.employee
-          , register: builder.register
-          , location: builder.location
-          , items: updatedItems
-          , payments: updatedPayments
-          , subtotal: fromDiscrete' builder.subtotal
-          , discountTotal: fromDiscrete' discountTotal
-          , taxTotal: fromDiscrete' builder.taxTotal
-          , total: fromDiscrete' builder.total
+          { transactionId: transactionId
+          , transactionStatus: Completed
+          , transactionCreated: timestamp
+          , transactionCompleted: Just timestamp
+          , transactionCustomerId: builder.customer
+          , transactionEmployeeId: builder.employee
+          , transactionRegisterId: builder.register
+          , transactionLocationId: builder.location
+          , transactionItems: updatedItems
+          , transactionPayments: updatedPayments
+          , transactionSubtotal: fromDiscrete' builder.subtotal
+          , transactionDiscountTotal: fromDiscrete' discountTotal
+          , transactionTaxTotal: fromDiscrete' builder.taxTotal
+          , transactionTotal: fromDiscrete' builder.total
           , transactionType: Sale
-          , isVoided: false
-          , voidReason: Nothing
-          , isRefunded: false
-          , refundReason: Nothing
-          , referenceTransactionId: Nothing
-          , notes: builder.notes
+          , transactionIsVoided: false
+          , transactionVoidReason: Nothing
+          , transactionIsRefunded: false
+          , transactionRefundReason: Nothing
+          , transactionReferenceTransactionId: Nothing
+          , transactionNotes: builder.notes
           }
 
       liftEffect $ log $ "Transaction finalized: " <> uuidToString transactionId
@@ -394,40 +411,40 @@ generateReceipt transaction =
         <> "        CANNABIS DISPENSARY        \n"
         <> "===================================\n"
         <> "Transaction: "
-        <> uuidToString txData.id
+        <> uuidToString txData.transactionId
         <> "\n"
         <> "Date: "
-        <> show txData.created
+        <> show txData.transactionCreated
         <> "\n"
         <>
           "\n"
 
     itemLines = foldl (\acc item -> acc <> formatTransactionItem item) ""
-      txData.items
+      txData.transactionItems
 
     subtotalLine =
       "\n"
         <> "Subtotal:         "
-        <> formatDiscrete numeric (toDiscrete txData.subtotal)
+        <> formatDiscrete numeric (toDiscrete txData.transactionSubtotal)
         <> "\n"
 
     discountLine =
-      if txData.discountTotal > (fromDiscrete' (Discrete 0)) then
+      if txData.transactionDiscountTotal > (fromDiscrete' (Discrete 0)) then
         "Discount:         -"
-          <> formatDiscrete numeric (toDiscrete txData.discountTotal)
+          <> formatDiscrete numeric (toDiscrete txData.transactionDiscountTotal)
           <> "\n"
       else ""
 
     taxLine = "Tax:              "
-      <> formatDiscrete numeric (toDiscrete txData.taxTotal)
+      <> formatDiscrete numeric (toDiscrete txData.transactionTaxTotal)
       <> "\n"
 
     totalLine =
-      "TOTAL:            " <> formatDiscrete numericC (toDiscrete txData.total)
+      "TOTAL:            " <> formatDiscrete numericC (toDiscrete txData.transactionTotal)
         <> "\n\n"
 
     paymentLines = foldl (\acc payment -> acc <> formatPayment payment) ""
-      txData.payments
+      txData.transactionPayments
 
     receiptFooter =
       "===================================\n"
@@ -439,6 +456,7 @@ generateReceipt transaction =
       <> totalLine
       <> paymentLines
       <> receiptFooter
+      
 
 formatTransactionItem :: TransactionItem -> String
 formatTransactionItem (TransactionItem item) =
@@ -609,34 +627,34 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
   let
     txData = unwrap
       ( Transaction
-          { id: txId
-          , status: Completed
-          , created: timestamp
-          , completed: Just timestamp
-          , customer: Nothing
-          , employee: dummyEmployeeId
-          , register: dummyRegisterId
-          , location: dummyLocationId
-          , items: []
-          , payments: []
-          , subtotal: fromDiscrete' (Discrete 0)
-          , discountTotal: fromDiscrete' (Discrete 0)
-          , taxTotal: fromDiscrete' (Discrete 0)
-          , total: fromDiscrete' (Discrete 0)
+          { transactionId: txId
+          , transactionStatus: Completed
+          , transactionCreated: timestamp
+          , transactionCompleted: Just timestamp
+          , transactionCustomerId: Nothing
+          , transactionEmployeeId: dummyEmployeeId
+          , transactionRegisterId: dummyRegisterId
+          , transactionLocationId: dummyLocationId
+          , transactionItems: []
+          , transactionPayments: []
+          , transactionSubtotal: fromDiscrete' (Discrete 0)
+          , transactionDiscountTotal: fromDiscrete' (Discrete 0)
+          , transactionTaxTotal: fromDiscrete' (Discrete 0)
+          , transactionTotal: fromDiscrete' (Discrete 0)
           , transactionType: Sale
-          , isVoided: false
-          , voidReason: Nothing
-          , isRefunded: false
-          , refundReason: Nothing
-          , referenceTransactionId: Nothing
-          , notes: Nothing
+          , transactionIsVoided: false
+          , transactionVoidReason: Nothing
+          , transactionIsRefunded: false
+          , transactionRefundReason: Nothing
+          , transactionReferenceTransactionId: Nothing
+          , transactionNotes: Nothing
           }
       )
 
-  if txData.isRefunded then do
+  if txData.transactionIsRefunded then do
     liftEffect $ log "Transaction has already been refunded"
     pure $ Left $ InternalError "Transaction has already been refunded"
-  else if txData.isVoided then do
+  else if txData.transactionIsVoided then do
     liftEffect $ log "Cannot refund a voided transaction"
     pure $ Left $ InternalError "Cannot refund a voided transaction"
   else do
@@ -646,9 +664,9 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
 
     let
       itemsToRefund =
-        if null itemIdsToRefund then txData.items
+        if null itemIdsToRefund then txData.transactionItems
         else filter (\item -> contains itemIdsToRefund (unwrap item).id)
-          txData.items
+          txData.transactionItems
 
       refundSubtotal = foldl
         (\acc item -> acc + (toDiscrete (unwrap item).subtotal))
@@ -676,27 +694,27 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
         }
 
       refundTransaction =
-        { id: refundId
-        , status: Completed
-        , created: timestamp
-        , completed: Just timestamp
-        , customer: txData.customer
-        , employee: employeeId
-        , register: txData.register
-        , location: txData.location
-        , items: map makeRefundItem itemsToRefund
-        , payments: [ PaymentTransaction refundPayment ]
-        , subtotal: fromDiscrete' (negate refundSubtotal)
-        , discountTotal: fromDiscrete' (Discrete 0)
-        , taxTotal: fromDiscrete' (negate refundTaxTotal)
-        , total: fromDiscrete' (negate refundTotal)
+        { transactionId: refundId
+        , transactionStatus: Completed
+        , transactionCreated: timestamp
+        , transactionCompleted: Just timestamp
+        , transactionCustomerId: txData.transactionCustomerId
+        , transactionEmployeeId: employeeId
+        , transactionRegisterId: txData.transactionRegisterId
+        , transactionLocationId: txData.transactionLocationId
+        , transactionItems: map makeRefundItem itemsToRefund
+        , transactionPayments: [ PaymentTransaction refundPayment ]
+        , transactionSubtotal: fromDiscrete' (negate refundSubtotal)
+        , transactionDiscountTotal: fromDiscrete' (Discrete 0)
+        , transactionTaxTotal: fromDiscrete' (negate refundTaxTotal)
+        , transactionTotal: fromDiscrete' (negate refundTotal)
         , transactionType: Return
-        , isVoided: false
-        , voidReason: Nothing
-        , isRefunded: false
-        , refundReason: Just reason
-        , referenceTransactionId: Just txId
-        , notes: Just $ "Refund for transaction " <> uuidToString
+        , transactionIsVoided: false
+        , transactionVoidReason: Nothing
+        , transactionIsRefunded: false
+        , transactionRefundReason: Just reason
+        , transactionReferenceTransactionId: Just txId
+        , transactionNotes: Just $ "Refund for transaction " <> uuidToString
             txId
         }
 
@@ -727,21 +745,3 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
           )
           item.taxes
       }
-
-dummyAccountId :: UUID
-dummyAccountId = UUID "a1c802dd-5651-4b2b-8242-d47ece4d7918"
-
-dummyPaymentId :: UUID
-dummyPaymentId = UUID "71bf2156-9234-46c8-b427-01d330cacb80"
-
-dummyTransactionId :: UUID
-dummyTransactionId = UUID "84bb27ce-c438-4c62-b73d-a72999c50911"
-
-dummyEmployeeId :: UUID
-dummyEmployeeId = UUID "bc36a386-03eb-442b-b607-b7212346577d"
-
-dummyRegisterId :: UUID -- Fixed capitalization of 'R'
-dummyRegisterId = UUID "91123908-92d8-4bb6-bc3c-c369378f74ff"
-
-dummyLocationId :: UUID -- Added this new dummy ID
-dummyLocationId = UUID "e5f1b94d-7b7c-4a55-8d64-5ac12542a2a8"

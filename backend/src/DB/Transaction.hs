@@ -254,77 +254,81 @@ getPaymentsByTransactionId conn transactionId = do
 
 createTransaction :: ConnectionPool -> Transaction -> IO Transaction
 createTransaction pool transaction = withConnection pool $ \conn -> do
+  -- First check if transaction already exists to prevent duplicate key errors
+  results <- query conn "SELECT 1 FROM transaction WHERE id = ?" (Only (transactionId transaction)) :: IO [Only Int]
+  
+  if not (null results)
+    then error $ "Transaction with ID " ++ show (transactionId transaction) ++ " already exists"
+    else do
+      let insert_str = [sql|
+          INSERT INTO transaction (
+            id,
+            status,
+            created,
+            completed,
+            customer_id,
+            employee_id,
+            register_id,
+            location_id,
+            subtotal,
+            discount_total,
+            tax_total,
+            total,
+            transaction_type,
+            is_voided,
+            void_reason,
+            is_refunded,
+            refund_reason,
+            reference_transaction_id,
+            notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          RETURNING
+            id,
+            status,
+            created,
+            completed,
+            customer_id,
+            employee_id,
+            register_id,
+            location_id,
+            subtotal,
+            discount_total,
+            tax_total,
+            total,
+            transaction_type,
+            is_voided,
+            void_reason,
+            is_refunded,
+            refund_reason,
+            reference_transaction_id,
+            notes
+        |]
 
-  let insert_str = [sql|
-      INSERT INTO transaction (
-        id, 
-        status, 
-        created, 
-        completed, 
-        customer_id, 
-        employee_id, 
-        register_id, 
-        location_id, 
-        subtotal, 
-        discount_total, 
-        tax_total, 
-        total, 
-        transaction_type, 
-        is_voided, 
-        void_reason, 
-        is_refunded, 
-        refund_reason, 
-        reference_transaction_id, 
-        notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING
-        id, 
-        status, 
-        created, 
-        completed, 
-        customer_id, 
-        employee_id, 
-        register_id, 
-        location_id, 
-        subtotal, 
-        discount_total, 
-        tax_total, 
-        total, 
-        transaction_type, 
-        is_voided, 
-        void_reason, 
-        is_refunded, 
-        refund_reason, 
-        reference_transaction_id, 
-        notes
-    |]
+      [newTransaction] <- Database.PostgreSQL.Simple.query conn insert_str (
+        transactionId transaction,
+        showStatus (transactionStatus transaction),
+        transactionCreated transaction,
+        transactionCompleted transaction,
+        transactionCustomerId transaction,
+        transactionEmployeeId transaction,
+        transactionRegisterId transaction,
+        transactionLocationId transaction,
+        transactionSubtotal transaction,
+        transactionDiscountTotal transaction,
+        transactionTaxTotal transaction,
+        transactionTotal transaction,
+        showTransactionType (transactionType transaction),
+        transactionIsVoided transaction,
+        transactionVoidReason transaction,
+        transactionIsRefunded transaction,
+        transactionRefundReason transaction,
+        transactionReferenceTransactionId transaction,
+        transactionNotes transaction
+       )
 
-  [newTransaction] <- Database.PostgreSQL.Simple.query conn insert_str (
-    transactionId transaction,
-    showStatus (transactionStatus transaction),
-    transactionCreated transaction,
-    transactionCompleted transaction,
-    transactionCustomerId transaction,
-    transactionEmployeeId transaction,
-    transactionRegisterId transaction,
-    transactionLocationId transaction,
-    transactionSubtotal transaction,
-    transactionDiscountTotal transaction,
-    transactionTaxTotal transaction,
-    transactionTotal transaction,
-    showTransactionType (transactionType transaction),
-    transactionIsVoided transaction,
-    transactionVoidReason transaction,
-    transactionIsRefunded transaction,
-    transactionRefundReason transaction,
-    transactionReferenceTransactionId transaction,
-    transactionNotes transaction
-   )
-
-  newItems <- mapM (insertTransactionItem conn) (transactionItems transaction)
-  newPayments <- mapM (insertPaymentTransaction conn) (transactionPayments transaction)
-  pure $ newTransaction { transactionItems = newItems, transactionPayments = newPayments }
-
+      newItems <- mapM (insertTransactionItem conn) (transactionItems transaction)
+      newPayments <- mapM (insertPaymentTransaction conn) (transactionPayments transaction)
+      pure $ newTransaction { transactionItems = newItems, transactionPayments = newPayments }
 
 -- | Insert a transaction item
 insertTransactionItem :: Database.PostgreSQL.Simple.Connection -> TransactionItem -> IO TransactionItem

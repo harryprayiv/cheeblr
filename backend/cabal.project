@@ -5,3 +5,18 @@ package postgresql-libpq
 
 package postgresql-simple
   flags: +use-pkg-config
+
+-- Add these repositories if needed
+-- repository head.hackage
+--   url: https://head.hackage.haskell.org/
+--   secure: True
+--   root-keys: ...
+--   key-threshold: 3
+
+package cheeblr-backend
+  flags: +use-pkg-config
+  ghc-options: -Wall
+               -Wcompat
+               -Wincomplete-record-updates
+               -Wincomplete-uni-patterns
+               -Wredundant-constraints
