@@ -217,74 +217,73 @@ main = do
           loadingState.push true
           errorState.push ""
 
-
           transactionState <- liftST Poll.create
 
-
           void $ launchAff_ do
-
-            employeeId <- liftEffect genUUID
-            locationId <- liftEffect genUUID
-
-
-            registerResult <- liftEffect $ do
-
-
-              registerId <- genUUID
-              pure $ Right { registerId, registerLocationId: locationId }
-
-            case registerResult of
-              Left regErr ->
-                liftEffect $ do
-                  Console.error $ "Failed to get register: " <> regErr
-                  loadingState.push false
-                  errorState.push $ "Error: " <> regErr
-
-                  currentRoute.push $ Tuple r (renderError $ "Failed to initialize register: " <> regErr)
-
-              Right register -> do
-
-                txResult <- startTransaction
-                  { employeeId: employeeId
-                  , registerId: register.registerId
-                  , locationId: register.registerLocationId
-                  }
-
-                liftEffect $ case txResult of
-                  Left txErr -> do
-
-                    Console.error $ "Failed to create transaction: " <> txErr
+            -- First, fetch inventory to ensure it's loaded
+            invResult <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
+            
+            liftEffect $ case invResult of
+              Left err -> do
+                Console.error $ "Error fetching inventory: " <> err
+                loadingState.push false
+                errorState.push $ "Error: " <> err
+              
+              Right (InventoryData inv) -> do
+                Console.log $ "Loaded inventory successfully for CreateTransaction"
+                inventoryState.push inv
+                
+                -- Generate the UUIDs we need
+                employeeId <- genUUID
+                locationId <- genUUID
+                registerId <- genUUID
+                
+                -- Create the register result with the Right wrapper (maintaining original pattern)
+                let registerResult = Right { 
+                      registerId, 
+                      registerLocationId: locationId,
+                      registerName: "Register #" <> show registerId,
+                      registerIsOpen: true,
+                      registerOpenedAt: Nothing,
+                      registerOpenedBy: Just employeeId,
+                      registerCurrentDrawerAmount: 0,
+                      registerExpectedDrawerAmount: 0,
+                      registerLastTransactionTime: Nothing
+                    }
+                
+                case registerResult of
+                  Left regErr -> do
+                    Console.error $ "Failed to get register: " <> regErr
                     loadingState.push false
-                    errorState.push $ "Error: " <> txErr
-
-                    currentRoute.push $ Tuple r (renderError $ "Failed to initialize transaction: " <> txErr)
-
-                  Right transaction -> do
-
-                    -- Console.log $ "Transaction initialized with ID: " <> show (transactionId transaction)
-
-                    transactionState.push transaction
-
-                    currentRoute.push $ Tuple r (createTransaction inventoryState.poll transactionState.poll)
-
-
+                    errorState.push $ "Error: " <> regErr
+                    currentRoute.push $ Tuple r (renderError $ "Failed to initialize register: " <> regErr)
+                  
+                  Right register -> do
+                    -- Now start the transaction (in Effect context because we're inside liftEffect)
                     launchAff_ do
-                      invResult <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
-                      liftEffect $ case invResult of
-                        Left err -> do
-                          Console.error $ "Error fetching inventory: " <> err
+                      txResult <- startTransaction
+                        { employeeId: employeeId
+                        , registerId: register.registerId
+                        , locationId: register.registerLocationId
+                        }
+                      
+                      liftEffect $ case txResult of
+                        Left txErr -> do
+                          Console.error $ "Failed to create transaction: " <> txErr
                           loadingState.push false
-                          errorState.push $ "Error: " <> err
-
-                        Right (InventoryData inv) -> do
-                          Console.log $ "Loaded inventory successfully for CreateTransaction"
-                          inventoryState.push inv
+                          errorState.push $ "Error: " <> txErr
+                          currentRoute.push $ Tuple r (renderError $ "Failed to initialize transaction: " <> txErr)
+                        
+                        Right transaction -> do
+                          -- Push transaction to state and update UI
+                          transactionState.push transaction
+                          currentRoute.push $ Tuple r (createTransaction inventoryState.poll transactionState.poll)
                           loadingState.push false
-
-                        Right (Message msg) -> do
-                          Console.log $ "Received message: " <> msg
-                          loadingState.push false
-                          errorState.push msg
+              
+              Right (Message msg) -> do
+                Console.log $ "Received message: " <> msg
+                loadingState.push false
+                errorState.push msg
 
         TransactionHistory -> do
           Console.log "Navigating to Transaction History page"

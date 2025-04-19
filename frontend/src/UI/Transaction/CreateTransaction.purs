@@ -263,7 +263,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                                                             , DA.disabled_ "true"
                                                             ]
                                                             [ text_ if record.quantity <= 0 then "Out of Stock"
-                                                                   else "Processing..." ]
+                                                                  else "Processing..." ]
                                                         else
                                                           D.div [ DA.klass_ "quantity-controls" ]
                                                             [ if currentQty > 0 then
@@ -277,7 +277,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                                                                     let transactionId = (unwrap transaction).transactionId
                                                                     addItemToCart
                                                                       menuItem
-                                                                      (qtyVal)
+                                                                      qtyVal
                                                                       cartItems
                                                                       transactionId
                                                                       setCartItems
@@ -490,7 +490,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                     , runOn DL.click $
                         ( \payAmt tenderedAmt method currPayments payRef authCode transaction -> do
                             case (Tuple (Number.fromString payAmt) transaction) of
-                              Tuple (Just amount) transaction -> do
+                              Tuple (Just amount) txn -> do
                                 let
                                   tenderedAmount = case Number.fromString tenderedAmt of
                                     Just t -> t
@@ -501,7 +501,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
 
                                 void $ launchAff_ do
                                   result <- TransactionService.addPayment
-                                    (unwrap transaction).transactionId
+                                    (unwrap txn).transactionId
                                     method
                                     amountInCents
                                     tenderedInCents
@@ -550,7 +550,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                                          , DA.disabled $ isProcessingValue <#> \isProcessing ->
                                              if isProcessing then "true" else ""
                                          , runOn DL.click $
-                                             (\currPayments transaction -> do
+                                             (\currPayments -> do
                                                 void $ launchAff_ do
                                                   result <- TransactionService.removePaymentTransaction p.id
                                                   liftEffect $ case result of
@@ -562,7 +562,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                                                       setStatusMessage "Payment removed"
                                                     Left err ->
                                                       setStatusMessage $ "Error removing payment: " <> err
-                                             ) <$> paymentsValue <*> transactionPoll
+                                             ) <$> paymentsValue
                                          ]
                                          [ text_ "✕" ]
                                      ]
@@ -577,7 +577,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
         [ D.button
             [ DA.klass_ "cancel-btn"
             , runOn DL.click $
-                (\transaction cartItems -> do
+                (\cartItems -> do
                    if null cartItems then do
                      setStatusMessage "No items to clear"
                    else do
@@ -585,7 +585,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                      setPayments []
                      setCartTotals emptyCartTotals
                      setStatusMessage "Transaction cleared"
-                ) <$> transactionPoll <*> cartItemsValue
+                ) <$> cartItemsValue
             ]
             [ text_ "Clear Items" ]
         , D.div
@@ -593,8 +593,6 @@ createTransaction inventoryPoll transactionPoll = Deku.do
             [ (Tuple <$> cartTotalsValue <*> paymentsValue) <#~>
                 \(Tuple totals payments) ->
                   let
-                    paymentTotal = calculateTotalPayments payments
-
                     dummyTransaction = Transaction {
                       transactionId: UUID "",
                       transactionStatus: InProgress,
@@ -606,10 +604,10 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                       transactionLocationId: UUID "",
                       transactionItems: [],
                       transactionPayments: [],
-                      transactionSubtotal: fromDiscrete' totals.subtotal,  -- Changed from unwrap to fromDiscrete'
+                      transactionSubtotal: fromDiscrete' totals.subtotal,
                       transactionDiscountTotal: fromDiscrete' (Discrete 0),
-                      transactionTaxTotal: fromDiscrete' totals.taxTotal,  -- Changed from unwrap to fromDiscrete'
-                      transactionTotal: fromDiscrete' totals.total,        -- Changed from unwrap to fromDiscrete'
+                      transactionTaxTotal: fromDiscrete' totals.taxTotal,
+                      transactionTotal: fromDiscrete' totals.total,
                       transactionType: Sale,
                       transactionIsVoided: false,
                       transactionVoidReason: Nothing,
@@ -644,7 +642,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                           transactionStatus: InProgress,
                           transactionCreated: bottom,
                           transactionCompleted: Nothing,
-                          transactionCustomerId: Nothing,  -- Changed from transactionCustomer
+                          transactionCustomerId: Nothing,
                           transactionEmployeeId: UUID "",
                           transactionRegisterId: UUID "",
                           transactionLocationId: UUID "",
@@ -654,7 +652,7 @@ createTransaction inventoryPoll transactionPoll = Deku.do
                           transactionDiscountTotal: fromDiscrete' (Discrete 0),
                           transactionTaxTotal: fromDiscrete' (totals.taxTotal),
                           transactionTotal: fromDiscrete' (totals.total),
-                          transactionType: Sale,  -- Changed from transactionTransactionType
+                          transactionType: Sale,
                           transactionIsVoided: false,
                           transactionVoidReason: Nothing,
                           transactionIsRefunded: false,
