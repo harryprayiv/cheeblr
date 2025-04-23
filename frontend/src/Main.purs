@@ -8,7 +8,7 @@ import Control.Monad.ST.Class (liftST)
 import CreateItem (createItem)
 import Data.Array (find, length)
 import Data.Either (Either(..))
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..), fst, snd)
 import Deku.Core (fixed, text_)
 import Deku.DOM as D
@@ -25,11 +25,11 @@ import MenuLiveView (createMenuLiveView)
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
+import Services.RegisterService as RegisterService
 import Services.TransactionService (startTransaction)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
 import UI.Transaction.CreateTransaction (createTransaction)
 import UI.Transaction.LiveCart (liveCart)
-
 import Utils.UUIDGen (genUUID)
 
 testItemUUID :: String
@@ -44,6 +44,17 @@ main = do
   inventoryState <- liftST Poll.create
   loadingState <- liftST Poll.create
   errorState <- liftST Poll.create
+  registerState <- liftST Poll.create
+  
+  RegisterService.initializeRegister
+    (\register -> do
+      Console.log "Register initialized at application startup"
+      registerState.push (Just register)
+    )
+    (\err -> do
+      Console.error $ "Failed to initialize register at startup: " <> err
+      registerState.push Nothing
+    )
 
   let
     menuLiveView = createMenuLiveView
@@ -219,71 +230,56 @@ main = do
 
           transactionState <- liftST Poll.create
 
-          void $ launchAff_ do
-            -- First, fetch inventory to ensure it's loaded
-            invResult <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
-            
-            liftEffect $ case invResult of
-              Left err -> do
-                Console.error $ "Error fetching inventory: " <> err
-                loadingState.push false
-                errorState.push $ "Error: " <> err
-              
-              Right (InventoryData inv) -> do
-                Console.log $ "Loaded inventory successfully for CreateTransaction"
-                inventoryState.push inv
-                
-                -- Generate the UUIDs we need
-                employeeId <- genUUID
-                locationId <- genUUID
-                registerId <- genUUID
-                
-                -- Create the register result with the Right wrapper (maintaining original pattern)
-                let registerResult = Right { 
-                      registerId, 
-                      registerLocationId: locationId,
-                      registerName: "Register #" <> show registerId,
-                      registerIsOpen: true,
-                      registerOpenedAt: Nothing,
-                      registerOpenedBy: Just employeeId,
-                      registerCurrentDrawerAmount: 0,
-                      registerExpectedDrawerAmount: 0,
-                      registerLastTransactionTime: Nothing
-                    }
-                
-                case registerResult of
-                  Left regErr -> do
-                    Console.error $ "Failed to get register: " <> regErr
+          RegisterService.initializeRegister  -- TODO: fix this.  We don't want to call init twice!
+            (\register -> do
+              -- Use register to create transaction in a new launchAff_ block
+              launchAff_ do
+                -- First fetch inventory
+                invResult <- fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
+
+                case invResult of
+                  Left err -> liftEffect do
+                    Console.error $ "Error fetching inventory: " <> err
                     loadingState.push false
-                    errorState.push $ "Error: " <> regErr
-                    currentRoute.push $ Tuple r (renderError $ "Failed to initialize register: " <> regErr)
-                  
-                  Right register -> do
-                    -- Now start the transaction (in Effect context because we're inside liftEffect)
-                    launchAff_ do
-                      txResult <- startTransaction
-                        { employeeId: employeeId
-                        , registerId: register.registerId
-                        , locationId: register.registerLocationId
-                        }
-                      
-                      liftEffect $ case txResult of
-                        Left txErr -> do
-                          Console.error $ "Failed to create transaction: " <> txErr
-                          loadingState.push false
-                          errorState.push $ "Error: " <> txErr
-                          currentRoute.push $ Tuple r (renderError $ "Failed to initialize transaction: " <> txErr)
+                    errorState.push $ "Error: " <> err
+
+                  Right (InventoryData inv) -> do
+                    -- Update inventory state
+                    liftEffect do
+                      Console.log $ "Loaded inventory successfully for CreateTransaction"
+                      inventoryState.push inv
+
+                    -- Then create transaction (still in Aff context)
+                    txResult <- startTransaction
+                      { employeeId: fromMaybe register.registerId register.registerOpenedBy
+                      , registerId: register.registerId
+                      , locationId: register.registerLocationId
+                      }
+
+                    -- Handle transaction result
+                    liftEffect case txResult of
+                      Left txErr -> do
+                        Console.error $ "Failed to create transaction: " <> txErr
+                        loadingState.push false
+                        errorState.push $ "Error: " <> txErr
+                        currentRoute.push $ Tuple r (renderError $ "Failed to initialize transaction: " <> txErr)
+
+                      Right transaction -> do
+                        transactionState.push transaction
+                        -- Pass the register directly to the component, not as a Poll
+                        currentRoute.push $ Tuple r (createTransaction inventoryState.poll transactionState.poll register)
+                        loadingState.push false
                         
-                        Right transaction -> do
-                          -- Push transaction to state and update UI
-                          transactionState.push transaction
-                          currentRoute.push $ Tuple r (createTransaction inventoryState.poll transactionState.poll)
-                          loadingState.push false
-              
-              Right (Message msg) -> do
-                Console.log $ "Received message: " <> msg
-                loadingState.push false
-                errorState.push msg
+                  Right (Message msg) -> liftEffect do
+                    Console.log $ "Received message: " <> msg
+                    loadingState.push false
+                    errorState.push msg
+            )
+            (\errMsg -> do
+              loadingState.push false
+              errorState.push $ "Error: " <> errMsg
+              currentRoute.push $ Tuple r (renderError $ "Failed to initialize register: " <> errMsg)
+            )
 
         TransactionHistory -> do
           Console.log "Navigating to Transaction History page"

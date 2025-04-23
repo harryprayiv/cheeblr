@@ -51,7 +51,7 @@ import API.Transaction (
     CloseRegisterResult(CloseRegisterResult, closeRegisterResultRegister, closeRegisterResultVariance)
   )
 import Data.Scientific (Scientific)
-import Control.Monad (void)
+import Control.Monad (void, when)
 
 type ConnectionPool = Pool Connection
 type DBAction a = Connection -> IO a
@@ -66,52 +66,195 @@ data InventoryReservation = InventoryReservation
   , reservationStatus :: Text
   } deriving (Show, Eq)
 
+-- This updated function creates all necessary tables for the transaction system
+-- Replace this function in DB/Transaction.hs
+
 createTransactionTables :: ConnectionPool -> IO ()
 createTransactionTables pool = withConnection pool $ \conn -> do
   hPutStrLn stderr "Creating transaction tables..."
-  do
-    results <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction'" :: IO [Only Int]
-    case results of
-      [] -> do
-        hPutStrLn stderr "Transaction tables not found, creating..."
-        void $ execute_ conn
-          [sql|
-            CREATE TABLE IF NOT EXISTS transaction (
-              id UUID PRIMARY KEY,
-              status TEXT NOT NULL,
-              created TIMESTAMP WITH TIME ZONE NOT NULL,
-              completed TIMESTAMP WITH TIME ZONE,
-              customer_id UUID,
-              employee_id UUID NOT NULL,
-              register_id UUID NOT NULL,
-              location_id UUID NOT NULL,
-              subtotal INTEGER NOT NULL,
-              discount_total INTEGER NOT NULL,
-              tax_total INTEGER NOT NULL,
-              total INTEGER NOT NULL,
-              transaction_type TEXT NOT NULL,
-              is_voided BOOLEAN NOT NULL DEFAULT FALSE,
-              void_reason TEXT,
-              is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
-              refund_reason TEXT,
-              reference_transaction_id UUID,
-              notes TEXT
-            )
-          |]
-        void $ execute_ conn
-          [sql|
-            CREATE TABLE IF NOT EXISTS inventory_reservation (
-              id UUID PRIMARY KEY,
-              item_sku UUID NOT NULL,
-              transaction_id UUID NOT NULL,
-              quantity INTEGER NOT NULL,
-              status TEXT NOT NULL,
-              created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-            )
-          |]
-      _ -> do
-        hPutStrLn stderr "Transaction tables already exist"
-        pure ()
+  
+  -- First, check and create the transaction table if needed
+  transactionTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction'" :: IO [Only Int]
+  when (null transactionTableResult) $ do
+    hPutStrLn stderr "Creating transaction table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS transaction (
+          id UUID PRIMARY KEY,
+          status TEXT NOT NULL,
+          created TIMESTAMP WITH TIME ZONE NOT NULL,
+          completed TIMESTAMP WITH TIME ZONE,
+          customer_id UUID,
+          employee_id UUID NOT NULL,
+          register_id UUID NOT NULL,
+          location_id UUID NOT NULL,
+          subtotal INTEGER NOT NULL,
+          discount_total INTEGER NOT NULL,
+          tax_total INTEGER NOT NULL,
+          total INTEGER NOT NULL,
+          transaction_type TEXT NOT NULL,
+          is_voided BOOLEAN NOT NULL DEFAULT FALSE,
+          void_reason TEXT,
+          is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
+          refund_reason TEXT,
+          reference_transaction_id UUID,
+          notes TEXT
+        )
+      |]
+
+  -- Check and create the register table if needed
+  registerTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'register'" :: IO [Only Int]
+  when (null registerTableResult) $ do
+    hPutStrLn stderr "Creating register table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS register (
+          id UUID PRIMARY KEY,
+          name TEXT NOT NULL,
+          location_id UUID NOT NULL,
+          is_open BOOLEAN NOT NULL DEFAULT FALSE,
+          current_drawer_amount INTEGER NOT NULL DEFAULT 0,
+          expected_drawer_amount INTEGER NOT NULL DEFAULT 0,
+          opened_at TIMESTAMP WITH TIME ZONE,
+          opened_by UUID,
+          last_transaction_time TIMESTAMP WITH TIME ZONE
+        )
+      |]
+
+  -- Check and create the inventory_reservation table if needed
+  reservationTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'inventory_reservation'" :: IO [Only Int]
+  when (null reservationTableResult) $ do
+    hPutStrLn stderr "Creating inventory_reservation table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS inventory_reservation (
+          id UUID PRIMARY KEY,
+          item_sku UUID NOT NULL,
+          transaction_id UUID NOT NULL,
+          quantity INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+        )
+      |]
+
+  -- Check and create the transaction_item table if needed
+  itemTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction_item'" :: IO [Only Int]
+  when (null itemTableResult) $ do
+    hPutStrLn stderr "Creating transaction_item table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS transaction_item (
+          id UUID PRIMARY KEY,
+          transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
+          menu_item_sku UUID NOT NULL,
+          quantity INTEGER NOT NULL,
+          price_per_unit INTEGER NOT NULL,
+          subtotal INTEGER NOT NULL,
+          total INTEGER NOT NULL
+        )
+      |]
+
+  -- Check and create the transaction_tax table if needed
+  taxTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction_tax'" :: IO [Only Int]
+  when (null taxTableResult) $ do
+    hPutStrLn stderr "Creating transaction_tax table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS transaction_tax (
+          id UUID PRIMARY KEY,
+          transaction_item_id UUID NOT NULL REFERENCES transaction_item(id) ON DELETE CASCADE,
+          category TEXT NOT NULL,
+          rate NUMERIC NOT NULL,
+          amount INTEGER NOT NULL,
+          description TEXT NOT NULL
+        )
+      |]
+
+  -- Check and create the discount table if needed
+  discountTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'discount'" :: IO [Only Int]
+  when (null discountTableResult) $ do
+    hPutStrLn stderr "Creating discount table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS discount (
+          id UUID PRIMARY KEY,
+          transaction_item_id UUID REFERENCES transaction_item(id) ON DELETE CASCADE,
+          transaction_id UUID REFERENCES transaction(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          percent NUMERIC,
+          reason TEXT NOT NULL,
+          approved_by UUID
+        )
+      |]
+
+  -- Check and create the payment_transaction table if needed
+  paymentTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'payment_transaction'" :: IO [Only Int]
+  when (null paymentTableResult) $ do
+    hPutStrLn stderr "Creating payment_transaction table..."
+    void $ execute_ conn
+      [sql|
+        CREATE TABLE IF NOT EXISTS payment_transaction (
+          id UUID PRIMARY KEY,
+          transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
+          method TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          tendered INTEGER NOT NULL,
+          change_amount INTEGER NOT NULL,
+          reference TEXT,
+          approved BOOLEAN NOT NULL DEFAULT FALSE,
+          authorization_code TEXT
+        )
+      |]
+
+  hPutStrLn stderr "Transaction tables setup completed."
+
+-- createTransactionTables :: ConnectionPool -> IO ()
+-- createTransactionTables pool = withConnection pool $ \conn -> do
+--   hPutStrLn stderr "Creating transaction tables..."
+--   do
+--     results <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction'" :: IO [Only Int]
+--     case results of
+--       [] -> do
+--         hPutStrLn stderr "Transaction tables not found, creating..."
+--         void $ execute_ conn
+--           [sql|
+--             CREATE TABLE IF NOT EXISTS transaction (
+--               id UUID PRIMARY KEY,
+--               status TEXT NOT NULL,
+--               created TIMESTAMP WITH TIME ZONE NOT NULL,
+--               completed TIMESTAMP WITH TIME ZONE,
+--               customer_id UUID,
+--               employee_id UUID NOT NULL,
+--               register_id UUID NOT NULL,
+--               location_id UUID NOT NULL,
+--               subtotal INTEGER NOT NULL,
+--               discount_total INTEGER NOT NULL,
+--               tax_total INTEGER NOT NULL,
+--               total INTEGER NOT NULL,
+--               transaction_type TEXT NOT NULL,
+--               is_voided BOOLEAN NOT NULL DEFAULT FALSE,
+--               void_reason TEXT,
+--               is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
+--               refund_reason TEXT,
+--               reference_transaction_id UUID,
+--               notes TEXT
+--             )
+--           |]
+--         void $ execute_ conn
+--           [sql|
+--             CREATE TABLE IF NOT EXISTS inventory_reservation (
+--               id UUID PRIMARY KEY,
+--               item_sku UUID NOT NULL,
+--               transaction_id UUID NOT NULL,
+--               quantity INTEGER NOT NULL,
+--               status TEXT NOT NULL,
+--               created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+--             )
+--           |]
+--       _ -> do
+--         hPutStrLn stderr "Transaction tables already exist"
+--         pure ()
 
 -- Transaction Functions --
 getAllTransactions :: ConnectionPool -> IO [Transaction]

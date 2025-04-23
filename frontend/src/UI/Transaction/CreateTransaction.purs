@@ -30,20 +30,20 @@ import Effect.Class.Console as Console
 import FRP.Poll (Poll)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..))
+import Types.System (Register)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID(..))
 import Utils.CartUtils (addItemToCart, emptyCartTotals, formatDiscretePrice, removeItemFromCart)
 import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
-import Utils.TransactionUtils (calculateTotalPayments, paymentsCoversTotal, getRemainingBalance)
+import Utils.TransactionUtils (getRemainingBalance, paymentsCoversTotal)
 import Web.Event.Event (target)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input
 import Web.PointerEvent.PointerEvent as PointerEvent
 
-createTransaction :: Poll Inventory -> Poll Transaction -> Nut
-createTransaction inventoryPoll transactionPoll = Deku.do
+createTransaction :: Poll Inventory -> Poll Transaction -> Register -> Nut
+createTransaction inventoryPoll transactionPoll register = Deku.do
 
-  -- State declarations
   setCartItems /\ cartItemsValue <- useHot []
   setCartTotals /\ cartTotalsValue <- useHot emptyCartTotals
   setPayments /\ paymentsValue <- useState []
@@ -57,83 +57,58 @@ createTransaction inventoryPoll transactionPoll = Deku.do
   setTenderedAmount /\ tenderedAmountValue <- useState ""
   setPaymentReference /\ paymentReferenceValue <- useState ""
   setAuthorizationCode /\ authorizationCodeValue <- useState ""
-  setRegister /\ registerValue <- useState Nothing
   setTransactionStatus /\ transactionStatusValue <- useState "CREATED"
   setInventoryErrors /\ inventoryErrorsValue <- useState []
   setCheckingInventory /\ checkingInventoryValue <- useState false
 
-  -- Setup transaction state synchronization
-  D.div 
+  -- Just handle transaction updates
+  let
+    _ = transactionPoll <#> \(Transaction txData) -> do
+        Console.log $ "Transaction received with ID: " <> show txData.transactionId
+        setTransactionStatus (show txData.transactionStatus)
+        setStatusMessage "Transaction ready"
+
+        unless (null txData.transactionItems) do
+          setCartItems txData.transactionItems
+          setPayments txData.transactionPayments
+
+          let
+            subtotal = toDiscrete txData.transactionSubtotal
+            taxTotal = toDiscrete txData.transactionTaxTotal
+            total = toDiscrete txData.transactionTotal
+            discountTotal = toDiscrete txData.transactionDiscountTotal
+
+          setCartTotals {
+            subtotal,
+            taxTotal,
+            total,
+            discountTotal
+          }
+
+  D.div
     [ DA.klass_ "transaction-container"
     , DL.load_ \_ -> do
         liftEffect $ Console.log "Transaction component loading with initialized transaction"
     ]
-    [ 
-      -- Initialize state from transaction (invisible element that updates state)
-      transactionPoll <#~> \transaction ->
-        D.div 
-          [ DL.load_ \_ ->
-              case transaction of
-                Transaction txData -> do
-                  let registerInfo = {
-                    registerId: txData.transactionRegisterId,
-                    registerName: "Register #" <> show txData.transactionRegisterId,
-                    registerLocationId: txData.transactionLocationId,
-                    registerIsOpen: true,
-                    registerCurrentDrawerAmount: 0,
-                    registerExpectedDrawerAmount: 0,
-                    registerOpenedAt: Just txData.transactionCreated,
-                    registerOpenedBy: Just txData.transactionEmployeeId,
-                    registerLastTransactionTime: Nothing
-                  }
-
-                  setRegister (Just registerInfo)
-                  setTransactionStatus (show txData.transactionStatus)
-                  setStatusMessage "Transaction ready"
-
-                  unless (null txData.transactionItems) do
-                    setCartItems txData.transactionItems
-                    setPayments txData.transactionPayments
-
-                    let
-                      subtotal = toDiscrete txData.transactionSubtotal
-                      taxTotal = toDiscrete txData.transactionTaxTotal
-                      total = toDiscrete txData.transactionTotal
-                      discountTotal = toDiscrete txData.transactionDiscountTotal
-
-                    setCartTotals {
-                      subtotal,
-                      taxTotal,
-                      total,
-                      discountTotal
-                    }
-          ]
-          []
-      
-      -- The actual UI components based on local state
-      , registerValue <#~> \maybeRegister ->
-          case maybeRegister of
-            Nothing ->
-              D.div [ DA.klass_ "register-status error" ]
-                [ text_ "No active register. Please refresh to initialize." ]
-            Just register ->
-              D.div [ DA.klass_ "register-status active" ]
-                [ D.div [ DA.klass_ "register-info" ]
-                    [ text_ ("Register: " <> register.registerName <> " (#" <> show (register.registerId :: UUID) <> ")") ]
-                , D.div
-                    [ DA.klass_ "transaction-status" ]
-                    [ D.span [ DA.klass_ "status-label" ] [ text_ "Transaction Status: " ]
-                    , D.span
-                        [ DA.klass $ transactionStatusValue <#> \status ->
-                            "status-value " <> case status of
-                              "Completed" -> "completed"
-                              "CREATED" -> "created"
-                              "In Progress" -> "in-progress"
-                              _ -> ""
-                        ]
-                        [ text transactionStatusValue ]
-                    ]
+    [
+      -- Since we have the register directly, render it
+      D.div [ DA.klass_ "register-status active" ]
+        [ D.div [ DA.klass_ "register-info" ]
+            [ text_ ("Register: " <> register.registerName <> " (#" <> show (register.registerId :: UUID) <> ")") ]
+        , D.div
+            [ DA.klass_ "transaction-status" ]
+            [ D.span [ DA.klass_ "status-label" ] [ text_ "Transaction Status: " ]
+            , D.span
+                [ DA.klass $ transactionStatusValue <#> \status ->
+                    "status-value " <> case status of
+                      "Completed" -> "completed"
+                      "CREATED" -> "created"
+                      "In Progress" -> "in-progress"
+                      _ -> ""
                 ]
+                [ text transactionStatusValue ]
+            ]
+        ]
     , D.div
         [ DA.klass_ "transaction-content" ]
         [

@@ -11,6 +11,10 @@ import Network.HTTP.Types.Header (hContentType, hAccept, hAuthorization, hOrigin
 import Network.HTTP.Types.Method (methodGet, methodPost, methodPut, methodDelete, methodOptions)
 import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy, CorsResourcePolicy(..), cors)
 import qualified Data.ByteString.Char8 as B8
+import qualified Data.CaseInsensitive as CI
+import Network.Wai (Application, responseBuilder, requestMethod)
+import Network.HTTP.Types.Status (status200)
+import qualified Data.ByteString.Builder as B
 
 data AppConfig = AppConfig
   { dbConfig :: DBConfig
@@ -47,15 +51,40 @@ run = do
   putStrLn "=================================="
 
   let
+    -- Define custom header name with correct type
+    hXRequestedWith :: CI.CI B8.ByteString
+    hXRequestedWith = CI.mk (B8.pack "x-requested-with")
+    
+    -- Very permissive CORS policy for development
     corsPolicy = simpleCorsResourcePolicy
-        { corsOrigins = Just ([B8.pack "http://localhost:5173", B8.pack "http://localhost:5174"], True)
-        , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength]
+        { corsOrigins = Nothing -- Allow all origins
+        , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith]
         , corsMethods = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
-        , corsMaxAge = Just 3600
-        , corsVaryOrigin = True
+        , corsMaxAge = Just 86400 -- 24 hours
+        , corsVaryOrigin = False
         , corsExposedHeaders = Just [hContentType]
+        , corsRequireOrigin = False
+        , corsIgnoreFailures = True -- Important: ignore CORS failures in development
         }
 
     app = cors (const $ Just corsPolicy) $ serve api (combinedServer pool)
+    
+    -- Add middleware for OPTIONS requests
+    appWithOptions = handleOptionsMiddleware app
 
-  Warp.run (serverPort config) app
+  Warp.run (serverPort config) appWithOptions
+
+-- Middleware to handle OPTIONS requests for CORS preflight
+handleOptionsMiddleware :: Application -> Application
+handleOptionsMiddleware app req respond =
+  if requestMethod req == methodOptions
+  then respond $ responseBuilder status200 corsHeaders (B.byteString B8.empty)
+  else app req respond
+  where
+    corsHeaders =
+      [ (hContentType, B8.pack "text/plain")
+      , (CI.mk $ B8.pack "Access-Control-Allow-Origin", B8.pack "*")
+      , (CI.mk $ B8.pack "Access-Control-Allow-Methods", B8.pack "GET, POST, PUT, DELETE, OPTIONS")
+      , (CI.mk $ B8.pack "Access-Control-Allow-Headers", B8.pack "Content-Type, Authorization, Accept, Origin, Content-Length, x-requested-with")
+      , (CI.mk $ B8.pack "Access-Control-Max-Age", B8.pack "86400")
+      ]

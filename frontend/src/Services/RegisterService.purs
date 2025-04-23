@@ -16,6 +16,7 @@ import Web.HTML (window)
 import Web.HTML.Window (localStorage)
 import Web.Storage.Storage (getItem, setItem)
 
+-- Modified to create a register first if it doesn't exist
 initializeRegister
   :: (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
 initializeRegister setRegister setError = do
@@ -24,36 +25,79 @@ initializeRegister setRegister setError = do
   storage <- localStorage w
   storedRegId <- getItem "register_id" storage
 
-
   registerId <- case storedRegId >>= parseUUID of
     Just id -> pure id
     Nothing -> do
-
       newId <- genUUID
       w' <- window
       storage' <- localStorage w'
       setItem "register_id" (show newId) storage'
       pure newId
 
-
   launchAff_ do
+    locationId <- liftEffect genUUID
     employeeId <- liftEffect genUUID
 
-
-    let
-      openRequest =
-        { openRegisterEmployeeId: employeeId
-        , openRegisterStartingCash: 0
-        }
-
-    result <- API.openRegister openRequest registerId
-
-    liftEffect case result of
+    -- First try to get the register - if it exists, we'll open it
+    getResult <- API.getRegister registerId
+    
+    case getResult of
+      -- Register exists, open it
       Right register -> do
-        setRegister register
-        Console.log $ "Register opened successfully: " <> register.registerName
-      Left err -> do
-        setError ("Failed to open register: " <> err)
+        let
+          openRequest =
+            { openRegisterEmployeeId: employeeId
+            , openRegisterStartingCash: 0
+            }
+        
+        openResult <- API.openRegister openRequest registerId
+        
+        liftEffect $ case openResult of
+          Right openedRegister -> do
+            setRegister openedRegister
+            Console.log $ "Register opened successfully: " <> openedRegister.registerName
+          Left err -> do
+            setError ("Failed to open register: " <> err)
+      
+      -- Register doesn't exist, create it first
+      Left _ -> do
+        liftEffect $ Console.log $ "Register not found, creating a new one with ID: " <> show registerId
+        
+        let
+          newRegister =
+            { registerId: registerId
+            , registerName: "Register #" <> show registerId
+            , registerLocationId: locationId
+            , registerIsOpen: false
+            , registerCurrentDrawerAmount: 0
+            , registerExpectedDrawerAmount: 0
+            , registerOpenedAt: Nothing
+            , registerOpenedBy: Nothing
+            , registerLastTransactionTime: Nothing
+            }
+        
+        createResult <- API.createRegister newRegister
+        
+        case createResult of
+          Right register -> do
+            -- Now open the newly created register
+            let
+              openRequest =
+                { openRegisterEmployeeId: employeeId
+                , openRegisterStartingCash: 0
+                }
+            
+            openResult <- API.openRegister openRequest registerId
+            
+            liftEffect $ case openResult of
+              Right openedRegister -> do
+                setRegister openedRegister
+                Console.log $ "New register created and opened successfully: " <> openedRegister.registerName
+              Left openErr -> do
+                setError ("Failed to open new register: " <> openErr)
+          
+          Left createErr -> do
+            liftEffect $ setError ("Failed to create register: " <> createErr)
 
 createRegister
   :: String
@@ -63,10 +107,9 @@ createRegister
   -> Effect Unit
 createRegister name locationId setRegister setError = do
   launchAff_ do
-    -- Fixed warning: Using "_" to ignore the unused employeeId
+
     _ <- liftEffect genUUID
     registerId <- liftEffect genUUID
-
 
     let
       newRegister =
