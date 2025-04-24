@@ -51,8 +51,11 @@ nav currentRoute = D.nav [ DA.klass_ "navbar" ]
           , D.div [ DA.klass_ "border-l mx-2 h-6" ] []
           , navItem LiveCart "/#/inventory/selector" "LiveCart" currentRoute
           , D.div [ DA.klass_ "border-l mx-2 h-6" ] []
-          , navItem CreateTransaction "/#/transaction/create" "New Transaction" currentRoute
-          , navItem TransactionHistory "/#/transaction/history" "Transaction History" currentRoute
+          , navItem CreateTransaction "/#/transaction/create" "New Transaction"
+              currentRoute
+          , navItem TransactionHistory "/#/transaction/history"
+              "Transaction History"
+              currentRoute
           ]
       ]
   ]

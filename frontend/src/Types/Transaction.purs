@@ -107,7 +107,7 @@ instance writeForeignPaymentMethod :: WriteForeign PaymentMethod where
   writeImpl Cash = writeImpl "Cash"
   writeImpl Debit = writeImpl "Debit"
   writeImpl Credit = writeImpl "Credit"
-  writeImpl ACH = writeImpl "ACH"  -- This one might stay uppercase as an acronym
+  writeImpl ACH = writeImpl "ACH"
   writeImpl GiftCard = writeImpl "GiftCard"
   writeImpl StoredValue = writeImpl "StoredValue"
   writeImpl Mixed = writeImpl "Mixed"
@@ -347,7 +347,7 @@ instance showTransactionType :: Show TransactionType where
 
 instance writeForeignTransactionType :: WriteForeign TransactionType where
   writeImpl Sale = writeImpl "Sale"
-  writeImpl Return = writeImpl "Return" 
+  writeImpl Return = writeImpl "Return"
   writeImpl Exchange = writeImpl "Exchange"
   writeImpl InventoryAdjustment = writeImpl "InventoryAdjustment"
   writeImpl ManagerComp = writeImpl "ManagerComp"

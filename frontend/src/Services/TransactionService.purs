@@ -28,42 +28,47 @@ startTransaction params = do
   timestamp <- liftEffect nowDateTime
 
   liftEffect $ Console.log $ "Starting transaction with params: "
-    <> "\nemployeeId: " <> show params.employeeId
-    <> "\nregisterId: " <> show params.registerId
-    <> "\nlocationId: " <> show params.locationId
+    <> "\nemployeeId: "
+    <> show params.employeeId
+    <> "\nregisterId: "
+    <> show params.registerId
+    <> "\nlocationId: "
+    <> show params.locationId
 
   let zeroMoney = fromDiscrete' (Discrete 0)
 
   -- Create transaction with the Transaction constructor to match Haskell backend
-  let transaction = Transaction
-        { transactionId: transactionId
-        , transactionStatus: Created
-        , transactionCreated: timestamp
-        , transactionCompleted: Nothing
-        , transactionCustomerId: Nothing
-        , transactionEmployeeId: params.employeeId
-        , transactionRegisterId: params.registerId
-        , transactionLocationId: params.locationId
-        , transactionItems: []
-        , transactionPayments: []
-        , transactionSubtotal: zeroMoney
-        , transactionDiscountTotal: zeroMoney
-        , transactionTaxTotal: zeroMoney
-        , transactionTotal: zeroMoney
-        , transactionType: Sale
-        , transactionIsVoided: false
-        , transactionVoidReason: Nothing
-        , transactionIsRefunded: false
-        , transactionRefundReason: Nothing
-        , transactionReferenceTransactionId: Nothing
-        , transactionNotes: Nothing
-        }
+  let
+    transaction = Transaction
+      { transactionId: transactionId
+      , transactionStatus: Created
+      , transactionCreated: timestamp
+      , transactionCompleted: Nothing
+      , transactionCustomerId: Nothing
+      , transactionEmployeeId: params.employeeId
+      , transactionRegisterId: params.registerId
+      , transactionLocationId: params.locationId
+      , transactionItems: []
+      , transactionPayments: []
+      , transactionSubtotal: zeroMoney
+      , transactionDiscountTotal: zeroMoney
+      , transactionTaxTotal: zeroMoney
+      , transactionTotal: zeroMoney
+      , transactionType: Sale
+      , transactionIsVoided: false
+      , transactionVoidReason: Nothing
+      , transactionIsRefunded: false
+      , transactionRefundReason: Nothing
+      , transactionReferenceTransactionId: Nothing
+      , transactionNotes: Nothing
+      }
 
   liftEffect $ Console.log "About to call API.createTransaction"
   result <- API.createTransaction transaction
 
   liftEffect $ case result of
-    Right tx -> Console.log $ "Transaction created successfully with ID: " <> show (unwrap tx).transactionId
+    Right tx -> Console.log $ "Transaction created successfully with ID: " <>
+      show (unwrap tx).transactionId
     Left err -> Console.error $ "Failed to create transaction: " <> err
 
   pure result
@@ -83,31 +88,35 @@ createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
   itemId <- liftEffect genUUID
 
   liftEffect $ Console.log $ "Creating transaction item: "
-    <> "\ntransactionId: " <> show transactionId
-    <> "\nmenuItemSku: " <> show menuItemSku
-    <> "\nquantity: " <> show quantity
-    <> "\npricePerUnit: " <> show pricePerUnit
+    <> "\ntransactionId: "
+    <> show transactionId
+    <> "\nmenuItemSku: "
+    <> show menuItemSku
+    <> "\nquantity: "
+    <> show quantity
+    <> "\npricePerUnit: "
+    <> show pricePerUnit
 
   let
     quantityAsInt = floor quantity
     salesTaxRate = 0.08
-    
+
     subtotalInt = pricePerUnit * quantityAsInt
     subtotalMoney = fromDiscrete' (Discrete subtotalInt)
-    
+
     taxAmountInt = floor (toNumber subtotalInt * salesTaxRate)
     taxMoney = fromDiscrete' (Discrete taxAmountInt)
-    
+
     totalInt = subtotalInt + taxAmountInt
     totalMoney = fromDiscrete' (Discrete totalInt)
-    
+
     salesTax =
       { category: RegularSalesTax
       , rate: salesTaxRate
       , amount: taxMoney
       , description: "Sales Tax"
       }
-    
+
     transactionItem = TransactionItem
       { id: itemId
       , transactionId: transactionId
@@ -124,7 +133,8 @@ createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
 
 addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)
 addTransactionItem item = do
-  liftEffect $ Console.log $ "Adding transaction item: " <> show (unwrap item).id
+  liftEffect $ Console.log $ "Adding transaction item: " <> show
+    (unwrap item).id
   API.addTransactionItem item
 
 removeTransactionItem :: UUID -> Aff (Either String Unit)
@@ -148,14 +158,18 @@ addPayment transactionId method amount tendered reference = do
   paymentId <- liftEffect genUUID
 
   liftEffect $ Console.log $ "Adding payment: "
-    <> "\ntransactionId: " <> show transactionId
-    <> "\nmethod: " <> show method
-    <> "\namount: " <> show amount
-    <> "\ntendered: " <> show tendered
+    <> "\ntransactionId: "
+    <> show transactionId
+    <> "\nmethod: "
+    <> show method
+    <> "\namount: "
+    <> show amount
+    <> "\ntendered: "
+    <> show tendered
 
   let
     change = max 0 (tendered - amount)
-    
+
     payment = PaymentTransaction
       { id: paymentId
       , transactionId: transactionId

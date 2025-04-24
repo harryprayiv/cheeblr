@@ -115,12 +115,18 @@ createTransaction transaction = do
       }
 
     if response.status >= 200 && response.status < 300 then do
-      liftEffect $ Console.log $ "Transaction created successfully - status: " <> show response.status
+      liftEffect $ Console.log $ "Transaction created successfully - status: "
+        <> show response.status
       fromJSON response.json
     else do
       errorText <- response.text
-      liftEffect $ Console.error $ "Server error: " <> errorText <> " (status " <> show response.status <> ")"
-      throwError (error $ "Server returned status " <> show response.status <> ": " <> errorText)
+      liftEffect $ Console.error $ "Server error: " <> errorText <> " (status "
+        <> show response.status
+        <> ")"
+      throwError
+        ( error $ "Server returned status " <> show response.status <> ": " <>
+            errorText
+        )
 
 addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)
 addTransactionItem item = do
@@ -196,7 +202,8 @@ finalizeTransaction transactionId = do
   liftEffect $ Console.log $ "Finalizing transaction: " <> show transactionId
 
   handleResponse "finalizeTransaction" do
-    response <- fetch (baseUrl <> "/transaction/finalize/" <> show transactionId)
+    response <- fetch
+      (baseUrl <> "/transaction/finalize/" <> show transactionId)
       { method: POST
       , headers:
           { "Content-Type": "application/json"

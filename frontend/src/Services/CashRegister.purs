@@ -35,10 +35,10 @@ dummyTransactionId = UUID "88dc4fbb-7aa5-417c-aae6-d18bc71b9e2f"
 dummyEmployeeId :: UUID
 dummyEmployeeId = UUID "8b3ae5bf-9c21-41c0-8554-1292f0827455"
 
-dummyRegisterId :: UUID 
+dummyRegisterId :: UUID
 dummyRegisterId = UUID "f046b434-c7f1-44cd-9946-fe047fd20ac6"
 
-dummyLocationId :: UUID 
+dummyLocationId :: UUID
 dummyLocationId = UUID "b2bd4b3a-d50f-4c04-90b1-01266735876b"
 
 data RegisterError
@@ -440,7 +440,8 @@ generateReceipt transaction =
       <> "\n"
 
     totalLine =
-      "TOTAL:            " <> formatDiscrete numericC (toDiscrete txData.transactionTotal)
+      "TOTAL:            "
+        <> formatDiscrete numericC (toDiscrete txData.transactionTotal)
         <> "\n\n"
 
     paymentLines = foldl (\acc payment -> acc <> formatPayment payment) ""
@@ -456,7 +457,6 @@ generateReceipt transaction =
       <> totalLine
       <> paymentLines
       <> receiptFooter
-      
 
 formatTransactionItem :: TransactionItem -> String
 formatTransactionItem (TransactionItem item) =

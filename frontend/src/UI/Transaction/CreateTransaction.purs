@@ -64,40 +64,49 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
   -- Just handle transaction updates
   let
     _ = transactionPoll <#> \(Transaction txData) -> do
-        Console.log $ "Transaction received with ID: " <> show txData.transactionId
-        setTransactionStatus (show txData.transactionStatus)
-        setStatusMessage "Transaction ready"
+      Console.log $ "Transaction received with ID: " <> show
+        txData.transactionId
+      setTransactionStatus (show txData.transactionStatus)
+      setStatusMessage "Transaction ready"
 
-        unless (null txData.transactionItems) do
-          setCartItems txData.transactionItems
-          setPayments txData.transactionPayments
+      unless (null txData.transactionItems) do
+        setCartItems txData.transactionItems
+        setPayments txData.transactionPayments
 
-          let
-            subtotal = toDiscrete txData.transactionSubtotal
-            taxTotal = toDiscrete txData.transactionTaxTotal
-            total = toDiscrete txData.transactionTotal
-            discountTotal = toDiscrete txData.transactionDiscountTotal
+        let
+          subtotal = toDiscrete txData.transactionSubtotal
+          taxTotal = toDiscrete txData.transactionTaxTotal
+          total = toDiscrete txData.transactionTotal
+          discountTotal = toDiscrete txData.transactionDiscountTotal
 
-          setCartTotals {
-            subtotal,
-            taxTotal,
-            total,
-            discountTotal
+        setCartTotals
+          { subtotal
+          , taxTotal
+          , total
+          , discountTotal
           }
 
   D.div
     [ DA.klass_ "transaction-container"
     , DL.load_ \_ -> do
-        liftEffect $ Console.log "Transaction component loading with initialized transaction"
+        liftEffect $ Console.log
+          "Transaction component loading with initialized transaction"
+
     ]
     [
       -- Since we have the register directly, render it
       D.div [ DA.klass_ "register-status active" ]
         [ D.div [ DA.klass_ "register-info" ]
-            [ text_ ("Register: " <> register.registerName <> " (#" <> show (register.registerId :: UUID) <> ")") ]
+            [ text_
+                ( "Register: " <> register.registerName <> " (#"
+                    <> show (register.registerId :: UUID)
+                    <> ")"
+                )
+            ]
         , D.div
             [ DA.klass_ "transaction-status" ]
-            [ D.span [ DA.klass_ "status-label" ] [ text_ "Transaction Status: " ]
+            [ D.span [ DA.klass_ "status-label" ]
+                [ text_ "Transaction Status: " ]
             , D.span
                 [ DA.klass $ transactionStatusValue <#> \status ->
                     "status-value " <> case status of
@@ -110,11 +119,24 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
             ]
         ]
     , D.div
+        [ DA.klass_ "debug-info"
+        , DA.style_
+            "color: red; border: 1px solid red; padding: 5px; margin: 5px;"
+        ]
+        [ inventoryPoll <#~> \(Inventory items) ->
+            D.div_
+              [ text_
+                  ( "Debug: Inventory has " <> show (Array.length items) <>
+                      " items"
+                  )
+              ]
+        ]
+    , D.div
         [ DA.klass_ "transaction-content" ]
-        [
-          D.div
+        [ D.div
             [ DA.klass_ "inventory-selection" ]
-            [ D.div [ DA.klass_ "inventory-header" ] [ D.h3_ [ text_ "Select Items" ] ]
+            [ D.div [ DA.klass_ "inventory-header" ]
+                [ D.h3_ [ text_ "Select Items" ] ]
             , inventoryPoll <#~> \(Inventory items) ->
                 let
                   categories = [ "All Items" ] <>
@@ -129,7 +151,8 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                     ( categories <#> \cat ->
                         D.div
                           [ DA.klass $ activeCategoryValue <#> \active ->
-                              "category-tab" <> if active == cat then " active" else ""
+                              "category-tab" <>
+                                if active == cat then " active" else ""
                           , DL.click_ \_ -> setActiveCategory cat
                           ]
                           [ text_ cat ]
@@ -143,7 +166,8 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                         , DA.placeholder_ "Search inventory..."
                         , DA.value_ ""
                         , DL.input_ \evt -> do
-                            for_ (target evt >>= Input.fromEventTarget) \el -> do
+                            for_ (target evt >>= Input.fromEventTarget) \el ->
+                              do
                                 value <- Input.value el
                                 setSearchText value
                         ]
@@ -159,10 +183,13 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                         , DA.step_ "1"
                         , DA.value_ "1"
                         , DL.input_ \evt -> do
-                            for_ (target evt >>= Input.fromEventTarget) \el -> do
+                            for_ (target evt >>= Input.fromEventTarget) \el ->
+                              do
                                 val <- Input.value el
                                 case Number.fromString val of
-                                  Just num -> if num > 0.0 then setQuantity num else pure unit
+                                  Just num ->
+                                    if num > 0.0 then setQuantity num
+                                    else pure unit
                                   Nothing -> pure unit
                         ]
                         []
@@ -177,134 +204,250 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                           checkingInventoryValue <#~> \isChecking ->
                             let
                               Inventory allItems = inventory
-                              
+
                               categoryFiltered =
                                 if activeCategory == "All Items" then allItems
-                                else filter (\(MenuItem i) -> show i.category == activeCategory) allItems
+                                else filter
+                                  ( \(MenuItem i) -> show i.category ==
+                                      activeCategory
+                                  )
+                                  allItems
 
                               filteredItems =
                                 if searchText == "" then categoryFiltered
-                                else filter (\(MenuItem item) ->
-                                      contains (Pattern (toLower searchText)) (toLower item.name)
-                                  ) categoryFiltered
+                                else filter
+                                  ( \(MenuItem item) ->
+                                      contains (Pattern (toLower searchText))
+                                        (toLower item.name)
+                                  )
+                                  categoryFiltered
 
                               isItemSelectDisabled = isChecking
                             in
                               if null filteredItems then
-                                D.div [ DA.klass_ "empty-result" ] [ text_ "No items found" ]
+                                D.div [ DA.klass_ "empty-result" ]
+                                  [ text_ "No items found" ]
                               else
                                 D.div
                                   [ DA.klass_ "inventory-table" ]
                                   [ D.div
                                       [ DA.klass_ "inventory-table-header" ]
-                                      [ D.div [ DA.klass_ "col name-col" ] [ text_ "Name" ]
-                                      , D.div [ DA.klass_ "col brand-col" ] [ text_ "Brand" ]
-                                      , D.div [ DA.klass_ "col category-col" ] [ text_ "Category" ]
-                                      , D.div [ DA.klass_ "col price-col" ] [ text_ "Price" ]
-                                      , D.div [ DA.klass_ "col stock-col" ] [ text_ "In Stock" ]
-                                      , D.div [ DA.klass_ "col actions-col" ] [ text_ "Actions" ]
+                                      [ D.div [ DA.klass_ "col name-col" ]
+                                          [ text_ "Name" ]
+                                      , D.div [ DA.klass_ "col brand-col" ]
+                                          [ text_ "Brand" ]
+                                      , D.div [ DA.klass_ "col category-col" ]
+                                          [ text_ "Category" ]
+                                      , D.div [ DA.klass_ "col price-col" ]
+                                          [ text_ "Price" ]
+                                      , D.div [ DA.klass_ "col stock-col" ]
+                                          [ text_ "In Stock" ]
+                                      , D.div [ DA.klass_ "col actions-col" ]
+                                          [ text_ "Actions" ]
                                       ]
                                   , D.div
                                       [ DA.klass_ "inventory-table-body" ]
-                                      ( filteredItems <#> \menuItem@(MenuItem record) ->
-                                          cartItemsValue <#~> \cartItems ->
-                                            quantityValue <#~> \qtyVal ->
-                                              let
-                                                formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
-                                                stockClass = if record.quantity <= 5 then "low-stock" else ""
+                                      ( filteredItems <#>
+                                          \menuItem@(MenuItem record) ->
+                                            cartItemsValue <#~> \cartItems ->
+                                              quantityValue <#~> \qtyVal ->
+                                                let
+                                                  formattedPrice = "$" <>
+                                                    formatCentsToDollars
+                                                      (unwrap record.price)
+                                                  stockClass =
+                                                    if record.quantity <= 5 then
+                                                      "low-stock"
+                                                    else ""
 
-                                                existingItem = find (\(TransactionItem item) ->
-                                                  item.menuItemSku == record.sku) cartItems
+                                                  existingItem = find
+                                                    ( \(TransactionItem item) ->
+                                                        item.menuItemSku ==
+                                                          record.sku
+                                                    )
+                                                    cartItems
 
-                                                currentQty = case existingItem of
-                                                  Just (TransactionItem item) -> floor item.quantity
-                                                  Nothing -> 0
-                                              in
-                                                D.div
-                                                  [ DA.klass_ ("inventory-row " <>
-                                                      if record.quantity <= 0 then "out-of-stock" else "")
-                                                  ]
-                                                  [ D.div [ DA.klass_ "col name-col" ] [ text_ record.name ]
-                                                  , D.div [ DA.klass_ "col brand-col" ] [ text_ record.brand ]
-                                                  , D.div [ DA.klass_ "col category-col" ]
-                                                      [ text_ (show record.category <> " - " <> record.subcategory) ]
-                                                  , D.div [ DA.klass_ "col price-col" ] [ text_ formattedPrice ]
-                                                  , D.div [ DA.klass_ ("col stock-col " <> stockClass) ]
-                                                      [ text_ (show record.quantity) ]
-                                                  , D.div [ DA.klass_ "col actions-col" ]
-                                                      [ if record.quantity <= 0 || isItemSelectDisabled then
-                                                          D.button
-                                                            [ DA.klass_ "add-btn disabled"
-                                                            , DA.disabled_ "true"
-                                                            ]
-                                                            [ text_ if record.quantity <= 0 then "Out of Stock"
-                                                                  else "Processing..." ]
-                                                        else
-                                                          D.div [ DA.klass_ "quantity-controls" ]
-                                                            [ if currentQty > 0 then
-                                                                D.div [ DA.klass_ "quantity-indicator" ]
-                                                                  [ text_ (show currentQty) ]
-                                                              else D.span_ []
-                                                            , D.button
-                                                                [ DA.klass_ "add-btn"
-                                                                , DL.click_ \evt -> do
-                                                                    Event.stopPropagation (PointerEvent.toEvent evt)
-                                                                    let transactionId = (unwrap transaction).transactionId
-                                                                    addItemToCart
-                                                                      menuItem
-                                                                      qtyVal
-                                                                      cartItems
-                                                                      transactionId
-                                                                      setCartItems
-                                                                      setCartTotals
-                                                                      setStatusMessage
-                                                                      setCheckingInventory
-                                                                ]
-                                                                [ text_ "Add" ]
-                                                            ]
-                                                      ]
-                                                  ]
+                                                  currentQty =
+                                                    case existingItem of
+                                                      Just
+                                                        (TransactionItem item) ->
+                                                        floor item.quantity
+                                                      Nothing -> 0
+                                                in
+                                                  D.div
+                                                    [ DA.klass_
+                                                        ( "inventory-row " <>
+                                                            if
+                                                              record.quantity <=
+                                                                0 then
+                                                              "out-of-stock"
+                                                            else ""
+                                                        )
+                                                    ]
+                                                    [ D.div
+                                                        [ DA.klass_
+                                                            "col name-col"
+                                                        ]
+                                                        [ text_ record.name ]
+                                                    , D.div
+                                                        [ DA.klass_
+                                                            "col brand-col"
+                                                        ]
+                                                        [ text_ record.brand ]
+                                                    , D.div
+                                                        [ DA.klass_
+                                                            "col category-col"
+                                                        ]
+                                                        [ text_
+                                                            ( show
+                                                                record.category
+                                                                <> " - "
+                                                                <>
+                                                                  record.subcategory
+                                                            )
+                                                        ]
+                                                    , D.div
+                                                        [ DA.klass_
+                                                            "col price-col"
+                                                        ]
+                                                        [ text_ formattedPrice ]
+                                                    , D.div
+                                                        [ DA.klass_
+                                                            ( "col stock-col "
+                                                                <> stockClass
+                                                            )
+                                                        ]
+                                                        [ text_
+                                                            ( show
+                                                                record.quantity
+                                                            )
+                                                        ]
+                                                    , D.div
+                                                        [ DA.klass_
+                                                            "col actions-col"
+                                                        ]
+                                                        [ if
+                                                            record.quantity <= 0
+                                                              ||
+                                                                isItemSelectDisabled then
+                                                            D.button
+                                                              [ DA.klass_
+                                                                  "add-btn disabled"
+                                                              , DA.disabled_
+                                                                  "true"
+                                                              ]
+                                                              [ text_
+                                                                  if
+                                                                    record.quantity
+                                                                      <= 0 then
+                                                                    "Out of Stock"
+                                                                  else
+                                                                    "Processing..."
+                                                              ]
+                                                          else
+                                                            D.div
+                                                              [ DA.klass_
+                                                                  "quantity-controls"
+                                                              ]
+                                                              [ if
+                                                                  currentQty > 0 then
+                                                                  D.div
+                                                                    [ DA.klass_
+                                                                        "quantity-indicator"
+                                                                    ]
+                                                                    [ text_
+                                                                        ( show
+                                                                            currentQty
+                                                                        )
+                                                                    ]
+                                                                else D.span_ []
+                                                              , D.button
+                                                                  [ DA.klass_
+                                                                      "add-btn"
+                                                                  , DL.click_
+                                                                      \evt -> do
+                                                                        Event.stopPropagation
+                                                                          ( PointerEvent.toEvent
+                                                                              evt
+                                                                          )
+                                                                        let
+                                                                          transactionId =
+                                                                            ( unwrap
+                                                                                transaction
+                                                                            ).transactionId
+                                                                        addItemToCart
+                                                                          menuItem
+                                                                          qtyVal
+                                                                          cartItems
+                                                                          transactionId
+                                                                          setCartItems
+                                                                          setCartTotals
+                                                                          setStatusMessage
+                                                                          setCheckingInventory
+                                                                  ]
+                                                                  [ text_ "Add"
+                                                                  ]
+                                                              ]
+                                                        ]
+                                                    ]
                                       )
                                   ]
                 ]
-          ]
+            ]
         , D.div
             [ DA.klass_ "cart-container" ]
-            [ D.div [ DA.klass_ "cart-header" ] [ D.h3_ [ text_ "Current Transaction" ] ]
+            [ D.div [ DA.klass_ "cart-header" ]
+                [ D.h3_ [ text_ "Current Transaction" ] ]
             , inventoryErrorsValue <#~> \errors ->
                 if null errors then D.div_ []
                 else
                   D.div [ DA.klass_ "inventory-errors-container" ]
-                    [ D.div [ DA.klass_ "inventory-errors-header" ] [ text_ "Inventory Issues:" ]
+                    [ D.div [ DA.klass_ "inventory-errors-header" ]
+                        [ text_ "Inventory Issues:" ]
                     , D.ul [ DA.klass_ "inventory-errors-list" ]
-                        ( errors <#> \err -> D.li [ DA.klass_ "inventory-error" ] [ text_ err ] )
+                        ( errors <#> \err -> D.li
+                            [ DA.klass_ "inventory-error" ]
+                            [ text_ err ]
+                        )
                     ]
             , D.div
                 [ DA.klass_ "cart-items" ]
-                [ (Tuple <$> (Tuple <$> cartItemsValue <*> inventoryPoll) <*> transactionPoll) <#~>
+                [ ( Tuple <$> (Tuple <$> cartItemsValue <*> inventoryPoll) <*>
+                      transactionPoll
+                  ) <#~>
                     \(Tuple (Tuple cartItems inventory) _) ->
                       if null cartItems then
-                        D.div [ DA.klass_ "empty-cart" ] [ text_ "No items selected" ]
+                        D.div [ DA.klass_ "empty-cart" ]
+                          [ text_ "No items selected" ]
                       else
                         D.div
                           [ DA.klass_ "cart-items-list" ]
                           [ D.div
                               [ DA.klass_ "cart-item-header" ]
-                              [ D.div [ DA.klass_ "col item-col" ] [ text_ "Item" ]
-                              , D.div [ DA.klass_ "col qty-col" ] [ text_ "Qty" ]
-                              , D.div [ DA.klass_ "col price-col" ] [ text_ "Price" ]
-                              , D.div [ DA.klass_ "col total-col" ] [ text_ "Total" ]
-                              , D.div [ DA.klass_ "col actions-col" ] [ text_ "" ]
+                              [ D.div [ DA.klass_ "col item-col" ]
+                                  [ text_ "Item" ]
+                              , D.div [ DA.klass_ "col qty-col" ]
+                                  [ text_ "Qty" ]
+                              , D.div [ DA.klass_ "col price-col" ]
+                                  [ text_ "Price" ]
+                              , D.div [ DA.klass_ "col total-col" ]
+                                  [ text_ "Total" ]
+                              , D.div [ DA.klass_ "col actions-col" ]
+                                  [ text_ "" ]
                               ]
                           , D.div
                               [ DA.klass_ "cart-items-body" ]
                               ( cartItems <#> \(TransactionItem itemData) ->
                                   let
-                                    itemName = findItemNameBySku itemData.menuItemSku inventory
+                                    itemName = findItemNameBySku
+                                      itemData.menuItemSku
+                                      inventory
                                   in
                                     D.div [ DA.klass_ "cart-item-row" ]
-                                      [ D.div [ DA.klass_ "col item-col" ] [ text_ itemName ]
-                                      , D.div [ DA.klass_ "col qty-col" ] [ text_ (show itemData.quantity) ]
+                                      [ D.div [ DA.klass_ "col item-col" ]
+                                          [ text_ itemName ]
+                                      , D.div [ DA.klass_ "col qty-col" ]
+                                          [ text_ (show itemData.quantity) ]
                                       , D.div [ DA.klass_ "col price-col" ]
                                           [ text_ (show itemData.pricePerUnit) ]
                                       , D.div [ DA.klass_ "col total-col" ]
@@ -331,73 +474,88 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                 [ D.div [ DA.klass_ "total-row" ]
                     [ D.div [ DA.klass_ "total-label" ] [ text_ "Subtotal:" ]
                     , D.div [ DA.klass_ "total-value" ]
-                        [ cartTotalsValue <#~> \totals -> text_ (formatDiscretePrice totals.subtotal) ]
+                        [ cartTotalsValue <#~> \totals -> text_
+                            (formatDiscretePrice totals.subtotal)
+                        ]
                     ]
                 , D.div [ DA.klass_ "total-row" ]
                     [ D.div [ DA.klass_ "total-label" ] [ text_ "Tax:" ]
                     , D.div [ DA.klass_ "total-value" ]
-                        [ cartTotalsValue <#~> \totals -> text_ (formatDiscretePrice totals.taxTotal) ]
+                        [ cartTotalsValue <#~> \totals -> text_
+                            (formatDiscretePrice totals.taxTotal)
+                        ]
                     ]
                 , D.div [ DA.klass_ "total-row grand-total" ]
                     [ D.div [ DA.klass_ "total-label" ] [ text_ "Total:" ]
                     , D.div [ DA.klass_ "total-value" ]
-                        [ cartTotalsValue <#~> \totals -> text_ (formatDiscretePrice totals.total) ]
+                        [ cartTotalsValue <#~> \totals -> text_
+                            (formatDiscretePrice totals.total)
+                        ]
                     ]
                 ]
             , D.div
                 [ DA.klass_ "payment-section" ]
-                [ D.div [ DA.klass_ "payment-header" ] [ text_ "Payment Options" ]
+                [ D.div [ DA.klass_ "payment-header" ]
+                    [ text_ "Payment Options" ]
                 , D.div
                     [ DA.klass_ "payment-methods" ]
                     [ D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == Cash then " active" else ""
+                            "payment-method" <>
+                              if method == Cash then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod Cash
                         ]
                         [ text_ "Cash" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == Credit then " active" else ""
+                            "payment-method" <>
+                              if method == Credit then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod Credit
                         ]
                         [ text_ "Credit" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == Debit then " active" else ""
+                            "payment-method" <>
+                              if method == Debit then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod Debit
                         ]
                         [ text_ "Debit" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == ACH then " active" else ""
+                            "payment-method" <>
+                              if method == ACH then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod ACH
                         ]
                         [ text_ "ACH" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == GiftCard then " active" else ""
+                            "payment-method" <>
+                              if method == GiftCard then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod GiftCard
                         ]
                         [ text_ "Gift Card" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == StoredValue then " active" else ""
+                            "payment-method" <>
+                              if method == StoredValue then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod StoredValue
                         ]
                         [ text_ "Stored Value" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if method == Mixed then " active" else ""
+                            "payment-method" <>
+                              if method == Mixed then " active" else ""
                         , DL.click_ \_ -> setPaymentMethod Mixed
                         ]
                         [ text_ "Split Payment" ]
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
-                            "payment-method" <> if
-                              case method of
-                                Other _ -> true
-                                _ -> false then " active"
-                            else ""
+                            "payment-method" <>
+                              if
+                                case method of
+                                  Other _ -> true
+                                  _ -> false then " active"
+                              else ""
                         , DL.click_ \_ -> setPaymentMethod (Other "")
                         ]
                         [ text_ "Other" ]
@@ -408,14 +566,17 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                         [ DA.klass_ "payment-inputs" ]
                         [ D.div
                             [ DA.klass_ "payment-input-row" ]
-                            [ D.label [ DA.klass_ "payment-label" ] [ text_ "Amount:" ]
+                            [ D.label [ DA.klass_ "payment-label" ]
+                                [ text_ "Amount:" ]
                             , D.input
                                 [ DA.klass_ "payment-field"
                                 , DA.xtype_ "text"
                                 , DA.value paymentAmountValue
-                                , DA.disabled_ (if isProcessing then "true" else "")
+                                , DA.disabled_
+                                    (if isProcessing then "true" else "")
                                 , DL.input_ \evt -> do
-                                    for_ (target evt >>= Input.fromEventTarget) \el -> do
+                                    for_ (target evt >>= Input.fromEventTarget)
+                                      \el -> do
                                         value <- Input.value el
                                         setPaymentAmount value
                                 ]
@@ -425,14 +586,18 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                             if method == Cash then
                               D.div
                                 [ DA.klass_ "payment-input-row" ]
-                                [ D.label [ DA.klass_ "payment-label" ] [ text_ "Tendered:" ]
+                                [ D.label [ DA.klass_ "payment-label" ]
+                                    [ text_ "Tendered:" ]
                                 , D.input
                                     [ DA.klass_ "payment-field"
                                     , DA.xtype_ "text"
                                     , DA.value tenderedAmountValue
-                                    , DA.disabled_ (if isProcessing then "true" else "")
+                                    , DA.disabled_
+                                        (if isProcessing then "true" else "")
                                     , DL.input_ \evt -> do
-                                        for_ (target evt >>= Input.fromEventTarget) \el -> do
+                                        for_
+                                          (target evt >>= Input.fromEventTarget)
+                                          \el -> do
                                             value <- Input.value el
                                             setTenderedAmount value
                                     ]
@@ -443,14 +608,18 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                             case method of
                               Credit -> D.div
                                 [ DA.klass_ "payment-input-row" ]
-                                [ D.label [ DA.klass_ "payment-label" ] [ text_ "Auth Code:" ]
+                                [ D.label [ DA.klass_ "payment-label" ]
+                                    [ text_ "Auth Code:" ]
                                 , D.input
                                     [ DA.klass_ "payment-field"
                                     , DA.xtype_ "text"
                                     , DA.value authorizationCodeValue
-                                    , DA.disabled_ (if isProcessing then "true" else "")
+                                    , DA.disabled_
+                                        (if isProcessing then "true" else "")
                                     , DL.input_ \evt -> do
-                                        for_ (target evt >>= Input.fromEventTarget) \el -> do
+                                        for_
+                                          (target evt >>= Input.fromEventTarget)
+                                          \el -> do
                                             value <- Input.value el
                                             setAuthorizationCode value
                                     ]
@@ -463,16 +632,26 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                     , DA.disabled $ isProcessingValue <#> \isProcessing ->
                         if isProcessing then "true" else ""
                     , runOn DL.click $
-                        ( \payAmt tenderedAmt method currPayments payRef authCode transaction -> do
-                            case (Tuple (Number.fromString payAmt) transaction) of
+                        ( \payAmt
+                           tenderedAmt
+                           method
+                           currPayments
+                           payRef
+                           authCode
+                           transaction -> do
+                            case
+                              (Tuple (Number.fromString payAmt) transaction)
+                              of
                               Tuple (Just amount) txn -> do
                                 let
-                                  tenderedAmount = case Number.fromString tenderedAmt of
-                                    Just t -> t
-                                    Nothing -> amount
+                                  tenderedAmount =
+                                    case Number.fromString tenderedAmt of
+                                      Just t -> t
+                                      Nothing -> amount
 
                                   amountInCents = Int.floor (amount * 100.0)
-                                  tenderedInCents = Int.floor (tenderedAmount * 100.0)
+                                  tenderedInCents = Int.floor
+                                    (tenderedAmount * 100.0)
 
                                 void $ launchAff_ do
                                   result <- TransactionService.addPayment
@@ -480,8 +659,13 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                     method
                                     amountInCents
                                     tenderedInCents
-                                    (if payRef == "" && authCode == "" then Nothing
-                                     else Just (if payRef /= "" then payRef else authCode))
+                                    ( if payRef == "" && authCode == "" then
+                                        Nothing
+                                      else Just
+                                        ( if payRef /= "" then payRef
+                                          else authCode
+                                        )
+                                    )
 
                                   liftEffect $ case result of
                                     Right payment -> do
@@ -490,10 +674,12 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                       setTenderedAmount ""
                                       setPaymentReference ""
                                       setAuthorizationCode ""
-                                      setStatusMessage "Payment added to transaction"
+                                      setStatusMessage
+                                        "Payment added to transaction"
 
                                     Left err ->
-                                      setStatusMessage $ "Payment error: " <> err
+                                      setStatusMessage $ "Payment error: " <>
+                                        err
 
                               Tuple Nothing _ ->
                                 setStatusMessage "Invalid payment amount"
@@ -513,34 +699,51 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                         else
                           D.div
                             [ DA.klass_ "payments-container" ]
-                            [ D.div [ DA.klass_ "payments-header" ] [ text_ "Current Payments:" ]
+                            [ D.div [ DA.klass_ "payments-header" ]
+                                [ text_ "Current Payments:" ]
                             , D.div_
-                                (payments <#> \(PaymentTransaction p) ->
-                                   D.div
-                                     [ DA.klass_ "payment-item" ]
-                                     [ D.div [ DA.klass_ "payment-method" ] [ text_ (show p.method) ]
-                                     , D.div [ DA.klass_ "payment-amount" ] [ text_ (show p.amount) ]
-                                     , D.button
-                                         [ DA.klass_ "payment-remove"
-                                         , DA.disabled $ isProcessingValue <#> \isProcessing ->
-                                             if isProcessing then "true" else ""
-                                         , runOn DL.click $
-                                             (\currPayments -> do
-                                                void $ launchAff_ do
-                                                  result <- TransactionService.removePaymentTransaction p.id
-                                                  liftEffect $ case result of
-                                                    Right _ -> do
-                                                      let updatedPayments = filter
-                                                            (\(PaymentTransaction pay) -> pay.id /= p.id)
-                                                            currPayments
-                                                      setPayments updatedPayments
-                                                      setStatusMessage "Payment removed"
-                                                    Left err ->
-                                                      setStatusMessage $ "Error removing payment: " <> err
-                                             ) <$> paymentsValue
-                                         ]
-                                         [ text_ "✕" ]
-                                     ]
+                                ( payments <#> \(PaymentTransaction p) ->
+                                    D.div
+                                      [ DA.klass_ "payment-item" ]
+                                      [ D.div [ DA.klass_ "payment-method" ]
+                                          [ text_ (show p.method) ]
+                                      , D.div [ DA.klass_ "payment-amount" ]
+                                          [ text_ (show p.amount) ]
+                                      , D.button
+                                          [ DA.klass_ "payment-remove"
+                                          , DA.disabled $ isProcessingValue <#>
+                                              \isProcessing ->
+                                                if isProcessing then "true"
+                                                else ""
+                                          , runOn DL.click $
+                                              ( \currPayments -> do
+                                                  void $ launchAff_ do
+                                                    result <-
+                                                      TransactionService.removePaymentTransaction
+                                                        p.id
+                                                    liftEffect $ case result of
+                                                      Right _ -> do
+                                                        let
+                                                          updatedPayments =
+                                                            filter
+                                                              ( \( PaymentTransaction
+                                                                     pay
+                                                                 ) -> pay.id /=
+                                                                  p.id
+                                                              )
+                                                              currPayments
+                                                        setPayments
+                                                          updatedPayments
+                                                        setStatusMessage
+                                                          "Payment removed"
+                                                      Left err ->
+                                                        setStatusMessage $
+                                                          "Error removing payment: "
+                                                            <> err
+                                              ) <$> paymentsValue
+                                          ]
+                                          [ text_ "✕" ]
+                                      ]
                                 )
                             ]
                     ]
@@ -552,14 +755,14 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
         [ D.button
             [ DA.klass_ "cancel-btn"
             , runOn DL.click $
-                (\cartItems -> do
-                   if null cartItems then do
-                     setStatusMessage "No items to clear"
-                   else do
-                     setCartItems []
-                     setPayments []
-                     setCartTotals emptyCartTotals
-                     setStatusMessage "Transaction cleared"
+                ( \cartItems -> do
+                    if null cartItems then do
+                      setStatusMessage "No items to clear"
+                    else do
+                      setCartItems []
+                      setPayments []
+                      setCartTotals emptyCartTotals
+                      setStatusMessage "Transaction cleared"
                 ) <$> cartItemsValue
             ]
             [ text_ "Clear Items" ]
@@ -568,96 +771,110 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
             [ (Tuple <$> cartTotalsValue <*> paymentsValue) <#~>
                 \(Tuple totals payments) ->
                   let
-                    dummyTransaction = Transaction {
-                      transactionId: UUID "",
-                      transactionStatus: InProgress,
-                      transactionCreated: bottom,
-                      transactionCompleted: Nothing,
-                      transactionCustomerId: Nothing,
-                      transactionEmployeeId: UUID "",
-                      transactionRegisterId: UUID "",
-                      transactionLocationId: UUID "",
-                      transactionItems: [],
-                      transactionPayments: [],
-                      transactionSubtotal: fromDiscrete' totals.subtotal,
-                      transactionDiscountTotal: fromDiscrete' (Discrete 0),
-                      transactionTaxTotal: fromDiscrete' totals.taxTotal,
-                      transactionTotal: fromDiscrete' totals.total,
-                      transactionType: Sale,
-                      transactionIsVoided: false,
-                      transactionVoidReason: Nothing,
-                      transactionIsRefunded: false,
-                      transactionRefundReason: Nothing,
-                      transactionReferenceTransactionId: Nothing,
-                      transactionNotes: Nothing
-                    }
+                    dummyTransaction = Transaction
+                      { transactionId: UUID ""
+                      , transactionStatus: InProgress
+                      , transactionCreated: bottom
+                      , transactionCompleted: Nothing
+                      , transactionCustomerId: Nothing
+                      , transactionEmployeeId: UUID ""
+                      , transactionRegisterId: UUID ""
+                      , transactionLocationId: UUID ""
+                      , transactionItems: []
+                      , transactionPayments: []
+                      , transactionSubtotal: fromDiscrete' totals.subtotal
+                      , transactionDiscountTotal: fromDiscrete' (Discrete 0)
+                      , transactionTaxTotal: fromDiscrete' totals.taxTotal
+                      , transactionTotal: fromDiscrete' totals.total
+                      , transactionType: Sale
+                      , transactionIsVoided: false
+                      , transactionVoidReason: Nothing
+                      , transactionIsRefunded: false
+                      , transactionRefundReason: Nothing
+                      , transactionReferenceTransactionId: Nothing
+                      , transactionNotes: Nothing
+                      }
 
                     remaining = getRemainingBalance payments dummyTransaction
-                    paidClass = if remaining <= Discrete 0 then "paid" else "unpaid"
+                    paidClass =
+                      if remaining <= Discrete 0 then "paid" else "unpaid"
                   in
                     D.div
                       [ DA.klass_ "remaining-balance" ]
-                      [ D.div [ DA.klass_ "remaining-label" ] [ text_ "Remaining:" ]
+                      [ D.div [ DA.klass_ "remaining-label" ]
+                          [ text_ "Remaining:" ]
                       , D.div
                           [ DA.klass_ ("remaining-amount " <> paidClass) ]
-                          [ text_ (formatDiscretePrice (max (Discrete 0) remaining)) ]
+                          [ text_
+                              (formatDiscretePrice (max (Discrete 0) remaining))
+                          ]
                       ]
             ]
         , D.button
             [ DA.klass_ "checkout-btn"
-            , DA.disabled $ (Tuple <$> transactionPoll <*> isProcessingValue) <#>
-                \(Tuple _ isProcessing) -> if isProcessing then "true" else ""
+            , DA.disabled $ (Tuple <$> transactionPoll <*> isProcessingValue)
+                <#>
+                  \(Tuple _ isProcessing) -> if isProcessing then "true" else ""
             , runOn DL.click $
-                (\cartItems currPayments totals transaction -> do
-                   if null cartItems then do
-                     setStatusMessage "Cannot complete: No items in transaction"
-                   else do
-                     let dummyTransaction = Transaction {
-                          transactionId: UUID "",
-                          transactionStatus: InProgress,
-                          transactionCreated: bottom,
-                          transactionCompleted: Nothing,
-                          transactionCustomerId: Nothing,
-                          transactionEmployeeId: UUID "",
-                          transactionRegisterId: UUID "",
-                          transactionLocationId: UUID "",
-                          transactionItems: [],
-                          transactionPayments: [],
-                          transactionSubtotal: fromDiscrete' (totals.subtotal),
-                          transactionDiscountTotal: fromDiscrete' (Discrete 0),
-                          transactionTaxTotal: fromDiscrete' (totals.taxTotal),
-                          transactionTotal: fromDiscrete' (totals.total),
-                          transactionType: Sale,
-                          transactionIsVoided: false,
-                          transactionVoidReason: Nothing,
-                          transactionIsRefunded: false,
-                          transactionRefundReason: Nothing,
-                          transactionReferenceTransactionId: Nothing,
-                          transactionNotes: Nothing
-                        }
+                ( \cartItems currPayments totals transaction -> do
+                    if null cartItems then do
+                      setStatusMessage
+                        "Cannot complete: No items in transaction"
+                    else do
+                      let
+                        dummyTransaction = Transaction
+                          { transactionId: UUID ""
+                          , transactionStatus: InProgress
+                          , transactionCreated: bottom
+                          , transactionCompleted: Nothing
+                          , transactionCustomerId: Nothing
+                          , transactionEmployeeId: UUID ""
+                          , transactionRegisterId: UUID ""
+                          , transactionLocationId: UUID ""
+                          , transactionItems: []
+                          , transactionPayments: []
+                          , transactionSubtotal: fromDiscrete' (totals.subtotal)
+                          , transactionDiscountTotal: fromDiscrete' (Discrete 0)
+                          , transactionTaxTotal: fromDiscrete' (totals.taxTotal)
+                          , transactionTotal: fromDiscrete' (totals.total)
+                          , transactionType: Sale
+                          , transactionIsVoided: false
+                          , transactionVoidReason: Nothing
+                          , transactionIsRefunded: false
+                          , transactionRefundReason: Nothing
+                          , transactionReferenceTransactionId: Nothing
+                          , transactionNotes: Nothing
+                          }
 
-                     let paymentCoversTotal = paymentsCoversTotal currPayments dummyTransaction
+                      let
+                        paymentCoversTotal = paymentsCoversTotal currPayments
+                          dummyTransaction
 
-                     if not paymentCoversTotal then do
-                       setStatusMessage "Cannot complete: Payment amount is insufficient"
-                     else do
-                       setIsProcessing true
-                       setStatusMessage "Finalizing transaction..."
+                      if not paymentCoversTotal then do
+                        setStatusMessage
+                          "Cannot complete: Payment amount is insufficient"
+                      else do
+                        setIsProcessing true
+                        setStatusMessage "Finalizing transaction..."
 
-                       void $ launchAff_ do
-                         result <- TransactionService.finalizeTransaction (unwrap transaction).transactionId
-                         liftEffect $ case result of
-                           Right _ -> do
-                             setCartItems []
-                             setPayments []
-                             setCartTotals emptyCartTotals
-                             setTransactionStatus "Completed"
-                             setInventoryErrors []
-                             setStatusMessage "Transaction completed successfully"
-                           Left err -> do
-                             setStatusMessage $ "Error finalizing transaction: " <> err
-                         liftEffect $ setIsProcessing false
-                ) <$> cartItemsValue <*> paymentsValue <*> cartTotalsValue <*> transactionPoll
+                        void $ launchAff_ do
+                          result <- TransactionService.finalizeTransaction
+                            (unwrap transaction).transactionId
+                          liftEffect $ case result of
+                            Right _ -> do
+                              setCartItems []
+                              setPayments []
+                              setCartTotals emptyCartTotals
+                              setTransactionStatus "Completed"
+                              setInventoryErrors []
+                              setStatusMessage
+                                "Transaction completed successfully"
+                            Left err -> do
+                              setStatusMessage $
+                                "Error finalizing transaction: " <> err
+                          liftEffect $ setIsProcessing false
+                ) <$> cartItemsValue <*> paymentsValue <*> cartTotalsValue <*>
+                  transactionPoll
             ]
             [ cartTotalsValue <#~> \totals ->
                 text_ ("Process Payment " <> formatDiscretePrice totals.total)

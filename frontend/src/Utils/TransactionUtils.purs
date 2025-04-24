@@ -29,22 +29,22 @@ menuItemToTransactionItem (MenuItem item) quantity transactionId = do
 
   let
     priceInCents = unwrap item.price
-    
+
     salesTaxRate = 0.08
     salesTaxAmount = floor
       (toNumber (priceInCents * floor quantity) * salesTaxRate)
-      
+
     salesTax =
       { category: RegularSalesTax
       , rate: salesTaxRate
       , amount: fromDiscrete' (Discrete salesTaxAmount)
       , description: "Sales Tax"
       }
-      
+
     subtotalInCents = priceInCents * floor quantity
-      
+
     totalInCents = subtotalInCents + salesTaxAmount
-      
+
   pure $ TransactionItem
     { id: itemId
     , transactionId: transactionId
@@ -72,7 +72,8 @@ paymentsCoversTotal payments (Transaction tx) =
 
 getRemainingBalance :: Array PaymentTransaction -> Transaction -> Discrete USD
 getRemainingBalance payments (Transaction tx) =
-  max (Discrete 0) (toDiscrete tx.transactionTotal - calculateTotalPayments payments)
+  max (Discrete 0)
+    (toDiscrete tx.transactionTotal - calculateTotalPayments payments)
 
 getTransactionItems :: Transaction -> Array TransactionItem
 getTransactionItems (Transaction tx) = tx.transactionItems
@@ -82,7 +83,8 @@ updateTransactionData
   -> (Transaction -> Effect Unit)
   -> Aff Unit
 updateTransactionData (Transaction tx) setTransaction = do
-  liftEffect $ Console.log $ "Updating transaction data for ID: " <> show tx.transactionId
+  liftEffect $ Console.log $ "Updating transaction data for ID: " <> show
+    tx.transactionId
   result <- getTransaction tx.transactionId
   liftEffect $ case result of
     Right updatedTx -> do
