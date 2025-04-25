@@ -2,6 +2,7 @@ module Services.CashRegister where
 
 import Prelude
 
+import Config.Entity (dummyEmployeeId, dummyLocationId, dummyPaymentId, dummyRegisterId, dummyTransactionId)
 import Data.Array (foldl, null, filter, (:))
 import Data.Array as Array
 import Data.DateTime (DateTime)
@@ -19,27 +20,9 @@ import Effect.Console (log)
 import Effect.Now (now, nowDateTime)
 import Types.Inventory (ItemCategory(..), MenuItem(..))
 import Types.Transaction (DiscountRecord, DiscountType(..), PaymentMethod(..), PaymentTransaction(..), TaxCategory(..), TaxRecord, Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
-import Types.UUID (UUID(..))
+import Types.UUID (UUID)
 import Utils.Formatting (uuidToString)
 import Utils.UUIDGen (genUUID)
-
-dummyAccountId :: UUID
-dummyAccountId = UUID "5d4c879c-fc9b-4635-9737-11391094fede"
-
-dummyPaymentId :: UUID
-dummyPaymentId = UUID "62e29012-d735-41f8-bec3-36c4834588cf"
-
-dummyTransactionId :: UUID
-dummyTransactionId = UUID "88dc4fbb-7aa5-417c-aae6-d18bc71b9e2f"
-
-dummyEmployeeId :: UUID
-dummyEmployeeId = UUID "8b3ae5bf-9c21-41c0-8554-1292f0827455"
-
-dummyRegisterId :: UUID
-dummyRegisterId = UUID "f046b434-c7f1-44cd-9946-fe047fd20ac6"
-
-dummyLocationId :: UUID
-dummyLocationId = UUID "b2bd4b3a-d50f-4c04-90b1-01266735876b"
 
 data RegisterError
   = InvalidTransaction
@@ -660,7 +643,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
   else do
 
     refundId <- liftEffect genUUID
-    timestamp <- liftEffect nowDateTime
+    currentTimestamp <- liftEffect nowDateTime
 
     let
       itemsToRefund =
@@ -696,8 +679,8 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
       refundTransaction =
         { transactionId: refundId
         , transactionStatus: Completed
-        , transactionCreated: timestamp
-        , transactionCompleted: Just timestamp
+        , transactionCreated: currentTimestamp
+        , transactionCompleted: Just currentTimestamp
         , transactionCustomerId: txData.transactionCustomerId
         , transactionEmployeeId: employeeId
         , transactionRegisterId: txData.transactionRegisterId

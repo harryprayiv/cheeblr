@@ -9,16 +9,15 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Types.System (Register)
+import Types.Register (Register)
 import Types.UUID (UUID, parseUUID)
 import Utils.UUIDGen (genUUID)
 import Web.HTML (window)
 import Web.HTML.Window (localStorage)
 import Web.Storage.Storage (getItem, setItem)
 
-getOrInitializeRegister
-  :: (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-getOrInitializeRegister setRegister setError = do
+getOrInitLocalRegister :: UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+getOrInitLocalRegister locationId employeeId setRegister setError = do
   w <- window
   storage <- localStorage w
   storedRegId <- getItem "register_id" storage
@@ -48,8 +47,8 @@ getOrInitializeRegister setRegister setError = do
         liftEffect $ Console.log $
           "Register not found, creating a new one with ID: " <> show registerId
 
-        locationId <- liftEffect genUUID
-        employeeId <- liftEffect genUUID
+        -- locationId <- liftEffect genUUID
+        -- employeeId <- liftEffect genUUID
 
         let
           newRegister =
@@ -74,7 +73,7 @@ getOrInitializeRegister setRegister setError = do
                 , openRegisterStartingCash: 0
                 }
 
-            openResult <- API.openRegister openRequest registerId
+            openResult <- API.openRegister openRequest register.registerId -- heeded warning about unused result
 
             liftEffect $ case openResult of
               Right openedRegister -> do
@@ -87,10 +86,9 @@ getOrInitializeRegister setRegister setError = do
           Left createErr -> do
             liftEffect $ setError ("Failed to create register: " <> createErr)
 
--- Modified to create a register first if it doesn't exist
-initializeRegister
-  :: (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-initializeRegister setRegister setError = do
+-- create a register if it doesn't exist
+initLocalRegister :: UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+initLocalRegister locationId employeeId setRegister setError = do
 
   w <- window
   storage <- localStorage w
@@ -106,8 +104,8 @@ initializeRegister setRegister setError = do
       pure newId
 
   launchAff_ do
-    locationId <- liftEffect genUUID
-    employeeId <- liftEffect genUUID
+    -- locationId <- liftEffect genUUID
+    -- employeeId <- liftEffect genUUID
 
     -- First try to get the register - if it exists, we'll open it
     getResult <- API.getRegister registerId
@@ -121,7 +119,7 @@ initializeRegister setRegister setError = do
             , openRegisterStartingCash: 0
             }
 
-        openResult <- API.openRegister openRequest registerId
+        openResult <- API.openRegister openRequest register.registerId
 
         liftEffect $ case openResult of
           Right openedRegister -> do
@@ -160,7 +158,7 @@ initializeRegister setRegister setError = do
                 , openRegisterStartingCash: 0
                 }
 
-            openResult <- API.openRegister openRequest registerId
+            openResult <- API.openRegister openRequest register.registerId
 
             liftEffect $ case openResult of
               Right openedRegister -> do
@@ -173,13 +171,10 @@ initializeRegister setRegister setError = do
           Left createErr -> do
             liftEffect $ setError ("Failed to create register: " <> createErr)
 
-createRegister
-  :: String
-  -> UUID
-  -> (Register -> Effect Unit)
-  -> (String -> Effect Unit)
-  -> Effect Unit
-createRegister name locationId setRegister setError = do
+
+-- || local Register creation
+createLocalRegister :: String -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+createLocalRegister name locationId setRegister setError = do
   launchAff_ do
 
     _ <- liftEffect genUUID
@@ -207,8 +202,8 @@ createRegister name locationId setRegister setError = do
       Left err -> do
         setError ("Failed to create register: " <> err)
 
-closeRegister :: UUID -> UUID -> Int -> (String -> Effect Unit) -> Effect Unit
-closeRegister registerId employeeId countedCash setMessage = do
+closeLocalRegister :: UUID -> UUID -> Int -> (String -> Effect Unit) -> Effect Unit
+closeLocalRegister registerId employeeId countedCash setMessage = do
   launchAff_ do
     let
       closeRequest =
