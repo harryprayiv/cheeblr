@@ -10,7 +10,7 @@ import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import NetworkConfig (currentConfig)
 import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
-import Types.System (CloseRegisterRequest, CloseRegisterResult, OpenRegisterRequest, Register)
+import Types.Register (CloseRegisterRequest, CloseRegisterResult, OpenRegisterRequest, Register)
 import Types.UUID (UUID)
 import Yoga.JSON (writeJSON)
 
@@ -78,8 +78,7 @@ openRegister request registerId = do
       }
     fromJSON response.json
 
-closeRegister
-  :: CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
+closeRegister :: CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
 closeRegister request registerId = do
   let content = writeJSON request
   liftEffect $ Console.log $ "Closing register: " <> show registerId

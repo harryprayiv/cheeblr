@@ -1,10 +1,19 @@
-module Types.System where
+module Types.Register where
 
 import Data.DateTime (DateTime)
 import Data.Maybe (Maybe)
 import Types.UUID (UUID)
+import Data.Finance.Currency (USD)
+import Data.Finance.Money (Discrete)
 
 type EntityId = UUID
+
+type CartTotals =
+  { subtotal :: Discrete USD
+  , taxTotal :: Discrete USD
+  , total :: Discrete USD
+  , discountTotal :: Discrete USD
+  }
 
 type Register =
   { registerId :: UUID
@@ -18,19 +27,16 @@ type Register =
   , registerLastTransactionTime :: Maybe DateTime
   }
 
--- Request model for opening a register
 type OpenRegisterRequest =
   { openRegisterEmployeeId :: UUID
   , openRegisterStartingCash :: Int
   }
 
--- Request model for closing a register
 type CloseRegisterRequest =
   { closeRegisterEmployeeId :: UUID
   , closeRegisterCountedCash :: Int
   }
 
--- Response when closing a register
 type CloseRegisterResult =
   { closeRegisterResultRegister :: Register
   , closeRegisterResultVariance :: Int

@@ -3,6 +3,7 @@ module Main where
 import Prelude
 
 import API.Inventory (fetchInventory, readInventory)
+import Config.Entity (dummyEmployeeId, dummyLocationId)
 import Config.LiveView (defaultViewConfig)
 import Control.Monad.ST.Class (liftST)
 import CreateItem (createItem)
@@ -46,7 +47,9 @@ main = do
   errorState <- liftST Poll.create
   registerState <- liftST Poll.create
 
-  RegisterService.initializeRegister
+  RegisterService.initLocalRegister
+    dummyLocationId
+    dummyEmployeeId
     ( \register -> do
         Console.log "Register initialized at application startup"
         registerState.push (Just register)
@@ -230,7 +233,9 @@ main = do
 
           transactionState <- liftST Poll.create
 
-          RegisterService.getOrInitializeRegister
+          RegisterService.getOrInitLocalRegister
+            dummyLocationId
+            dummyEmployeeId
             ( \register -> do
                 launchAff_ do
                   invResult <- fetchInventory defaultViewConfig.fetchConfig

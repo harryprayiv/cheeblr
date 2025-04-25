@@ -30,7 +30,7 @@ import Effect.Class.Console as Console
 import FRP.Poll (Poll)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..))
-import Types.System (Register)
+import Types.Register (Register)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID(..))
 import Utils.CartUtils (addItemToCart, emptyCartTotals, formatDiscretePrice, removeItemFromCart)

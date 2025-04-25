@@ -17,7 +17,8 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Services.TransactionService as TransactionService
 import Types.Inventory (MenuItem(..))
-import Types.Transaction (TaxCategory(..), TransactionItem(..), CartTotals)
+import Types.Register (CartTotals)
+import Types.Transaction (TaxCategory(..), TransactionItem(..))
 import Types.UUID (UUID)
 import Utils.Money (formatMoney')
 import Utils.UUIDGen (genUUID)
