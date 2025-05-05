@@ -54,17 +54,19 @@ instance showRegisterError :: Show RegisterError where
   show (InternalError msg) = "Internal error: " <> msg
 
 type RegisterState =
-  { isOpen :: Boolean
+  { registerId :: UUID
+  , isOpen :: Boolean
   , currentDrawerAmount :: Discrete USD
   , currentTransaction :: Maybe Transaction
   , openedAt :: Maybe DateTime
-  , openedBy :: Maybe UUID
+  , openedBy :: UUID
   , lastTransactionTime :: Maybe DateTime
   , expectedDrawerAmount :: Discrete USD
   }
 
 type TransactionBuilder =
-  { items :: Array TransactionItem
+  { transactionId :: UUID
+  , items :: Array TransactionItem
   , payments :: Array PaymentTransaction
   , customer :: Maybe UUID
   , employee :: UUID
@@ -79,15 +81,17 @@ type TransactionBuilder =
   }
 
 initializeTransaction
-  :: UUID
-  -> UUID
-  -> UUID
+  :: UUID  -- Transaction ID
+  -> UUID  -- Employee ID
+  -> UUID  -- Register ID
+  -> UUID  -- Location ID
   -> Aff TransactionBuilder
-initializeTransaction employeeId registerId locationId = do
+initializeTransaction transactionId employeeId registerId locationId = do
   liftEffect $ log "Initializing new transaction"
 
   pure
-    { items: []
+    { transactionId          -- Add this field
+    , items: []
     , payments: []
     , customer: Nothing
     , employee: employeeId
@@ -135,7 +139,7 @@ addItemToTransaction builder menuItem quantity = do
       -- Create a new TransactionItem by wrapping the record with the constructor
       newItem = TransactionItem
         { id: itemId
-        , transactionId: dummyTransactionId
+        , transactionId:  builder.transactionId 
         , menuItemSku: menuItemRecord.sku
         , quantity
         , pricePerUnit: fromDiscrete' itemPrice
@@ -244,7 +248,6 @@ addPayment builder method amount tendered reference = do
     paymentId <- liftEffect genUUID
 
     let
-      -- Fix 1: Properly unwrap PaymentTransaction in the fold
       currentPaymentTotal = foldl
         ( \acc p ->
             let
@@ -266,10 +269,9 @@ addPayment builder method amount tendered reference = do
           actualPaymentAmount
         else Discrete 0
 
-      -- Create the payment record
       newPaymentRecord =
         { id: paymentId
-        , transactionId: dummyTransactionId
+        , transactionId: builder.transactionId
         , method
         , amount: fromDiscrete' actualPaymentAmount
         , tendered: fromDiscrete'
@@ -280,7 +282,6 @@ addPayment builder method amount tendered reference = do
         , authorizationCode: Nothing
         }
 
-      -- Fix 2: Wrap the record in PaymentTransaction constructor
       newPayments = PaymentTransaction newPaymentRecord : builder.payments
       newPaymentTotal = currentPaymentTotal + actualPaymentAmount
 
@@ -327,7 +328,6 @@ finalizeTransaction builder = do
       liftEffect $ log "Insufficient payment to complete transaction"
       pure $ Left InsufficientPayment
     else do
-      transactionId <- liftEffect genUUID
       timestamp <- liftEffect nowDateTime
 
       let
@@ -341,7 +341,7 @@ finalizeTransaction builder = do
               let
                 TransactionItem ti = item
               in
-                TransactionItem (ti { transactionId = transactionId })
+                TransactionItem (ti { transactionId = builder.transactionId })
           )
           builder.items
 
@@ -350,12 +350,12 @@ finalizeTransaction builder = do
               let
                 PaymentTransaction p = payment
               in
-                PaymentTransaction (p { transactionId = transactionId })
+                PaymentTransaction (p { transactionId = builder.transactionId })  
           )
           builder.payments
 
         transaction = Transaction
-          { transactionId: transactionId
+          { transactionId: builder.transactionId 
           , transactionStatus: Completed
           , transactionCreated: timestamp
           , transactionCompleted: Just timestamp
@@ -378,7 +378,7 @@ finalizeTransaction builder = do
           , transactionNotes: builder.notes
           }
 
-      liftEffect $ log $ "Transaction finalized: " <> uuidToString transactionId
+      liftEffect $ log $ "Transaction finalized: " <> uuidToString builder.transactionId
         <> ", Total: "
         <> formatDiscrete numericC builder.total
 
@@ -489,7 +489,6 @@ openRegister
   -> Discrete USD
   -> Aff (Either RegisterError RegisterState)
 openRegister registerId employeeId startingCash = do
-  currentTime <- liftEffect now
   timestamp <- liftEffect nowDateTime
 
   liftEffect $ log $ "Opening register " <> uuidToString registerId
@@ -497,15 +496,15 @@ openRegister registerId employeeId startingCash = do
     <> formatDiscrete numericC startingCash
 
   pure $ Right
-    { isOpen: true
+    { registerId
+    , isOpen: true
     , currentDrawerAmount: startingCash
     , currentTransaction: Nothing
     , openedAt: Just timestamp
-    , openedBy: Just employeeId
+    , openedBy: employeeId
     , lastTransactionTime: Nothing
     , expectedDrawerAmount: startingCash
     }
-
 closeRegister
   :: RegisterState
   -> UUID
@@ -564,10 +563,8 @@ calculateTaxes amount menuItem =
       Tinctures -> true
       _ -> false
 
-    -- Convert Discrete to Int for calculations
     amountInCents = unwrap amount
 
-    -- Calculate tax amounts as Discrete values
     salesTaxAmount = Discrete
       (Int.floor (Int.toNumber amountInCents * salesTaxRate))
     cannabisTaxAmount =
@@ -606,7 +603,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
 
   let txId = originalTransaction.id
 
-  -- Creating a placeholder transaction with all required fields
+  -- TODO:  transaction with all required fields
   let
     txData = unwrap
       ( Transaction
@@ -708,7 +705,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
     pure $ Right (Transaction refundTransaction)
   where
 
-  contains :: Array UUID -> UUID -> Boolean -- Fixed: Removed unused type variable
+  contains :: Array UUID -> UUID -> Boolean
   contains ids targetId =
     case Array.uncons ids of
       Nothing -> false
