@@ -59,14 +59,14 @@ renderInventory config (Inventory items) =
   in
     D.div
       [ DA.klass_ "container" ]
-      [ D.div [ DA.klass_ "inventory-stats" ]
-          [ text $ pure $ "Total items: " <> show (length items) ]
-      , if length items == 0 then
+      [ if length items == 0 then
           D.div [ DA.klass_ "empty-inventory" ]
             [ text_ "No items in inventory" ]
         else
           D.div [ DA.klass_ "inventory-grid" ]
             (map renderItem sortedItems)
+      , D.div [ DA.klass_ "inventory-stats" ]
+          [ text $ pure $ "Total items: " <> show (length items) ]
       ]
 
 renderItem :: MenuItem -> Nut
