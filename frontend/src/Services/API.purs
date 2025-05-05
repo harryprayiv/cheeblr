@@ -36,25 +36,6 @@ instance monadServiceLiveService :: MonadService LiveService where
 runLiveService :: forall a. LiveService a -> Aff a
 runLiveService (LiveService aff) = aff
 
--- Mock service implementation for testing
-newtype MockService a = MockService (Aff a)
-
-derive newtype instance functorMockService :: Functor MockService
-derive newtype instance applyMockService :: Apply MockService
-derive newtype instance applicativeMockService :: Applicative MockService
-derive newtype instance bindMockService :: Bind MockService
-derive newtype instance monadMockService :: Monad MockService
-derive newtype instance monadEffectMockService :: MonadEffect MockService
-derive newtype instance monadAffMockService :: MonadAff MockService
-
-instance monadServiceMockService :: MonadService MockService where
-  addMenuItem (MenuItem item) = do
-    liftEffect $ Console.log $ "Mock: Adding item " <> item.name
-    pure $ Right (MenuItem item)
-
-runMockService :: forall a. MockService a -> Aff a
-runMockService (MockService aff) = aff
-
 -- Environment-dependent service
 newtype AppService a = AppService (ReaderT AppEnv Aff a)
 
@@ -80,3 +61,22 @@ instance monadServiceAppService :: MonadService AppService where
 
 runAppService :: forall a. AppEnv -> AppService a -> Aff a
 runAppService env (AppService reader) = runReaderT reader env
+
+-- Mock service implementation for testing
+newtype MockService a = MockService (Aff a)
+
+derive newtype instance functorMockService :: Functor MockService
+derive newtype instance applyMockService :: Apply MockService
+derive newtype instance applicativeMockService :: Applicative MockService
+derive newtype instance bindMockService :: Bind MockService
+derive newtype instance monadMockService :: Monad MockService
+derive newtype instance monadEffectMockService :: MonadEffect MockService
+derive newtype instance monadAffMockService :: MonadAff MockService
+
+instance monadServiceMockService :: MonadService MockService where
+  addMenuItem (MenuItem item) = do
+    liftEffect $ Console.log $ "Mock: Adding item " <> item.name
+    pure $ Right (MenuItem item)
+
+runMockService :: forall a. MockService a -> Aff a
+runMockService (MockService aff) = aff
