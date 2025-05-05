@@ -73,7 +73,7 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
                 , openRegisterStartingCash: 0
                 }
 
-            openResult <- API.openRegister openRequest register.registerId -- heeded warning about unused result
+            openResult <- API.openRegister openRequest register.registerId
 
             liftEffect $ case openResult of
               Right openedRegister -> do
