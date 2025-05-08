@@ -1,21 +1,6 @@
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant return" #-}
 
-{- we need to ignore "Redundant return" here
- There's a critical difference: The return value gets lost in your suggested version.
-In the Servant handler context:
-
-- The createRegister function returns a Register inside an IO monad
-- The liftIO lifts this into the Handler monad
-- We need to capture and return this value to the API caller
-
-If we just did liftIO $ createRegister pool register without binding it to a variable and returning it:
-
- 1. The register would be created in the database
- 2. The Register object would be created but then discarded
- 3.  API would return nothing to the client (or an empty value) -}
-
-
 module Server.Transaction where
 
 import API.Transaction

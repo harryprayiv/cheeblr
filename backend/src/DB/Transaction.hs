@@ -43,6 +43,7 @@ import Types.Transaction
       Transaction(..),
       TransactionItem(..),
       TransactionStatus(..),
+      InventoryReservation (..),
       TransactionType(..) )
 import API.Transaction (
     OpenRegisterRequest(..),
@@ -58,16 +59,6 @@ type DBAction a = Connection -> IO a
 
 withConnection :: ConnectionPool -> (Connection -> IO a) -> IO a
 withConnection = withResource
-
-data InventoryReservation = InventoryReservation
-  { reservationItemSku :: UUID
-  , reservationTransactionId :: UUID
-  , reservationQuantity :: Int
-  , reservationStatus :: Text
-  } deriving (Show, Eq)
-
--- This updated function creates all necessary tables for the transaction system
--- Replace this function in DB/Transaction.hs
 
 createTransactionTables :: ConnectionPool -> IO ()
 createTransactionTables pool = withConnection pool $ \conn -> do
@@ -208,53 +199,6 @@ createTransactionTables pool = withConnection pool $ \conn -> do
       |]
 
   hPutStrLn stderr "Transaction tables setup completed."
-
--- createTransactionTables :: ConnectionPool -> IO ()
--- createTransactionTables pool = withConnection pool $ \conn -> do
---   hPutStrLn stderr "Creating transaction tables..."
---   do
---     results <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction'" :: IO [Only Int]
---     case results of
---       [] -> do
---         hPutStrLn stderr "Transaction tables not found, creating..."
---         void $ execute_ conn
---           [sql|
---             CREATE TABLE IF NOT EXISTS transaction (
---               id UUID PRIMARY KEY,
---               status TEXT NOT NULL,
---               created TIMESTAMP WITH TIME ZONE NOT NULL,
---               completed TIMESTAMP WITH TIME ZONE,
---               customer_id UUID,
---               employee_id UUID NOT NULL,
---               register_id UUID NOT NULL,
---               location_id UUID NOT NULL,
---               subtotal INTEGER NOT NULL,
---               discount_total INTEGER NOT NULL,
---               tax_total INTEGER NOT NULL,
---               total INTEGER NOT NULL,
---               transaction_type TEXT NOT NULL,
---               is_voided BOOLEAN NOT NULL DEFAULT FALSE,
---               void_reason TEXT,
---               is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
---               refund_reason TEXT,
---               reference_transaction_id UUID,
---               notes TEXT
---             )
---           |]
---         void $ execute_ conn
---           [sql|
---             CREATE TABLE IF NOT EXISTS inventory_reservation (
---               id UUID PRIMARY KEY,
---               item_sku UUID NOT NULL,
---               transaction_id UUID NOT NULL,
---               quantity INTEGER NOT NULL,
---               status TEXT NOT NULL,
---               created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
---             )
---           |]
---       _ -> do
---         hPutStrLn stderr "Transaction tables already exist"
---         pure ()
 
 -- Transaction Functions --
 getAllTransactions :: ConnectionPool -> IO [Transaction]

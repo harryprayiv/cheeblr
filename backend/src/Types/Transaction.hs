@@ -22,6 +22,13 @@ data TransactionStatus
 instance ToJSON TransactionStatus
 instance FromJSON TransactionStatus
 
+data InventoryReservation = InventoryReservation
+  { reservationItemSku :: UUID
+  , reservationTransactionId :: UUID
+  , reservationQuantity :: Int
+  , reservationStatus :: Text
+  } deriving (Show, Eq)
+
 data TransactionType
   = Sale
   | Return

@@ -64,7 +64,7 @@ run = do
         , corsVaryOrigin = False
         , corsExposedHeaders = Just [hContentType]
         , corsRequireOrigin = False
-        , corsIgnoreFailures = True -- Important: ignore CORS failures in development
+        , corsIgnoreFailures = True -- ignore CORS failures in development
         }
 
     app = cors (const $ Just corsPolicy) $ serve api (combinedServer pool)

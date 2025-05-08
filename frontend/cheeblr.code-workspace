@@ -1,0 +1,61 @@
+{
+  "folders": [
+    {
+      "name": "PS_frontend",
+      "path": "frontend"
+    },
+    {
+      "name": "HS_backend",
+      "path": "backend"
+    },
+    {
+      "name": "nix",
+      "path": "nix"
+    },
+    {
+      "name": "Helpers",
+      "path": "script"
+    },
+    {
+      "name": "Root",
+      "path": "./"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "frontend": false,
+      "backend": false,
+      "nix": false
+    },
+    "[purescript]": {
+      "editor.defaultFormatter": "nwolverson.ide-purescript",
+      "editor.fontFamily": "Hasklig",
+      "editor.fontSize": 14
+    },
+    "[haskell]": {
+      "editor.defaultFormatter": "haskell.haskell",
+      "haskell.formattingProvider": "fourmolu",
+      "editor.fontFamily": "Hasklig",
+      "editor.fontSize": 14
+    },
+    "purescript.addSpagoSources": true,
+    "purescript.workspace.multiRootMode": true,
+    "purescript.sourcePath": "src",
+    "haskell.checkProject": true,
+    "files.watcherExclude": {
+      "**/dist/**": true,
+      "**/dist-newstyle/**": true,
+      "**/.spago/**": true,
+      "**/output/**": true,
+      "**/.psci_modules/**": true
+    }
+  },
+  "extensions": {
+    "recommendations": [
+      "nwolverson.ide-purescript",
+      "nwolverson.language-purescript",
+      "haskell.haskell",
+      "justusadam.language-haskell"
+    ]
+  }
+}

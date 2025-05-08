@@ -40,20 +40,28 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  width: 100%;
-  max-width: 100%;
+  width: 100vw; /* Use viewport width */
+  max-width: 100vw; /* Ensure no horizontal scrollbar */
   padding-bottom: 75px;
+  overflow-x: hidden; /* Prevent horizontal scroll */
 }
 
 .app-content {
   flex: 1;
-  padding: 1rem;
+  padding: 0.5rem; /* Reduced padding */
   width: 100%;
   max-width: 100%;
-  margin: 0 auto;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch; /* Changed from center to stretch */
+}
+
+.container {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  margin: 0;
 }
 
 /* Navigation */
@@ -113,11 +121,12 @@ body {
 /* LiveView Inventory Grid */
 .inventory-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); /* Smaller minimum width */
+  gap: 0.75rem; /* Reduced gap */
   width: 100%;
-  max-width: 1600px;
-  margin: 0 auto;
+  max-width: 100%; /* Remove width restriction */
+  margin: 0;
+  padding: 0 0.5rem; /* Small horizontal padding */
 }
 
 .inventory-stats {
@@ -144,45 +153,45 @@ body {
   flex-direction: column;
   background-color: var(--bg-medium);
   border-radius: var(--border-radius);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-  padding: 1rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  padding: 0.4rem; /* Further reduced padding */
   transition: transform 0.2s, box-shadow 0.2s;
-  max-height: 400px; /* Limit card height */
+  max-height: 280px; /* Further reduced height */
   overflow: hidden;
   width: 100%;
   height: 100%;
 }
 
 .inventory-item-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transform: translateY(-2px); /* Reduced from -3px */
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4);
 }
 
 /* Item Header */
 .item-header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem; /* Reduced from 0.75rem */
   width: 100%;
 }
 
 .item-brand {
-  font-size: 0.85rem;
+  font-size: 0.75rem; /* Reduced from 0.85rem */
   font-weight: 600;
   color: var(--brown-light);
   text-transform: uppercase;
 }
 
 .inventory-item-card .item-name {
-  font-size: 1.25rem;
+  font-size: 1rem; /* Reduced from 1.25rem */
   font-weight: 700;
-  margin: 0.25rem 0 0.75rem;
+  margin: 0.15rem 0 0.5rem; /* Reduced margins */
   color: var(--fg-light);
 }
 
 .item-img {
-  width: 60px;
-  height: 60px;
+  width: 50px; /* Reduced from 60px */
+  height: 50px; /* Reduced from 60px */
   flex-shrink: 0;
   border-radius: var(--border-radius);
   overflow: hidden;
@@ -199,63 +208,63 @@ body {
 .item-category,
 .item-species,
 .item-strain_lineage {
-  font-size: 0.85rem;
-  margin-bottom: 0.5rem;
+  font-size: 0.75rem; /* Reduced from 0.85rem */
+  margin-bottom: 0.35rem; /* Reduced from 0.5rem */
   color: var(--fg-dark);
 }
 
 .inventory-item-card .item-price {
-  font-size: 1.1rem;
+  font-size: 0.95rem; /* Reduced from 1.1rem */
   font-weight: 700;
-  margin: 0.5rem 0;
+  margin: 0.35rem 0; /* Reduced from 0.5rem */
   color: var(--green-light);
 }
 
 .item-description {
-  font-size: 0.9rem;
-  margin: 0.5rem 0;
+  font-size: 0.8rem; /* Reduced from 0.9rem */
+  margin: 0.35rem 0; /* Reduced from 0.5rem */
   color: var(--fg-dark);
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2; /* Reduced from 3 lines to 2 */
   -webkit-box-orient: vertical;
-  max-height: 4.5em; /* Limit to ~3 lines */
-  flex: 0 0 auto; /* Don't allow this to grow too much */
+  max-height: 3em; /* Reduced from 4.5em */
+  flex: 0 0 auto;
 }
 
 .inventory-item-card .item-quantity {
   display: inline-block;
-  padding: 0.25rem 0.5rem;
+  padding: 0.2rem 0.4rem; /* Reduced from 0.25rem 0.5rem */
   background-color: var(--green-dark);
   color: var(--fg-light);
   border-radius: var(--border-radius);
-  font-size: 0.85rem;
-  margin: 0.5rem 0;
+  font-size: 0.75rem; /* Reduced from 0.85rem */
+  margin: 0.35rem 0; /* Reduced from 0.5rem */
 }
 
 .inventory-item-card .item-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 1rem;
-  margin-top: 0.75rem;
+  gap: 0.25rem; /* Reduced from 1rem */
+  margin-top: 0.5rem; /* Reduced from 0.75rem */
   border-top: 1px solid var(--bg-light);
-  padding-top: 0.75rem;
+  padding-top: 0.5rem; /* Reduced from 0.75rem */
 }
 
 .action-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 24px;
-  padding: 0 8px;
+  height: 22px; /* Reduced from 24px */
+  padding: 0 6px; /* Reduced from 0 8px */
   border-radius: 4px;
   border: none;
   background-color: var(--bg-light);
   color: var(--fg-dark);
   cursor: pointer;
   transition: all 0.2s ease;
-  font-size: 0.75rem;
+  font-size: 0.7rem; /* Reduced from 0.75rem */
   font-weight: 500;
   text-decoration: none;
 }
@@ -599,28 +608,37 @@ body {
 /* Responsive Adjustments for LiveView */
 @media (max-width: 1200px) {
   .inventory-grid {
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); /* Reduced from 250px */
+  }
+}
+
+@media (max-width: 1600px) {
+  .inventory-grid {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  }
+}
+
+@media (max-width: 1200px) {
+  .inventory-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   }
 }
 
 @media (max-width: 768px) {
   .inventory-grid {
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   }
   
   .item-img {
-    width: 50px;
-    height: 50px;
-  }
-  
-  .item-name {
-    font-size: 1.1rem;
+    width: 36px;
+    height: 36px;
   }
 }
 
 @media (max-width: 576px) {
   .inventory-grid {
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 0.5rem;
   }
   
   .navigation-container {
