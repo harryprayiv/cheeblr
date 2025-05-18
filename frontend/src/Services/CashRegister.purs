@@ -90,7 +90,7 @@ initializeTransaction transactionId employeeId registerId locationId = do
   liftEffect $ log "Initializing new transaction"
 
   pure
-    { transactionId          -- Add this field
+    { transactionId
     , items: []
     , payments: []
     , customer: Nothing

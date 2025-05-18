@@ -47,9 +47,6 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
         liftEffect $ Console.log $
           "Register not found, creating a new one with ID: " <> show registerId
 
-        -- locationId <- liftEffect genUUID
-        -- employeeId <- liftEffect genUUID
-
         let
           newRegister =
             { registerId: registerId
@@ -86,7 +83,7 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
           Left createErr -> do
             liftEffect $ setError ("Failed to create register: " <> createErr)
 
--- create a register if it doesn't exist
+-- create a local register if it doesn't exist
 initLocalRegister :: UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
 initLocalRegister locationId employeeId setRegister setError = do
 
@@ -104,14 +101,9 @@ initLocalRegister locationId employeeId setRegister setError = do
       pure newId
 
   launchAff_ do
-    -- locationId <- liftEffect genUUID
-    -- employeeId <- liftEffect genUUID
-
-    -- First try to get the register - if it exists, we'll open it
     getResult <- API.getRegister registerId
 
     case getResult of
-      -- Register exists, open it
       Right register -> do
         let
           openRequest =
@@ -129,7 +121,6 @@ initLocalRegister locationId employeeId setRegister setError = do
           Left err -> do
             setError ("Failed to open register: " <> err)
 
-      -- Register doesn't exist, create it first
       Left _ -> do
         liftEffect $ Console.log $
           "Register not found, creating a new one with ID: " <> show registerId
@@ -151,7 +142,6 @@ initLocalRegister locationId employeeId setRegister setError = do
 
         case createResult of
           Right register -> do
-            -- Now open the newly created register
             let
               openRequest =
                 { openRegisterEmployeeId: employeeId

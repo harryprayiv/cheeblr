@@ -177,11 +177,11 @@ addItemToCart
   :: MenuItem
   -> Number
   -> Array TransactionItem
-  -> UUID -- Transaction ID
+  -> UUID
   -> (Array TransactionItem -> Effect Unit)
   -> (CartTotals -> Effect Unit)
-  -> (String -> Effect Unit) -- For status messages
-  -> (Boolean -> Effect Unit) -- For loading state
+  -> (String -> Effect Unit)
+  -> (Boolean -> Effect Unit)
   -> Effect Unit
 addItemToCart
   menuItem@(MenuItem record)
@@ -196,7 +196,6 @@ addItemToCart
   if qty <= 0.0 then
     setStatusMessage "Quantity must be greater than 0"
   else do
-    -- Check current cart quantity first
     let
       currentQtyInCart =
         case
@@ -213,10 +212,10 @@ addItemToCart
         <> show (record.quantity - Int.floor currentQtyInCart)
         <> " more available."
     else do
-      -- Set loading state
+      -- Set processing state but don't block UI updates
       setIsProcessing true
+      setStatusMessage "Adding item to transaction..."
 
-      -- Make a backend call to reserve the item
       void $ launchAff_ do
         result <- TransactionService.createTransactionItem
           transactionId
@@ -226,24 +225,19 @@ addItemToCart
 
         liftEffect $ case result of
           Right addedItem -> do
-            -- Item successfully reserved, update the cart
             let newItems = addedItem : currentItems
-
-            -- Recalculate totals
             let newTotals = calculateCartTotals newItems
 
-            -- Update state
             setTotals newTotals
             setItems newItems
             setStatusMessage "Item added to transaction and reserved"
             Console.log $ "Added and reserved item: " <> record.name
 
           Left err -> do
-            -- Handle error (likely inventory unavailable)
             setStatusMessage $ "Error: " <> err
             Console.error $ "Failed to reserve item: " <> err
 
-        -- End loading state
+        -- Always reset the processing state
         liftEffect $ setIsProcessing false
 
 removeItemFromCart
