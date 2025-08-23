@@ -138,15 +138,15 @@ addItemToTransaction builder menuItem quantity = do
 
       -- Create a new TransactionItem by wrapping the record with the constructor
       newItem = TransactionItem
-        { id: itemId
-        , transactionId:  builder.transactionId 
-        , menuItemSku: menuItemRecord.sku
-        , quantity
-        , pricePerUnit: fromDiscrete' itemPrice
-        , discounts: []
-        , taxes
-        , subtotal: fromDiscrete' itemSubtotal
-        , total: fromDiscrete' (itemSubtotal + itemTaxTotal)
+        { transactionItemId: itemId
+        , transactionItemTransactionId: builder.transactionId 
+        , transactionItemMenuItemSku: menuItemRecord.sku
+        , transactionItemQuantity: quantity
+        , transactionItemPricePerUnit: fromDiscrete' itemPrice
+        , transactionItemDiscounts: []
+        , transactionItemTaxes: taxes
+        , transactionItemSubtotal: fromDiscrete' itemSubtotal
+        , transactionItemTotal: fromDiscrete' (itemSubtotal + itemTaxTotal)
         }
 
       newSubtotal = builder.subtotal + itemSubtotal
@@ -341,7 +341,7 @@ finalizeTransaction builder = do
               let
                 TransactionItem ti = item
               in
-                TransactionItem (ti { transactionId = builder.transactionId })
+                TransactionItem (ti { transactionItemTransactionId = builder.transactionId })
           )
           builder.items
 
@@ -445,11 +445,11 @@ formatTransactionItem :: TransactionItem -> String
 formatTransactionItem (TransactionItem item) =
   let
     itemLine =
-      ( if item.quantity /= 1.0 then show item.quantity <> " x "
+      ( if item.transactionItemQuantity /= 1.0 then show item.transactionItemQuantity <> " x "
         else ""
       )
         <> "Item @ "
-        <> formatDiscrete numeric (toDiscrete item.pricePerUnit)
+        <> formatDiscrete numeric (toDiscrete item.transactionItemPricePerUnit)
         <> "\n"
 
     taxLines = foldl
@@ -460,10 +460,10 @@ formatTransactionItem (TransactionItem item) =
             <> "\n"
       )
       ""
-      item.taxes
+      item.transactionItemTaxes
 
     totalLine = "  Item Total: "
-      <> formatDiscrete numeric (toDiscrete item.total)
+      <> formatDiscrete numeric (toDiscrete item.transactionItemTotal)
       <> "\n\n"
   in
     itemLine <> taxLines <> totalLine
@@ -645,17 +645,17 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
     let
       itemsToRefund =
         if null itemIdsToRefund then txData.transactionItems
-        else filter (\item -> contains itemIdsToRefund (unwrap item).id)
+        else filter (\item -> contains itemIdsToRefund (unwrap item).transactionItemId)
           txData.transactionItems
 
       refundSubtotal = foldl
-        (\acc item -> acc + (toDiscrete (unwrap item).subtotal))
+        (\acc item -> acc + (toDiscrete (unwrap item).transactionItemSubtotal))
         (Discrete 0)
         itemsToRefund
       refundTaxTotal = foldl
         ( \acc item ->
             foldl (\acc2 tax -> acc2 + (toDiscrete tax.amount)) acc
-              (unwrap item).taxes
+              (unwrap item).transactionItemTaxes
         )
         (Discrete 0)
         itemsToRefund
@@ -716,12 +716,12 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
   makeRefundItem :: TransactionItem -> TransactionItem
   makeRefundItem (TransactionItem item) =
     TransactionItem $ item
-      { transactionId = dummyTransactionId
-      , subtotal = fromDiscrete' (negate (toDiscrete item.subtotal))
-      , total = fromDiscrete' (negate (toDiscrete item.total))
-      , taxes = map
+      { transactionItemTransactionId = dummyTransactionId
+      , transactionItemSubtotal = fromDiscrete' (negate (toDiscrete item.transactionItemSubtotal))
+      , transactionItemTotal = fromDiscrete' (negate (toDiscrete item.transactionItemTotal))
+      , transactionItemTaxes = map
           ( \tax -> tax
               { amount = fromDiscrete' (negate (toDiscrete tax.amount)) }
           )
-          item.taxes
+          item.transactionItemTaxes
       }

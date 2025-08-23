@@ -24,6 +24,9 @@ type TransactionAPI =
     :<|> "transaction" :> "payment" :> ReqBody '[JSON] PaymentTransaction :> Post '[JSON] PaymentTransaction
     :<|> "transaction" :> "payment" :> Capture "id" UUID :> Delete '[JSON] NoContent
     :<|> "transaction" :> "finalize" :> Capture "id" UUID :> Post '[JSON] Transaction
+    :<|> "inventory"   :> "available" :> Capture "sku" UUID :> Get '[JSON] AvailableInventory
+    :<|> "inventory"   :> "reserve" :> ReqBody '[JSON] ReservationRequest :> Post '[JSON] InventoryReservation
+    :<|> "inventory"   :> "release" :> Capture "id" UUID :> Delete '[JSON] NoContent
 
 -- | Register API endpoints
 type RegisterAPI =
@@ -42,6 +45,24 @@ type LedgerAPI =
     :<|> "ledger" :> "account" :> Capture "id" UUID :> Get '[JSON] Account
     :<|> "ledger" :> "account" :> ReqBody '[JSON] Account :> Post '[JSON] Account
     :<|> "ledger" :> "report" :> "daily" :> ReqBody '[JSON] DailyReportRequest :> Post '[JSON] DailyReportResult
+
+data AvailableInventory = AvailableInventory
+  { availableTotal :: Int
+  , availableReserved :: Int
+  , availableActual :: Int
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON AvailableInventory
+instance FromJSON AvailableInventory
+
+data ReservationRequest = ReservationRequest
+  { reserveItemSku :: UUID
+  , reserveTransactionId :: UUID
+  , reserveQuantity :: Int
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON ReservationRequest
+instance FromJSON ReservationRequest
 
 -- | Compliance API endpoints
 type ComplianceAPI =

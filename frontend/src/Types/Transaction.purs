@@ -14,6 +14,7 @@ import Data.String (drop, take)
 import Foreign (ForeignError(..), fail)
 import Foreign.Index (readProp)
 import Types.UUID (UUID)
+import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Yoga.JSON (class ReadForeign, class WriteForeign, writeImpl, readImpl)
 
 -- || Base Types
@@ -56,16 +57,28 @@ newtype Transaction = Transaction
   , transactionNotes :: Maybe String
   }
 
+-- newtype TransactionItem = TransactionItem
+--   { id :: UUID
+--   , transactionId :: UUID
+--   , menuItemSku :: UUID
+--   , quantity :: Number
+--   , pricePerUnit :: DiscreteMoney USD
+--   , discounts :: Array DiscountRecord
+--   , taxes :: Array TaxRecord
+--   , subtotal :: DiscreteMoney USD
+--   , total :: DiscreteMoney USD
+--   }
+
 newtype TransactionItem = TransactionItem
-  { id :: UUID
-  , transactionId :: UUID
-  , menuItemSku :: UUID
-  , quantity :: Number
-  , pricePerUnit :: DiscreteMoney USD
-  , discounts :: Array DiscountRecord
-  , taxes :: Array TaxRecord
-  , subtotal :: DiscreteMoney USD
-  , total :: DiscreteMoney USD
+  { transactionItemId :: UUID  -- was: id
+  , transactionItemTransactionId :: UUID  -- was: transactionId
+  , transactionItemMenuItemSku :: UUID  -- was: menuItemSku
+  , transactionItemQuantity :: Number  -- was: quantity
+  , transactionItemPricePerUnit :: DiscreteMoney USD  -- was: pricePerUnit
+  , transactionItemDiscounts :: Array DiscountRecord  -- was: discounts
+  , transactionItemTaxes :: Array TaxRecord  -- was: taxes
+  , transactionItemSubtotal :: DiscreteMoney USD  -- was: subtotal
+  , transactionItemTotal :: DiscreteMoney USD  -- was: total
   }
 
 newtype PaymentTransaction = PaymentTransaction
@@ -272,13 +285,22 @@ instance showTransaction :: Show Transaction where
       <> show t.transactionStatus
       <> " }"
 
+-- instance showTransactionItem :: Show TransactionItem where
+--   show (TransactionItem ti) =
+--     "TransactionItem { sku: " <> show ti.menuItemSku
+--       <> ", quantity: "
+--       <> show ti.quantity
+--       <> ", total: "
+--       <> show ti.total
+--       <> " }"
+
 instance showTransactionItem :: Show TransactionItem where
   show (TransactionItem ti) =
-    "TransactionItem { sku: " <> show ti.menuItemSku
+    "TransactionItem { sku: " <> show ti.transactionItemMenuItemSku
       <> ", quantity: "
-      <> show ti.quantity
+      <> show ti.transactionItemQuantity
       <> ", total: "
-      <> show ti.total
+      <> show ti.transactionItemTotal
       <> " }"
 
 instance showPaymentTransaction :: Show PaymentTransaction where
@@ -349,6 +371,26 @@ instance writeForeignTaxCategory :: WriteForeign TaxCategory where
 
 instance writeForeignTransactionItem :: WriteForeign TransactionItem where
   writeImpl (TransactionItem item) = writeImpl item
+
+-- instance writeForeignTransactionItem :: WriteForeign TransactionItem where
+--   writeImpl (TransactionItem item) = writeImpl
+--     { transactionItemId: item.id
+--     , transactionItemTransactionId: item.transactionId
+--     , transactionItemMenuItemSku: item.menuItemSku
+--     , transactionItemQuantity: Int.floor item.quantity  -- Make sure it's an Int
+--     , transactionItemPricePerUnit: unwrap (toDiscrete item.pricePerUnit)  -- Convert to Int
+--     , transactionItemDiscounts: item.discounts
+--     , transactionItemTaxes: map writeTaxRecord item.taxes
+--     , transactionItemSubtotal: unwrap (toDiscrete item.subtotal)  -- Convert to Int
+--     , transactionItemTotal: unwrap (toDiscrete item.total)  -- Convert to Int
+--     }
+--     where
+--     writeTaxRecord tax =
+--       { taxCategory: show tax.category
+--       , taxRate: tax.rate
+--       , taxAmount: unwrap (toDiscrete tax.amount)  -- Convert to Int
+--       , taxDescription: tax.description
+--       }
 
 instance writeForeignPaymentTransaction :: WriteForeign PaymentTransaction where
   writeImpl (PaymentTransaction payment) = writeImpl payment

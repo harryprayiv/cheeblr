@@ -32,10 +32,10 @@ import Effect.Class.Console as Console
 import FRP.Poll (Poll)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..))
-import Types.Register (Register)
+import Types.Register (Register, CartTotals)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID(..))
-import Utils.CartUtils (addItemToCart, emptyCartTotals, formatDiscretePrice, removeItemFromCart)
+import Utils.CartUtils (emptyCartTotals, formatDiscretePrice, removeItemFromCart)
 import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
 import Utils.TransactionUtils (getRemainingBalance, paymentsCoversTotal)
 import Web.Event.Event (target)
@@ -320,7 +320,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
   
                                                         existingItem = find
                                                           ( \(TransactionItem item) ->
-                                                              item.menuItemSku ==
+                                                              item.transactionItemMenuItemSku ==
                                                                 record.sku
                                                           )
                                                           cartItems
@@ -329,7 +329,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                           case existingItem of
                                                             Just
                                                               (TransactionItem item) ->
-                                                              floor item.quantity
+                                                              floor item.transactionItemQuantity
                                                             Nothing -> 0
                                                       in
                                                         D.div
@@ -500,24 +500,24 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                 ( cartItems <#> \(TransactionItem itemData) ->
                                     let
                                       itemName = findItemNameBySku
-                                        itemData.menuItemSku
+                                        itemData.transactionItemMenuItemSku
                                         inventory
                                     in
                                       D.div [ DA.klass_ "cart-item-row" ]
                                         [ D.div [ DA.klass_ "col item-col" ]
                                             [ text_ itemName ]
                                         , D.div [ DA.klass_ "col qty-col" ]
-                                            [ text_ (show itemData.quantity) ]
+                                            [ text_ (show itemData.transactionItemQuantity) ]
                                         , D.div [ DA.klass_ "col price-col" ]
-                                            [ text_ (show itemData.pricePerUnit) ]
+                                            [ text_ (show itemData.transactionItemPricePerUnit) ]
                                         , D.div [ DA.klass_ "col total-col" ]
-                                            [ text_ (show itemData.total) ]
+                                            [ text_ (show itemData.transactionItemTotal) ]
                                         , D.div [ DA.klass_ "col actions-col" ]
                                             [ D.button
                                                 [ DA.klass_ "remove-btn"
                                                 , DL.click_ \_ -> do
                                                     removeItemFromCart
-                                                      itemData.id
+                                                      itemData.transactionItemId
                                                       cartItems
                                                       setCartItems
                                                       setCartTotals
@@ -944,3 +944,75 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
           if msg == "" then D.div_ []
           else D.div [ DA.klass_ "status-message" ] [ text_ msg ]
       ]
+
+
+-- In CreateTransaction.purs, update the addItemToCart function:
+addItemToCart
+  :: MenuItem
+  -> Number
+  -> Array TransactionItem
+  -> UUID  -- transactionId
+  -> (Array TransactionItem -> Effect Unit)
+  -> (CartTotals -> Effect Unit)
+  -> (String -> Effect Unit)
+  -> (Boolean -> Effect Unit)
+  -> Effect Unit
+addItemToCart
+  menuItem@(MenuItem record)
+  qty
+  currentItems
+  transactionId
+  setItems
+  setTotals
+  setStatusMessage
+  setCheckingInventory = do
+  
+  if qty <= 0.0 then
+    setStatusMessage "Quantity must be greater than 0"
+  else do
+    setCheckingInventory true
+    setStatusMessage "Checking inventory..."
+    
+    -- Check for existing item in cart
+    let existingItem = find 
+          (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku) 
+          currentItems
+    
+    let currentQtyInCart = case existingItem of
+          Just (TransactionItem item) -> item.transactionItemQuantity
+          Nothing -> 0.0
+    
+    let totalRequestedQty = currentQtyInCart + qty
+    
+    -- Create the transaction item through the API
+    void $ launchAff_ do
+      result <- TransactionService.createTransactionItem
+        transactionId
+        record.sku
+        qty
+        (unwrap record.price)
+      
+      liftEffect $ case result of
+        Right newItem -> do
+          -- Update local state with the new item
+          let updatedItems = case existingItem of
+                Just (TransactionItem existing) ->
+                  -- Update existing item quantity
+                  map (\(TransactionItem i) -> 
+                    if i.transactionItemId == existing.transactionItemId 
+                    then TransactionItem (i { transactionItemQuantity = totalRequestedQty })
+                    else TransactionItem i
+                  ) currentItems
+                Nothing ->
+                  -- Add new item
+                  newItem : currentItems
+          
+          let newTotals = TransactionService.calculateCartTotals updatedItems
+          setItems updatedItems
+          setTotals newTotals
+          setCheckingInventory false
+          setStatusMessage $ "Added " <> record.name <> " to cart"
+          
+        Left err -> do
+          setCheckingInventory false
+          setStatusMessage $ "Failed to add item: " <> err

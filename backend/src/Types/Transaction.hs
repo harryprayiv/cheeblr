@@ -27,7 +27,10 @@ data InventoryReservation = InventoryReservation
   , reservationTransactionId :: UUID
   , reservationQuantity :: Int
   , reservationStatus :: Text
-  } deriving (Show, Eq)
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON InventoryReservation
+instance FromJSON InventoryReservation
 
 data TransactionType
   = Sale

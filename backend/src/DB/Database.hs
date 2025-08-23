@@ -202,20 +202,43 @@ deleteMenuItem pool uuid = do
         then return $ Message "Item deleted successfully"
         else throwError err404
 
+-- getAllMenuItems :: Pool.Pool Connection -> IO Inventory
+-- getAllMenuItems pool = withConnection pool $ \conn -> do
+--   items <-
+--     query_
+--       conn
+--       [sql|
+--         SELECT m.*,
+--                s.thc, s.cbg, s.strain, s.creator, s.species,
+--                s.dominant_terpene, s.terpenes, s.lineage,
+--                s.leafly_url, s.img
+--         FROM menu_items m
+--         JOIN strain_lineage s ON m.sku = s.sku
+--         ORDER BY m.sort
+--       |]
+--   return $ Inventory $ V.fromList items
+
 getAllMenuItems :: Pool.Pool Connection -> IO Inventory
 getAllMenuItems pool = withConnection pool $ \conn -> do
-  items <-
-    query_
-      conn
-      [sql|
-        SELECT m.*,
-               s.thc, s.cbg, s.strain, s.creator, s.species,
-               s.dominant_terpene, s.terpenes, s.lineage,
-               s.leafly_url, s.img
-        FROM menu_items m
-        JOIN strain_lineage s ON m.sku = s.sku
-        ORDER BY m.sort
-      |]
+  items <- query_ conn
+    [sql|
+      SELECT 
+        m.sort, m.sku, m.brand, m.name, m.price, m.measure_unit, m.per_package,
+        m.quantity - COALESCE(r.reserved_qty, 0) as available_quantity,
+        m.category, m.subcategory, m.description, m.tags, m.effects,
+        s.thc, s.cbg, s.strain, s.creator, s.species,
+        s.dominant_terpene, s.terpenes, s.lineage,
+        s.leafly_url, s.img
+      FROM menu_items m
+      JOIN strain_lineage s ON m.sku = s.sku
+      LEFT JOIN (
+        SELECT item_sku, SUM(quantity) as reserved_qty
+        FROM inventory_reservation
+        WHERE status = 'Reserved'
+        GROUP BY item_sku
+      ) r ON r.item_sku = m.sku
+      ORDER BY m.sort
+    |]
   return $ Inventory $ V.fromList items
 
 updateExistingMenuItem :: Pool.Pool Connection -> MenuItem -> IO ()

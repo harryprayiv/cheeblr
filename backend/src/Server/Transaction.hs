@@ -1,3 +1,4 @@
+{-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant return" #-}
 
@@ -7,14 +8,17 @@ import API.Transaction
 import Control.Monad.IO.Class (liftIO)
 import Data.Pool (Pool)
 import Data.UUID (UUID)
-import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple (Connection, Only(..), query, execute, Query)
 import DB.Transaction
 import Servant
+import Servant.API
 import Types.Transaction
 import Data.Text (Text, pack)
 import qualified Data.ByteString.Lazy.Char8 as LBS
+import qualified DB.Database as DB
+import Data.UUID.V4 (nextRandom)
+import Data.Time (getCurrentTime)
 
--- Helper function to convert String to LBS.ByteString
 stringToLBS :: String -> LBS.ByteString
 stringToLBS = LBS.pack
 
@@ -31,6 +35,9 @@ transactionServer pool =
     :<|> addPaymentTransactionHandler
     :<|> removePaymentTransactionHandler
     :<|> finalizeTransactionHandler
+    :<|> getAvailableInventoryHandler
+    :<|> reserveInventoryHandler
+    :<|> releaseInventoryHandler
   where
     getAllTransactionsHandler :: Handler [Transaction]
     getAllTransactionsHandler = do
@@ -46,6 +53,93 @@ transactionServer pool =
       case maybeTransaction of
         Just transaction -> return transaction
         Nothing -> throwError err404 { errBody = stringToLBS "Transaction not found" }
+
+    getAvailableInventoryHandler :: UUID -> Handler AvailableInventory
+    getAvailableInventoryHandler sku = do
+      liftIO $ putStrLn $ "Handling GET /inventory/available/" ++ show sku ++ " request"
+      
+      -- Perform the database query in IO and then handle the result
+      result <- liftIO $ DB.withConnection pool $ \conn -> do
+        query conn
+          ("SELECT m.quantity, COALESCE(SUM(r.quantity), 0) " <>
+           "FROM menu_items m " <>
+           "LEFT JOIN inventory_reservation r ON r.item_sku = m.sku AND r.status = 'Reserved' " <>
+           "WHERE m.sku = ? " <>
+           "GROUP BY m.quantity" :: Query)
+          (Only sku) :: IO [(Int, Int)]
+      
+      case result of
+        [] -> throwError err404 { errBody = stringToLBS "Item not found" }
+        ((total, reserved):_) ->
+          return $ AvailableInventory
+            { availableTotal = total
+            , availableReserved = reserved
+            , availableActual = total - reserved
+            }
+
+    reserveInventoryHandler :: ReservationRequest -> Handler InventoryReservation
+    reserveInventoryHandler request = do
+      liftIO $ putStrLn "Handling POST /inventory/reserve request"
+      
+      -- Create a new reservation
+      reservationId <- liftIO nextRandom
+      now <- liftIO getCurrentTime
+      
+      -- Check availability and create reservation atomically
+      result <- liftIO $ DB.withConnection pool $ \conn -> do
+        -- Check current availability
+        availability <- query conn
+          ("SELECT m.quantity, COALESCE(SUM(r.quantity), 0) " <>
+           "FROM menu_items m " <>
+           "LEFT JOIN inventory_reservation r ON r.item_sku = m.sku AND r.status = 'Reserved' " <>
+           "WHERE m.sku = ? " <>
+           "GROUP BY m.quantity" :: Query)
+          (Only $ reserveItemSku request) :: IO [(Int, Int)]
+        
+        case availability of
+          [] -> return $ Left "Item not found"
+          ((total, reserved):_) -> do
+            let available = total - reserved
+            if available < reserveQuantity request
+              then return $ Left $ "Insufficient inventory. Only " ++ show available ++ " available"
+              else do
+                -- Create the reservation
+                _ <- execute conn
+                  ("INSERT INTO inventory_reservation " <>
+                   "(id, item_sku, transaction_id, quantity, status, created_at) " <>
+                   "VALUES (?, ?, ?, ?, 'Reserved', ?)" :: Query)
+                  ( reservationId
+                  , reserveItemSku request
+                  , reserveTransactionId request
+                  , reserveQuantity request
+                  , now
+                  )
+                
+                return $ Right $ InventoryReservation
+                  { reservationItemSku = reserveItemSku request
+                  , reservationTransactionId = reserveTransactionId request
+                  , reservationQuantity = reserveQuantity request
+                  , reservationStatus = "Reserved"
+                  }
+      
+      case result of
+        Left errMsg -> throwError err400 { errBody = stringToLBS errMsg }
+        Right reservation -> return reservation
+
+    releaseInventoryHandler :: UUID -> Handler NoContent
+    releaseInventoryHandler reservationId = do
+      liftIO $ putStrLn $ "Handling DELETE /inventory/release/" ++ show reservationId ++ " request"
+      
+      rowsAffected <- liftIO $ DB.withConnection pool $ \conn ->
+        execute conn
+          ("UPDATE inventory_reservation " <>
+           "SET status = 'Released' " <>
+           "WHERE id = ? AND status = 'Reserved'" :: Query)
+          (Only reservationId)
+      
+      if rowsAffected > 0
+        then return NoContent
+        else throwError err404 { errBody = stringToLBS "Reservation not found or already released" }
 
     createTransactionHandler :: Transaction -> Handler Transaction
     createTransactionHandler transaction = do
@@ -121,7 +215,7 @@ registerServer pool =
     :<|> closeRegisterHandler
   where
     getAllRegistersHandler :: Handler [Register]
-    getAllRegistersHandler = do 
+    getAllRegistersHandler = do
       liftIO $ putStrLn "Handling GET /register request"
       registers <- liftIO $ getAllRegisters pool
       return registers
@@ -135,31 +229,31 @@ registerServer pool =
         Nothing -> throwError err404 { errBody = stringToLBS "Register not found" }
 
     createRegisterHandler :: Register -> Handler Register
-    createRegisterHandler register = do 
+    createRegisterHandler register = do
       liftIO $ putStrLn "Handling POST /register request"
       createdRegister <- liftIO $ createRegister pool register
       return createdRegister
 
     updateRegisterHandler :: UUID -> Register -> Handler Register
-    updateRegisterHandler regId register = do 
+    updateRegisterHandler regId register = do
       liftIO $ putStrLn $ "Handling PUT /register/" ++ show regId ++ " request"
       updatedRegister <- liftIO $ updateRegister pool regId register
       return updatedRegister
 
     openRegisterHandler :: UUID -> OpenRegisterRequest -> Handler Register
-    openRegisterHandler regId request = do 
+    openRegisterHandler regId request = do
       liftIO $ putStrLn $ "Handling POST /register/open/" ++ show regId ++ " request"
       openedRegister <- liftIO $ openRegister pool regId request
       return openedRegister
 
     closeRegisterHandler :: UUID -> CloseRegisterRequest -> Handler CloseRegisterResult
-    closeRegisterHandler regId request = do 
+    closeRegisterHandler regId request = do
       liftIO $ putStrLn $ "Handling POST /register/close/" ++ show regId ++ " request"
       closeResult <- liftIO $ closeRegister pool regId request
       return closeResult
 
 ledgerServer :: Pool Connection -> Server LedgerAPI
-ledgerServer _ =  -- Changed pool to _ since it's unused
+ledgerServer _ =
   getEntriesHandler
     :<|> getEntryHandler
     :<|> getAccountsHandler
@@ -188,17 +282,17 @@ ledgerServer _ =  -- Changed pool to _ since it's unused
       throwError err501 { errBody = stringToLBS "Not implemented yet" }
 
     createAccountHandler :: Account -> Handler Account
-    createAccountHandler _ = do  -- Changed account to _ since it's unused
+    createAccountHandler _ = do
       liftIO $ putStrLn "Handling POST /ledger/account request"
       throwError err501 { errBody = stringToLBS "Not implemented yet" }
 
     dailyReportHandler :: DailyReportRequest -> Handler DailyReportResult
-    dailyReportHandler _ = do  -- Changed request to _ since it's unused
+    dailyReportHandler _ = do
       liftIO $ putStrLn "Handling POST /ledger/report/daily request"
       return $ DailyReportResult 0 0 0 0 0
 
 complianceServer :: Pool Connection -> Server ComplianceAPI
-complianceServer _ =  -- Changed pool to _ since it's unused
+complianceServer _ =
   verificationHandler
     :<|> getRecordHandler
     :<|> reportHandler
@@ -209,12 +303,12 @@ complianceServer _ =  -- Changed pool to _ since it's unused
       return verification
 
     getRecordHandler :: UUID -> Handler ComplianceRecord
-    getRecordHandler txId = do  -- Renamed from transactionId to txId
+    getRecordHandler txId = do
       liftIO $ putStrLn $ "Handling GET /compliance/record/" ++ show txId ++ " request"
       throwError err501 { errBody = stringToLBS "Not implemented yet" }
 
     reportHandler :: ComplianceReportRequest -> Handler ComplianceReportResult
-    reportHandler _ = do  -- Changed request to _ since it's unused
+    reportHandler _ = do
       liftIO $ putStrLn "Handling POST /compliance/report request"
       return $ ComplianceReportResult (pack "Report Not Implemented")
 

@@ -46,15 +46,15 @@ menuItemToTransactionItem (MenuItem item) quantity transactionId = do
     totalInCents = subtotalInCents + salesTaxAmount
 
   pure $ TransactionItem
-    { id: itemId
-    , transactionId: transactionId
-    , menuItemSku: item.sku
-    , quantity: quantity
-    , pricePerUnit: fromDiscrete' (Discrete priceInCents)
-    , discounts: []
-    , taxes: [ salesTax ]
-    , subtotal: fromDiscrete' (Discrete subtotalInCents)
-    , total: fromDiscrete' (Discrete totalInCents)
+    { transactionItemId: itemId
+    , transactionItemTransactionId: transactionId
+    , transactionItemMenuItemSku: item.sku
+    , transactionItemQuantity: quantity
+    , transactionItemPricePerUnit: fromDiscrete' (Discrete priceInCents)
+    , transactionItemDiscounts: []
+    , transactionItemTaxes: [ salesTax ]
+    , transactionItemSubtotal: fromDiscrete' (Discrete subtotalInCents)
+    , transactionItemTotal: fromDiscrete' (Discrete totalInCents)
     }
 
 calculateTotalPayments :: Array PaymentTransaction -> Discrete USD

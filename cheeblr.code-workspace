@@ -25,7 +25,8 @@
     "files.exclude": {
       "frontend": false,
       "backend": false,
-      "nix": false
+      "nix": false,
+      "direnv.restart.automatic": true
     },
     "[purescript]": {
       "editor.defaultFormatter": "nwolverson.ide-purescript",
@@ -40,10 +41,22 @@
       "editor.fontLigatures": true,
       "editor.fontSize": 14
     },
+    "[nix]": {
+      // "editor.defaultFormatter": "haskell.haskell",
+      // "haskell.formattingProvider": "fourmolu",
+      // "editor.fontFamily": "Hasklig",
+      // "editor.fontLigatures": true,
+      
+      "editor.fontSize": 14
+    },
     "purescript.addSpagoSources": true,
     "purescript.workspace.multiRootMode": true,
     "purescript.sourcePath": "src",
     "haskell.checkProject": true,
+    "files.associations": {
+      "*.purs": "purescript",
+      "*.hs": "haskell"
+    },
     "files.watcherExclude": {
       "**/dist/**": true,
       "**/dist-newstyle/**": true,
@@ -54,11 +67,27 @@
   },
   "extensions": {
     "recommendations": [
+      "mkhl.direnv", 
       "nwolverson.ide-purescript",
       "nwolverson.language-purescript",
       "haskell.haskell",
-      "mkhl.direnv",
       "justusadam.language-haskell"
+    ]
+  },
+  "tasks": {
+    "version": "2.0.0",
+    "tasks": [
+      {
+        "label": "direnv allow",
+        "type": "shell", 
+        "command": "direnv allow",
+        "runOptions": {
+          "runOn": "folderOpen"
+        },
+        "presentation": {
+          "reveal": "never"
+        }
+      }
     ]
   }
 }

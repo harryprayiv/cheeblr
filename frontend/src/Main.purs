@@ -233,64 +233,56 @@ main = do
 
           transactionState <- liftST Poll.create
 
+          -- Create the component FIRST with empty polls (just like LiveCart does)
           RegisterService.getOrInitLocalRegister
             dummyLocationId
             dummyEmployeeId
             ( \register -> do
+                -- Push the route IMMEDIATELY with the polls
+                currentRoute.push $ Tuple r
+                  ( createTransaction inventoryState.poll
+                      transactionState.poll
+                      register
+                  )
+                
+                -- NOW start the transaction (it will update transactionState.poll)
                 launchAff_ do
-                  invResult <- fetchInventory defaultViewConfig.fetchConfig
-                    defaultViewConfig.mode
+                  txResult <- startTransaction
+                    { employeeId: fromMaybe register.registerId register.registerOpenedBy
+                    , registerId: register.registerId
+                    , locationId: register.registerLocationId
+                    }
 
-                  case invResult of
-                    Left err -> liftEffect do
-                      Console.error $ "Error fetching inventory: " <> err
-                      loadingState.push false
-                      errorState.push $ "Error: " <> err
-
-                    Right (InventoryData inv) -> do
-                      liftEffect do
-                        Console.log $
-                          "Loaded inventory successfully for CreateTransaction"
-                        inventoryState.push inv
-
-                      txResult <- startTransaction
-                        { employeeId: fromMaybe register.registerId
-                            register.registerOpenedBy
-                        , registerId: register.registerId
-                        , locationId: register.registerLocationId
-                        }
-
-                      liftEffect case txResult of
-                        Left txErr -> do
-                          Console.error $ "Failed to create transaction: " <>
-                            txErr
-                          loadingState.push false
-                          errorState.push $ "Error: " <> txErr
-                          currentRoute.push $ Tuple r
-                            ( renderError $ "Failed to initialize transaction: "
-                                <> txErr
-                            )
-
-                        Right transaction -> do
-                          transactionState.push transaction
-                          currentRoute.push $ Tuple r
-                            ( createTransaction inventoryState.poll
-                                transactionState.poll
-                                register
-                            )
-                          loadingState.push false
-
-                    Right (Message msg) -> liftEffect do
-                      Console.log $ "Received message: " <> msg
-                      loadingState.push false
-                      errorState.push msg
+                  liftEffect case txResult of
+                    Right transaction -> do
+                      transactionState.push transaction
+                      Console.log "Transaction started and pushed to poll"
+                    Left txErr -> do
+                      Console.error $ "Failed to create transaction: " <> txErr
+                      errorState.push $ "Error: " <> txErr
             )
             ( \errMsg -> do
-                loadingState.push false
                 errorState.push $ "Error: " <> errMsg
                 currentRoute.push $ Tuple r
                   (renderError $ "Failed to initialize register: " <> errMsg)
             )
+
+          -- NOW fetch inventory (exactly like LiveCart does)
+          launchAff_ do
+            result <- fetchInventory defaultViewConfig.fetchConfig
+              defaultViewConfig.mode
+
+            liftEffect $ case result of
+              Right (InventoryData inv) -> do
+                Console.log "Pushing inventory to poll"
+                inventoryState.push inv
+                loadingState.push false
+              Right (Message msg) -> do
+                Console.log $ "Received message: " <> msg
+                loadingState.push false
+              Left err -> do
+                Console.error $ "Error fetching inventory: " <> err
+                loadingState.push false
 
         TransactionHistory -> do
           Console.log "Navigating to Transaction History page"

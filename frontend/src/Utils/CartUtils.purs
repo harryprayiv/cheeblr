@@ -40,11 +40,11 @@ calculateCartTotals items =
   addItemToTotals :: CartTotals -> TransactionItem -> CartTotals
   addItemToTotals totals (TransactionItem item) =
     let
-      itemSubtotal = toDiscrete item.subtotal
+      itemSubtotal = toDiscrete item.transactionItemSubtotal
       itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.amount))
         (Discrete 0)
-        item.taxes
-      itemTotal = toDiscrete item.total
+        item.transactionItemTaxes
+      itemTotal = toDiscrete item.transactionItemTotal
     in
       { subtotal: totals.subtotal + itemSubtotal
       , taxTotal: totals.taxTotal + itemTaxTotal
@@ -90,36 +90,36 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
       totalAsMoney = fromDiscrete' totalDiscrete
 
       newItem = TransactionItem
-        { id: itemId
-        , transactionId: transactionId
-        , menuItemSku: item.sku
-        , quantity: qty
-        , pricePerUnit: priceAsMoney
-        , discounts: []
-        , taxes:
+        { transactionItemId: itemId
+        , transactionItemTransactionId: transactionId
+        , transactionItemMenuItemSku: item.sku
+        , transactionItemQuantity: qty
+        , transactionItemPricePerUnit: priceAsMoney
+        , transactionItemDiscounts: []
+        , transactionItemTaxes:
             [ { category: RegularSalesTax
               , rate: taxRate
               , amount: taxAsMoney
               , description: "Sales Tax"
               }
             ]
-        , subtotal: subtotalAsMoney
-        , total: totalAsMoney
+        , transactionItemSubtotal: subtotalAsMoney
+        , transactionItemTotal: totalAsMoney
         }
 
     liftEffect do
       let
         existingItem = find
-          (\(TransactionItem i) -> i.menuItemSku == item.sku)
+          (\(TransactionItem i) -> i.transactionItemMenuItemSku == item.sku)
           currentItems
 
       case existingItem of
         Just (TransactionItem existing) ->
           let
-            newQty = existing.quantity + qty
+            newQty = existing.transactionItemQuantity + qty
             newQtyInt = Int.floor newQty
 
-            existingPriceDiscrete = toDiscrete existing.pricePerUnit
+            existingPriceDiscrete = toDiscrete existing.transactionItemPricePerUnit
             existingPriceInCents = unwrap existingPriceDiscrete
 
             newSubtotalInCents = existingPriceInCents * newQtyInt
@@ -142,15 +142,15 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
               }
 
             updatedItem = TransactionItem $ existing
-              { quantity = newQty
-              , subtotal = newSubtotalAsMoney
-              , total = newTotalAsMoney
-              , taxes = [ newTaxRecord ]
+              { transactionItemQuantity = newQty
+              , transactionItemSubtotal = newSubtotalAsMoney
+              , transactionItemTotal = newTotalAsMoney
+              , transactionItemTaxes = [ newTaxRecord ]
               }
 
             updatedItems = map
               ( \i@(TransactionItem currItem) ->
-                  if currItem.menuItemSku == item.sku then updatedItem
+                  if currItem.transactionItemMenuItemSku == item.sku then updatedItem
                   else i
               )
               currentItems
@@ -167,11 +167,11 @@ removeItemFromTransaction
   -> Effect Unit
 removeItemFromTransaction itemId currentItems updateItems = do
   updateItems
-    (filter (\(TransactionItem item) -> item.id /= itemId) currentItems)
+    (filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems)
 
 findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
 findExistingItem (MenuItem menuItem) items =
-  find (\(TransactionItem txItem) -> txItem.menuItemSku == menuItem.sku) items
+   find (\(TransactionItem txItem) -> txItem.transactionItemMenuItemSku == menuItem.sku) items
 
 addItemToCart
   :: MenuItem
@@ -199,10 +199,10 @@ addItemToCart
     let
       currentQtyInCart =
         case
-          find (\(TransactionItem item) -> item.menuItemSku == record.sku)
+          find (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
             currentItems
           of
-          Just (TransactionItem item) -> item.quantity
+          Just (TransactionItem item) -> item.transactionItemQuantity
           Nothing -> 0.0
 
       totalRequestedQty = currentQtyInCart + qty
@@ -260,8 +260,7 @@ removeItemFromCart itemId currentItems setItems setTotals setIsProcessing = do
       Right _ -> do
         -- Item reservation released, update the cart
         let
-          newItems = filter (\(TransactionItem item) -> item.id /= itemId)
-            currentItems
+          newItems = filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems
 
         -- Recalculate totals  
         let newTotals = calculateCartTotals newItems

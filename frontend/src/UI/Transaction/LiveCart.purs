@@ -210,14 +210,14 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                               -- Find if this item is already in the cart
                                               existingItem = find
                                                 ( \(TransactionItem item) ->
-                                                    item.menuItemSku ==
+                                                    item.transactionItemMenuItemSku ==
                                                       record.sku
                                                 )
                                                 cartItems
 
                                               currentQty = case existingItem of
                                                 Just (TransactionItem item) ->
-                                                  item.quantity
+                                                  item.transactionItemQuantity
                                                 Nothing -> 0.0
                                             in
                                               D.div
@@ -348,7 +348,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                           ( cartItems <#> \(TransactionItem itemData) ->
                               let
                                 itemName = findItemNameBySku
-                                  itemData.menuItemSku
+                                  itemData.transactionItemMenuItemSku
                                   inventory
                               in
                                 D.div
@@ -358,21 +358,21 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                       [ text_ itemName ]
                                   , D.div
                                       [ DA.klass_ "inv-selector-col-qty" ]
-                                      [ text_ (show itemData.quantity) ]
+                                      [ text_ (show itemData.transactionItemQuantity) ]
                                   , D.div
                                       [ DA.klass_ "inv-selector-col-price" ]
                                       [ text_
-                                          (formatPrice itemData.pricePerUnit)
+                                          (formatPrice itemData.transactionItemPricePerUnit)
                                       ]
                                   , D.div
                                       [ DA.klass_ "inv-selector-col-total" ]
-                                      [ text_ (formatPrice itemData.total) ]
+                                      [ text_ (formatPrice itemData.transactionItemTotal) ]
                                   , D.div
                                       [ DA.klass_ "inv-selector-col-actions" ]
                                       [ D.button
                                           [ DA.klass_ "inv-selector-remove-btn"
                                           , DL.click_ \_ -> do
-                                              removeItemFromCart itemData.id
+                                              removeItemFromCart itemData.transactionItemId
                                                 cartItems
                                                 setCartItems
                                                 setCartTotals
@@ -478,10 +478,10 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
       let
         currentQtyInCart =
           case
-            find (\(TransactionItem item) -> item.menuItemSku == record.sku)
+            find (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
               currentItems
             of
-            Just (TransactionItem item) -> item.quantity
+            Just (TransactionItem item) -> item.transactionItemQuantity
             Nothing -> 0.0
 
         -- Calculate the total requested quantity (existing cart items + new request)

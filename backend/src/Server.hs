@@ -11,7 +11,8 @@ import Data.Pool (Pool)
 import Servant
 import DB.Database (getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
 import Types.Inventory
-import API.Transaction (PosAPI)
+-- import API.Transaction (PosAPI)
+import API.Transaction ()
 import Data.Text (pack)
 import qualified Data.Pool as Pool
 import Server.Transaction (posServerImpl)
