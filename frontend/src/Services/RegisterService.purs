@@ -50,7 +50,7 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
         let
           newRegister =
             { registerId: registerId
-            , registerName: "Register #" <> show registerId
+            , registerName: "Register ID: " <> show registerId
             , registerLocationId: locationId
             , registerIsOpen: false
             , registerCurrentDrawerAmount: 0
@@ -128,7 +128,7 @@ initLocalRegister locationId employeeId setRegister setError = do
         let
           newRegister =
             { registerId: registerId
-            , registerName: "Register #" <> show registerId
+            , registerName: "Register ID: " <> show registerId
             , registerLocationId: locationId
             , registerIsOpen: false
             , registerCurrentDrawerAmount: 0

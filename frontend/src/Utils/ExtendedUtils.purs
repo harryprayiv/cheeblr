@@ -7,7 +7,7 @@ import Data.Either (Either(..))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (DiscreteMoney, fromDiscrete', toDiscrete)
-import Data.Int (toNumber)
+-- import Data.Int (toNumber)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -57,20 +57,20 @@ formatDiscretePrice :: Discrete USD -> String
 formatDiscretePrice = formatMoney' <<< fromDiscrete'
 
 -- Calculate how many items are already in the cart (local reservation)
-getCartQuantityForSku :: UUID -> Array TransactionItem -> Number
+getCartQuantityForSku :: UUID -> Array TransactionItem -> Int
 getCartQuantityForSku sku cartItems =
   case find (\(TransactionItem item) -> item.transactionItemMenuItemSku == sku) cartItems of
     Just (TransactionItem item) -> item.transactionItemQuantity
-    Nothing -> 0.0
+    Nothing -> 0
 
 -- Check if an item is available considering both inventory and cart quantities
-isItemAvailable :: MenuItem -> Number -> Array TransactionItem -> Boolean
+isItemAvailable :: MenuItem -> Int -> Array TransactionItem -> Boolean
 isItemAvailable (MenuItem item) requestedQty cartItems =
   let
     currentInCart = getCartQuantityForSku item.sku cartItems
     totalRequestedQty = currentInCart + requestedQty
   in
-    totalRequestedQty <= toNumber item.quantity
+    totalRequestedQty <= item.quantity
 
 -- Get the remaining available quantity considering cart items
 getAvailableQuantity :: MenuItem -> Array TransactionItem -> Int
@@ -78,7 +78,7 @@ getAvailableQuantity (MenuItem item) cartItems =
   let
     currentInCart = getCartQuantityForSku item.sku cartItems
   in
-    item.quantity - Int.floor currentInCart
+    item.quantity - currentInCart
 
 -- Find items that are already in the transaction but might no longer be available
 findUnavailableItems :: Array TransactionItem -> Inventory -> Array { id :: UUID, name :: String }
@@ -88,7 +88,7 @@ findUnavailableItems cartItems (Inventory inventory) =
         case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
           Just (MenuItem menuItem) -> 
             -- If item quantity in cart exceeds inventory
-            menuItem.quantity < Int.floor item.transactionItemQuantity
+            menuItem.quantity < item.transactionItemQuantity
           Nothing -> 
             -- Item is in cart but no longer in inventory
             true
@@ -104,7 +104,7 @@ findUnavailableItems cartItems (Inventory inventory) =
 
 addItemToTransaction
   :: MenuItem
-  -> Number
+  -> Int
   -> Array TransactionItem
   -> (Array TransactionItem -> Effect Unit)
   -> Effect Unit
@@ -116,9 +116,8 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
     let
       priceAsMoney = fromDiscrete' item.price
 
-      qtyAsInt = Int.floor qty
       priceInCents = unwrap item.price
-      subtotalInCents = priceInCents * qtyAsInt
+      subtotalInCents = priceInCents * qty
       subtotalDiscrete = Discrete subtotalInCents
       subtotalAsMoney = fromDiscrete' subtotalDiscrete
 
@@ -160,12 +159,11 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
         Just (TransactionItem existing) ->
           let
             newQty = existing.transactionItemQuantity + qty
-            newQtyInt = Int.floor newQty
 
             existingPriceDiscrete = toDiscrete existing.transactionItemPricePerUnit
             existingPriceInCents = unwrap existingPriceDiscrete
 
-            newSubtotalInCents = existingPriceInCents * newQtyInt
+            newSubtotalInCents = existingPriceInCents * newQty
             newTaxInCents = (newSubtotalInCents * taxRateInt) / 100
             newTotalInCents = newSubtotalInCents + newTaxInCents
 
@@ -218,7 +216,7 @@ findExistingItem (MenuItem menuItem) items =
 
 addItemToCart
   :: MenuItem
-  -> Number
+  -> Int
   -> Array TransactionItem
   -> UUID
   -> (Array TransactionItem -> Effect Unit)
@@ -236,7 +234,7 @@ addItemToCart
   setStatusMessage
   setIsProcessing = do
 
-  if qty <= 0.0 then
+  if qty <= 0 then
     setStatusMessage "Quantity must be greater than 0"
   else do
     let
@@ -246,13 +244,13 @@ addItemToCart
             currentItems
           of
           Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0.0
+          Nothing -> 0
 
       totalRequestedQty = currentQtyInCart + qty
 
-    if totalRequestedQty > toNumber record.quantity then
+    if totalRequestedQty > record.quantity then
       setStatusMessage $ "Cannot add " <> show qty <> " more items. Only "
-        <> show (record.quantity - Int.floor currentQtyInCart)
+        <> show (record.quantity - currentQtyInCart)
         <> " more available."
     else do
       -- Set processing state but don't block UI updates

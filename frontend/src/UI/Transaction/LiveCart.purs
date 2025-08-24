@@ -6,6 +6,7 @@ import Data.Array (filter, find, null, sort)
 import Data.Array (nub) as Array
 import Data.Foldable (for_)
 import Data.Int (floor, toNumber)
+import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Number (fromString)
@@ -40,7 +41,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
   -- UI state for filtering
   setSearchText /\ searchTextValue <- useState ""
   setActiveCategory /\ activeCategoryValue <- useState "All Items"
-  setQuantity /\ quantityValue <- useState 1.0
+  setQuantity /\ quantityValue <- useState 1  -- Changed to Int
   setStatusMessage /\ statusMessageValue <- useState ""
 
   -- Cart state - keep isolated from the filtering mechanism
@@ -120,7 +121,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                     val <- Input.value el
                                     case fromString val of
                                       Just num ->
-                                        if num > 0.0 then setQuantity num
+                                        if num > 0.0 then setQuantity (Int.floor num)
                                         else pure unit
                                       Nothing -> pure unit
                             ]
@@ -218,7 +219,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                               currentQty = case existingItem of
                                                 Just (TransactionItem item) ->
                                                   item.transactionItemQuantity
-                                                Nothing -> 0.0
+                                                Nothing -> 0  -- Changed from 0.0 to 0
                                             in
                                               D.div
                                                 [ DA.klass_
@@ -280,7 +281,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                                                           [ DA.klass_
                                                               "inv-selector-quantity-controls"
                                                           ]
-                                                          [ if currentQty > 0.0 then
+                                                          [ if currentQty > 0 then  -- Changed from 0.0 to 0
                                                               D.div
                                                                 [ DA.klass_
                                                                     "inv-selector-quantity-indicator"
@@ -317,7 +318,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
                 ]
             ]
         ,
-          -- Right side: Cart
+          -- Right side: Cart (unchanged)
           D.div
             [ DA.klass_ "inv-selector-selected-items-container" ]
             [ D.h4 [ DA.klass_ "inv-selector-selected-items-header" ]
@@ -458,7 +459,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
   -- Helper function to add items to cart
   addItemToCart
     :: MenuItem
-    -> Number
+    -> Int  -- Changed from Number to Int
     -> Array TransactionItem
     -> (Array TransactionItem -> Effect Unit)
     -> (CartTotals -> Effect Unit)
@@ -471,7 +472,7 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
     setItems
     setTotals
     setStatusMessage = do
-    if qty <= 0.0 then
+    if qty <= 0 then  -- Changed from 0.0 to 0
       setStatusMessage "Quantity must be greater than 0"
     else do
       -- Calculate how many of this item are already in the cart
@@ -482,15 +483,15 @@ liveCart updateTransactionItems inventoryPoll = Deku.do
               currentItems
             of
             Just (TransactionItem item) -> item.transactionItemQuantity
-            Nothing -> 0.0
+            Nothing -> 0  -- Changed from 0.0 to 0
 
         -- Calculate the total requested quantity (existing cart items + new request)
         totalRequestedQty = currentQtyInCart + qty
 
       -- Check if the total requested quantity exceeds available inventory
-      if totalRequestedQty > toNumber record.quantity then
+      if totalRequestedQty > record.quantity then
         setStatusMessage $ "Cannot add " <> show qty <> " more items. Only "
-          <> show (record.quantity - floor currentQtyInCart)
+          <> show (record.quantity - currentQtyInCart)  -- Removed floor since currentQtyInCart is already Int
           <>
             " more available."
       else

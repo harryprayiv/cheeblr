@@ -61,7 +61,7 @@ formatDiscretePrice = formatMoney' <<< fromDiscrete'
 
 addItemToTransaction
   :: MenuItem
-  -> Number
+  -> Int
   -> Array TransactionItem
   -> (Array TransactionItem -> Effect Unit)
   -> Effect Unit
@@ -73,9 +73,8 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
     let
       priceAsMoney = fromDiscrete' item.price
 
-      qtyAsInt = Int.floor qty
       priceInCents = unwrap item.price
-      subtotalInCents = priceInCents * qtyAsInt
+      subtotalInCents = priceInCents * qty
       subtotalDiscrete = Discrete subtotalInCents
       subtotalAsMoney = fromDiscrete' subtotalDiscrete
 
@@ -117,12 +116,11 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
         Just (TransactionItem existing) ->
           let
             newQty = existing.transactionItemQuantity + qty
-            newQtyInt = Int.floor newQty
 
             existingPriceDiscrete = toDiscrete existing.transactionItemPricePerUnit
             existingPriceInCents = unwrap existingPriceDiscrete
 
-            newSubtotalInCents = existingPriceInCents * newQtyInt
+            newSubtotalInCents = existingPriceInCents * newQty
             newTaxInCents = (newSubtotalInCents * taxRateInt) / 100
             newTotalInCents = newSubtotalInCents + newTaxInCents
 
@@ -175,7 +173,7 @@ findExistingItem (MenuItem menuItem) items =
 
 addItemToCart
   :: MenuItem
-  -> Number
+  -> Int
   -> Array TransactionItem
   -> UUID
   -> (Array TransactionItem -> Effect Unit)
@@ -193,7 +191,7 @@ addItemToCart
   setStatusMessage
   setIsProcessing = do
 
-  if qty <= 0.0 then
+  if qty <= 0 then
     setStatusMessage "Quantity must be greater than 0"
   else do
     let
@@ -203,13 +201,13 @@ addItemToCart
             currentItems
           of
           Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0.0
+          Nothing -> 0
 
       totalRequestedQty = currentQtyInCart + qty
 
-    if totalRequestedQty > toNumber record.quantity then
+    if totalRequestedQty > record.quantity then
       setStatusMessage $ "Cannot add " <> show qty <> " more items. Only "
-        <> show (record.quantity - Int.floor currentQtyInCart)
+        <> show (record.quantity - currentQtyInCart)
         <> " more available."
     else do
       -- Set processing state but don't block UI updates

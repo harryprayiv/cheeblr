@@ -17,6 +17,7 @@ import Services.TransactionService (getTransaction)
 import Types.Inventory (MenuItem(..))
 import Types.Transaction (PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..))
 import Types.UUID (UUID)
+import Data.Int as Int 
 import Utils.UUIDGen (genUUID)
 
 menuItemToTransactionItem
@@ -49,7 +50,7 @@ menuItemToTransactionItem (MenuItem item) quantity transactionId = do
     { transactionItemId: itemId
     , transactionItemTransactionId: transactionId
     , transactionItemMenuItemSku: item.sku
-    , transactionItemQuantity: quantity
+    , transactionItemQuantity: Int.floor quantity
     , transactionItemPricePerUnit: fromDiscrete' (Discrete priceInCents)
     , transactionItemDiscounts: []
     , transactionItemTaxes: [ salesTax ]

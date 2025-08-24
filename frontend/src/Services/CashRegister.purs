@@ -141,7 +141,7 @@ addItemToTransaction builder menuItem quantity = do
         { transactionItemId: itemId
         , transactionItemTransactionId: builder.transactionId 
         , transactionItemMenuItemSku: menuItemRecord.sku
-        , transactionItemQuantity: quantity
+        , transactionItemQuantity: Int.floor quantity
         , transactionItemPricePerUnit: fromDiscrete' itemPrice
         , transactionItemDiscounts: []
         , transactionItemTaxes: taxes
@@ -445,7 +445,7 @@ formatTransactionItem :: TransactionItem -> String
 formatTransactionItem (TransactionItem item) =
   let
     itemLine =
-      ( if item.transactionItemQuantity /= 1.0 then show item.transactionItemQuantity <> " x "
+      ( if item.transactionItemQuantity /= 1 then show item.transactionItemQuantity <> " x "
         else ""
       )
         <> "Item @ "

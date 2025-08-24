@@ -54,7 +54,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
   setPayments /\ paymentsValue <- useState []
   setSearchText /\ searchTextValue <- useState ""
   setActiveCategory /\ activeCategoryValue <- useState "All Items"
-  setQuantity /\ quantityValue <- useState 1.0
+  setQuantity /\ quantityValue <- useState 1
   setStatusMessage /\ statusMessageValue <- useState ""
   setIsProcessing /\ isProcessingValue <- useState false
   setPaymentMethod /\ paymentMethodValue <- useState Cash
@@ -223,7 +223,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                   val <- Input.value el
                                   case Number.fromString val of
                                     Just num ->
-                                      if num > 0.0 then setQuantity num
+                                      if num > 0.0 then setQuantity (Int.floor num)
                                       else pure unit
                                     Nothing -> pure unit
                           ]
@@ -327,9 +327,8 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
   
                                                         currentQty =
                                                           case existingItem of
-                                                            Just
-                                                              (TransactionItem item) ->
-                                                              floor item.transactionItemQuantity
+                                                            Just (TransactionItem item) ->
+                                                              item.transactionItemQuantity  -- Already an Int
                                                             Nothing -> 0
                                                       in
                                                         D.div
@@ -946,12 +945,11 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
       ]
 
 
--- In CreateTransaction.purs, update the addItemToCart function:
 addItemToCart
   :: MenuItem
-  -> Number
+  -> Int
   -> Array TransactionItem
-  -> UUID  -- transactionId
+  -> UUID
   -> (Array TransactionItem -> Effect Unit)
   -> (CartTotals -> Effect Unit)
   -> (String -> Effect Unit)
@@ -967,7 +965,7 @@ addItemToCart
   setStatusMessage
   setCheckingInventory = do
   
-  if qty <= 0.0 then
+  if qty <= 0 then  
     setStatusMessage "Quantity must be greater than 0"
   else do
     setCheckingInventory true
@@ -980,7 +978,7 @@ addItemToCart
     
     let currentQtyInCart = case existingItem of
           Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0.0
+          Nothing -> 0 
     
     let totalRequestedQty = currentQtyInCart + qty
     

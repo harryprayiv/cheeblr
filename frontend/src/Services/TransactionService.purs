@@ -112,40 +112,75 @@ getTransaction transactionId = do
   liftEffect $ Console.log $ "Getting transaction: " <> show transactionId
   API.getTransaction transactionId
 
+-- createTransactionItem
+--   :: UUID  -- transactionId
+--   -> UUID  -- menuItemSku
+--   -> Number  -- quantity
+--   -> Int  -- pricePerUnit in cents
+--   -> Aff (Either String TransactionItem)
+-- createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
+--   itemId <- liftEffect genUUID
+  
+--   let quantityInt = floor quantity
+--       salesTaxRate = 0.08
+--       subtotalCents = pricePerUnit * quantityInt
+--       taxCents = floor (toNumber subtotalCents * salesTaxRate)
+--       totalCents = subtotalCents + taxCents
+      
+--       salesTax = 
+--         { category: RegularSalesTax
+--         , rate: salesTaxRate
+--         , amount: fromDiscrete' (Discrete taxCents)
+--         , description: "Sales Tax"
+--         }
+      
+--       transactionItem = TransactionItem
+--               { transactionItemId: itemId
+--               , transactionItemTransactionId: transactionId
+--               , transactionItemMenuItemSku: menuItemSku
+--               , transactionItemQuantity: toNumber quantityInt
+--               , transactionItemPricePerUnit: fromDiscrete' (Discrete pricePerUnit)
+--               , transactionItemDiscounts: []
+--               , transactionItemTaxes: [salesTax]
+--               , transactionItemSubtotal: fromDiscrete' (Discrete subtotalCents)
+--               , transactionItemTotal: fromDiscrete' (Discrete totalCents)
+--               }
+        
+--   API.addTransactionItem transactionItem
+
 createTransactionItem
-  :: UUID  -- transactionId
-  -> UUID  -- menuItemSku
-  -> Number  -- quantity
-  -> Int  -- pricePerUnit in cents
+  :: UUID
+  -> UUID
+  -> Int  -- Changed from Number
+  -> Int
   -> Aff (Either String TransactionItem)
 createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
   itemId <- liftEffect genUUID
-  
-  let quantityInt = floor quantity
-      salesTaxRate = 0.08
-      subtotalCents = pricePerUnit * quantityInt
+
+  let salesTaxRate = 0.08
+      subtotalCents = pricePerUnit * quantity
       taxCents = floor (toNumber subtotalCents * salesTaxRate)
       totalCents = subtotalCents + taxCents
-      
-      salesTax = 
+
+      salesTax =
         { category: RegularSalesTax
         , rate: salesTaxRate
         , amount: fromDiscrete' (Discrete taxCents)
         , description: "Sales Tax"
         }
-      
+
       transactionItem = TransactionItem
               { transactionItemId: itemId
               , transactionItemTransactionId: transactionId
               , transactionItemMenuItemSku: menuItemSku
-              , transactionItemQuantity: toNumber quantityInt
+              , transactionItemQuantity: quantity  -- Now an Int
               , transactionItemPricePerUnit: fromDiscrete' (Discrete pricePerUnit)
               , transactionItemDiscounts: []
               , transactionItemTaxes: [salesTax]
               , transactionItemSubtotal: fromDiscrete' (Discrete subtotalCents)
               , transactionItemTotal: fromDiscrete' (Discrete totalCents)
               }
-        
+
   API.addTransactionItem transactionItem
 
 addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)

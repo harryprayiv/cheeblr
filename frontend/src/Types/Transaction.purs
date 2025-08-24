@@ -57,28 +57,16 @@ newtype Transaction = Transaction
   , transactionNotes :: Maybe String
   }
 
--- newtype TransactionItem = TransactionItem
---   { id :: UUID
---   , transactionId :: UUID
---   , menuItemSku :: UUID
---   , quantity :: Number
---   , pricePerUnit :: DiscreteMoney USD
---   , discounts :: Array DiscountRecord
---   , taxes :: Array TaxRecord
---   , subtotal :: DiscreteMoney USD
---   , total :: DiscreteMoney USD
---   }
-
 newtype TransactionItem = TransactionItem
-  { transactionItemId :: UUID  -- was: id
-  , transactionItemTransactionId :: UUID  -- was: transactionId
-  , transactionItemMenuItemSku :: UUID  -- was: menuItemSku
-  , transactionItemQuantity :: Number  -- was: quantity
-  , transactionItemPricePerUnit :: DiscreteMoney USD  -- was: pricePerUnit
-  , transactionItemDiscounts :: Array DiscountRecord  -- was: discounts
-  , transactionItemTaxes :: Array TaxRecord  -- was: taxes
-  , transactionItemSubtotal :: DiscreteMoney USD  -- was: subtotal
-  , transactionItemTotal :: DiscreteMoney USD  -- was: total
+  { transactionItemId :: UUID
+  , transactionItemTransactionId :: UUID
+  , transactionItemMenuItemSku :: UUID
+  , transactionItemQuantity :: Int  -- Changed from Number to Int
+  , transactionItemPricePerUnit :: DiscreteMoney USD
+  , transactionItemDiscounts :: Array DiscountRecord
+  , transactionItemTaxes :: Array TaxRecord
+  , transactionItemSubtotal :: DiscreteMoney USD
+  , transactionItemTotal :: DiscreteMoney USD
   }
 
 newtype PaymentTransaction = PaymentTransaction
