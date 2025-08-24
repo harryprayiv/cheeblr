@@ -271,6 +271,15 @@ let
     deployModule.deploy
     deployModule.stop
     
+
+    # Individual Componenty Launchers
+    deployModule.db-start
+    deployModule.db-stop
+    deployModule.backend-start
+    deployModule.backend-stop    
+    deployModule.frontend-start
+    deployModule.frontend-stop     
+
     # Additional tools specifically for the scripts
     coreutils
     bash
@@ -366,6 +375,12 @@ let
       echo "  Deployment:"
       echo "    deploy                 - Deploy to server"
       echo "    stop                   - Withdraw deployment"
+      echo "    db-start               - Start Database"
+      echo "    db-stop                - Stop Database"
+      echo "    backend-start          - Start Haskell Back End"
+      echo "    backend-stop           - Stop Haskell Back End"          
+      echo "    frontend-start         - Start Purescript Front End"
+      echo "    frontend-stop          - Stop Purescript Front End" 
       echo ""
       echo ""
       toilet ${lib.toSentenceCase name} -t --metal
