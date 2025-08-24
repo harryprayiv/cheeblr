@@ -328,7 +328,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                         currentQty =
                                                           case existingItem of
                                                             Just (TransactionItem item) ->
-                                                              item.transactionItemQuantity  -- Already an Int
+                                                              item.transactionItemQuantity
                                                             Nothing -> 0
                                                       in
                                                         D.div
