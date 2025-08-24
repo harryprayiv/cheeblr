@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DeriveAnyClass #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 {-# OPTIONS_GHC -Wno-unused-do-bind #-}
 {-# OPTIONS_GHC -Wno-unused-matches #-}
@@ -10,6 +11,8 @@
 module DB.Transaction where
 
 import Control.Monad.IO.Class (liftIO)
+import Control.Exception (Exception, throwIO)
+import Data.Typeable (Typeable)
 import Data.Pool (Pool, withResource)  -- Add withResource to the import
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -54,6 +57,13 @@ import API.Transaction (
   )
 import Data.Scientific (Scientific)
 import Control.Monad (void, when, forM_)
+
+data InventoryException 
+  = ItemNotFound UUID
+  | InsufficientInventory UUID Int Int  -- SKU, requested, available
+  deriving (Show, Typeable)
+
+instance Exception InventoryException
 
 type ConnectionPool = Pool Connection
 type DBAction a = Connection -> IO a
@@ -783,42 +793,52 @@ insertInventoryReservation conn InventoryReservation{..} = do
 
 -- addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
 -- addTransactionItem pool item = withConnection pool $ \conn -> do
---   -- Check if there's enough inventory for this item
 --   let quantity = transactionItemQuantity item
 --       menuItemSku = transactionItemMenuItemSku item
+
+--   -- Check available inventory (excluding reserved quantities)
+--   results <- query conn
+--     [sql|
+--       SELECT
+--         m.quantity,
+--         COALESCE(SUM(r.quantity), 0)
+--       FROM menu_items m
+--       LEFT JOIN inventory_reservation r
+--         ON r.item_sku = m.sku
+--         AND r.status = 'Reserved'
+--       WHERE m.sku = ?
+--       GROUP BY m.quantity
+--     |]
+--     (Only menuItemSku) :: IO [(Int, Int)]  -- Returns list of tuples
   
---   [Only availableQuantity] <- query conn 
---     "SELECT quantity FROM menu_items WHERE sku = ?" 
---     (Only menuItemSku)
-  
---   if availableQuantity < quantity
---     then error $ "Not enough inventory. Only " ++ show availableQuantity ++ " available."
---     else do
---       -- Temporarily decrement inventory
---       execute conn 
---         "UPDATE menu_items SET quantity = quantity - ? WHERE sku = ?" 
---         (quantity, menuItemSku)
-      
---       -- Add the transaction item
---       newItem <- insertTransactionItem conn item
-      
---       -- Add inventory record
---       let reservation = InventoryReservation
---             { reservationItemSku = menuItemSku
---             , reservationTransactionId = transactionItemTransactionId item
---             , reservationQuantity = quantity
---             , reservationStatus = "Reserved"
---             }
---       insertInventoryReservation conn reservation
-      
---       pure newItem
+--   case results of
+--     [] -> error $ "Item not found: " ++ show menuItemSku
+--     ((availableQuantity, reservedQuantity):_) -> do
+--       let actuallyAvailable = availableQuantity - reservedQuantity
+
+--       if actuallyAvailable < quantity
+--         then error $ "Not enough inventory. Only " ++ show actuallyAvailable ++ " available."
+--         else do
+--           -- DON'T decrement inventory here, just create reservation
+--           newItem <- insertTransactionItem conn item
+
+--           -- Create reservation
+--           let reservation = InventoryReservation
+--                 { reservationItemSku = menuItemSku
+--                 , reservationTransactionId = transactionItemTransactionId item
+--                 , reservationQuantity = quantity
+--                 , reservationStatus = "Reserved"
+--                 }
+--           insertInventoryReservation conn reservation
+
+--           pure newItem
 
 addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
 addTransactionItem pool item = withConnection pool $ \conn -> do
   let quantity = transactionItemQuantity item
       menuItemSku = transactionItemMenuItemSku item
 
-  -- Check available inventory (excluding reserved quantities)
+  -- Check inventory availability
   results <- query conn
     [sql|
       SELECT
@@ -831,17 +851,17 @@ addTransactionItem pool item = withConnection pool $ \conn -> do
       WHERE m.sku = ?
       GROUP BY m.quantity
     |]
-    (Only menuItemSku) :: IO [(Int, Int)]  -- Returns list of tuples
-  
+    (Only menuItemSku) :: IO [(Int, Int)]
+
   case results of
-    [] -> error $ "Item not found: " ++ show menuItemSku
+    [] -> throwIO $ ItemNotFound menuItemSku
     ((availableQuantity, reservedQuantity):_) -> do
       let actuallyAvailable = availableQuantity - reservedQuantity
 
       if actuallyAvailable < quantity
-        then error $ "Not enough inventory. Only " ++ show actuallyAvailable ++ " available."
+        then throwIO $ InsufficientInventory menuItemSku quantity actuallyAvailable
         else do
-          -- DON'T decrement inventory here, just create reservation
+          -- Insert the item
           newItem <- insertTransactionItem conn item
 
           -- Create reservation

@@ -10,9 +10,9 @@ import System.Posix.User (getLoginName)
 import Network.HTTP.Types.Header (hContentType, hAccept, hAuthorization, hOrigin, hContentLength)
 import Network.HTTP.Types.Method (methodGet, methodPost, methodPut, methodDelete, methodOptions)
 import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy, CorsResourcePolicy(..), cors)
+import Network.Wai (responseBuilder, requestMethod)
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.CaseInsensitive as CI
-import Network.Wai (Application, responseBuilder, requestMethod)
 import Network.HTTP.Types.Status (status200)
 import qualified Data.ByteString.Builder as B
 
@@ -76,10 +76,10 @@ run = do
 
 -- Middleware to handle OPTIONS requests for CORS preflight
 handleOptionsMiddleware :: Application -> Application
-handleOptionsMiddleware app req respond =
+handleOptionsMiddleware app req responder =
   if requestMethod req == methodOptions
-  then respond $ responseBuilder status200 corsHeaders (B.byteString B8.empty)
-  else app req respond
+  then responder $ responseBuilder status200 corsHeaders (B.byteString B8.empty)
+  else app req responder
   where
     corsHeaders =
       [ (hContentType, B8.pack "text/plain")

@@ -1,18 +1,20 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant return" #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Server.Transaction where
 
 import API.Transaction
 import Control.Monad.IO.Class (liftIO)
+import Control.Exception (SomeException, try, displayException, fromException)
+import DB.Transaction
 import Data.Pool (Pool)
 import Data.UUID (UUID)
 import Database.PostgreSQL.Simple (Connection, Only(..), query, execute, Query)
-import DB.Transaction
 import Servant
-import Servant.API
 import Types.Transaction
+import Data.Aeson (encode, object, (.=))
 import Data.Text (Text, pack)
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import qualified DB.Database as DB
@@ -173,9 +175,23 @@ transactionServer pool =
     addTransactionItemHandler :: TransactionItem -> Handler TransactionItem
     addTransactionItemHandler item = do
       liftIO $ putStrLn "Handling POST /transaction/item request"
-      addedItem <- liftIO $ addTransactionItem pool item
-      liftIO $ putStrLn "Transaction item added successfully"
-      return addedItem
+      result <- liftIO $ try @SomeException $ addTransactionItem pool item
+      case result of
+        Right addedItem -> do
+          liftIO $ putStrLn "Transaction item added successfully"
+          return addedItem
+        Left e -> do  -- Fixed indentation - aligned with Right
+          let errorMsg = case fromException e of
+                Just (ItemNotFound sku) -> 
+                  "Item not found: " ++ show sku
+                Just (InsufficientInventory sku requested available) -> 
+                  "Insufficient inventory for item " ++ show sku ++ 
+                  ". Only " ++ show available ++ " available, but " ++ 
+                  show requested ++ " requested."
+                Nothing -> displayException e
+          liftIO $ putStrLn $ "Error adding transaction item: " ++ errorMsg
+          let jsonError = encode $ object ["error" .= errorMsg]
+          throwError err400 { errBody = jsonError }
 
     removeTransactionItemHandler :: UUID -> Handler NoContent
     removeTransactionItemHandler itemId = do
