@@ -91,13 +91,13 @@ let
       publisher = "nwolverson";
       name = "language-purescript";
       version = "0.2.9";
-      sha256 = "sha256-2uOwCHvnlQQM8s8n7dtvIaMgpW8ROeoUraM02rncH9o=";
+      sha256 = "sha256-9LBdo6lj+hz2NsvPmMV73nCT7uk6Q/ViguiilngOsGc=";
     }
     {
       publisher = "nwolverson";
       name = "ide-purescript";
       version = "0.26.6";
-      sha256 = "sha256-72DRp+XLPlOowkRqyCWAeU/MNUr01m39IkCHCm5zpVc=";
+      sha256 = "sha256-zYLAcPgvfouMQj3NJlNJA0DNeayKxQhOYNloRN2YuU8=";
     }
     {
       publisher = "hoovercj";
@@ -201,9 +201,9 @@ let
       name = "backup-project";
       runtimeInputs = with pkgs; [ rsync ];
       text = ''
-        rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' ~/workdir/${name}/ ~/plutus/workspace/scdWs/${name}/
-        rsync -va ~/.local/share/${name}/backups/ ~/plutus/${name}DB/
-        rsync -va script/concat_archive/ ~/plutus/workspace/scdWs/${name}/script/concat_archive/
+        rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' ~/NAS/plutus/workdir/${name}/ ~/NAS/plutus/workspace/scdWs/${name}/
+        rsync -va ~/.local/share/${name}/backups/ ~/NAS/plutus/${name}DB/
+        rsync -va script/concat_archive/ ~/NAS/plutus/workspace/scdWs/${name}/script/concat_archive/
       '';
     };
   };
@@ -249,6 +249,7 @@ let
     
     # Database tools
     pgadmin4
+    gettext
 
     # DevShell tools
     toilet # colorful text
@@ -384,6 +385,7 @@ let
       echo ""
       echo ""
       toilet ${lib.toSentenceCase name} -t --metal
+      codium ${name}.code-workspace
     '';
   };
 

@@ -7,7 +7,6 @@ import Data.Either (Either(..))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (DiscreteMoney, fromDiscrete', toDiscrete)
-import Data.Int (toNumber)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -41,7 +40,7 @@ calculateCartTotals items =
   addItemToTotals totals (TransactionItem item) =
     let
       itemSubtotal = toDiscrete item.transactionItemSubtotal
-      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.amount))
+      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.taxAmount))
         (Discrete 0)
         item.transactionItemTaxes
       itemTotal = toDiscrete item.transactionItemTotal
@@ -96,10 +95,10 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
         , transactionItemPricePerUnit: priceAsMoney
         , transactionItemDiscounts: []
         , transactionItemTaxes:
-            [ { category: RegularSalesTax
-              , rate: taxRate
-              , amount: taxAsMoney
-              , description: "Sales Tax"
+            [ { taxCategory: RegularSalesTax
+              , taxRate: taxRate
+              , taxAmount: taxAsMoney
+              , taxDescription: "Sales Tax"
               }
             ]
         , transactionItemSubtotal: subtotalAsMoney
@@ -133,10 +132,10 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
             newTotalAsMoney = fromDiscrete' newTotalDiscrete
 
             newTaxRecord =
-              { category: RegularSalesTax
-              , rate: taxRate
-              , amount: newTaxAsMoney
-              , description: "Sales Tax"
+              { taxCategory: RegularSalesTax
+              , taxRate: taxRate
+              , taxAmount: newTaxAsMoney
+              , taxDescription: "Sales Tax"
               }
 
             updatedItem = TransactionItem $ existing

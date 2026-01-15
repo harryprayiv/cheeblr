@@ -36,10 +36,10 @@ menuItemToTransactionItem (MenuItem item) quantity transactionId = do
       (toNumber (priceInCents * floor quantity) * salesTaxRate)
 
     salesTax =
-      { category: RegularSalesTax
-      , rate: salesTaxRate
-      , amount: fromDiscrete' (Discrete salesTaxAmount)
-      , description: "Sales Tax"
+      { taxCategory: RegularSalesTax
+      , taxRate: salesTaxRate
+      , taxAmount: fromDiscrete' (Discrete salesTaxAmount)
+      , taxDescription: "Sales Tax"
       }
 
     subtotalInCents = priceInCents * floor quantity
@@ -62,7 +62,7 @@ calculateTotalPayments :: Array PaymentTransaction -> Discrete USD
 calculateTotalPayments payments =
   foldl
     ( \acc (PaymentTransaction payment) ->
-        acc + toDiscrete payment.amount
+        acc + toDiscrete payment.paymentAmount
     )
     (Discrete 0)
     payments

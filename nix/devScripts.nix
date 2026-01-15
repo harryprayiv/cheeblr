@@ -166,7 +166,7 @@ let
         sed 's/[[:space:]]*$//'
     }
     
-    # Function to clean Nix content with preserved formatting
+    # Function to clean ./ content with preserved formatting
     clean_nix() {
         # Remove single-line comments while preserving indentation
         sed 's/\([ ]*\)#.*$/\1/' | \

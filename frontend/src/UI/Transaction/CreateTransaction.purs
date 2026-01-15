@@ -765,9 +765,9 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                       D.div
                                         [ DA.klass_ "payment-item" ]
                                         [ D.div [ DA.klass_ "payment-method" ]
-                                            [ text_ (show p.method) ]
+                                            [ text_ (show p.paymentMethod) ]
                                         , D.div [ DA.klass_ "payment-amount" ]
-                                            [ text_ (show p.amount) ]
+                                            [ text_ (show p.paymentAmount) ]
                                         , D.button
                                             [ DA.klass_ "payment-remove"
                                             , DA.disabled $ isProcessingValue <#>
@@ -779,7 +779,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                     void $ launchAff_ do
                                                       result <-
                                                         TransactionService.removePaymentTransaction
-                                                          p.id
+                                                          p.paymentId
                                                       liftEffect $ case result of
                                                         Right _ -> do
                                                           let
@@ -787,8 +787,8 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                               filter
                                                                 ( \( PaymentTransaction
                                                                        pay
-                                                                   ) -> pay.id /=
-                                                                    p.id
+                                                                   ) -> pay.paymentId /=
+                                                                    p.paymentId
                                                                 )
                                                                 currPayments
                                                           setPayments

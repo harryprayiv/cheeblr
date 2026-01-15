@@ -16,6 +16,9 @@ flag use-pkg-config
 common shared-properties
     ghc-options: -Wall
                  -O2
+                 -threaded
+                 -rtsopts
+                 "-with-rtsopts=-N"
     build-depends: base
                 , servant
                 , servant-server

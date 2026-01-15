@@ -191,6 +191,7 @@ let
     echo "You can monitor database stats with: watch -n 5 pg-stats"
     echo "You can backup the database with: pg-backup"
     echo "You can stop the database with: pg-stop"
+    watch -n 5 pg-stats
   '';
 
   # Database stop script

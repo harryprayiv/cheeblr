@@ -154,8 +154,8 @@ backup-project  # Backup project files and database
 ```
 
 This will:
-- Copy project files to `~/plutus/workspace/scdWs/cheeblr/`
-- Copy database backups to `~/plutus/cheeblrDB/`
+- Copy project files to `~/NAS/plutus/workspace/scdWs/cheeblr/`
+- Copy database backups to `~/NAS/plutus/cheeblrDB/`
 
 ### Open in VSCodium
 

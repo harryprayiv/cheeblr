@@ -17,7 +17,7 @@ import Data.Newtype (unwrap)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
 import Effect.Console (log)
-import Effect.Now (now, nowDateTime)
+import Effect.Now (nowDateTime)
 import Types.Inventory (ItemCategory(..), MenuItem(..))
 import Types.Transaction (DiscountRecord, DiscountType(..), PaymentMethod(..), PaymentTransaction(..), TaxCategory(..), TaxRecord, Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID)
@@ -132,7 +132,7 @@ addItemToTransaction builder menuItem quantity = do
       itemSubtotal = itemPrice * (Discrete (Int.floor quantity))
 
       taxes = calculateTaxes itemSubtotal menuItem
-      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.amount))
+      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.taxAmount))
         (Discrete 0)
         taxes
 
@@ -175,7 +175,7 @@ applyDiscount
   -> String
   -> Maybe UUID
   -> Aff (Either RegisterError TransactionBuilder)
-applyDiscount builder discountType reason maybeApprover = do
+applyDiscount builder discountType discountReason maybeApprover = do
   liftEffect $ log "Applying discount to transaction"
 
   if builder.subtotal == Discrete 0 then do
@@ -211,10 +211,10 @@ applyDiscount builder discountType reason maybeApprover = do
           else amount
 
       newDiscount =
-        { type: discountType
-        , amount: fromDiscrete' discountAmount
-        , reason
-        , approvedBy: maybeApprover
+        { discountType: discountType
+        , discountAmount: fromDiscrete' discountAmount
+        , discountReason
+        , discountApprovedBy: maybeApprover
         }
 
       newTotal = builder.subtotal - discountAmount + builder.taxTotal
@@ -253,7 +253,7 @@ addPayment builder method amount tendered reference = do
             let
               PaymentTransaction payment = p
             in
-              acc + (toDiscrete payment.amount)
+              acc + (toDiscrete payment.paymentAmount)
         )
         (Discrete 0)
         builder.payments
@@ -270,16 +270,16 @@ addPayment builder method amount tendered reference = do
         else Discrete 0
 
       newPaymentRecord =
-        { id: paymentId
-        , transactionId: builder.transactionId
-        , method
-        , amount: fromDiscrete' actualPaymentAmount
-        , tendered: fromDiscrete'
+        { paymentId: paymentId
+        , paymentTransactionId: builder.transactionId
+        , paymentMethod: method
+        , paymentAmount: fromDiscrete' actualPaymentAmount
+        , paymentTendered: fromDiscrete'
             (if method == Cash then tendered else actualPaymentAmount)
-        , change: fromDiscrete' change
-        , reference
-        , approved: true
-        , authorizationCode: Nothing
+        , paymentChange: fromDiscrete' change
+        , paymentReference: reference
+        , paymentApproved: true
+        , paymentAuthorizationCode: Nothing
         }
 
       newPayments = PaymentTransaction newPaymentRecord : builder.payments
@@ -319,7 +319,7 @@ finalizeTransaction builder = do
       totalPayments = foldl
         ( \acc payment ->
             case payment of
-              PaymentTransaction p -> acc + (toDiscrete p.amount)
+              PaymentTransaction p -> acc + (toDiscrete p.paymentAmount)
         )
         (Discrete 0)
         builder.payments
@@ -331,7 +331,7 @@ finalizeTransaction builder = do
       timestamp <- liftEffect nowDateTime
 
       let
-        discountTotal = foldl (\acc d -> acc + (toDiscrete d.amount))
+        discountTotal = foldl (\acc d -> acc + (toDiscrete d.discountAmount))
           (Discrete 0)
           builder.discounts
 
@@ -350,7 +350,7 @@ finalizeTransaction builder = do
               let
                 PaymentTransaction p = payment
               in
-                PaymentTransaction (p { transactionId = builder.transactionId })  
+                PaymentTransaction (p { paymentId = builder.transactionId })  
           )
           builder.payments
 
@@ -454,9 +454,9 @@ formatTransactionItem (TransactionItem item) =
 
     taxLines = foldl
       ( \acc tax ->
-          acc <> "  " <> tax.description <> " (" <> show (tax.rate * 100.0)
+          acc <> "  " <> tax.taxDescription <> " (" <> show (tax.taxRate * 100.0)
             <> "%): "
-            <> formatDiscrete numeric (toDiscrete tax.amount)
+            <> formatDiscrete numeric (toDiscrete tax.taxAmount)
             <> "\n"
       )
       ""
@@ -471,13 +471,13 @@ formatTransactionItem (TransactionItem item) =
 formatPayment :: PaymentTransaction -> String
 formatPayment (PaymentTransaction payment) =
   let
-    paymentLine = "Paid (" <> show payment.method <> "): "
-      <> formatDiscrete numeric (toDiscrete payment.amount)
+    paymentLine = "Paid (" <> show payment.paymentMethod <> "): "
+      <> formatDiscrete numeric (toDiscrete payment.paymentAmount)
       <> "\n"
 
     changeLine =
-      if payment.change > (fromDiscrete' (Discrete 0)) then "Change: "
-        <> formatDiscrete numeric (toDiscrete payment.change)
+      if payment.paymentChange > (fromDiscrete' (Discrete 0)) then "Change: "
+        <> formatDiscrete numeric (toDiscrete payment.paymentChange)
         <> "\n"
       else ""
   in
@@ -572,23 +572,24 @@ calculateTaxes amount menuItem =
         Discrete (Int.floor (Int.toNumber amountInCents * cannabisTaxRate))
       else Discrete 0
 
+    -- Use prefixed field names
     salesTax =
-      { category: RegularSalesTax
-      , rate: salesTaxRate
-      , amount: fromDiscrete' salesTaxAmount
-      , description: "Sales Tax"
+      { taxCategory: RegularSalesTax
+      , taxRate: salesTaxRate
+      , taxAmount: fromDiscrete' salesTaxAmount
+      , taxDescription: "Sales Tax"
       }
 
     cannabisTax =
-      { category: CannabisTax
-      , rate: cannabisTaxRate
-      , amount: fromDiscrete' cannabisTaxAmount
-      , description: "Cannabis Excise Tax"
+      { taxCategory: CannabisTax
+      , taxRate: cannabisTaxRate
+      , taxAmount: fromDiscrete' cannabisTaxAmount
+      , taxDescription: "Cannabis Excise Tax"
       }
   in
     if cannabisTaxAmount > Discrete 0 then [ salesTax, cannabisTax ]
     else [ salesTax ]
-
+    
 processRefund
   :: { id :: UUID }
   -> Array UUID
@@ -640,6 +641,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
   else do
 
     refundId <- liftEffect genUUID
+    refundPaymentId <- liftEffect genUUID  -- Separate ID for the payment
     currentTimestamp <- liftEffect nowDateTime
 
     let
@@ -654,23 +656,24 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
         itemsToRefund
       refundTaxTotal = foldl
         ( \acc item ->
-            foldl (\acc2 tax -> acc2 + (toDiscrete tax.amount)) acc
+            foldl (\acc2 tax -> acc2 + (toDiscrete tax.taxAmount)) acc
               (unwrap item).transactionItemTaxes
         )
         (Discrete 0)
         itemsToRefund
       refundTotal = refundSubtotal + refundTaxTotal
 
+      -- FIXED: Correct field names and IDs
       refundPayment =
-        { id: dummyPaymentId
-        , transactionId: refundId
-        , method: Cash
-        , amount: fromDiscrete' (negate refundTotal)
-        , tendered: fromDiscrete' (negate refundTotal)
-        , change: fromDiscrete' (Discrete 0)
-        , reference: Nothing
-        , approved: true
-        , authorizationCode: Nothing
+        { paymentId: refundPaymentId           -- Payment's own unique ID
+        , paymentTransactionId: refundId       -- The refund transaction ID
+        , paymentMethod: Cash
+        , paymentAmount: fromDiscrete' (negate refundTotal)
+        , paymentTendered: fromDiscrete' (negate refundTotal)
+        , paymentChange: fromDiscrete' (Discrete 0)
+        , paymentReference: Nothing
+        , paymentApproved: true
+        , paymentAuthorizationCode: Nothing
         }
 
       refundTransaction =
@@ -721,7 +724,7 @@ processRefund originalTransaction itemIdsToRefund reason employeeId = do
       , transactionItemTotal = fromDiscrete' (negate (toDiscrete item.transactionItemTotal))
       , transactionItemTaxes = map
           ( \tax -> tax
-              { amount = fromDiscrete' (negate (toDiscrete tax.amount)) }
+              { taxAmount = fromDiscrete' (negate (toDiscrete tax.taxAmount)) }
           )
           item.transactionItemTaxes
       }

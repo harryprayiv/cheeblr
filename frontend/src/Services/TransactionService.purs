@@ -3,43 +3,21 @@ module Services.TransactionService where
 import Prelude
 
 import API.Transaction as API
+import Data.Array (filter, foldl)
 import Data.Either (Either(..))
 import Data.Finance.Money (Discrete(..))
-import Data.Finance.Money.Extended (fromDiscrete')
+import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Int (floor, toNumber)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
-import Data.Array (filter, length, sortBy)
-import Effect.Aff (Aff)
 import Effect (Effect)
+import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
-import Effect.Aff (launchAff_)
-import Types.Register (Register, CartTotals)
 import Effect.Class.Console as Console
 import Effect.Now (nowDateTime)
+import Types.Register (CartTotals)
 import Types.Transaction (PaymentMethod, PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID)
-import Utils.UUIDGen (genUUID)
-import Data.Array (filter, find, foldl, (:))
-import Data.Either (Either(..))
-import Data.Finance.Currency (USD)
-import Data.Finance.Money (Discrete(..))
-import Data.Finance.Money.Extended (DiscreteMoney, fromDiscrete', toDiscrete)
-import Data.Int (toNumber)
-import Data.Int as Int
-import Data.Maybe (Maybe(..))
-import Data.Newtype (unwrap)
-import Effect (Effect)
-import Effect.Aff (launchAff_)
-import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
--- import Services.TransactionService as TransactionService
-import Types.Inventory (MenuItem(..))
-import Types.Register (CartTotals)
-import Types.Transaction (TaxCategory(..), TransactionItem(..))
-import Types.UUID (UUID)
-import Utils.Money (formatMoney')
--- import Utils.CartUtils (emptyCartTotals, formatDiscretePrice)
 import Utils.UUIDGen (genUUID)
 
 emptyCartTotals :: CartTotals
@@ -112,46 +90,10 @@ getTransaction transactionId = do
   liftEffect $ Console.log $ "Getting transaction: " <> show transactionId
   API.getTransaction transactionId
 
--- createTransactionItem
---   :: UUID  -- transactionId
---   -> UUID  -- menuItemSku
---   -> Number  -- quantity
---   -> Int  -- pricePerUnit in cents
---   -> Aff (Either String TransactionItem)
--- createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
---   itemId <- liftEffect genUUID
-  
---   let quantityInt = floor quantity
---       salesTaxRate = 0.08
---       subtotalCents = pricePerUnit * quantityInt
---       taxCents = floor (toNumber subtotalCents * salesTaxRate)
---       totalCents = subtotalCents + taxCents
-      
---       salesTax = 
---         { category: RegularSalesTax
---         , rate: salesTaxRate
---         , amount: fromDiscrete' (Discrete taxCents)
---         , description: "Sales Tax"
---         }
-      
---       transactionItem = TransactionItem
---               { transactionItemId: itemId
---               , transactionItemTransactionId: transactionId
---               , transactionItemMenuItemSku: menuItemSku
---               , transactionItemQuantity: toNumber quantityInt
---               , transactionItemPricePerUnit: fromDiscrete' (Discrete pricePerUnit)
---               , transactionItemDiscounts: []
---               , transactionItemTaxes: [salesTax]
---               , transactionItemSubtotal: fromDiscrete' (Discrete subtotalCents)
---               , transactionItemTotal: fromDiscrete' (Discrete totalCents)
---               }
-        
---   API.addTransactionItem transactionItem
-
 createTransactionItem
   :: UUID
   -> UUID
-  -> Int  -- Changed from Number
+  -> Int
   -> Int
   -> Aff (Either String TransactionItem)
 createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
@@ -162,24 +104,25 @@ createTransactionItem transactionId menuItemSku quantity pricePerUnit = do
       taxCents = floor (toNumber subtotalCents * salesTaxRate)
       totalCents = subtotalCents + taxCents
 
+      -- Use prefixed field names to match Haskell
       salesTax =
-        { category: RegularSalesTax
-        , rate: salesTaxRate
-        , amount: fromDiscrete' (Discrete taxCents)
-        , description: "Sales Tax"
+        { taxCategory: RegularSalesTax
+        , taxRate: salesTaxRate
+        , taxAmount: fromDiscrete' (Discrete taxCents)
+        , taxDescription: "Sales Tax"
         }
 
       transactionItem = TransactionItem
-              { transactionItemId: itemId
-              , transactionItemTransactionId: transactionId
-              , transactionItemMenuItemSku: menuItemSku
-              , transactionItemQuantity: quantity  -- Now an Int
-              , transactionItemPricePerUnit: fromDiscrete' (Discrete pricePerUnit)
-              , transactionItemDiscounts: []
-              , transactionItemTaxes: [salesTax]
-              , transactionItemSubtotal: fromDiscrete' (Discrete subtotalCents)
-              , transactionItemTotal: fromDiscrete' (Discrete totalCents)
-              }
+        { transactionItemId: itemId
+        , transactionItemTransactionId: transactionId
+        , transactionItemMenuItemSku: menuItemSku
+        , transactionItemQuantity: quantity
+        , transactionItemPricePerUnit: fromDiscrete' (Discrete pricePerUnit)
+        , transactionItemDiscounts: []
+        , transactionItemTaxes: [salesTax]
+        , transactionItemSubtotal: fromDiscrete' (Discrete subtotalCents)
+        , transactionItemTotal: fromDiscrete' (Discrete totalCents)
+        }
 
   API.addTransactionItem transactionItem
 
@@ -223,15 +166,15 @@ addPayment transactionId method amount tendered reference = do
     change = max 0 (tendered - amount)
 
     payment = PaymentTransaction
-      { id: paymentId
-      , transactionId: transactionId
-      , method: method
-      , amount: fromDiscrete' (Discrete amount)
-      , tendered: fromDiscrete' (Discrete tendered)
-      , change: fromDiscrete' (Discrete change)
-      , reference: reference
-      , approved: true
-      , authorizationCode: Nothing
+      { paymentId: paymentId
+      , paymentTransactionId: transactionId
+      , paymentMethod: method
+      , paymentAmount: fromDiscrete' (Discrete amount)
+      , paymentTendered: fromDiscrete' (Discrete tendered)
+      , paymentChange: fromDiscrete' (Discrete change)
+      , paymentReference: reference
+      , paymentApproved: true
+      , paymentAuthorizationCode: Nothing
       }
 
   API.addPaymentTransaction payment
@@ -280,7 +223,7 @@ calculateCartTotals items =
   addItemToTotals totals (TransactionItem item) =
     let
       itemSubtotal = toDiscrete item.transactionItemSubtotal
-      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.amount))
+      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.taxAmount))
         (Discrete 0)
         item.transactionItemTaxes
       itemTotal = toDiscrete item.transactionItemTotal

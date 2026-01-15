@@ -14,10 +14,8 @@ import Data.String (drop, take)
 import Foreign (ForeignError(..), fail)
 import Foreign.Index (readProp)
 import Types.UUID (UUID)
-import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Yoga.JSON (class ReadForeign, class WriteForeign, writeImpl, readImpl)
 
--- || Base Types
 data TransactionStatus
   = Created
   | InProgress
@@ -61,7 +59,7 @@ newtype TransactionItem = TransactionItem
   { transactionItemId :: UUID
   , transactionItemTransactionId :: UUID
   , transactionItemMenuItemSku :: UUID
-  , transactionItemQuantity :: Int  -- Changed from Number to Int
+  , transactionItemQuantity :: Int
   , transactionItemPricePerUnit :: DiscreteMoney USD
   , transactionItemDiscounts :: Array DiscountRecord
   , transactionItemTaxes :: Array TaxRecord
@@ -70,15 +68,15 @@ newtype TransactionItem = TransactionItem
   }
 
 newtype PaymentTransaction = PaymentTransaction
-  { id :: UUID
-  , transactionId :: UUID
-  , method :: PaymentMethod
-  , amount :: DiscreteMoney USD
-  , tendered :: DiscreteMoney USD
-  , change :: DiscreteMoney USD
-  , reference :: Maybe String
-  , approved :: Boolean
-  , authorizationCode :: Maybe String
+  { paymentId :: UUID
+  , paymentTransactionId :: UUID
+  , paymentMethod :: PaymentMethod
+  , paymentAmount :: DiscreteMoney USD
+  , paymentTendered :: DiscreteMoney USD
+  , paymentChange :: DiscreteMoney USD
+  , paymentReference :: Maybe String
+  , paymentApproved :: Boolean
+  , paymentAuthorizationCode :: Maybe String
   }
 
 data PaymentMethod
@@ -106,17 +104,17 @@ data TaxCategory
   | NoTax
 
 type TaxRecord =
-  { category :: TaxCategory
-  , rate :: Number
-  , amount :: DiscreteMoney USD
-  , description :: String
+  { taxCategory :: TaxCategory
+  , taxRate :: Number
+  , taxAmount :: DiscreteMoney USD
+  , taxDescription :: String
   }
 
 type DiscountRecord =
-  { type :: DiscountType
-  , amount :: DiscreteMoney USD
-  , reason :: String
-  , approvedBy :: Maybe UUID
+  { discountType :: DiscountType
+  , discountAmount :: DiscreteMoney USD
+  , discountReason :: String
+  , discountApprovedBy :: Maybe UUID
   }
 
 data AccountType
@@ -126,12 +124,13 @@ data AccountType
   | Revenue
   | Expense
 
+-- FIXED: accountParentAccount -> accountParentAccountId
 newtype Account = Account
-  { id :: UUID
-  , code :: String
-  , name :: String
-  , isDebitNormal :: Boolean
-  , parentAccount :: Maybe UUID
+  { accountId :: UUID
+  , accountCode :: String
+  , accountName :: String
+  , accountIsDebitNormal :: Boolean
+  , accountParentAccountId :: Maybe UUID
   , accountType :: AccountType
   }
 
@@ -145,15 +144,16 @@ data LedgerError
   | AuthorizationFailed
   | SystemError String
 
+-- FIXED: Field names now match Haskell's LedgerEntry
 newtype LedgerEntry = LedgerEntry
-  { id :: UUID
-  , transactionId :: UUID
-  , accountId :: UUID
-  , amount :: DiscreteMoney USD
-  , isDebit :: Boolean
-  , timestamp :: DateTime
-  , entryType :: LedgerEntryType
-  , description :: String
+  { ledgerEntryId :: UUID
+  , ledgerEntryTransactionId :: UUID
+  , ledgerEntryAccountId :: UUID
+  , ledgerEntryAmount :: DiscreteMoney USD
+  , ledgerEntryIsDebit :: Boolean
+  , ledgerEntryTimestamp :: DateTime
+  , ledgerEntryType :: LedgerEntryType
+  , ledgerEntryDescription :: String
   }
 
 data LedgerEntryType
@@ -166,7 +166,6 @@ data LedgerEntryType
   | Adjustment
   | Fee
 
--- || Derived Instances
 derive instance eqLedgerError :: Eq LedgerError
 derive instance ordLedgerError :: Ord LedgerError
 
@@ -211,7 +210,6 @@ derive instance ordPaymentMethod :: Ord PaymentMethod
 derive instance eqTransactionStatus :: Eq TransactionStatus
 derive instance ordTransactionStatus :: Ord TransactionStatus
 
--- || Show Instances
 instance showTransactionStatus :: Show TransactionStatus where
   show Created = "CREATED"
   show InProgress = "IN_PROGRESS"
@@ -220,39 +218,39 @@ instance showTransactionStatus :: Show TransactionStatus where
   show Refunded = "REFUNDED"
 
 instance showPaymentMethod :: Show PaymentMethod where
-  show Cash = "Cash"
-  show Debit = "Debit"
-  show Credit = "Credit"
+  show Cash = "CASH"
+  show Debit = "DEBIT"
+  show Credit = "CREDIT"
   show ACH = "ACH"
-  show GiftCard = "Gift Card"
-  show StoredValue = "Stored Value"
-  show Mixed = "Mixed Payment"
-  show (Other s) = "Other: " <> s
+  show GiftCard = "GIFT_CARD"
+  show StoredValue = "STORED_VALUE"
+  show Mixed = "MIXED"
+  show (Other s) = "OTHER:" <> s
 
 instance showTransactionType :: Show TransactionType where
-  show Sale = "Sale"
-  show Return = "Return"
-  show Exchange = "Exchange"
-  show InventoryAdjustment = "Inventory Adjustment"
-  show ManagerComp = "Manager Comp"
-  show Administrative = "Administrative"
+  show Sale = "SALE"
+  show Return = "RETURN"
+  show Exchange = "EXCHANGE"
+  show InventoryAdjustment = "INVENTORY_ADJUSTMENT"
+  show ManagerComp = "MANAGER_COMP"
+  show Administrative = "ADMINISTRATIVE"
 
 instance showAccountType :: Show AccountType where
-  show Asset = "Asset"
-  show Liability = "Liability"
-  show Equity = "Equity"
-  show Revenue = "Revenue"
-  show Expense = "Expense"
+  show Asset = "ASSET"
+  show Liability = "LIABILITY"
+  show Equity = "EQUITY"
+  show Revenue = "REVENUE"
+  show Expense = "EXPENSE"
 
 instance showLedgerEntryType :: Show LedgerEntryType where
-  show SaleEntry = "Sale"
-  show Tax = "Tax"
-  show Discount = "Discount"
-  show Payment = "Payment"
-  show Refund = "Refund"
-  show Void = "Void"
-  show Adjustment = "Adjustment"
-  show Fee = "Fee"
+  show SaleEntry = "SALE"
+  show Tax = "TAX"
+  show Discount = "DISCOUNT"
+  show Payment = "PAYMENT"
+  show Refund = "REFUND"
+  show Void = "VOID"
+  show Adjustment = "ADJUSTMENT"
+  show Fee = "FEE"
 
 instance showLedgerError :: Show LedgerError where
   show UnbalancedTransaction = "Transaction debits and credits do not balance"
@@ -273,15 +271,6 @@ instance showTransaction :: Show Transaction where
       <> show t.transactionStatus
       <> " }"
 
--- instance showTransactionItem :: Show TransactionItem where
---   show (TransactionItem ti) =
---     "TransactionItem { sku: " <> show ti.menuItemSku
---       <> ", quantity: "
---       <> show ti.quantity
---       <> ", total: "
---       <> show ti.total
---       <> " }"
-
 instance showTransactionItem :: Show TransactionItem where
   show (TransactionItem ti) =
     "TransactionItem { sku: " <> show ti.transactionItemMenuItemSku
@@ -293,28 +282,31 @@ instance showTransactionItem :: Show TransactionItem where
 
 instance showPaymentTransaction :: Show PaymentTransaction where
   show (PaymentTransaction pt) =
-    "Payment { method: " <> show pt.method
+    "Payment { method: " <> show pt.paymentMethod
       <> ", amount: "
-      <> show pt.amount
+      <> show pt.paymentAmount
       <> " }"
 
 instance showLedgerEntry :: Show LedgerEntry where
   show (LedgerEntry le) =
-    "LedgerEntry { entryType: " <> show le.entryType
+    "LedgerEntry { entryType: " <> show le.ledgerEntryType
       <> ", amount: "
-      <> show le.amount
+      <> show le.ledgerEntryAmount
       <> ", isDebit: "
-      <> show le.isDebit
+      <> show le.ledgerEntryIsDebit
       <> " }"
 
 instance showAccount :: Show Account where
   show (Account a) =
-    "Account { name: " <> a.name
+    "Account { name: " <> a.accountName
       <> ", type: "
       <> show a.accountType
       <> " }"
 
--- || WriteForeign Instances
+-- =============================================================================
+-- WriteForeign instances - 
+-- =============================================================================
+
 instance writeForeignTransactionStatus :: WriteForeign TransactionStatus where
   writeImpl Created = writeImpl "Created"
   writeImpl InProgress = writeImpl "InProgress"
@@ -334,16 +326,16 @@ instance writeForeignPaymentMethod :: WriteForeign PaymentMethod where
 
 instance writeForeignDiscountType :: WriteForeign DiscountType where
   writeImpl (PercentOff pct) = writeImpl
-    { type: "PERCENT_OFF", percent: pct, amount: 0.0 }
+    { discountType: "PERCENT_OFF", percent: pct, amount: 0.0 }
   writeImpl (AmountOff amount) = writeImpl
-    { type: "AMOUNT_OFF"
+    { discountType: "AMOUNT_OFF"
     , percent: 0.0
     , amount: show ((Int.toNumber (unwrap amount)) / 100.0)
     }
   writeImpl BuyOneGetOne = writeImpl
-    { type: "BUY_ONE_GET_ONE", percent: 0.0, amount: 0.0 }
+    { discountType: "BUY_ONE_GET_ONE", percent: 0.0, amount: 0.0 }
   writeImpl (Custom name amount) = writeImpl
-    { type: "CUSTOM"
+    { discountType: "CUSTOM"
     , name
     , percent: 0.0
     , amount: show ((Int.toNumber (unwrap amount)) / 100.0)
@@ -359,26 +351,6 @@ instance writeForeignTaxCategory :: WriteForeign TaxCategory where
 
 instance writeForeignTransactionItem :: WriteForeign TransactionItem where
   writeImpl (TransactionItem item) = writeImpl item
-
--- instance writeForeignTransactionItem :: WriteForeign TransactionItem where
---   writeImpl (TransactionItem item) = writeImpl
---     { transactionItemId: item.id
---     , transactionItemTransactionId: item.transactionId
---     , transactionItemMenuItemSku: item.menuItemSku
---     , transactionItemQuantity: Int.floor item.quantity  -- Make sure it's an Int
---     , transactionItemPricePerUnit: unwrap (toDiscrete item.pricePerUnit)  -- Convert to Int
---     , transactionItemDiscounts: item.discounts
---     , transactionItemTaxes: map writeTaxRecord item.taxes
---     , transactionItemSubtotal: unwrap (toDiscrete item.subtotal)  -- Convert to Int
---     , transactionItemTotal: unwrap (toDiscrete item.total)  -- Convert to Int
---     }
---     where
---     writeTaxRecord tax =
---       { taxCategory: show tax.category
---       , taxRate: tax.rate
---       , taxAmount: unwrap (toDiscrete tax.amount)  -- Convert to Int
---       , taxDescription: tax.description
---       }
 
 instance writeForeignPaymentTransaction :: WriteForeign PaymentTransaction where
   writeImpl (PaymentTransaction payment) = writeImpl payment
@@ -439,7 +411,10 @@ instance writeForeignAccountType :: WriteForeign AccountType where
 instance writeForeignAccount :: WriteForeign Account where
   writeImpl (Account account) = writeImpl account
 
--- || ReadForeign Instances
+-- =============================================================================
+-- ReadForeign instances - Support both formats for flexibility
+-- =============================================================================
+
 instance readForeignTransactionStatus :: ReadForeign TransactionStatus where
   readImpl f = do
     status <- readImpl f
@@ -449,7 +424,6 @@ instance readForeignTransactionStatus :: ReadForeign TransactionStatus where
       "Completed" -> pure Completed
       "Voided" -> pure Voided
       "Refunded" -> pure Refunded
-      -- backward compatibility with uppercase format
       "CREATED" -> pure Created
       "IN_PROGRESS" -> pure InProgress
       "COMPLETED" -> pure Completed
@@ -461,10 +435,16 @@ instance readForeignPaymentMethod :: ReadForeign PaymentMethod where
   readImpl f = do
     method <- readImpl f
     case method of
+      "Cash" -> pure Cash
+      "Debit" -> pure Debit
+      "Credit" -> pure Credit
+      "ACH" -> pure ACH
+      "GiftCard" -> pure GiftCard
+      "StoredValue" -> pure StoredValue
+      "Mixed" -> pure Mixed
       "CASH" -> pure Cash
       "DEBIT" -> pure Debit
       "CREDIT" -> pure Credit
-      "ACH" -> pure ACH
       "GIFT_CARD" -> pure GiftCard
       "STORED_VALUE" -> pure StoredValue
       "MIXED" -> pure Mixed
@@ -475,7 +455,7 @@ instance readForeignPaymentMethod :: ReadForeign PaymentMethod where
 instance readForeignDiscountType :: ReadForeign DiscountType where
   readImpl f = do
     obj <- readImpl f
-    discType <- readProp "type" obj >>= readImpl
+    discType <- readProp "discountType" obj >>= readImpl
     case discType of
       "PERCENT_OFF" -> PercentOff <$> (readProp "percent" obj >>= readImpl)
       "AMOUNT_OFF" -> do
@@ -496,6 +476,12 @@ instance readForeignTaxCategory :: ReadForeign TaxCategory where
   readImpl f = do
     category <- readImpl f
     case category of
+      "RegularSalesTax" -> pure RegularSalesTax
+      "ExciseTax" -> pure ExciseTax
+      "CannabisTax" -> pure CannabisTax
+      "LocalTax" -> pure LocalTax
+      "MedicalTax" -> pure MedicalTax
+      "NoTax" -> pure NoTax
       "REGULAR_SALES_TAX" -> pure RegularSalesTax
       "EXCISE_TAX" -> pure ExciseTax
       "CANNABIS_TAX" -> pure CannabisTax
@@ -523,7 +509,6 @@ instance readForeignTransactionType :: ReadForeign TransactionType where
       "InventoryAdjustment" -> pure InventoryAdjustment
       "ManagerComp" -> pure ManagerComp
       "Administrative" -> pure Administrative
-      -- For backward compatibility
       "SALE" -> pure Sale
       "RETURN" -> pure Return
       "EXCHANGE" -> pure Exchange
@@ -539,6 +524,14 @@ instance readForeignLedgerEntryType :: ReadForeign LedgerEntryType where
   readImpl f = do
     entryType <- readImpl f
     case entryType of
+      "SaleEntry" -> pure SaleEntry
+      "Tax" -> pure Tax
+      "Discount" -> pure Discount
+      "Payment" -> pure Payment
+      "Refund" -> pure Refund
+      "Void" -> pure Void
+      "Adjustment" -> pure Adjustment
+      "Fee" -> pure Fee
       "SALE" -> pure SaleEntry
       "TAX" -> pure Tax
       "DISCOUNT" -> pure Discount
@@ -553,6 +546,11 @@ instance readForeignAccountType :: ReadForeign AccountType where
   readImpl f = do
     acctType <- readImpl f
     case acctType of
+      "Asset" -> pure Asset
+      "Liability" -> pure Liability
+      "Equity" -> pure Equity
+      "Revenue" -> pure Revenue
+      "Expense" -> pure Expense
       "ASSET" -> pure Asset
       "LIABILITY" -> pure Liability
       "EQUITY" -> pure Equity
