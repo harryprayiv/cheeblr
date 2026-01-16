@@ -43,3 +43,4 @@ cabal.project.local~
 .ghc.environment.*
 .nix-shell
 .postgres
+backend/output
