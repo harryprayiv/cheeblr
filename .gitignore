@@ -13,6 +13,9 @@ generated-docs/
 .direnv
 /script/
 /script/*
+result
+/result/
+/result/*
 /.vscode/
 /backend/dist-newstyle
 dist
