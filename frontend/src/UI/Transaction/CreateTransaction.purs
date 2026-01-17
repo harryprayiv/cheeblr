@@ -813,18 +813,46 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
           [ DA.klass_ "action-bar" ]
           [ D.button
               [ DA.klass_ "cancel-btn"
+              , DA.disabled $ isProcessingValue <#> \p -> if p then "true" else ""
               , runOn DL.click $
-                  ( \cartItems -> do
-                      if null cartItems then do
+                  ( \cartItems transaction -> do
+                      if null cartItems then
                         setStatusMessage "No items to clear"
                       else do
-                        setCartItems []
-                        setPayments []
-                        setCartTotals emptyCartTotals
-                        setStatusMessage "Transaction cleared"
-                  ) <$> cartItemsValue
+                        setIsProcessing true
+                        setStatusMessage "Clearing cart..."
+
+                        void $ launchAff_ do
+                          result <- TransactionService.clearTransaction
+                            (unwrap transaction).transactionId
+
+                          liftEffect $ case result of
+                            Right _ -> do
+                              setCartItems []
+                              setPayments []
+                              setCartTotals emptyCartTotals
+                              setStatusMessage "Cart cleared"
+                            Left err -> do
+                              setStatusMessage $ "Error: " <> err
+
+                          liftEffect $ setIsProcessing false
+                  ) <$> cartItemsValue <*> transactionPoll
               ]
               [ text_ "Clear Items" ]
+          -- [ D.button
+          --     [ DA.klass_ "cancel-btn"
+          --     , runOn DL.click $
+          --         ( \cartItems -> do
+          --             if null cartItems then do
+          --               setStatusMessage "No items to clear"
+          --             else do
+          --               setCartItems []
+          --               setPayments []
+          --               setCartTotals emptyCartTotals
+          --               setStatusMessage "Transaction cleared"
+          --         ) <$> cartItemsValue
+          --     ]
+          --     [ text_ "Clear Items" ]
           , D.div
               [ DA.klass_ "payment-summary" ]
               [ (Tuple <$> cartTotalsValue <*> paymentsValue) <#~>

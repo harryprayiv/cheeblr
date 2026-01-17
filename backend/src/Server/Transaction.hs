@@ -37,6 +37,7 @@ transactionServer pool =
     :<|> addPaymentTransactionHandler
     :<|> removePaymentTransactionHandler
     :<|> finalizeTransactionHandler
+    :<|> clearTransactionHandler
     :<|> getAvailableInventoryHandler
     :<|> reserveInventoryHandler
     :<|> releaseInventoryHandler
@@ -198,6 +199,12 @@ transactionServer pool =
       liftIO $ putStrLn $ "Handling DELETE /transaction/item/" ++ show itemId ++ " request"
       liftIO $ deleteTransactionItem pool itemId
       liftIO $ putStrLn "Transaction item deleted successfully"
+      return NoContent
+
+    clearTransactionHandler :: UUID -> Handler NoContent
+    clearTransactionHandler txId = do
+      liftIO $ putStrLn $ "Handling POST /transaction/clear/" ++ show txId ++ " request"
+      liftIO $ clearTransaction pool txId
       return NoContent
 
     addPaymentTransactionHandler :: PaymentTransaction -> Handler PaymentTransaction

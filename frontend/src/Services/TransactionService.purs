@@ -137,6 +137,9 @@ removeTransactionItem itemId = do
   liftEffect $ Console.log $ "Removing transaction item: " <> show itemId
   API.removeTransactionItem itemId
 
+clearTransaction :: UUID -> Aff (Either String Unit)
+clearTransaction = API.clearTransaction
+
 voidTransaction :: UUID -> String -> Aff (Either String Transaction)
 voidTransaction transactionId reason = do
   liftEffect $ Console.log $ "Voiding transaction: " <> show transactionId

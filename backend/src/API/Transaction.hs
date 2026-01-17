@@ -24,6 +24,7 @@ type TransactionAPI =
     :<|> "transaction" :> "payment" :> ReqBody '[JSON] PaymentTransaction :> Post '[JSON] PaymentTransaction
     :<|> "transaction" :> "payment" :> Capture "id" UUID :> Delete '[JSON] NoContent
     :<|> "transaction" :> "finalize" :> Capture "id" UUID :> Post '[JSON] Transaction
+    :<|> "transaction" :> "clear" :> Capture "id" UUID :> Post '[JSON] NoContent
     :<|> "inventory"   :> "available" :> Capture "sku" UUID :> Get '[JSON] AvailableInventory
     :<|> "inventory"   :> "reserve" :> ReqBody '[JSON] ReservationRequest :> Post '[JSON] InventoryReservation
     :<|> "inventory"   :> "release" :> Capture "id" UUID :> Delete '[JSON] NoContent

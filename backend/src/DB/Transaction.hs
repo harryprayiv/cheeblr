@@ -699,6 +699,63 @@ negateTransactionItem item = TransactionItem {
   transactionItemTotal = negate (transactionItemTotal item)
 }
 
+clearTransaction :: ConnectionPool -> UUID -> IO ()
+clearTransaction pool transactionId = withConnection pool $ \conn -> do
+  hPutStrLn stderr $ "Cancelling transaction: " ++ show transactionId
+
+  _ <- execute conn
+    [sql|
+      UPDATE inventory_reservation
+      SET status = 'Released'
+      WHERE transaction_id = ? AND status = 'Reserved'
+    |]
+    (Only transactionId)
+
+  _ <- execute conn
+    [sql|
+      DELETE FROM transaction_tax
+      WHERE transaction_item_id IN (
+        SELECT id FROM transaction_item WHERE transaction_id = ?
+      )
+    |]
+    (Only transactionId)
+
+  _ <- execute conn
+    [sql|
+      DELETE FROM discount
+      WHERE transaction_item_id IN (
+        SELECT id FROM transaction_item WHERE transaction_id = ?
+      )
+      OR transaction_id = ?
+    |]
+    (transactionId, transactionId)
+
+  _ <- execute conn
+    [sql|
+      DELETE FROM transaction_item WHERE transaction_id = ?
+    |]
+    (Only transactionId)
+
+  _ <- execute conn
+    [sql|
+      DELETE FROM payment_transaction WHERE transaction_id = ?
+    |]
+    (Only transactionId)
+
+  _ <- execute conn
+    [sql|
+      UPDATE transaction SET
+        subtotal = 0,
+        discount_total = 0,
+        tax_total = 0,
+        total = 0,
+        status = 'CREATED'
+      WHERE id = ?
+    |]
+    (Only transactionId)
+
+  hPutStrLn stderr "Transaction cancelled successfully"
+
 -- | Negate a discount record for refunds
 negateDiscountRecord :: DiscountRecord -> DiscountRecord
 negateDiscountRecord discount = discount {
@@ -720,24 +777,6 @@ negatePaymentTransaction payment = payment {
   paymentChange = negate $ paymentChange payment
 }
 
--- | Finalize a transaction
--- finalizeTransaction :: ConnectionPool -> UUID -> IO Transaction
--- finalizeTransaction pool transactionId = withConnection pool $ \conn -> do
---   -- Update transaction status to Completed
---   now <- liftIO getCurrentTime
---   Database.PostgreSQL.Simple.execute conn [sql|
---     UPDATE transaction SET
---       status = 'COMPLETED',
---       completed = ?
---     WHERE id = ?
---   |] (now, transactionId)
-
---   -- Get the updated transaction
---   maybeTransaction <- getTransactionById pool transactionId
---   case maybeTransaction of
---     Just updatedTransaction -> pure updatedTransaction
---     Nothing -> error $ "Transaction not found after finalization: " ++ show transactionId
-
 -- Updated finalizeTransaction that converts reservations to actual sales
 finalizeTransaction :: ConnectionPool -> UUID -> IO Transaction
 finalizeTransaction pool transactionId = withConnection pool $ \conn -> do
@@ -750,7 +789,7 @@ finalizeTransaction pool transactionId = withConnection pool $ \conn -> do
     |]
     (Only transactionId) :: IO [(UUID, Int)]  -- Add explicit type annotation
 
-  -- Actually decrement inventory now
+  -- decrement inventory
   forM_ reservations $ \(sku, qty) -> do
     execute conn
       "UPDATE menu_items SET quantity = quantity - ? WHERE sku = ?"
@@ -790,48 +829,6 @@ insertInventoryReservation conn InventoryReservation{..} = do
     reservationQuantity,
     reservationStatus
     )
-
--- addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
--- addTransactionItem pool item = withConnection pool $ \conn -> do
---   let quantity = transactionItemQuantity item
---       menuItemSku = transactionItemMenuItemSku item
-
---   -- Check available inventory (excluding reserved quantities)
---   results <- query conn
---     [sql|
---       SELECT
---         m.quantity,
---         COALESCE(SUM(r.quantity), 0)
---       FROM menu_items m
---       LEFT JOIN inventory_reservation r
---         ON r.item_sku = m.sku
---         AND r.status = 'Reserved'
---       WHERE m.sku = ?
---       GROUP BY m.quantity
---     |]
---     (Only menuItemSku) :: IO [(Int, Int)]  -- Returns list of tuples
-  
---   case results of
---     [] -> error $ "Item not found: " ++ show menuItemSku
---     ((availableQuantity, reservedQuantity):_) -> do
---       let actuallyAvailable = availableQuantity - reservedQuantity
-
---       if actuallyAvailable < quantity
---         then error $ "Not enough inventory. Only " ++ show actuallyAvailable ++ " available."
---         else do
---           -- DON'T decrement inventory here, just create reservation
---           newItem <- insertTransactionItem conn item
-
---           -- Create reservation
---           let reservation = InventoryReservation
---                 { reservationItemSku = menuItemSku
---                 , reservationTransactionId = transactionItemTransactionId item
---                 , reservationQuantity = quantity
---                 , reservationStatus = "Reserved"
---                 }
---           insertInventoryReservation conn reservation
-
---           pure newItem
 
 addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
 addTransactionItem pool item = withConnection pool $ \conn -> do
@@ -874,36 +871,6 @@ addTransactionItem pool item = withConnection pool $ \conn -> do
           insertInventoryReservation conn reservation
 
           pure newItem
-
--- | Delete a transaction item
--- deleteTransactionItem :: ConnectionPool -> UUID -> IO ()
--- deleteTransactionItem pool itemId = withConnection pool $ \conn -> do
---   -- Get transaction ID before deleting
---   results <- Database.PostgreSQL.Simple.query conn [sql|
---     SELECT transaction_id FROM transaction_item WHERE id = ?
---   |] (Database.PostgreSQL.Simple.Only itemId)
-
---   case results of
---     [Database.PostgreSQL.Simple.Only transactionId] -> do
---       -- Delete discounts for this item
---       Database.PostgreSQL.Simple.execute conn [sql|
---         DELETE FROM discount WHERE transaction_item_id = ?
---       |] (Database.PostgreSQL.Simple.Only itemId)
-
---       -- Delete taxes for this item
---       Database.PostgreSQL.Simple.execute conn [sql|
---         DELETE FROM transaction_tax WHERE transaction_item_id = ?
---       |] (Database.PostgreSQL.Simple.Only itemId)
-
---       -- Delete the item
---       Database.PostgreSQL.Simple.execute conn [sql|
---         DELETE FROM transaction_item WHERE id = ?
---       |] (Database.PostgreSQL.Simple.Only itemId)
-
---       -- Update transaction totals
---       updateTransactionTotals conn transactionId
-
---     _ -> pure () -- Item not found
 
 deleteTransactionItem :: ConnectionPool -> UUID -> IO ()
 deleteTransactionItem pool itemId = withConnection pool $ \conn -> do

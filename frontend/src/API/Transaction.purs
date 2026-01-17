@@ -150,7 +150,6 @@ removeTransactionItem itemId = do
   liftEffect $ Console.log $ "Removing item from transaction: " <> show itemId
 
   handleResponse "removeTransactionItem" do
-    -- Fixed warning: ignored response with underscore
     _ <- fetch (baseUrl <> "/transaction/item/" <> show itemId)
       { method: DELETE
       , headers:
@@ -160,6 +159,25 @@ removeTransactionItem itemId = do
           }
       }
     pure unit
+
+clearTransaction :: UUID -> Aff (Either String Unit)
+clearTransaction transactionId = do
+  liftEffect $ Console.log $ "Clearing transaction: " <> show transactionId
+
+  result <- attempt do
+    response <- fetch (baseUrl <> "/transaction/clear/" <> show transactionId)
+      { method: POST
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          }
+      }
+    pure unit
+
+  pure case result of
+    Left err -> Left $ "Clear error: " <> show err
+    Right _ -> Right unit
 
 addPaymentTransaction
   :: PaymentTransaction -> Aff (Either String PaymentTransaction)
