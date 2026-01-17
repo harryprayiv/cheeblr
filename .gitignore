@@ -44,3 +44,4 @@ cabal.project.local~
 .nix-shell
 .postgres
 backend/output
+result-frontend
