@@ -234,11 +234,6 @@ let
     spago-unstable
 
     # Back End tools
-    cabal-install
-    ghc
-    haskellPackages.fourmolu
-    haskell-language-server
-    hlint
     zlib
     pgcli
     pkg-config
