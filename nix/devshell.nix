@@ -401,7 +401,6 @@ let
       echo ""
       echo ""
       toilet ${lib.toSentenceCase name} -t --metal
-      codium ${name}.code-workspace
     '';
   };
 
