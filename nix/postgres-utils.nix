@@ -9,7 +9,7 @@ let
   pgConfig = if database != null then 
     { database = database; } 
   else 
-    import ./app-config.nix { inherit name; };
+    import ./config.nix { inherit name; };
 
   postgresql = pkgs.postgresql;
   bin = {

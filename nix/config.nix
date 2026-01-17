@@ -1,5 +1,14 @@
-{ name, ... }:
+{ name ? "cheeblr", ... }:
 {
+  # Project name - used EVERYWHERE
+  inherit name;
+
+  # Network settings
+  network = {
+    host = "localhost";
+    bindAddress = "0.0.0.0";  
+  };
+
   database = {
     name = name;
     user = "$(whoami)";
@@ -20,11 +29,13 @@
       listen_addresses = "localhost";
     };
   };
+
   vite = {
-    viteport = 5173;
+    port = 5173;
     settings = {
     };
   };
+
   purescript = {
     spagoFile = "./frontend/spago.yaml";
     codeDirs = [
@@ -35,7 +46,9 @@
     settings = {
     };
   };
+
   haskell = {
+    port = 8080;
     cabalFile = "./backend/${name}-backend.cabal";
     codeDirs = [
       "./backend/app"
@@ -45,4 +58,7 @@
     settings = {
     };
   };
+
+  # Data directories
+  dataDir = "$HOME/.local/share/${name}";
 }

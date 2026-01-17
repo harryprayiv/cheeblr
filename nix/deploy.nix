@@ -1,16 +1,32 @@
 { pkgs, lib ? pkgs.lib, name }:
 
 let
+  config = import ./config.nix { inherit name; };
+  
+  # Network
+  host = config.network.host;
+  bindAddress = config.network.bindAddress;
+  
+  # Ports
+  frontendPort = toString config.vite.port;
+  backendPort = toString config.haskell.port;
+  dbPort = toString config.database.port;
+  
+  # Directories
+  backendDir = builtins.head (builtins.split "/[^/]*$" (builtins.head config.haskell.codeDirs));
+  frontendDir = builtins.head (builtins.split "/[^/]*$" (builtins.head config.purescript.codeDirs));
+  dataDir = config.dataDir;
+
   deploy = pkgs.writeShellScriptBin "deploy" ''
     #!/usr/bin/env bash
     set -euo pipefail
 
     echo "Building projects..."
-    (cd backend && cabal build) || { echo "Backend build failed"; exit 1; }
-    (cd frontend && spago build) || { echo "Frontend build failed"; exit 1; }
+    (cd ${backendDir} && cabal build) || { echo "Backend build failed"; exit 1; }
+    (cd ${frontendDir} && spago build) || { echo "Frontend build failed"; exit 1; }
     
     # Check for and handle database backup
-    BACKUP_DIR="$HOME/.local/share/${name}/backups"
+    BACKUP_DIR="${dataDir}/backups"
     mkdir -p "$BACKUP_DIR"
     LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
     
@@ -34,6 +50,10 @@ let
     echo "Ctrl-b [    - Scroll mode (q to exit)"
     echo ""
     echo "Starting services..."
+    echo "  Backend:  http://${host}:${backendPort}"
+    echo "  Frontend: http://${host}:${frontendPort}"
+    echo "  Postgres: ${host}:${dbPort}"
+    echo ""
 
     # Start completely fresh
     tmux kill-session -t ${name} 2>/dev/null || true
@@ -41,19 +61,12 @@ let
     # Create a new session with a single pane (this will be the interactive shell)
     tmux new-session -d -s ${name} -n "Services" -x 120 -y 42
     
-    # Create three small panes at the top - 12 lines tall (splitting the difference)
-    # First create one small pane at the top
+    # Create three small panes at the top - 12 lines tall
     tmux split-window -v -b -l 12
     
     # Now split this top pane horizontally into three parts
     tmux split-window -h -t ${name}:Services.0 -p 66
     tmux split-window -h -t ${name}:Services.1 -p 50
-    
-    # At this point we should have:
-    # Pane 0: Top-left (backend)
-    # Pane 1: Top-middle (frontend)
-    # Pane 2: Top-right (stats)
-    # Pane 3: Bottom (interactive shell, taking most of the screen)
     
     # Make absolutely sure our panes are correctly sized
     tmux resize-pane -t ${name}:Services.0 -y 12
@@ -61,10 +74,10 @@ let
     tmux resize-pane -t ${name}:Services.2 -y 12
     
     # Send commands to each pane
-    tmux send-keys -t ${name}:Services.0 'cd backend && cabal run ${name}-backend' C-m
-    tmux send-keys -t ${name}:Services.1 'cd frontend && vite --open' C-m
+    tmux send-keys -t ${name}:Services.0 'cd ${backendDir} && cabal run ${name}-backend' C-m
+    tmux send-keys -t ${name}:Services.1 'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
     tmux send-keys -t ${name}:Services.2 'watch -n 5 pg-stats' C-m
-    tmux send-keys -t ${name}:Services.3 'echo "Interactive shell ready for use"; echo' C-m
+    tmux send-keys -t ${name}:Services.3 'echo "Backend: http://${host}:${backendPort}"; echo "Frontend: http://${host}:${frontendPort}"; echo "Postgres: ${host}:${dbPort}"; echo' C-m
     
     # Make sure the layout is maintained when resizing
     tmux set-hook -t ${name} client-resized 'resize-pane -t ${name}:Services.0 -y 12; resize-pane -t ${name}:Services.1 -y 12; resize-pane -t ${name}:Services.2 -y 12'
@@ -96,7 +109,6 @@ let
     vite-cleanup || true
     
     echo "Ensuring all vite processes are stopped..."
-    # Get vite PIDs but exclude our script and its parent
     VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
     if [ -n "$VITE_PIDS" ]; then
       echo "Found remaining vite processes: $VITE_PIDS"
@@ -106,12 +118,12 @@ let
       done
     fi
     
-    # Check port 5173 but protect our process
-    PORT_PIDS=$(lsof -i :5173 -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
+    # Check frontend port but protect our process
+    PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
     if [ -n "$PORT_PIDS" ]; then
-      echo "Found processes still using port 5173: $PORT_PIDS"
+      echo "Found processes still using port ${frontendPort}: $PORT_PIDS"
       for pid in $PORT_PIDS; do
-        echo "Killing process $pid on port 5173"
+        echo "Killing process $pid on port ${frontendPort}"
         kill -9 "$pid" 2>/dev/null || true
       done
     fi
@@ -129,27 +141,22 @@ let
       tmux detach-client -s ${name} 2>/dev/null || true
       
       echo "Killing tmux session..."
-      # Use a subshell for the kill operation to prevent killing our own script
       (
         tmux kill-session -t ${name} 2>/dev/null || true
         sleep 1
       ) &
-      
-      # Wait for the subshell to complete
       wait
       
-      # Check if the session still exists
       if tmux has-session -t ${name} 2>/dev/null; then
         echo "Session still exists, using last resort measures..."
         (
-          # Run kill-server in a subshell to prevent it from killing our script
           tmux kill-server 2>/dev/null || true
         ) &
         wait
       fi
     fi
 
-    # Final verification that doesn't kill our script
+    # Final verification
     BACKEND_PIDS=$(pgrep -f "${name}-backend" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
     VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
     
@@ -164,15 +171,14 @@ let
     echo "All services stopped."
   '';
 
-  # Individual Database start script
+  # Database start script
   db-start = pkgs.writeShellScriptBin "db-start" ''
     #!/usr/bin/env bash
     set -euo pipefail
 
-    echo "Starting database service..."
+    echo "Starting database service on port ${dbPort}..."
     
-    # Check for and handle database backup
-    BACKUP_DIR="$HOME/.local/share/${name}/backups"
+    BACKUP_DIR="${dataDir}/backups"
     mkdir -p "$BACKUP_DIR"
     LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
     
@@ -186,7 +192,7 @@ let
       pg-restore "$LATEST_BACKUP"
     fi
     
-    echo "Database started successfully."
+    echo "Database started successfully at ${host}:${dbPort}"
     echo ""
     echo "You can monitor database stats with: watch -n 5 pg-stats"
     echo "You can backup the database with: pg-backup"
@@ -216,27 +222,24 @@ let
     echo "Building and starting Haskell backend..."
     
     # Check if we're in the right directory
-    if [ ! -f "backend/cabal.project" ] && [ ! -f "backend/${name}.cabal" ]; then
-      if [ -f "cabal.project" ] || [ -f "${name}.cabal" ]; then
-        # We're already in the backend directory
+    if [ ! -f "${backendDir}/cabal.project" ] && [ ! -f "${backendDir}/${name}-backend.cabal" ]; then
+      if [ -f "cabal.project" ] || [ -f "${name}-backend.cabal" ]; then
         BACKEND_DIR="."
       else
         echo "Error: Cannot find backend directory. Please run from project root or backend directory."
         exit 1
       fi
     else
-      BACKEND_DIR="backend"
+      BACKEND_DIR="${backendDir}"
     fi
     
-    # Build the backend
     echo "Building backend..."
     (cd "$BACKEND_DIR" && cabal build) || { 
       echo "Backend build failed"
       exit 1
     }
     
-    # Run the backend
-    echo "Starting backend server..."
+    echo "Starting backend server on ${host}:${backendPort}..."
     echo "Press Ctrl+C to stop the backend"
     echo ""
     
@@ -251,7 +254,6 @@ let
     
     echo "Stopping backend..."
     
-    # Find and stop backend processes
     BACKEND_PIDS=$(pgrep -f "${name}-backend" 2>/dev/null || echo "")
     if [ -n "$BACKEND_PIDS" ]; then
       echo "Found backend processes: $BACKEND_PIDS"
@@ -260,10 +262,8 @@ let
         kill -TERM "$pid" 2>/dev/null || true
       done
       
-      # Give processes time to stop gracefully
       sleep 2
       
-      # Force kill if still running
       REMAINING_PIDS=$(pgrep -f "${name}-backend" 2>/dev/null || echo "")
       if [ -n "$REMAINING_PIDS" ]; then
         echo "Force stopping remaining backend processes..."
@@ -284,19 +284,17 @@ let
     echo "Building and starting PureScript frontend..."
     
     # Check if we're in the right directory
-    if [ ! -f "frontend/spago.yaml" ] && [ ! -f "frontend/spago.dhall" ] && [ ! -f "frontend/package.json" ]; then
+    if [ ! -f "${frontendDir}/spago.yaml" ] && [ ! -f "${frontendDir}/spago.dhall" ] && [ ! -f "${frontendDir}/package.json" ]; then
       if [ -f "spago.yaml" ] || [ -f "spago.dhall" ] || [ -f "package.json" ]; then
-        # We're already in the frontend directory
         FRONTEND_DIR="."
       else
         echo "Error: Cannot find frontend directory. Please run from project root or frontend directory."
         exit 1
       fi
     else
-      FRONTEND_DIR="frontend"
+      FRONTEND_DIR="${frontendDir}"
     fi
     
-    # Clean up any existing vite processes first
     echo "Checking for existing vite processes..."
     VITE_PIDS=$(pgrep -f "vite" 2>/dev/null || echo "")
     if [ -n "$VITE_PIDS" ]; then
@@ -307,30 +305,28 @@ let
       sleep 1
     fi
     
-    # Check if port 5173 is in use
-    if lsof -i :5173 &>/dev/null; then
-      echo "Warning: Port 5173 is already in use. Attempting to free it..."
-      PORT_PIDS=$(lsof -i :5173 -t 2>/dev/null || echo "")
+    # Check if frontend port is in use
+    if ${pkgs.lsof}/bin/lsof -i :${frontendPort} &>/dev/null; then
+      echo "Warning: Port ${frontendPort} is already in use. Attempting to free it..."
+      PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t 2>/dev/null || echo "")
       for pid in $PORT_PIDS; do
         kill -TERM "$pid" 2>/dev/null || true
       done
       sleep 1
     fi
     
-    # Build the frontend
     echo "Building frontend..."
     (cd "$FRONTEND_DIR" && spago build) || { 
       echo "Frontend build failed"
       exit 1
     }
     
-    # Start vite
-    echo "Starting Vite development server..."
+    echo "Starting Vite development server on ${host}:${frontendPort}..."
     echo "Press Ctrl+C to stop the frontend"
     echo ""
     
     cd "$FRONTEND_DIR"
-    exec vite --open
+    exec vite --host ${bindAddress} --port ${frontendPort} --open
   ''; 
 
   # Frontend stop script
@@ -340,7 +336,6 @@ let
     
     echo "Stopping frontend..."
     
-    # Store our own PID so we don't kill ourselves
     OUR_PID=$$
     PARENT_PID=$PPID
     
@@ -348,7 +343,6 @@ let
     vite-cleanup 2>/dev/null || true
     
     echo "Ensuring all vite processes are stopped..."
-    # Get vite PIDs but exclude our script and its parent
     VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
     if [ -n "$VITE_PIDS" ]; then
       echo "Found remaining vite processes: $VITE_PIDS"
@@ -359,7 +353,6 @@ let
       
       sleep 1
       
-      # Force kill if still running
       REMAINING_VITE=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
       if [ -n "$REMAINING_VITE" ]; then
         echo "Force stopping remaining vite processes..."
@@ -369,12 +362,11 @@ let
       fi
     fi
     
-    # Check port 5173 but protect our process
-    PORT_PIDS=$(lsof -i :5173 -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
+    PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
     if [ -n "$PORT_PIDS" ]; then
-      echo "Found processes still using port 5173: $PORT_PIDS"
+      echo "Found processes still using port ${frontendPort}: $PORT_PIDS"
       for pid in $PORT_PIDS; do
-        echo "Killing process $pid on port 5173"
+        echo "Killing process $pid on port ${frontendPort}"
         kill -9 "$pid" 2>/dev/null || true
       done
     fi

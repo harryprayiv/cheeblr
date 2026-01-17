@@ -2,7 +2,7 @@
 
 let
   # Import app config to use in all the scripts
-  appConfig = import ./app-config.nix {
+  appConfig = import ./config.nix {
     inherit name;
   };
   
@@ -45,11 +45,15 @@ let
     };
   };
   
+  deployNixModule = import ./deploy-nix.nix {
+    inherit pkgs name;
+  };
+
   deployModule = import ./deploy.nix {
     inherit pkgs name;
   };
 
-  manifestModule = import ./manifest.nix {
+  manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
     config = {
       backendPath = backendPath;
@@ -62,7 +66,7 @@ let
     };
   };
   
-  devScripts = import ./file-tools.nix {
+  devScripts = import ./scripts/file-tools.nix {
     inherit pkgs name lib;
     backendPath = backendPath;
     frontendPath = frontendPath;
@@ -210,6 +214,15 @@ let
 
   # Common buildInputs used in development shell
   commonBuildInputs = with pkgs; [
+
+    # deterministic Nix-native deployment ()
+    deployNixModule.build-all
+    deployNixModule.deploy-nix
+    deployNixModule.deploy-nix-interactive
+    deployNixModule.stop-nix
+    deployNixModule.status-nix
+    deployNixModule.tui
+
     # Front End tools
     esbuild
     nodejs_20
@@ -359,6 +372,14 @@ let
       echo "    pg-rotate-credentials  - Generate new PostgreSQL password"
       echo "    pg-create-schema <n>   - Create new schema"
       echo "    pg-stats               - Show PostgreSQL statistics"
+      echo ""
+      echo "  Nix Deployment:"
+      echo "    build-all              - Build backend and frontend via nix build"
+      echo "    deploy-nix             - Deploy using Nix-built artifacts (headless)"
+      echo "    deploy-nix-interactive - Deploy with tmux using Nix-built artifacts"
+      echo "    stop-nix               - Stop Nix deployment"
+      echo "    status-nix             - Show service status"
+      echo "    ${name}-tui            - Interactive TUI menu"
       echo ""
       echo "  Frontend:"
       echo "    vite                   - Start Vite development server"

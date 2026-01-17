@@ -1,7 +1,7 @@
 { pkgs, lib ? pkgs.lib, name, frontend ? null }:
 
 let
-  appConfig = import ./app-config.nix { inherit name; };
+  appConfig = import ./config.nix { inherit name; };
 
   vite-cleanup = pkgs.writeShellApplication {
     name = "vite-cleanup";
