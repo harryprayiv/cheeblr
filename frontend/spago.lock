@@ -850,7 +850,7 @@
         ]
       },
       "linear-algebra": {
-        "git": "https://github.com/harryprayiv/purescript-linear-algebra.git",
+        "git": "https://github.com/rowtype-yoga/purescript-linear-algebra.git",
         "ref": "d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb",
         "dependencies": [
           "arrays",
@@ -863,7 +863,7 @@
         ]
       },
       "money": {
-        "git": "https://github.com/harryprayiv/purescript-money.git",
+        "git": "https://github.com/rowtype-yoga/purescript-money.git",
         "ref": "338d7cce83af935f078839d88b2ffc72de432b73",
         "dependencies": [
           "console",
@@ -942,7 +942,7 @@
         ]
       },
       "vector": {
-        "git": "https://github.com/harryprayiv/purescript-vector.git",
+        "git": "https://github.com/mgmeier/purescript-vector.git",
         "ref": "086268b7e60b570b2be7c104159e021259de98df",
         "dependencies": [
           "arrays",
@@ -1733,7 +1733,7 @@
     },
     "linear-algebra": {
       "type": "git",
-      "url": "https://github.com/harryprayiv/purescript-linear-algebra.git",
+      "url": "https://github.com/rowtype-yoga/purescript-linear-algebra.git",
       "rev": "d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb",
       "dependencies": [
         "arrays",
@@ -1810,7 +1810,7 @@
     },
     "money": {
       "type": "git",
-      "url": "https://github.com/harryprayiv/purescript-money.git",
+      "url": "https://github.com/rowtype-yoga/purescript-money.git",
       "rev": "338d7cce83af935f078839d88b2ffc72de432b73",
       "dependencies": [
         "console",
@@ -2490,7 +2490,7 @@
     },
     "vector": {
       "type": "git",
-      "url": "https://github.com/harryprayiv/purescript-vector.git",
+      "url": "https://github.com/mgmeier/purescript-vector.git",
       "rev": "086268b7e60b570b2be7c104159e021259de98df",
       "dependencies": [
         "arrays",

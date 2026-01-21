@@ -87,7 +87,7 @@ workspace:
     registry: 56.4.0
   extraPackages:
     money:
-      git: "https://github.com/harryprayiv/purescript-money.git"
+      git: "https://github.com/rowtype-yoga/purescript-money.git"
       ref: "338d7cce83af935f078839d88b2ffc72de432b73"
       dependencies:
         - console
@@ -99,7 +99,7 @@ workspace:
         - prelude
         - rationals
     linear-algebra:
-      git: "https://github.com/harryprayiv/purescript-linear-algebra.git"
+      git: "https://github.com/rowtype-yoga/purescript-linear-algebra.git"
       ref: "d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb"
       dependencies:
         - arrays
@@ -110,7 +110,7 @@ workspace:
         - prelude
         - tuples
     vector:
-      git: "https://github.com/harryprayiv/purescript-vector.git"
+      git: "https://github.com/mgmeier/purescript-vector.git"
       ref: "086268b7e60b570b2be7c104159e021259de98df"
       dependencies:
         - arrays
