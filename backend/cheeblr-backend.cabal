@@ -1,6 +1,6 @@
-cabal-version: 3.6
+cabal-version: 3.14
 name: cheeblr-backend
-version: 0.0.0.3
+version: 0.0.0.4
 category: web
 author: Harry Pray IV
 maintainer: harryprayiv@harryprayiv.com
@@ -17,8 +17,6 @@ common shared-properties
     ghc-options: -Wall
                  -O2
                  -threaded
-                 -rtsopts
-                 "-with-rtsopts=-N"
     build-depends: base
                 , servant
                 , servant-server
@@ -62,6 +60,8 @@ library
 
 executable cheeblr-backend
     import: shared-properties
+    ghc-options: -rtsopts
+                "-with-rtsopts=-N"
     main-is: Main.hs
     hs-source-dirs: app
     build-depends: cheeblr-backend
