@@ -18,6 +18,7 @@ Detailed documentation for each component of the system:
 ## 🌟 Features
 
 ### Inventory Management
+- **Comprehensive Schema Codegen**: I am currently doing work on a schema interpreted front end. So, this library can work with any domain.
 - **Comprehensive Product Tracking**: Maintain detailed cannabis product information including strain data, THC/CBD content, terpenes, and lineage
 - **Real-time Inventory Reservations**: Automatic inventory reservation system prevents overselling during concurrent transactions
 - **Visual Categorization**: Products are visually distinguished by category and species
@@ -83,7 +84,7 @@ Detailed documentation for each component of the system:
 
 1. Clone the repository:
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/harryprayiv/cheeblr.git
    cd cheeblr
    nix develop
    deploy
