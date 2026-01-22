@@ -101,6 +101,7 @@
             {
               "stringutils": ">=0.0.12 <0.0.13"
             },
+            "tidy-codegen",
             {
               "transformers": ">=6.1.0 <7.0.0"
             },
@@ -149,6 +150,7 @@
             "deku-css",
             "deku-dom",
             "distributive",
+            "dodo-printer",
             "effect",
             "either",
             "encoding",
@@ -180,6 +182,7 @@
             "js-promise-aff",
             "js-timers",
             "js-uri",
+            "language-cst-parser",
             "lazy",
             "lcg",
             "linear-algebra",
@@ -187,13 +190,17 @@
             "literals",
             "maybe",
             "media-types",
+            "minibench",
             "mmorph",
             "money",
             "newtype",
             "node-buffer",
+            "node-child-process",
             "node-event-emitter",
             "node-fs",
+            "node-os",
             "node-path",
+            "node-process",
             "node-streams",
             "nonempty",
             "now",
@@ -205,6 +212,7 @@
             "parsing",
             "partial",
             "pipes",
+            "posix-types",
             "prelude",
             "profunctor",
             "psci-support",
@@ -224,6 +232,8 @@
             "stringutils",
             "tailrec",
             "these",
+            "tidy",
+            "tidy-codegen",
             "transformers",
             "tuples",
             "type-equality",
@@ -1358,6 +1368,41 @@
         "type-equality"
       ]
     },
+    "dodo-printer": {
+      "type": "git",
+      "url": "https://github.com/natefaubion/purescript-dodo-printer",
+      "rev": "7a3c7f050754478d15b72d20cebb1d99d9c0f338",
+      "dependencies": [
+        "aff",
+        "ansi",
+        "arrays",
+        "avar",
+        "console",
+        "control",
+        "effect",
+        "either",
+        "exceptions",
+        "foldable-traversable",
+        "integers",
+        "lists",
+        "maybe",
+        "minibench",
+        "newtype",
+        "node-buffer",
+        "node-child-process",
+        "node-fs",
+        "node-os",
+        "node-path",
+        "node-process",
+        "node-streams",
+        "parallel",
+        "partial",
+        "prelude",
+        "safe-coerce",
+        "strings",
+        "tuples"
+      ]
+    },
     "effect": {
       "type": "registry",
       "version": "4.0.0",
@@ -1775,6 +1820,40 @@
         "maybe"
       ]
     },
+    "language-cst-parser": {
+      "type": "registry",
+      "version": "0.14.1",
+      "integrity": "sha256-LJzh1ZTaKjcrHx95ZfO2La3w6Xb/IZQT3m2Nuj4n1dM=",
+      "dependencies": [
+        "arrays",
+        "const",
+        "control",
+        "effect",
+        "either",
+        "enums",
+        "foldable-traversable",
+        "free",
+        "functions",
+        "functors",
+        "identity",
+        "integers",
+        "lazy",
+        "lists",
+        "maybe",
+        "newtype",
+        "numbers",
+        "ordered-collections",
+        "partial",
+        "prelude",
+        "st",
+        "strings",
+        "transformers",
+        "tuples",
+        "typelevel-prelude",
+        "unfoldable",
+        "unsafe-coerce"
+      ]
+    },
     "lazy": {
       "type": "registry",
       "version": "6.0.0",
@@ -1866,6 +1945,20 @@
         "prelude"
       ]
     },
+    "minibench": {
+      "type": "registry",
+      "version": "4.0.1",
+      "integrity": "sha256-7jyxcklZI49q/otYvMV4f9YnJwEqQ3Me5buhDwAOydw=",
+      "dependencies": [
+        "console",
+        "effect",
+        "integers",
+        "numbers",
+        "partial",
+        "prelude",
+        "refs"
+      ]
+    },
     "mmorph": {
       "type": "registry",
       "version": "7.0.0",
@@ -1913,6 +2006,24 @@
         "unsafe-coerce"
       ]
     },
+    "node-child-process": {
+      "type": "registry",
+      "version": "11.1.0",
+      "integrity": "sha256-vioMNgk8p+CGwlb6T3I3TIir27el85Yg4satLE/I89w=",
+      "dependencies": [
+        "exceptions",
+        "foreign",
+        "foreign-object",
+        "functions",
+        "node-event-emitter",
+        "node-fs",
+        "node-os",
+        "node-streams",
+        "nullable",
+        "posix-types",
+        "unsafe-coerce"
+      ]
+    },
     "node-event-emitter": {
       "type": "registry",
       "version": "3.0.0",
@@ -1951,12 +2062,54 @@
         "unsafe-coerce"
       ]
     },
+    "node-os": {
+      "type": "registry",
+      "version": "5.1.0",
+      "integrity": "sha256-K3gcu9AXanN1+qtk1900+Fi+CuO0s3/H/RMNRNgIzso=",
+      "dependencies": [
+        "arrays",
+        "bifunctors",
+        "console",
+        "control",
+        "datetime",
+        "effect",
+        "either",
+        "exceptions",
+        "foldable-traversable",
+        "foreign",
+        "foreign-object",
+        "functions",
+        "maybe",
+        "node-buffer",
+        "nullable",
+        "partial",
+        "posix-types",
+        "prelude",
+        "unsafe-coerce"
+      ]
+    },
     "node-path": {
       "type": "registry",
       "version": "5.0.1",
       "integrity": "sha256-ePOElFamHkffhwJcS0Ozq4A14rflnkasFU6X2B8/yXs=",
       "dependencies": [
         "effect"
+      ]
+    },
+    "node-process": {
+      "type": "registry",
+      "version": "11.2.0",
+      "integrity": "sha256-+2MQDYChjGbVbapCyJtuWYwD41jk+BntF/kcOTKBMVs=",
+      "dependencies": [
+        "effect",
+        "foreign",
+        "foreign-object",
+        "maybe",
+        "node-event-emitter",
+        "node-streams",
+        "posix-types",
+        "prelude",
+        "unsafe-coerce"
       ]
     },
     "node-streams": {
@@ -2116,6 +2269,15 @@
         "tailrec",
         "transformers",
         "tuples"
+      ]
+    },
+    "posix-types": {
+      "type": "registry",
+      "version": "6.0.0",
+      "integrity": "sha256-ZfFz8RR1lee/o/Prccyeut3Q+9tYd08mlR72sIh6GzA=",
+      "dependencies": [
+        "maybe",
+        "prelude"
       ]
     },
     "prelude": {
@@ -2404,6 +2566,73 @@
         "quickcheck",
         "quickcheck-laws",
         "tuples"
+      ]
+    },
+    "tidy": {
+      "type": "git",
+      "url": "https://github.com/natefaubion/purescript-tidy.git",
+      "rev": "42db77a3d9b0985021d970404195ca8bb2857ee0",
+      "dependencies": [
+        "arrays",
+        "dodo-printer",
+        "foldable-traversable",
+        "language-cst-parser",
+        "lists",
+        "maybe",
+        "ordered-collections",
+        "partial",
+        "prelude",
+        "strings",
+        "tuples"
+      ]
+    },
+    "tidy-codegen": {
+      "type": "git",
+      "url": "https://github.com/natefaubion/purescript-tidy-codegen",
+      "rev": "df39cf0962b2627eb758cdc1f932c6cbf8f086a7",
+      "dependencies": [
+        "aff",
+        "ansi",
+        "arrays",
+        "avar",
+        "bifunctors",
+        "console",
+        "control",
+        "dodo-printer",
+        "effect",
+        "either",
+        "enums",
+        "exceptions",
+        "filterable",
+        "foldable-traversable",
+        "free",
+        "identity",
+        "integers",
+        "language-cst-parser",
+        "lazy",
+        "lists",
+        "maybe",
+        "newtype",
+        "node-buffer",
+        "node-child-process",
+        "node-fs",
+        "node-path",
+        "node-process",
+        "node-streams",
+        "ordered-collections",
+        "parallel",
+        "partial",
+        "posix-types",
+        "prelude",
+        "record",
+        "safe-coerce",
+        "st",
+        "strings",
+        "tidy",
+        "transformers",
+        "tuples",
+        "type-equality",
+        "unicode"
       ]
     },
     "transformers": {
