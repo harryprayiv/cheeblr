@@ -14,7 +14,7 @@ import Data.String as String
 import Data.Tuple (Tuple(..))
 import Partial.Unsafe (unsafePartial)
 import PureScript.CST.Types (Declaration, DoStatement, Expr, Type) as CST
-import Tidy.Codegen (PrintOptions, binderCtor, binderInt, binderRecord, binderString, binderVar, binderWildcard, binaryOp, caseBranch, dataCtor, declData, declDerive, declInstance, declNewtype, declSignature, declType, declValue, defaultPrintOptions, doBind, exprApp, exprArray, exprBool, exprCase, exprCtor, exprDo, exprDot, exprIdent, exprIf, exprInt, exprLambda, exprNumber, exprOp, exprRecord, exprString, exprTyped, instValue, printModuleWithOptions, typeApp, typeArrow, typeCtor, typeRecord, typeVar)
+import Tidy.Codegen (PrintOptions, binaryOp, binderCtor, binderInt, binderRecord, binderString, binderVar, binderWildcard, caseBranch, dataCtor, declData, declDerive, declInstance, declNewtype, declSignature, declType, declValue, defaultPrintOptions, doBind, exprApp, exprArray, exprBool, exprCase, exprCtor, exprDo, exprDot, exprIdent, exprIf, exprInt, exprLambda, exprNumber, exprOp, exprRecord, exprString, exprTyped, instValue, printModuleWithOptions, typeApp, typeArrow, typeCtor, typeRecord, typeWildcard)
 import Tidy.Codegen.Monad (codegenModule, importClass, importCtor, importFrom, importOpen, importType, importTypeAll, importValue, write, writeAndExport)
 
 type GeneratedModule =
@@ -217,7 +217,7 @@ generateRecordDecl schema rec = unsafePartial $
 
 generateRecordDeriveNewtype :: RecordDef -> CST.Declaration Void
 generateRecordDeriveNewtype rec = unsafePartial $
-  declDerive Nothing [] "Newtype" [typeCtor rec.name, typeVar "_"]
+  declDerive Nothing [] "Newtype" [typeCtor rec.name, typeWildcard]
 
 generateRecordDeriveEq :: RecordDef -> CST.Declaration Void
 generateRecordDeriveEq rec = unsafePartial $
@@ -705,14 +705,15 @@ buildValidationChain schema recName firstField restFields = unsafePartial $
     case Array.uncons restFields of
       Nothing ->
         -- Single field - validate and build record
-        exprOp firstValidation
-          [ binaryOp "`andThen`" $
-              exprLambda [binderVar (camelCase firstField.name)] $
-                exprApp (exprIdent "pure")
-                  [ exprApp (exprCtor recName)
-                      [ exprRecord [Tuple firstField.name (exprIdent (camelCase firstField.name))]
-                      ]
-                  ]
+        -- andThen firstValidation (\firstField -> pure (RecName { field: firstField }))
+        exprApp
+          (exprApp (exprIdent "andThen") [firstValidation])
+          [ exprLambda [binderVar (camelCase firstField.name)] $
+              exprApp (exprIdent "pure")
+                [ exprApp (exprCtor recName)
+                    [ exprRecord [Tuple firstField.name (exprIdent (camelCase firstField.name))]
+                    ]
+                ]
           ]
       Just { head: _, tail: _ } ->
         -- Multiple fields - chain them
@@ -726,20 +727,20 @@ buildNestedAndThen schema recName fields = unsafePartial $
       exprApp (exprIdent "pure")
         [exprApp (exprCtor recName) [exprRecord ([] :: Array (Tuple String (CST.Expr Void)))]]
     Just { head: field, tail: rest } ->
-      exprOp (generateSingleFieldValidation schema field)
-        [ binaryOp "`andThen`" $
-            exprLambda [binderVar (camelCase field.name)] $
-              case Array.uncons rest of
-                Nothing ->
-                  -- Last field
-                  exprApp (exprIdent "pure")
-                    [ exprApp (exprCtor recName)
-                        [ exprRecord $ map (\f -> Tuple f.name (exprIdent (camelCase f.name))) fields
-                        ]
-                    ]
-                Just _ ->
-                  -- More fields to go
-                  buildNestedAndThenContinue schema recName fields rest
+      exprApp
+        (exprApp (exprIdent "andThen") [generateSingleFieldValidation schema field])
+        [ exprLambda [binderVar (camelCase field.name)] $
+            case Array.uncons rest of
+              Nothing ->
+                -- Last field
+                exprApp (exprIdent "pure")
+                  [ exprApp (exprCtor recName)
+                      [ exprRecord $ map (\f -> Tuple f.name (exprIdent (camelCase f.name))) fields
+                      ]
+                  ]
+              Just _ ->
+                -- More fields to go
+                buildNestedAndThenContinue schema recName fields rest
         ]
 
 buildNestedAndThenContinue :: DomainSchema -> String -> Array FieldDef -> Array FieldDef -> CST.Expr Void
@@ -752,10 +753,10 @@ buildNestedAndThenContinue schema recName allFields remainingFields = unsafePart
             ]
         ]
     Just { head: field, tail: rest } ->
-      exprOp (generateSingleFieldValidation schema field)
-        [ binaryOp "`andThen`" $
-            exprLambda [binderVar (camelCase field.name)] $
-              buildNestedAndThenContinue schema recName allFields rest
+      exprApp
+        (exprApp (exprIdent "andThen") [generateSingleFieldValidation schema field])
+        [ exprLambda [binderVar (camelCase field.name)] $
+            buildNestedAndThenContinue schema recName allFields rest
         ]
 
 generateSingleFieldValidation :: DomainSchema -> FieldDef -> CST.Expr Void

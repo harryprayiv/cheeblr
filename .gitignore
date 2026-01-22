@@ -45,3 +45,4 @@ cabal.project.local~
 .postgres
 backend/output
 result-frontend
+**/src/Generated/
