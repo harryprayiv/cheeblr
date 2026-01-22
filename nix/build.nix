@@ -76,15 +76,23 @@ let
         inherit inputs purs-nix-instance ps-pkgs;
       };
 
-      # Frontend project definition
+      # Import codegen module
+      codegenModule = import ./codegen.nix {
+        inherit pkgs purs-nix-instance;
+        psDependencies = psDependencies;
+        frontendSrc = ../frontend;
+      };
+
+      # Use the combined source (with generated files) for the main build
       frontendProject = purs-nix-instance.build {
         name = "cheeblr-frontend";
-        src.path = ../frontend;
+        src.path = codegenModule.frontendWithGenerated;
         info.dependencies = psDependencies;
       };
 
+      # Also update ps to use combined source for dev
       ps = purs-nix-instance.purs {
-        dir = ../frontend;
+        dir = codegenModule.frontendWithGenerated;
         dependencies = psDependencies;
         inherit purescript;
         nodejs = pkgs.nodejs_20;

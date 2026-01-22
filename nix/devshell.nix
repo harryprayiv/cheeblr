@@ -273,6 +273,7 @@ let
     frontendModule.vite-cleanup
     frontendModule.spago-watch
     frontendModule.concurrent
+    frontendModule.codegen
     frontendModule.dev
 
     # Workspace and deployment tools
@@ -380,6 +381,7 @@ let
       echo "    vite                   - Start Vite development server"
       echo "    vite-cleanup           - Clean frontend build artifacts"
       echo "    spago-watch            - Watch PureScript files for changes"
+      echo "    codegen                - Generate types from schema"
       echo "    concurrent             - Run concurrent development tasks"
       echo ""
       echo "  Development:"

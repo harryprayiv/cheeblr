@@ -250,11 +250,11 @@
     "hackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1769001932,
-        "narHash": "sha256-zHVnXzsMVZLf33IVGq7/4bQcZY7B0UaL5Pw5nnUsbpg=",
+        "lastModified": 1769110653,
+        "narHash": "sha256-GoUAEL9+R7+goLZijLH7QCrK/82ee6vYhByxfgBagPo=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "5434d8130512d5bdc1ac8dcffa028c79b668b875",
+        "rev": "47806fd9561634d5ce2a2904a630f34fc43c62e4",
         "type": "github"
       },
       "original": {
@@ -266,11 +266,11 @@
     "hackage-for-stackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1768955395,
-        "narHash": "sha256-84pROICbTampTTBPNLAbrDfQqecw78JWJcGxkh8bGgA=",
+        "lastModified": 1769041772,
+        "narHash": "sha256-XQxXcw3U9BwTZ/Vn2UwUMfGeH0swyV7WNbXScxCnA40=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "8c184b3262ab6413009d242c4e4453a0a398ded5",
+        "rev": "f415b65157b5474a33466386472b1554b887a7e8",
         "type": "github"
       },
       "original": {
@@ -299,11 +299,11 @@
     "hackage_2": {
       "flake": false,
       "locked": {
-        "lastModified": 1768955406,
-        "narHash": "sha256-YDDAYqjh7Wp5hzxwN6e/VrK0iNYbYFBVPmjRveo1WpQ=",
+        "lastModified": 1769041783,
+        "narHash": "sha256-ax/ud0cUbvfn732BfUh/oXvyNIN5sTYrWCZPOwQIWww=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "d63e47f83be48d42b1c66f1d7ae00d0f6550289b",
+        "rev": "9f178ceb90695bae139d122d1c10fad2bb7b908e",
         "type": "github"
       },
       "original": {
@@ -354,11 +354,11 @@
         "stackage": "stackage"
       },
       "locked": {
-        "lastModified": 1768956748,
-        "narHash": "sha256-uT/plGOmrreqUrhy7kvw83xuKkm5alRPP/LMgwPpPCk=",
+        "lastModified": 1769043145,
+        "narHash": "sha256-/XFclRXOAU00DW7WNiHN+WX2UiX2tBmvvMvAnT2M8bk=",
         "owner": "input-output-hk",
         "repo": "haskell.nix",
-        "rev": "c2a927c5dd3996a66bfb37c09029d1e936388caf",
+        "rev": "fc50fb0ad26e171745ec6f05efb6550dc9db6156",
         "type": "github"
       },
       "original": {
@@ -846,11 +846,11 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 1768886240,
-        "narHash": "sha256-C2TjvwYZ2VDxYWeqvvJ5XPPp6U7H66zeJlRaErJKoEM=",
+        "lastModified": 1769018530,
+        "narHash": "sha256-MJ27Cy2NtBEV5tsK+YraYr2g851f3Fl1LpNHDzDX15c=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "80e4adbcf8992d3fd27ad4964fbb84907f9478b0",
+        "rev": "88d3861acdd3d2f0e361767018218e51810df8a1",
         "type": "github"
       },
       "original": {
@@ -1026,13 +1026,13 @@
       "locked": {
         "lastModified": 1741641333,
         "narHash": "sha256-KrAZsLERJC1jDw7DHZG1zW8GPA4MzoIj304Tcqb+gZ8=",
-        "owner": "harryprayiv",
+        "owner": "rowtype-yoga",
         "repo": "purescript-linear-algebra",
         "rev": "d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb",
         "type": "github"
       },
       "original": {
-        "owner": "harryprayiv",
+        "owner": "rowtype-yoga",
         "repo": "purescript-linear-algebra",
         "rev": "d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb",
         "type": "github"
@@ -1043,13 +1043,13 @@
       "locked": {
         "lastModified": 1741405200,
         "narHash": "sha256-h6v8DERU9zuxIcuW5voF/D/MufxeW+YC3OF/klHVbuU=",
-        "owner": "harryprayiv",
+        "owner": "rowtype-yoga",
         "repo": "purescript-money",
         "rev": "338d7cce83af935f078839d88b2ffc72de432b73",
         "type": "github"
       },
       "original": {
-        "owner": "harryprayiv",
+        "owner": "rowtype-yoga",
         "repo": "purescript-money",
         "rev": "338d7cce83af935f078839d88b2ffc72de432b73",
         "type": "github"
@@ -1112,13 +1112,13 @@
       "locked": {
         "lastModified": 1741644481,
         "narHash": "sha256-kq0hsvJ/jWHc6+UBtLuRVHUb1xovVHIwa32IJM8j2hw=",
-        "owner": "harryprayiv",
+        "owner": "rowtype-yoga",
         "repo": "purescript-vector",
         "rev": "086268b7e60b570b2be7c104159e021259de98df",
         "type": "github"
       },
       "original": {
-        "owner": "harryprayiv",
+        "owner": "rowtype-yoga",
         "repo": "purescript-vector",
         "rev": "086268b7e60b570b2be7c104159e021259de98df",
         "type": "github"
@@ -1228,11 +1228,11 @@
     "stackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1768954466,
-        "narHash": "sha256-JGWRYT5Nv41cuyacw/RIY74ejToGYk61MmCP+nf99Sk=",
+        "lastModified": 1769040888,
+        "narHash": "sha256-0Q1iMFYBxSOd9eDwRm2RVsL8hl925t2tPEJKnhL5GH4=",
         "owner": "input-output-hk",
         "repo": "stackage.nix",
-        "rev": "a56af78f2ddb91be9b3d49e32565a18eaca276e0",
+        "rev": "68b96b151de26cca7b04771c3ef17e3514aa0ae4",
         "type": "github"
       },
       "original": {

@@ -54,6 +54,7 @@ let
     info.dependencies = with ps-pkgs; [ css ] ++ [ deku-core hyrule ];
   };
 
+  # Codegen dependencies - these are the key additions
   dodo-printer = build {
     name = "dodo-printer";
     src.path = inputs.purescript-dodo-printer;
@@ -89,7 +90,7 @@ let
   };
 
 in with ps-pkgs; [
-  # Standard packages
+  # Core dependencies
   aff
   aff-promise
   affjax
@@ -111,6 +112,8 @@ in with ps-pkgs; [
   maybe
   newtype
   node-fs
+  node-path
+  node-buffer
   numbers
   parsing
   prelude
@@ -123,12 +126,39 @@ in with ps-pkgs; [
   validation
   web-html
   yoga-json
+  
+  # Additional dependencies for codegen
+  language-cst-parser
+  ansi
+  node-child-process
+  node-process
+  node-streams
+  node-os
+  ordered-collections
+  lazy
+  identity
+  bifunctors
+  free
+  filterable
+  parallel
+  posix-types
+  record
+  safe-coerce
+  st
+  type-equality
+  unicode
+  minibench
+  control
+  exceptions
 ] ++ [
-  # Custom packages
   money
   linear-algebra
   vector
   deku-core
   deku-dom
   deku-css
+  
+  dodo-printer
+  tidy
+  tidy-codegen
 ]

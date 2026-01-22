@@ -2,6 +2,7 @@
 
 let
   appConfig = import ./config.nix { inherit name; };
+  frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head appConfig.purescript.codeDirs));
 
   vite-cleanup = pkgs.writeShellApplication {
     name = "vite-cleanup";
@@ -111,11 +112,35 @@ let
     '';
   };
 
+  codegen = pkgs.writeShellApplication {
+    name = "codegen";
+    runtimeInputs = with pkgs; [ spago-unstable nodejs_20 purs ];
+    text = ''
+      cd ${frontendPath}
+      echo "Running PureScript codegen..."
+      spago run --main Codegen.Run
+      echo "Codegen complete."
+    '';
+  };
+
   spago-watch = pkgs.writeShellApplication {
     name = "spago-watch";
     runtimeInputs = with pkgs; [ entr spago-unstable ];
     text = ''find {src,test} | entr -s "spago $*" '';
   };
+
+  # spago-watch = pkgs.writeShellApplication {
+  #   name = "spago-watch";
+  #   runtimeInputs = with pkgs; [ entr spago-unstable nodejs_20 purs ];
+  #   text = ''
+  #     # Run codegen once at start
+  #     cd ${frontendPath}
+  #     spago run --main Codegen.Run 2>/dev/null || echo "Codegen skipped (may not be needed)"
+      
+  #     # Then watch
+  #     find {src,test} -name "*.purs" | entr -s "spago $*"
+  #   '';
+  # };
 
   dev = pkgs.writeShellApplication {
     name = "dev";
@@ -126,6 +151,11 @@ let
       concurrent
     ];
     text = ''
+      # Run codegen before starting dev server
+      cd ${frontendPath}
+      echo "Running initial codegen..."
+      spago run --main Codegen.Run || true
+      
       concurrent "spago-watch build" vite
     '';
   };
@@ -181,8 +211,7 @@ let
   };
 
 in {
-  inherit vite vite-cleanup spago-watch concurrent dev network-dev get-ip;
-  
+  inherit vite vite-cleanup spago-watch concurrent dev network-dev get-ip codegen;  
   # Frontend development tools
   buildInputs = with pkgs; [
     esbuild

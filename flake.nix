@@ -8,33 +8,33 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     iogx.url = "github:input-output-hk/iogx";
     iohkNix.url = "github:input-output-hk/iohk-nix";
-    
+
     hackage = {
       url = "github:input-output-hk/hackage.nix";
       flake = false;
     };
-    
+
     CHaP = {
       url = "github:IntersectMBO/cardano-haskell-packages?rev=4a6ecceb08b7980b0368907537a47215cae2e61f";
       flake = false;
     };
 
-    # PureScript infrastructure
+    # PureScript ecosystem
     purs-nix.url = "github:purs-nix/purs-nix";
     ps-tools.follows = "purs-nix/ps-tools";
     purescript-overlay.url = "github:harryprayiv/purescript-overlay";
 
-    # Custom PureScript packages
+    # PureScript packages
     purescript-money = {
-      url = "github:harryprayiv/purescript-money/338d7cce83af935f078839d88b2ffc72de432b73";
+      url = "github:rowtype-yoga/purescript-money/338d7cce83af935f078839d88b2ffc72de432b73";
       flake = false;
     };
     purescript-linear-algebra = {
-      url = "github:harryprayiv/purescript-linear-algebra/d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb";
+      url = "github:rowtype-yoga/purescript-linear-algebra/d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb";
       flake = false;
     };
     purescript-vector = {
-      url = "github:harryprayiv/purescript-vector/086268b7e60b570b2be7c104159e021259de98df";
+      url = "github:rowtype-yoga/purescript-vector/086268b7e60b570b2be7c104159e021259de98df";
       flake = false;
     };
     purescript-hyrule = {
@@ -49,6 +49,7 @@
       url = "github:mikesol/purescript-deku/06a06a2908b2a400a0ab9224c8128aa5988e674d";
       flake = false;
     };
+    
     purescript-dodo-printer = {
       url = "github:natefaubion/purescript-dodo-printer";
       flake = false;
@@ -62,7 +63,7 @@
       flake = false;
     };
 
-    # Utilities
+    # Nix Utils
     flake-utils.url = "github:numtide/flake-utils";
     flake-compat = {
       url = "github:edolstra/flake-compat";
@@ -75,9 +76,8 @@
       build = import ./nix/build.nix { inherit inputs; };
     in
     {
-      # System-independent outputs
       nixosModules = build.nixosModules;
-    } 
+    }
     // flake-utils.lib.eachSystem build.systems (system: build.perSystem system);
 
   nixConfig = {
