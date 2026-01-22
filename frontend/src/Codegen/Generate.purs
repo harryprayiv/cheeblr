@@ -1,4 +1,3 @@
--- src/Codegen/Generate.purs
 module Codegen.Generate 
   ( generateAll
   , GeneratedModule

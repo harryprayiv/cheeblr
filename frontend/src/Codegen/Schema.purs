@@ -1,4 +1,3 @@
--- src/Codegen/Schema.purs
 module Codegen.Schema where
 
 import Prelude

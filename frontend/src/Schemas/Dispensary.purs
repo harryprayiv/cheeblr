@@ -1,4 +1,3 @@
--- schemas/Dispensary.purs
 module Schemas.Dispensary where
 
 import Codegen.Schema (DomainSchema, FieldType(..), InputType(..), TypeKind(..), Validation(..))

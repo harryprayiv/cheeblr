@@ -1,4 +1,3 @@
--- src/Codegen/Main.purs
 module Codegen.Main where
 
 import Prelude
