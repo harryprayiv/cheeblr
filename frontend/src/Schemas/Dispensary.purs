@@ -11,12 +11,12 @@ dispensarySchema =
   , validationModuleName: "Generated.Utils.InventoryValidation"
   , enums:
       [ { name: "ItemCategory"
-        , variants: NEA.cons' "Flower" 
+        , variants: NEA.cons' "Flower"
             ["PreRolls", "Vaporizers", "Edibles", "Drinks", "Concentrates", "Topicals", "Tinctures", "Accessories"]
         , description: Just "Product categories for dispensary inventory"
         }
       , { name: "Species"
-        , variants: NEA.cons' "Indica" 
+        , variants: NEA.cons' "Indica"
             ["IndicaDominantHybrid", "Hybrid", "SativaDominantHybrid", "Sativa"]
         , description: Just "Cannabis species classification"
         }
@@ -26,17 +26,17 @@ dispensarySchema =
         , kind: RecordType
         , description: Just "A single inventory item"
         , fields:
-            [ { name: "sku"
+            [ { name: "sort"
+              , fieldType: FInt
+              , validations: [Required, NonNegative]
+              , inputType: NumberInput
+              , ui: { label: "Sort Order", placeholder: "Enter sort position", errorMessage: "Sort order must be a number" }
+              }
+            , { name: "sku"
               , fieldType: FUuid
               , validations: [Required]
               , inputType: TextInput
               , ui: { label: "SKU", placeholder: "Enter UUID", errorMessage: "Valid UUID required" }
-              }
-            , { name: "name"
-              , fieldType: FString
-              , validations: [Required, ExtendedAlphanumeric, MaxLength 50]
-              , inputType: TextInput
-              , ui: { label: "Name", placeholder: "Enter product name", errorMessage: "Name required, max 50 chars" }
               }
             , { name: "brand"
               , fieldType: FString
@@ -44,11 +44,29 @@ dispensarySchema =
               , inputType: TextInput
               , ui: { label: "Brand", placeholder: "Enter brand name", errorMessage: "Brand is required" }
               }
+            , { name: "name"
+              , fieldType: FString
+              , validations: [Required, ExtendedAlphanumeric, MaxLength 50]
+              , inputType: TextInput
+              , ui: { label: "Name", placeholder: "Enter product name", errorMessage: "Name required, max 50 chars" }
+              }
             , { name: "price"
               , fieldType: FMoney
               , validations: [Required]
               , inputType: TextInput
               , ui: { label: "Price", placeholder: "Enter price (e.g. 12.99)", errorMessage: "Valid dollar amount required" }
+              }
+            , { name: "measure_unit"
+              , fieldType: FString
+              , validations: [Required, ValidMeasurementUnit]
+              , inputType: TextInput
+              , ui: { label: "Measure Unit", placeholder: "Enter unit (g, mg, etc)", errorMessage: "Valid measurement unit required" }
+              }
+            , { name: "per_package"
+              , fieldType: FString
+              , validations: [Required]
+              , inputType: TextInput
+              , ui: { label: "Per Package", placeholder: "Enter amount per package", errorMessage: "Per package is required" }
               }
             , { name: "quantity"
               , fieldType: FInt
