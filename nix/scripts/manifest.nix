@@ -8,6 +8,9 @@ let
     frontendPath = "frontend";
     hsDirs = [ "src" "app" "test" ];
     psDirs = [ "src" "test" ];
+    
+    # Explicitly track generated code directory
+    generatedDir = "src/Generated";
 
     hsConfig = {
       cabalFile = null;
@@ -53,6 +56,7 @@ let
     # Define base directories from configuration
     BACKEND_PATH="${cfg.backendPath}"
     FRONTEND_PATH="${cfg.frontendPath}"
+    GENERATED_DIR="${cfg.generatedDir}"
     
     # Define Haskell directories
     HASKELL_DIRS=()
@@ -82,9 +86,10 @@ let
       fi
     done
 
-    # Find PureScript files
+    # Find PureScript files - separate generated from hand-written
     echo "Finding PureScript files..."
     PS_FILES=()
+    PS_GENERATED_FILES=()
 
     for dir in "''${PURESCRIPT_DIRS[@]}"; do
       if [ -d "$dir" ]; then
@@ -92,11 +97,19 @@ let
         while IFS= read -r file; do
           if [ -n "$file" ]; then
             rel_path="''${file#$PROJECT_ROOT/}"
-            PS_FILES+=("$rel_path")
+            # Separate generated files
+            if [[ "$rel_path" == *"/Generated/"* ]] || [[ "$rel_path" == *"/$GENERATED_DIR/"* ]]; then
+              PS_GENERATED_FILES+=("$rel_path")
+            else
+              PS_FILES+=("$rel_path")
+            fi
           fi
         done < <(find "$dir" -type f -name "*.purs" 2>/dev/null | grep -v "${excludePatternStr}" | sort)
       fi
     done
+    
+    # Combine: generated files first, then regular files
+    ALL_PS_FILES=("''${PS_GENERATED_FILES[@]}" "''${PS_FILES[@]}")
 
     # Find Nix files in project root and nix directory
     echo "Finding Nix files..."
@@ -125,7 +138,9 @@ let
     echo "  \"meta\": {" >> $MANIFEST_FILE
     echo "    \"generated\": \"$(date '+%s')\","  >> $MANIFEST_FILE
     echo "    \"humanTime\": \"$(date '+%Y-%m-%d %H:%M:%S')\","  >> $MANIFEST_FILE
-    echo "    \"projectRoot\": \"$PROJECT_ROOT\""  >> $MANIFEST_FILE
+    echo "    \"projectRoot\": \"$PROJECT_ROOT\","  >> $MANIFEST_FILE
+    echo "    \"backendPath\": \"$BACKEND_PATH\","  >> $MANIFEST_FILE
+    echo "    \"frontendPath\": \"$FRONTEND_PATH\""  >> $MANIFEST_FILE
     echo "  },"  >> $MANIFEST_FILE
 
     # Add Haskell files section
@@ -146,21 +161,33 @@ let
     echo "    \"timestamp\": \"$(date '+%s')\""  >> $MANIFEST_FILE
     echo "  },"  >> $MANIFEST_FILE
 
-    # Add PureScript files section
+    # Add PureScript files section with generated tracking
     echo "  \"purescript\": {"  >> $MANIFEST_FILE
     echo "    \"include\": ["  >> $MANIFEST_FILE
-    if [ ''${#PS_FILES[@]} -gt 0 ]; then
-      for i in "''${!PS_FILES[@]}"; do
-        if [ $i -eq $((''${#PS_FILES[@]}-1)) ]; then
-          echo "      \"''${PS_FILES[$i]}\""  >> $MANIFEST_FILE
+    if [ ''${#ALL_PS_FILES[@]} -gt 0 ]; then
+      for i in "''${!ALL_PS_FILES[@]}"; do
+        if [ $i -eq $((''${#ALL_PS_FILES[@]}-1)) ]; then
+          echo "      \"''${ALL_PS_FILES[$i]}\""  >> $MANIFEST_FILE
         else
-          echo "      \"''${PS_FILES[$i]}\","  >> $MANIFEST_FILE
+          echo "      \"''${ALL_PS_FILES[$i]}\","  >> $MANIFEST_FILE
         fi
       done
     fi
     echo "    ],"  >> $MANIFEST_FILE
     echo "    \"exclude\": [],"  >> $MANIFEST_FILE
-    echo "    \"count\": ''${#PS_FILES[@]},"  >> $MANIFEST_FILE
+    echo "    \"generated\": ["  >> $MANIFEST_FILE
+    if [ ''${#PS_GENERATED_FILES[@]} -gt 0 ]; then
+      for i in "''${!PS_GENERATED_FILES[@]}"; do
+        if [ $i -eq $((''${#PS_GENERATED_FILES[@]}-1)) ]; then
+          echo "      \"''${PS_GENERATED_FILES[$i]}\""  >> $MANIFEST_FILE
+        else
+          echo "      \"''${PS_GENERATED_FILES[$i]}\","  >> $MANIFEST_FILE
+        fi
+      done
+    fi
+    echo "    ],"  >> $MANIFEST_FILE
+    echo "    \"count\": ''${#ALL_PS_FILES[@]},"  >> $MANIFEST_FILE
+    echo "    \"generatedCount\": ''${#PS_GENERATED_FILES[@]},"  >> $MANIFEST_FILE
     echo "    \"timestamp\": \"$(date '+%s')\""  >> $MANIFEST_FILE
     echo "  },"  >> $MANIFEST_FILE
 
@@ -192,26 +219,7 @@ let
 
     echo "Manifest generated at: $MANIFEST_FILE"
     echo "Backup created at: $MANIFEST_FILE.$BACKUP_TIME"
-    echo "Found ''${#HS_FILES[@]} Haskell files, ''${#PS_FILES[@]} PureScript files, and ''${#NIX_FILES[@]} Nix files"
-
-    echo ""
-    echo "Searched the following directories:"
-    echo "Haskell directories:"
-    for dir in "''${HASKELL_DIRS[@]}"; do
-      if [ -d "$dir" ]; then
-        echo "  - $dir (exists)"
-      else
-        echo "  - $dir (does not exist)"
-      fi
-    done
-    echo "PureScript directories:"
-    for dir in "''${PURESCRIPT_DIRS[@]}"; do
-      if [ -d "$dir" ]; then
-        echo "  - $dir (exists)"
-      else
-        echo "  - $dir (does not exist)"
-      fi
-    done
+    echo "Found ''${#HS_FILES[@]} Haskell, ''${#ALL_PS_FILES[@]} PureScript (''${#PS_GENERATED_FILES[@]} generated), ''${#NIX_FILES[@]} Nix files"
   '';
 
   # Manifest data structure
@@ -226,7 +234,9 @@ let
     haskell.count = 0;
     purescript.include = [];
     purescript.exclude = [];
+    purescript.generated = [];
     purescript.count = 0;
+    purescript.generatedCount = 0;
     nix.include = [];
     nix.exclude = [];
     nix.count = 0;
@@ -241,4 +251,10 @@ in {
 
   # Export the manifest generation script
   generateScript = generateManifestScript;
+  
+  # Debug info
+  debug = {
+    config = cfg;
+    excludePattern = excludePatternStr;
+  };
 }

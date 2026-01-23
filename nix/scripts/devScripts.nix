@@ -87,10 +87,43 @@ let
         rm "$temp_file"
     }
     
+    # Function to run PureScript codegen
+    run_codegen() {
+        local project_dir=$1
+        local temp_file=$(mktemp)
+        local codegen_status=0
+        
+        echo "Running PureScript codegen..."
+        
+        if (cd "$project_dir/$FRONTEND_DIR" && spago run --main Codegen.Run) > "$temp_file" 2>&1; then
+            codegen_status=0
+            echo "Codegen completed successfully"
+        else
+            codegen_status=$?
+            echo "Codegen failed or module not found (this may be expected)"
+        fi
+        
+        # Output for inclusion in concatenated file
+        echo "{-"
+        echo "CODEGEN_STATUS: $( [ $codegen_status -eq 0 ] && echo 'true' || echo 'false' )"
+        if [ -s "$temp_file" ]; then
+            echo "CODEGEN_OUTPUT:"
+            cat "$temp_file"
+        fi
+        echo "-}"
+        
+        rm "$temp_file"
+        return 0  # Don't fail the whole script if codegen fails
+    }
+    
     # Function to compile PureScript project
     compile_purescript() {
         local project_dir=$1
         local temp_file=$(mktemp)
+        local codegen_output=""
+        
+        # Run codegen first
+        codegen_output=$(run_codegen "$project_dir" 2>&1) || true
         
         # Navigate to frontend directory and attempt to build with timeout
         if timeout 60 bash -c "cd '$project_dir/$FRONTEND_DIR' && spago build" > "$temp_file" 2>&1; then
@@ -107,6 +140,12 @@ let
         
         # Format the compilation status and output
         echo "{-"
+        # Include codegen output first
+        if [ -n "$codegen_output" ]; then
+            echo "$codegen_output" | sed 's/^{-//; s/-}$//'
+            echo ""
+        fi
+        
         if [ $build_status -eq 0 ]; then
             echo "COMPILE_STATUS: true"
         else
@@ -455,15 +494,13 @@ let
         echo "Generated new $file_type file with status $status"
     }
     
-    # Check if the manifest exists
+    # Regenerate manifest first to pick up any new files (including generated)
+    echo "Regenerating manifest..."
+    generate-manifest
+    
     if [ ! -f "$MANIFEST_FILE" ]; then
-        echo "Manifest file not found. Generating it first..."
-        generate-manifest
-        
-        if [ ! -f "$MANIFEST_FILE" ]; then
-            echo "Failed to generate manifest file."
-            exit 1
-        fi
+        echo "Failed to generate manifest file."
+        exit 1
     fi
     
     # Archive old files
@@ -487,28 +524,60 @@ let
     echo "Previous files have been moved to $ARCHIVE_DIR"
   '';
   
+  run-codegen = pkgs.writeShellScriptBin "run-codegen" ''
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "${frontendPath}"
+    echo "Running PureScript codegen..."
+    spago run --main Codegen.Run
+    echo "Codegen complete."
+  '';
+  
   compile-archive = pkgs.writeShellScriptBin "compile-archive" ''
     #!/usr/bin/env bash
     set -euo pipefail
     
-    # Run the compile-manifest command first
-    compile-manifest
-    
-    # Create an archive of the output
     PROJECT_ROOT="$(pwd)"
+    SCRIPT_DIR="$PROJECT_ROOT/script"
+    MANIFEST_FILE="$SCRIPT_DIR/manifest.json"
     ARCHIVE_DIR="$PROJECT_ROOT/script/archives"
     mkdir -p "$ARCHIVE_DIR"
+    
+    # Regenerate manifest to get fresh file list
+    echo "Regenerating manifest..."
+    generate-manifest
+    
+    if [ ! -f "$MANIFEST_FILE" ]; then
+        echo "Failed to generate manifest."
+        exit 1
+    fi
     
     TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
     ARCHIVE_NAME="${name}_$TIMESTAMP.tar.gz"
     ARCHIVE_PATH="$ARCHIVE_DIR/$ARCHIVE_NAME"
     
-    echo "Creating archive at $ARCHIVE_PATH..."
-    tar -czf "$ARCHIVE_PATH" -C "$PROJECT_ROOT" script/concat_archive/output
+    # Build file list from manifest
+    echo "Collecting files from manifest..."
+    FILE_LIST=$(mktemp)
     
-    echo "Archive created successfully."
+    ${pkgs.jq}/bin/jq -r '.haskell.include[]' "$MANIFEST_FILE" >> "$FILE_LIST"
+    ${pkgs.jq}/bin/jq -r '.purescript.include[]' "$MANIFEST_FILE" >> "$FILE_LIST"
+    ${pkgs.jq}/bin/jq -r '.nix.include[]' "$MANIFEST_FILE" >> "$FILE_LIST"
+    
+    # Include the manifest itself
+    echo "script/manifest.json" >> "$FILE_LIST"
+    
+    FILE_COUNT=$(wc -l < "$FILE_LIST")
+    echo "Archiving $FILE_COUNT files..."
+    
+    tar -czf "$ARCHIVE_PATH" -C "$PROJECT_ROOT" -T "$FILE_LIST"
+    
+    rm "$FILE_LIST"
+    
+    echo "Archive created: $ARCHIVE_PATH"
+    echo "Contains $FILE_COUNT source files from manifest"
   '';
 
 in {
-  inherit compile-manifest compile-archive;
+  inherit compile-manifest compile-archive run-codegen;
 }

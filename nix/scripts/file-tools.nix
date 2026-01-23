@@ -41,7 +41,7 @@ let
 
 in {
   # Export tools from devScripts module
-  inherit (devScriptsModule) compile-manifest compile-archive;
+  inherit (devScriptsModule) compile-manifest compile-archive run-codegen;
   
   # Export the manifest generator from the manifest module
   generate-manifest = manifestModule.generateScript;
@@ -50,9 +50,18 @@ in {
   tools = [
     devScriptsModule.compile-manifest
     devScriptsModule.compile-archive
+    devScriptsModule.run-codegen
     manifestModule.generateScript
   ];
   
   # Export for debugging/development
   debug = manifestModule.debug;
+  
+  # Expose effective config for inspection
+  config = {
+    backendPath = effectiveBackendPath;
+    frontendPath = effectiveFrontendPath;
+    hsDirs = effectiveHsDirs;
+    psDirs = effectivePsDirs;
+  };
 }
