@@ -70,7 +70,6 @@ generateTypesModule schema =
       uuidType <- importFrom "Types.UUID" (importType "UUID")
       parseUUIDFn <- importFrom "Types.UUID" (importValue "parseUUID")
 
-
       for_ schema.enums \enum -> do
         writeAndExport $ generateEnumDecl enum
         write $ generateEnumDeriveEq enum
@@ -81,7 +80,6 @@ generateTypesModule schema =
         writeAndExport $ generateEnumBoundedEnumInstance enum
         writeAndExport $ generateEnumWriteForeignInstance enum
         writeAndExport $ generateEnumReadForeignInstance enum
-
 
       for_ schema.records \rec -> do
         writeAndExport $ generateRecordDecl schema rec
@@ -260,7 +258,7 @@ generateRecordReadForeignInstance schema rec = unsafePartial $
 generateReadField :: DomainSchema -> FieldDef -> CST.DoStatement Void
 generateReadField schema field = unsafePartial $
   let
-    varName = camelCase field.name
+    varName = snakeToCamel field.name
     baseExpr = exprOp
       (exprApp (exprIdent "readProp") [exprString field.name, exprIdent "json"])
       [binaryOp ">>=" (exprIdent "readImpl")]
@@ -270,11 +268,10 @@ generateReadField schema field = unsafePartial $
   in
     doBind (binderVar varName) readExpr
 
--- | Generate the expression for a field when constructing the record in ReadForeign
 generateReadFieldExpr :: FieldDef -> CST.Expr Void
 generateReadFieldExpr field = unsafePartial $
   let
-    varExpr = exprIdent (camelCase field.name)
+    varExpr = exprIdent (snakeToCamel field.name)
   in
     case field.fieldType of
       FMoney -> exprApp (exprCtor "Discrete") [varExpr]
@@ -329,21 +326,18 @@ generateFieldConfigModule schema =
       getAllEnumValuesFn <- importFrom "Utils.Formatting" (importValue "getAllEnumValues")
       formatCentsToDisplayDollarsFn <- importFrom "Utils.Formatting" (importValue "formatCentsToDisplayDollars")
 
-
       for_ schema.enums \enum -> do
         _ <- importFrom schema.moduleName (importType enum.name)
         pure unit
 
-
       for_ schema.records \rec ->
         for_ rec.fields \field -> do
-          -- Skip fields that are enum types - they use dropdown configs instead
           case field.fieldType of
             FEnum _ -> pure unit
+            FNested _ -> pure unit
             _ -> do
               writeAndExport $ generateFieldConfigSig field
               writeAndExport $ generateFieldConfig field
-
 
       for_ schema.enums \enum -> do
         writeAndExport $ generateDropdownConfigSig enum
@@ -353,16 +347,17 @@ generateFieldConfigModule schema =
 generateFieldConfigSig :: FieldDef -> CST.Declaration Void
 generateFieldConfigSig field = unsafePartial $
   let
-    fnName = camelCase field.name <> "Config"
+    fnName = snakeToCamel field.name <> "Config"
   in
     declSignature fnName $ typeArrow [typeCtor "String"] (typeCtor "FieldConfig")
 
 generateFieldConfig :: FieldDef -> CST.Declaration Void
 generateFieldConfig field = unsafePartial $
   let
-    fnName = camelCase field.name <> "Config"
-    validationExpr = generateValidationExpr field.validations field.fieldType
+    fnName = snakeToCamel field.name <> "Config"
+    validationExpr = generateConfigValidationExpr field.validations field.fieldType
     defaultValueExpr = generateDefaultValueExpr field.fieldType
+    formatInputExpr = generateFormatInput field.fieldType field.validations
   in
     declValue fnName [binderVar "defaultValue"]
       ( exprRecord
@@ -371,7 +366,7 @@ generateFieldConfig field = unsafePartial $
           , Tuple "defaultValue" defaultValueExpr
           , Tuple "validation" validationExpr
           , Tuple "errorMessage" (exprString field.ui.errorMessage)
-          , Tuple "formatInput" (generateFormatInput field.fieldType)
+          , Tuple "formatInput" formatInputExpr
           ]
       )
 
@@ -382,12 +377,17 @@ generateDefaultValueExpr = unsafePartial $ case _ of
   _ ->
     exprIdent "defaultValue"
 
-generateValidationExpr :: Array Validation -> FieldType -> CST.Expr Void
-generateValidationExpr validations fieldType = unsafePartial $
+generateConfigValidationExpr :: Array Validation -> FieldType -> CST.Expr Void
+generateConfigValidationExpr validations fieldType = unsafePartial $
   let
-    rules = Array.catMaybes $ map validationToExpr validations
-    typeRules = fieldTypeValidation fieldType
-    allRules = rules <> typeRules
+    hasValidations = not (Array.null validations)
+    hasRequired = Array.elem Required validations
+    
+    explicitRules = Array.catMaybes $ map validationToExpr validations
+    
+    typeRules = if hasRequired then fieldTypeValidation fieldType else []
+    
+    allRules = explicitRules <> typeRules
   in
     case allRules of
       [] ->
@@ -420,21 +420,17 @@ fieldTypeValidation = unsafePartial $ case _ of
   FUuid -> [exprIdent "validUUID"]
   _ -> []
 
-generateFormatInput :: FieldType -> CST.Expr Void
-generateFormatInput = unsafePartial $ case _ of
-  FString -> exprIdent "trim"
-  FInt -> exprIdent "trim"
-  FNumber -> exprIdent "trim"
-  FMoney -> exprIdent "trim"
-  FPercentage -> exprIdent "trim"
-  FUrl -> exprIdent "trim"
-  FUuid -> exprIdent "trim"
-  _ -> exprIdent "identity"
+generateFormatInput :: FieldType -> Array Validation -> CST.Expr Void
+generateFormatInput fieldType validations = unsafePartial $
+  case fieldType of
+    FArray _ -> exprIdent "identity"
+    _ | Array.null validations -> exprIdent "identity"
+    _ -> exprIdent "trim"
 
 generateDropdownConfigSig :: EnumDef -> CST.Declaration Void
 generateDropdownConfigSig enum = unsafePartial $
   let
-    fnName = camelCase enum.name <> "Config"
+    fnName = lowerFirst enum.displayName <> "Config"
   in
     declSignature fnName $
       typeArrow
@@ -449,11 +445,11 @@ generateDropdownConfigSig enum = unsafePartial $
 generateDropdownConfig :: DomainSchema -> EnumDef -> CST.Declaration Void
 generateDropdownConfig schema enum = unsafePartial $
   let
-    fnName = camelCase enum.name <> "Config"
+    fnName = lowerFirst enum.displayName <> "Config"
   in
     declValue fnName [binderRecord ["defaultValue", "forNewItem"]]
       ( exprRecord
-          [ Tuple "label" (exprString enum.name)
+          [ Tuple "label" (exprString enum.displayName)
           , Tuple "options" $
               exprApp (exprIdent "map")
                 [ exprLambda [binderVar "val"] $
@@ -483,7 +479,6 @@ generateFormInputModule schema =
   { path: moduleNameToPath (schema.moduleName <> ".FormInput")
   , content: printModuleWithOptions printOpts $ unsafePartial $ codegenModule (schema.moduleName <> ".FormInput") do
       importOpen "Prelude"
-
 
       for_ schema.records \rec ->
         writeAndExport $ generateFormInputType rec
@@ -528,16 +523,16 @@ generateValidationModule schema =
       intFromStringFn <- importFrom "Data.Int" (importValue "fromString")
       floorFn <- importFrom "Data.Int" (importValue "floor")
 
-      -- Use qualified import for Data.Number to avoid fromString conflict
-      -- Passing "Number.fromString" creates a qualified import automatically
       numberFromStringFn <- importFrom "Data.Number" (importValue "Number.fromString")
 
       discreteCtor <- importFrom "Data.Finance.Money" (importCtor "Discrete" "Discrete")
+      discreteType <- importFrom "Data.Finance.Money" (importType "Discrete")
+      usdType <- importFrom "Data.Finance.Currency" (importType "USD")
 
+      uuidType <- importFrom "Types.UUID" (importType "UUID")
       parseUUIDFn <- importFrom "Types.UUID" (importValue "parseUUID")
       parseCommaListFn <- importFrom "Utils.Formatting" (importValue "parseCommaList")
 
-      -- Import enum types with all constructors
       for_ schema.enums \enum -> do
         _ <- importFrom schema.moduleName (importTypeAll enum.name)
         pure unit
@@ -547,24 +542,38 @@ generateValidationModule schema =
         _ <- importFrom (schema.moduleName <> ".FormInput") (importType (rec.name <> "FormInput"))
         pure unit
 
-
+      writeAndExport $ generateValidateStringSig
       writeAndExport generateValidateString
+      writeAndExport $ generateValidateIntSig
       writeAndExport generateValidateInt
+      writeAndExport $ generateValidateNumberSig
       writeAndExport generateValidateNumber
+      writeAndExport $ generateValidateMoneySig
       writeAndExport generateValidateMoney
+      writeAndExport $ generateValidatePercentageSig
       writeAndExport generateValidatePercentage
+      writeAndExport $ generateValidateUUIDSig
       writeAndExport generateValidateUUID
+      writeAndExport $ generateValidateUrlSig
       writeAndExport generateValidateUrl
-      writeAndExport generateValidateArray
 
-
-      for_ schema.enums \enum ->
+      for_ schema.enums \enum -> do
+        writeAndExport $ generateEnumValidatorSig enum
         writeAndExport $ generateEnumValidator enum
 
-
-      for_ schema.records \rec ->
+      for_ schema.records \rec -> do
+        writeAndExport $ generateRecordValidatorSig schema rec
         writeAndExport $ generateRecordValidator schema rec
   }
+
+generateValidateStringSig :: CST.Declaration Void
+generateValidateStringSig = unsafePartial $
+  declSignature "validateString" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor "String"])
 
 generateValidateString :: CST.Declaration Void
 generateValidateString = unsafePartial $
@@ -575,6 +584,15 @@ generateValidateString = unsafePartial $
           [exprArray [exprOp (exprIdent "fieldName") [binaryOp "<>" (exprString " is required")]]])
         (exprApp (exprIdent "pure") [exprIdent "str"])
     )
+
+generateValidateIntSig :: CST.Declaration Void
+generateValidateIntSig = unsafePartial $
+  declSignature "validateInt" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor "Int"])
 
 generateValidateInt :: CST.Declaration Void
 generateValidateInt = unsafePartial $
@@ -591,6 +609,15 @@ generateValidateInt = unsafePartial $
         ]
     )
 
+generateValidateNumberSig :: CST.Declaration Void
+generateValidateNumberSig = unsafePartial $
+  declSignature "validateNumber" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor "Number"])
+
 generateValidateNumber :: CST.Declaration Void
 generateValidateNumber = unsafePartial $
   declValue "validateNumber" [binderVar "fieldName", binderVar "str"]
@@ -605,6 +632,18 @@ generateValidateNumber = unsafePartial $
               [exprArray [exprOp (exprIdent "fieldName") [binaryOp "<>" (exprString " must be a valid number")]]]
         ]
     )
+
+generateValidateMoneySig :: CST.Declaration Void
+generateValidateMoneySig = unsafePartial $
+  declSignature "validateMoney" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") 
+        [ typeApp (typeCtor "Array") [typeCtor "String"]
+        , typeApp (typeCtor "Discrete") [typeCtor "USD"]
+        ])
 
 generateValidateMoney :: CST.Declaration Void
 generateValidateMoney = unsafePartial $
@@ -626,6 +665,15 @@ generateValidateMoney = unsafePartial $
         ]
     )
 
+generateValidatePercentageSig :: CST.Declaration Void
+generateValidatePercentageSig = unsafePartial $
+  declSignature "validatePercentage" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor "String"])
+
 generateValidatePercentage :: CST.Declaration Void
 generateValidatePercentage = unsafePartial $
   declValue "validatePercentage" [binderVar "fieldName", binderVar "str"]
@@ -635,6 +683,15 @@ generateValidatePercentage = unsafePartial $
           [exprArray [exprOp (exprIdent "fieldName") [binaryOp "<>" (exprString " is required")]]])
         (exprApp (exprIdent "pure") [exprIdent "str"])
     )
+
+generateValidateUUIDSig :: CST.Declaration Void
+generateValidateUUIDSig = unsafePartial $
+  declSignature "validateUUID" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor "UUID"])
 
 generateValidateUUID :: CST.Declaration Void
 generateValidateUUID = unsafePartial $
@@ -648,6 +705,15 @@ generateValidateUUID = unsafePartial $
         ]
     )
 
+generateValidateUrlSig :: CST.Declaration Void
+generateValidateUrlSig = unsafePartial $
+  declSignature "validateUrl" $
+    typeArrow 
+      [ typeCtor "String"
+      , typeCtor "String" 
+      ]
+      (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor "String"])
+
 generateValidateUrl :: CST.Declaration Void
 generateValidateUrl = unsafePartial $
   declValue "validateUrl" [binderVar "fieldName", binderVar "str"]
@@ -658,11 +724,17 @@ generateValidateUrl = unsafePartial $
         (exprApp (exprIdent "pure") [exprIdent "str"])
     )
 
-generateValidateArray :: CST.Declaration Void
-generateValidateArray = unsafePartial $
-  declValue "validateArray" [binderVar "fieldName", binderVar "str"]
-    ( exprApp (exprIdent "pure") [exprApp (exprIdent "parseCommaList") [exprIdent "str"]]
-    )
+generateEnumValidatorSig :: EnumDef -> CST.Declaration Void
+generateEnumValidatorSig enum = unsafePartial $
+  let
+    fnName = "validate" <> enum.name
+  in
+    declSignature fnName $
+      typeArrow 
+        [ typeCtor "String"
+        , typeCtor "String" 
+        ]
+        (typeApp (typeCtor "V") [typeApp (typeCtor "Array") [typeCtor "String"], typeCtor enum.name])
 
 generateEnumValidator :: EnumDef -> CST.Declaration Void
 generateEnumValidator enum = unsafePartial $
@@ -685,7 +757,21 @@ generateEnumValidator enum = unsafePartial $
           )
       )
 
--- | Check if a record is used as a nested type in any other record
+data FieldValidationKind
+  = ValidatedRequired    -- Required field, validate with andThen
+  | ValidatedOptional    -- Has validations but not Required
+  | PassThrough          -- No validations, pass through directly
+  | ArrayPassThrough     -- Array field, use parseCommaList
+  | NestedValidation     -- Nested record, call nested validator
+
+getFieldValidationKind :: FieldDef -> FieldValidationKind
+getFieldValidationKind field = case field.fieldType of
+  FNested _ -> NestedValidation
+  FArray _ -> ArrayPassThrough
+  _ | Array.elem Required field.validations -> ValidatedRequired
+    | not (Array.null field.validations) -> ValidatedOptional
+    | otherwise -> PassThrough
+
 isNestedRecord :: DomainSchema -> String -> Boolean
 isNestedRecord schema recName =
   Array.any (\rec -> Array.any (isNestedField recName) rec.fields) schema.records
@@ -694,21 +780,54 @@ isNestedRecord schema recName =
     FNested n -> n == name
     _ -> false
 
+generateRecordValidatorSig :: DomainSchema -> RecordDef -> CST.Declaration Void
+generateRecordValidatorSig schema rec = unsafePartial $
+  let
+    fnName = "validate" <> rec.name
+    inputType = typeCtor (rec.name <> "FormInput")
+    isNested = isNestedRecord schema rec.name
+    returnType = 
+      if isNested then
+        typeApp (typeCtor "V") 
+          [ typeApp (typeCtor "Array") [typeCtor "String"]
+          , typeCtor rec.name
+          ]
+      else
+        typeApp (typeCtor "Either") 
+          [ typeCtor "String"
+          , typeCtor rec.name
+          ]
+  in
+    declSignature fnName $ typeArrow [inputType] returnType
+
 generateRecordValidator :: DomainSchema -> RecordDef -> CST.Declaration Void
 generateRecordValidator schema rec = unsafePartial $
   let
     fnName = "validate" <> rec.name
     isNested = isNestedRecord schema rec.name
+    
+    validatedFields = Array.filter (\f -> 
+      case getFieldValidationKind f of
+        ValidatedRequired -> true
+        NestedValidation -> true
+        _ -> false
+      ) rec.fields
+    
+    passThroughFields = Array.filter (\f ->
+      case getFieldValidationKind f of
+        PassThrough -> true
+        ValidatedOptional -> true
+        ArrayPassThrough -> true
+        _ -> false
+      ) rec.fields
   in
     if isNested then
-      -- Nested records return V directly for use with andThen
       declValue fnName [binderVar "input"]
-        (generateValidationChain schema rec)
+        (generateValidationChainForNested schema rec validatedFields passThroughFields)
     else
-      -- Top-level records return Either String for cleaner API
       declValue fnName [binderVar "input"]
         ( exprCase
-            [exprApp (exprIdent "toEither") [generateValidationChain schema rec]]
+            [exprApp (exprIdent "toEither") [generateValidationChainForNested schema rec validatedFields passThroughFields]]
             [ caseBranch [binderCtor "Left" [binderVar "errors"]] $
                 exprApp (exprCtor "Left")
                   [exprApp (exprIdent "joinWith") [exprString ", ", exprIdent "errors"]]
@@ -717,76 +836,53 @@ generateRecordValidator schema rec = unsafePartial $
             ]
         )
 
-generateValidationChain :: DomainSchema -> RecordDef -> CST.Expr Void
-generateValidationChain schema rec = unsafePartial $
-  case Array.uncons rec.fields of
+generateValidationChainForNested :: DomainSchema -> RecordDef -> Array FieldDef -> Array FieldDef -> CST.Expr Void
+generateValidationChainForNested schema rec validatedFields passThroughFields = unsafePartial $
+  case Array.uncons validatedFields of
     Nothing ->
       exprApp (exprIdent "pure")
-        [exprApp (exprCtor rec.name) [exprRecord ([] :: Array (Tuple String (CST.Expr Void)))]]
-    Just { head: firstField, tail: restFields } ->
-      buildValidationChain schema rec.name firstField restFields
+        [exprApp (exprCtor rec.name)
+          [exprRecord $ map (\f -> Tuple f.name (generatePassThroughExpr f)) rec.fields]
+        ]
+    Just { head: firstField, tail: restValidated } ->
+      buildAndThenChain schema rec.name firstField restValidated passThroughFields rec.fields
 
-buildValidationChain :: DomainSchema -> String -> FieldDef -> Array FieldDef -> CST.Expr Void
-buildValidationChain schema recName firstField restFields = unsafePartial $
+buildAndThenChain :: DomainSchema -> String -> FieldDef -> Array FieldDef -> Array FieldDef -> Array FieldDef -> CST.Expr Void
+buildAndThenChain schema recName currentField remainingValidated passThroughFields allFields = unsafePartial $
   let
-    firstValidation = generateSingleFieldValidation schema firstField
+    validationExpr = generateSingleFieldValidation schema currentField
+    varName = snakeToCamel currentField.name
   in
-    case Array.uncons restFields of
-      Nothing ->
-
-
-        exprApp
-          (exprApp (exprIdent "andThen") [firstValidation])
-          [ exprLambda [binderVar (camelCase firstField.name)] $
+    exprApp
+      (exprApp (exprIdent "andThen") [validationExpr])
+      [ exprLambda [binderVar varName] $
+          case Array.uncons remainingValidated of
+            Nothing ->
               exprApp (exprIdent "pure")
                 [ exprApp (exprCtor recName)
-                    [ exprRecord [Tuple firstField.name (exprIdent (camelCase firstField.name))]
+                    [ exprRecord $ map (\f -> Tuple f.name (fieldToRecordExpr f)) allFields
                     ]
                 ]
-          ]
-      Just { head: _, tail: _ } ->
+            Just { head: nextField, tail: rest } ->
+              buildAndThenChain schema recName nextField rest passThroughFields allFields
+      ]
 
-        let allFields = Array.cons firstField restFields
-        in buildNestedAndThen schema recName allFields
+fieldToRecordExpr :: FieldDef -> CST.Expr Void
+fieldToRecordExpr field = unsafePartial $
+  case getFieldValidationKind field of
+    ValidatedRequired -> exprIdent (snakeToCamel field.name)
+    NestedValidation -> exprIdent (snakeToCamel field.name)
+    ArrayPassThrough -> 
+      exprApp (exprIdent "parseCommaList") 
+        [exprDot (exprIdent "input") [field.name]]
+    PassThrough -> exprDot (exprIdent "input") [field.name]
+    ValidatedOptional -> exprDot (exprIdent "input") [field.name]
 
-buildNestedAndThen :: DomainSchema -> String -> Array FieldDef -> CST.Expr Void
-buildNestedAndThen schema recName fields = unsafePartial $
-  case Array.uncons fields of
-    Nothing ->
-      exprApp (exprIdent "pure")
-        [exprApp (exprCtor recName) [exprRecord ([] :: Array (Tuple String (CST.Expr Void)))]]
-    Just { head: field, tail: rest } ->
-      exprApp
-        (exprApp (exprIdent "andThen") [generateSingleFieldValidation schema field])
-        [ exprLambda [binderVar (camelCase field.name)] $
-            case Array.uncons rest of
-              Nothing ->
-
-                exprApp (exprIdent "pure")
-                  [ exprApp (exprCtor recName)
-                      [ exprRecord $ map (\f -> Tuple f.name (exprIdent (camelCase f.name))) fields
-                      ]
-                  ]
-              Just _ ->
-
-                buildNestedAndThenContinue schema recName fields rest
-        ]
-
-buildNestedAndThenContinue :: DomainSchema -> String -> Array FieldDef -> Array FieldDef -> CST.Expr Void
-buildNestedAndThenContinue schema recName allFields remainingFields = unsafePartial $
-  case Array.uncons remainingFields of
-    Nothing ->
-      exprApp (exprIdent "pure")
-        [ exprApp (exprCtor recName)
-            [ exprRecord $ map (\f -> Tuple f.name (exprIdent (camelCase f.name))) allFields
-            ]
-        ]
-    Just { head: field, tail: rest } ->
-      exprApp
-        (exprApp (exprIdent "andThen") [generateSingleFieldValidation schema field])
-        [ exprLambda [binderVar (camelCase field.name)] $
-            buildNestedAndThenContinue schema recName allFields rest
-        ]
+generatePassThroughExpr :: FieldDef -> CST.Expr Void
+generatePassThroughExpr field = unsafePartial $
+  case field.fieldType of
+    FArray _ -> exprApp (exprIdent "parseCommaList") [exprDot (exprIdent "input") [field.name]]
+    _ -> exprDot (exprIdent "input") [field.name]
 
 generateSingleFieldValidation :: DomainSchema -> FieldDef -> CST.Expr Void
 generateSingleFieldValidation schema field = unsafePartial $
@@ -795,9 +891,7 @@ generateSingleFieldValidation schema field = unsafePartial $
     validatorName = fieldTypeToValidator field.fieldType
   in
     case field.fieldType of
-      -- Nested records take the record directly, no field name
       FNested _ -> exprApp (exprIdent validatorName) [accessor]
-      -- All other validators take fieldName and value
       _ -> exprApp (exprIdent validatorName) [exprString field.ui.label, accessor]
 
 fieldTypeToValidator :: FieldType -> String
@@ -820,7 +914,25 @@ moduleNameToPath :: String -> String
 moduleNameToPath modName =
   "src/" <> String.replaceAll (String.Pattern ".") (String.Replacement "/") modName <> ".purs"
 
-camelCase :: String -> String
-camelCase s = case String.uncons s of
+snakeToCamel :: String -> String
+snakeToCamel s =
+  let
+    parts = String.split (String.Pattern "_") s
+  in
+    case Array.uncons parts of
+      Nothing -> s
+      Just { head, tail } ->
+        lowerFirst head <> String.joinWith "" (map capitalize tail)
+
+lowerFirst :: String -> String
+lowerFirst s = case String.uncons s of
   Nothing -> s
   Just { head, tail } -> String.toLower (String.singleton head) <> tail
+
+capitalize :: String -> String
+capitalize s = case String.uncons s of
+  Nothing -> s
+  Just { head, tail } -> String.toUpper (String.singleton head) <> tail
+
+camelCase :: String -> String
+camelCase = lowerFirst

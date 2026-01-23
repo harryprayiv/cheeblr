@@ -11,11 +11,13 @@ dispensarySchema =
   , validationModuleName: "Generated.Utils.InventoryValidation"
   , enums:
       [ { name: "ItemCategory"
+        , displayName: "Category"
         , variants: NEA.cons' "Flower"
             ["PreRolls", "Vaporizers", "Edibles", "Drinks", "Concentrates", "Topicals", "Tinctures", "Accessories"]
         , description: Just "Product categories for dispensary inventory"
         }
       , { name: "Species"
+        , displayName: "Species"
         , variants: NEA.cons' "Indica"
             ["IndicaDominantHybrid", "Hybrid", "SativaDominantHybrid", "Sativa"]
         , description: Just "Cannabis species classification"
