@@ -9,7 +9,6 @@ import Codegen.Schema
 import Codegen.Generate.Common (GeneratedModule(..), moduleNameToPath)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Maybe (mapMaybe)
 
 generateServerModule :: DomainSchema -> GeneratedModule
 generateServerModule schema = GeneratedModule
@@ -58,8 +57,8 @@ generateImports schema = T.unlines
   , "import Servant"
   , ""
   , "import " <> schemaModuleName schema
-  , "import " <> schemaApiModuleName schema
-  , "import " <> schemaDbModuleName schema
+  , "import " <> schemaApiModuleName schema <> ".Generated"
+  , "import " <> schemaDbModuleName schema <> ".Generated"
   ]
 
 generateServerImpl :: DomainSchema -> Text
@@ -79,30 +78,31 @@ findMainRecord schema =
       _ -> False
 
 generateMainServer :: DomainSchema -> RecordDef -> Text
-generateMainServer schema rec@RecordDef{..} = 
-  let itemName = case recordKind of
+generateMainServer schema rec = 
+  let itemName = case recordKind rec of
         NewtypeOver inner -> extractItemName inner
-        _ -> recordName
-      serverName = T.toLower recordName <> "Server"
-      apiName = recordName <> "API"
+        _ -> recordName rec
+      recName = recordName rec
+      serverName = T.toLower recName <> "Server"
+      apiName = recName <> "API"
       responseType = findResponseType schema itemName
   in T.unlines
-    [ "-- | Server implementation for " <> recordName <> "API"
+    [ "-- | Server implementation for " <> recName <> "API"
     , serverName <> " :: Pool Connection -> Server " <> apiName
     , serverName <> " pool ="
-    , "  get" <> recordName
+    , "  get" <> recName
     , "    :<|> add" <> itemName
     , "    :<|> update" <> itemName
     , "    :<|> delete" <> itemName <> " pool"
     , "  where"
     , ""
     , "    -- GET all items"
-    , "    get" <> recordName <> " :: Handler " <> responseType
-    , "    get" <> recordName <> " = do"
-    , "      " <> T.toLower recordName <> " <- liftIO $ getAll" <> itemName <> "s pool"
-    , "      liftIO $ putStrLn \"Sending " <> T.toLower recordName <> " response:\""
-    , "      liftIO $ LBS.putStrLn $ encode $ " <> getDataCtor responseType <> " " <> T.toLower recordName
-    , "      return $ " <> getDataCtor responseType <> " " <> T.toLower recordName
+    , "    get" <> recName <> " :: Handler " <> responseType
+    , "    get" <> recName <> " = do"
+    , "      " <> T.toLower recName <> " <- liftIO $ getAll" <> itemName <> "s pool"
+    , "      liftIO $ putStrLn \"Sending " <> T.toLower recName <> " response:\""
+    , "      liftIO $ LBS.putStrLn $ encode $ " <> getDataCtor responseType <> " " <> T.toLower recName
+    , "      return $ " <> getDataCtor responseType <> " " <> T.toLower recName
     , ""
     , "    -- POST new item"
     , "    add" <> itemName <> " :: " <> itemName <> " -> Handler " <> responseType

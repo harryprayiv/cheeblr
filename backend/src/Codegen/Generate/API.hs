@@ -13,7 +13,7 @@ import Data.Maybe (mapMaybe)
 
 generateApiModule :: DomainSchema -> GeneratedModule
 generateApiModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaApiModuleName schema)
+  { modulePath = moduleNameToPath (schemaApiModuleName schema <> ".Generated")
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -43,7 +43,7 @@ generatePragmas = T.unlines
 
 generateModuleDecl :: DomainSchema -> Text
 generateModuleDecl schema = 
-  "module " <> schemaApiModuleName schema <> " where"
+  "module " <> schemaApiModuleName schema <> ".Generated where"
 
 generateImports :: DomainSchema -> Text
 generateImports schema = T.unlines
@@ -56,45 +56,47 @@ generateApiTypes :: DomainSchema -> Text
 generateApiTypes schema = T.intercalate "\n\n" $ mapMaybe (generateApiType schema) (schemaRecords schema)
 
 generateApiType :: DomainSchema -> RecordDef -> Maybe Text
-generateApiType schema rec@RecordDef{..} = case recordKind of
+generateApiType schema rec = case recordKind rec of
   NewtypeOver _ -> Just $ generateCollectionApi schema rec
   RecordType
-    | recordName == "InventoryResponse" -> Nothing
+    | recordName rec == "InventoryResponse" -> Nothing
     | isNestedRecord schema rec -> Nothing
     | otherwise -> Just $ generateCrudApi schema rec
 
 isNestedRecord :: DomainSchema -> RecordDef -> Bool
-isNestedRecord schema RecordDef{..} =
-  any (referencesThis . recordFields) (schemaRecords schema)
+isNestedRecord schema rec =
+  any referencesThis (schemaRecords schema)
   where
-    referencesThis fields = any (references recordName) fields
-    references name f = case fieldType f of
+    referencesThis r = any (references (recordName rec)) (recordFields r)
+    references name fld = case fieldType fld of
       FNested n -> n == name
       _ -> False
 
 generateCrudApi :: DomainSchema -> RecordDef -> Text
-generateCrudApi schema RecordDef{..} = T.unlines
-  [ "-- | CRUD API for " <> recordName
-  , "type " <> recordName <> "API ="
+generateCrudApi schema rec = T.unlines
+  [ "-- | CRUD API for " <> recName
+  , "type " <> recName <> "API ="
   , "  \"" <> endpoint <> "\" :> Get '[JSON] " <> responseType
-  , "    :<|> \"" <> endpoint <> "\" :> ReqBody '[JSON] " <> recordName <> " :> Post '[JSON] " <> responseType
-  , "    :<|> \"" <> endpoint <> "\" :> ReqBody '[JSON] " <> recordName <> " :> Put '[JSON] " <> responseType
+  , "    :<|> \"" <> endpoint <> "\" :> ReqBody '[JSON] " <> recName <> " :> Post '[JSON] " <> responseType
+  , "    :<|> \"" <> endpoint <> "\" :> ReqBody '[JSON] " <> recName <> " :> Put '[JSON] " <> responseType
   , "    :<|> \"" <> endpoint <> "\" :> Capture \"" <> pkField <> "\" UUID :> Delete '[JSON] " <> responseType
   ]
   where
-    endpoint = T.toLower recordName
-    responseType = findResponseType schema recordName
-    pkField = findPrimaryKeyField recordFields
+    recName = recordName rec
+    endpoint = T.toLower recName
+    responseType = findResponseType schema recName
+    pkField = findPrimaryKeyField (recordFields rec)
 
 generateCollectionApi :: DomainSchema -> RecordDef -> Text
-generateCollectionApi schema RecordDef{..} = case recordKind of
+generateCollectionApi schema rec = case recordKind rec of
   NewtypeOver innerType -> 
     let itemName = extractItemName innerType
-        endpoint = T.toLower recordName
+        recName = recordName rec
+        endpoint = T.toLower recName
         responseType = findResponseType schema itemName
     in T.unlines
-      [ "-- | Collection API for " <> recordName
-      , "type " <> recordName <> "API ="
+      [ "-- | Collection API for " <> recName
+      , "type " <> recName <> "API ="
       , "  \"" <> endpoint <> "\" :> Get '[JSON] " <> responseType
       , "    :<|> \"" <> endpoint <> "\" :> ReqBody '[JSON] " <> itemName <> " :> Post '[JSON] " <> responseType
       , "    :<|> \"" <> endpoint <> "\" :> ReqBody '[JSON] " <> itemName <> " :> Put '[JSON] " <> responseType
@@ -110,12 +112,12 @@ extractItemName innerType =
     _ -> innerType
 
 findResponseType :: DomainSchema -> Text -> Text
-findResponseType schema name =
+findResponseType schema _ =
   -- Look for a response wrapper type
   let responseTypes = filter isResponseType (schemaRecords schema)
   in case responseTypes of
     (r:_) -> recordName r
-    [] -> name
+    [] -> "InventoryResponse"
   where
     isResponseType r = "Response" `T.isSuffixOf` recordName r
 
@@ -128,17 +130,18 @@ findPrimaryKeyField fields =
     isPk f = fieldName f == "sku" || fieldName f == "id"
 
 generateProxies :: DomainSchema -> Text
-generateProxies schema = T.intercalate "\n\n" $ mapMaybe generateProxy (schemaRecords schema)
-  where
-    generateProxy RecordDef{..} = case recordKind of
-      NewtypeOver _ -> Just $ T.unlines
-        [ T.toLower recordName <> "API :: Proxy " <> recordName <> "API"
-        , T.toLower recordName <> "API = Proxy"
-        ]
-      RecordType
-        | recordName == "InventoryResponse" -> Nothing
-        | isNestedRecord schema (RecordDef recordName recordKind recordFields recordDescription recordDeriving) -> Nothing
-        | otherwise -> Just $ T.unlines
-          [ T.toLower recordName <> "API :: Proxy " <> recordName <> "API"
-          , T.toLower recordName <> "API = Proxy"
-          ]
+generateProxies schema = T.intercalate "\n\n" $ mapMaybe (generateProxy schema) (schemaRecords schema)
+
+generateProxy :: DomainSchema -> RecordDef -> Maybe Text
+generateProxy schema rec = case recordKind rec of
+  NewtypeOver _ -> Just $ T.unlines
+    [ T.toLower (recordName rec) <> "API :: Proxy " <> recordName rec <> "API"
+    , T.toLower (recordName rec) <> "API = Proxy"
+    ]
+  RecordType
+    | recordName rec == "InventoryResponse" -> Nothing
+    | isNestedRecord schema rec -> Nothing
+    | otherwise -> Just $ T.unlines
+      [ T.toLower (recordName rec) <> "API :: Proxy " <> recordName rec <> "API"
+      , T.toLower (recordName rec) <> "API = Proxy"
+      ]

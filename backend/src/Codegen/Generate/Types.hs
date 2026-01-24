@@ -10,7 +10,6 @@ import Codegen.Schema
 import Codegen.Generate.Common (GeneratedModule(..), moduleNameToPath)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Maybe (fromMaybe, mapMaybe)
 
 generateTypesModule :: DomainSchema -> GeneratedModule
 generateTypesModule schema = GeneratedModule
@@ -53,7 +52,7 @@ generateTypesModule schema = GeneratedModule
       , "-- ============================================"
       , ""
       , T.intercalate "\n" $ map generateAesonInstances (schemaEnums schema)
-      , T.intercalate "\n" $ map (generateRecordAesonInstances schema)
+      , T.intercalate "\n" $ map generateRecordAesonInstances
           (filter isRegularRecord $ schemaRecords schema)
       , generateNewtypeAesonInstances
       , generateInventoryResponseAeson
@@ -116,10 +115,10 @@ generateAesonInstances EnumDef{..} = T.unlines
   ]
 
 generateRecord :: DomainSchema -> RecordDef -> Text
-generateRecord schema RecordDef{..} = T.unlines $
-  [ "data " <> recordName <> " = " <> recordName ]
-  ++ formatRecordFields schema recordFields
-  ++ [ "  deriving (" <> T.intercalate ", " recordDeriving <> ")" ]
+generateRecord schema rec = T.unlines $
+  [ "data " <> recordName rec <> " = " <> recordName rec ]
+  ++ formatRecordFields schema (recordFields rec)
+  ++ [ "  deriving (" <> T.intercalate ", " (recordDeriving rec) <> ")" ]
 
 formatRecordFields :: DomainSchema -> [FieldDef] -> [Text]
 formatRecordFields _ [] = ["  {}"]
@@ -130,12 +129,12 @@ formatRecordFields schema fields =
     formatField s _ f = "  , " <> fieldName f <> " :: " <> fieldTypeToHaskell s (fieldType f)
 
 generateNewtype :: RecordDef -> Text
-generateNewtype RecordDef{..} = case recordKind of
+generateNewtype rec = case recordKind rec of
   NewtypeOver inner -> T.unlines
-    [ "newtype " <> recordName <> " = " <> recordName
+    [ "newtype " <> recordName rec <> " = " <> recordName rec
     , "  { items :: " <> inner
     , "  }"
-    , "  deriving (" <> T.intercalate ", " recordDeriving <> ")"
+    , "  deriving (" <> T.intercalate ", " (recordDeriving rec) <> ")"
     ]
   _ -> ""
 
@@ -147,10 +146,10 @@ generateInventoryResponse = T.unlines
   , "  deriving (Show, Generic)"
   ]
 
-generateRecordAesonInstances :: DomainSchema -> RecordDef -> Text
-generateRecordAesonInstances _ RecordDef{..} = T.unlines
-  [ "instance ToJSON " <> recordName
-  , "instance FromJSON " <> recordName
+generateRecordAesonInstances :: RecordDef -> Text
+generateRecordAesonInstances rec = T.unlines
+  [ "instance ToJSON " <> recordName rec
+  , "instance FromJSON " <> recordName rec
   ]
 
 generateNewtypeAesonInstances :: Text
@@ -180,70 +179,67 @@ generateInventoryResponseAeson = T.unlines
   ]
 
 generatePgInstances :: DomainSchema -> RecordDef -> [Text]
-generatePgInstances schema rec@RecordDef{..} = case recordKind of
+generatePgInstances schema rec = case recordKind rec of
   NewtypeOver _ -> []
   RecordType
-    | recordName == "InventoryResponse" -> []
+    | recordName rec == "InventoryResponse" -> []
     | otherwise ->
         [ generateToRowInstance schema rec
         , generateFromRowInstance schema rec
         ]
 
 generateToRowInstance :: DomainSchema -> RecordDef -> Text
-generateToRowInstance schema RecordDef{..} = T.unlines
-  [ "instance ToRow " <> recordName <> " where"
-  , "  toRow " <> recordName <> " {..} ="
-  , "    [ " <> T.intercalate "\n    , " (map (toRowField schema) simpleFields) <> "\n    ]"
+generateToRowInstance _ rec = T.unlines
+  [ "instance ToRow " <> recordName rec <> " where"
+  , "  toRow " <> recordName rec <> "{..} ="
+  , "    [ " <> T.intercalate "\n    , " (map toRowField simpleFields) <> "\n    ]"
   ]
   where
-    simpleFields = filter (not . isNestedField) recordFields
-    isNestedField f = case fieldType f of
-      FNested _ -> True
-      _ -> False
+    simpleFields = filter (not . isNestedFieldType . fieldType) (recordFields rec)
 
-toRowField :: DomainSchema -> FieldDef -> Text
-toRowField _ FieldDef{..} = case fieldType of
-  FEnum _ -> "toField (show " <> fieldName <> ")"
-  FVector _ -> "toField (PGArray $ V.toList " <> fieldName <> ")"
-  _ -> "toField " <> fieldName
+toRowField :: FieldDef -> Text
+toRowField fld = case fieldType fld of
+  FEnum _ -> "toField (show " <> fieldName fld <> ")"
+  FVector _ -> "toField (PGArray $ V.toList " <> fieldName fld <> ")"
+  _ -> "toField " <> fieldName fld
+
+isNestedFieldType :: FieldType -> Bool
+isNestedFieldType (FNested _) = True
+isNestedFieldType _ = False
 
 generateFromRowInstance :: DomainSchema -> RecordDef -> Text
-generateFromRowInstance schema rec@RecordDef{..}
+generateFromRowInstance schema rec
   | hasNestedRecord rec = generateFromRowWithNested schema rec
   | otherwise = generateSimpleFromRow schema rec
 
 hasNestedRecord :: RecordDef -> Bool
-hasNestedRecord RecordDef{..} = any isNested recordFields
-  where
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
+hasNestedRecord rec = any (isNestedFieldType . fieldType) (recordFields rec)
 
 generateSimpleFromRow :: DomainSchema -> RecordDef -> Text
-generateSimpleFromRow schema RecordDef{..} = T.unlines $
-  [ "instance FromRow " <> recordName <> " where"
+generateSimpleFromRow schema rec = T.unlines $
+  [ "instance FromRow " <> recordName rec <> " where"
   , "  fromRow ="
-  , "    " <> recordName
-  ] ++ zipWith (fromRowField schema) [0::Int ..] recordFields
+  , "    " <> recordName rec
+  ] ++ zipWith (fromRowField schema) [0::Int ..] (recordFields rec)
 
 fromRowField :: DomainSchema -> Int -> FieldDef -> Text
-fromRowField _ idx FieldDef{..} =
+fromRowField _ idx fld =
   let prefix = if idx == 0 then "      <$> " else "      <*> "
-      parser = case fieldType of
+      parser = case fieldType fld of
         FEnum _ -> "(read <$> field)"
         FVector _ -> "(V.fromList . fromPGArray <$> field)"
         _ -> "field"
   in prefix <> parser
 
 generateFromRowWithNested :: DomainSchema -> RecordDef -> Text
-generateFromRowWithNested schema RecordDef{..} = T.unlines $
-  [ "instance FromRow " <> recordName <> " where"
+generateFromRowWithNested schema rec = T.unlines $
+  [ "instance FromRow " <> recordName rec <> " where"
   , "  fromRow ="
-  , "    " <> recordName
-  ] ++ concatMap (fromRowFieldOrNested schema) (zip [0::Int ..] recordFields)
+  , "    " <> recordName rec
+  ] ++ concatMap (fromRowFieldOrNested schema) (zip [0::Int ..] (recordFields rec))
 
 fromRowFieldOrNested :: DomainSchema -> (Int, FieldDef) -> [Text]
-fromRowFieldOrNested schema (idx, f@FieldDef{..}) = case fieldType of
+fromRowFieldOrNested schema (idx, fld) = case fieldType fld of
   FNested nestedName ->
     let prefix = if idx == 0 then "      <$> " else "      <*> "
     in case findRecord schema nestedName of
@@ -252,16 +248,16 @@ fromRowFieldOrNested schema (idx, f@FieldDef{..}) = case fieldType of
         [ prefix <> "( " <> nestedName ]
         ++ map ("          " <>) (nestedFieldParsers nested)
         ++ [ "          )" ]
-  _ -> [fromRowField schema idx f]
+  _ -> [fromRowField schema idx fld]
 
 nestedFieldParsers :: RecordDef -> [Text]
-nestedFieldParsers RecordDef{..} =
-  zipWith mkParser [0::Int ..] recordFields
+nestedFieldParsers rec =
+  zipWith mkParser [0::Int ..] (recordFields rec)
   where
     mkParser 0 f = "<$> " <> fieldParser f
     mkParser _ f = "<*> " <> fieldParser f
 
-    fieldParser FieldDef{..} = case fieldType of
+    fieldParser fld = case fieldType fld of
       FEnum _ -> "(read <$> field)"
       FVector _ -> "(V.fromList . fromPGArray <$> field)"
       _ -> "field"

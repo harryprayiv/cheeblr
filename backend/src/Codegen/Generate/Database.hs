@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 
 module Codegen.Generate.Database
   ( generateDbModule
@@ -168,11 +169,11 @@ getMainRecords :: DomainSchema -> [RecordDef]
 getMainRecords schema = filter isMainRecord (schemaRecords schema)
   where
     isMainRecord r = case recordKind r of
-      RecordType -> recordName r `notElem` ["InventoryResponse"]
+      RecordType -> r.recordName /= "InventoryResponse"
       _ -> False
 
 generateCreateTableSql :: DomainSchema -> RecordDef -> [Text]
-generateCreateTableSql schema rec@RecordDef{..} = case recordKind of
+generateCreateTableSql schema rec = case recordKind rec of
   NewtypeOver _ -> []
   RecordType ->
     [ "  _ <-"
@@ -186,31 +187,32 @@ generateCreateTableSql schema rec@RecordDef{..} = case recordKind of
        , ""
        ]
   where
-    tableName = toTableName recordName
+    tableName = toTableName (recordName rec)
 
 generateColumns :: DomainSchema -> RecordDef -> [Text]
-generateColumns _ RecordDef{..} =
-  zipWith formatCol [0..] $ filter (not . isNestedField) recordFields
+generateColumns _ rec =
+  zipWith formatCol [0..] simpleFields
   where
-    isNestedField f = case fieldType f of
-      FNested _ -> True
-      _ -> False
-
-    numFields = length $ filter (not . isNestedField) recordFields
+    simpleFields = filter (not . isNestedFieldType . fieldType) (recordFields rec)
+    numFields = length simpleFields
 
     formatCol :: Int -> FieldDef -> Text
-    formatCol idx f@FieldDef{..} =
+    formatCol idx fld =
       colName <> " " <> sqlType <> constraints <> comma
       where
-        colName = fromMaybe fieldName fieldDbColumn
-        sqlType = fieldTypeToSql (fieldType f)
-        constraints = generateConstraints f
+        colName = fromMaybe (fieldName fld) (fieldDbColumn fld)
+        sqlType = fieldTypeToSql (fieldType fld)
+        constraints = generateConstraints fld
         comma = if idx == numFields - 1 then "" else ","
 
-    generateConstraints FieldDef{..}
-      | fieldName == "sku" = " PRIMARY KEY"
-      | Required `elem` fieldValidations = " NOT NULL"
+    generateConstraints fld
+      | fieldName fld == "sku" = " PRIMARY KEY"
+      | Required `elem` fieldValidations fld = " NOT NULL"
       | otherwise = ""
+
+isNestedFieldType :: FieldType -> Bool
+isNestedFieldType (FNested _) = True
+isNestedFieldType _ = False
 
 fieldTypeToSql :: FieldType -> Text
 fieldTypeToSql = \case
@@ -230,24 +232,20 @@ fieldTypeToSql = \case
   FCustom _ -> "TEXT"
 
 generateInsertFunction :: DomainSchema -> RecordDef -> Maybe Text
-generateInsertFunction schema rec@RecordDef{..} = case recordKind of
+generateInsertFunction schema rec = case recordKind rec of
   NewtypeOver _ -> Nothing
   RecordType
-    | recordName `elem` ["InventoryResponse"] -> Nothing
+    | recordName rec == "InventoryResponse" -> Nothing
     | hasNestedField rec -> Just $ generateInsertWithNested schema rec
-    | otherwise -> Just $ generateSimpleInsert schema rec
+    | otherwise -> Just $ generateSimpleInsert rec
 
 hasNestedField :: RecordDef -> Bool
-hasNestedField RecordDef{..} = any isNested recordFields
-  where
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
+hasNestedField rec = any (isNestedFieldType . fieldType) (recordFields rec)
 
-generateSimpleInsert :: DomainSchema -> RecordDef -> Text
-generateSimpleInsert _ RecordDef{..} = T.unlines
-  [ "insert" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "insert" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
+generateSimpleInsert :: RecordDef -> Text
+generateSimpleInsert rec = T.unlines
+  [ "insert" <> recName <> " :: Pool.Pool Connection -> " <> recName <> " -> IO ()"
+  , "insert" <> recName <> " pool " <> recName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -261,19 +259,17 @@ generateSimpleInsert _ RecordDef{..} = T.unlines
   , "  pure ()"
   ]
   where
-    tableName = toTableName recordName
-    simpleFields = filter (not . isNested) recordFields
+    recName = recordName rec
+    tableName = toTableName recName
+    simpleFields = filter (not . isNestedFieldType . fieldType) (recordFields rec)
     colNames = map fieldName simpleFields
     placeholders = replicate (length simpleFields) "?"
     fieldRefs = map formatFieldRef simpleFields
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
 
 generateInsertWithNested :: DomainSchema -> RecordDef -> Text
-generateInsertWithNested schema rec@RecordDef{..} = T.unlines $
-  [ "insert" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "insert" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
+generateInsertWithNested schema rec = T.unlines $
+  [ "insert" <> recName <> " :: Pool.Pool Connection -> " <> recName <> " -> IO ()"
+  , "insert" <> recName <> " pool " <> recName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -285,22 +281,20 @@ generateInsertWithNested schema rec@RecordDef{..} = T.unlines $
   , "      ( " <> T.intercalate "\n      , " mainFieldRefs
   , "      )"
   , ""
-  ] ++ concatMap (generateNestedInsert schema rec) nestedFields ++
+  ] ++ concatMap (generateNestedInsert schema) nestedFields ++
   [ "  pure ()"
   ]
   where
-    tableName = toTableName recordName
-    mainFields = filter (not . isNested) recordFields
-    nestedFields = filter isNested recordFields
+    recName = recordName rec
+    tableName = toTableName recName
+    mainFields = filter (not . isNestedFieldType . fieldType) (recordFields rec)
+    nestedFields = filter (isNestedFieldType . fieldType) (recordFields rec)
     mainColNames = map fieldName mainFields
     mainPlaceholders = replicate (length mainFields) "?"
     mainFieldRefs = map formatFieldRef mainFields
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
 
-generateNestedInsert :: DomainSchema -> RecordDef -> FieldDef -> [Text]
-generateNestedInsert schema _ FieldDef{..} = case fieldType of
+generateNestedInsert :: DomainSchema -> FieldDef -> [Text]
+generateNestedInsert schema fld = case fieldType fld of
   FNested nestedName -> case findRecord schema nestedName of
     Nothing -> []
     Just nestedRec ->
@@ -309,7 +303,7 @@ generateNestedInsert schema _ FieldDef{..} = case fieldType of
           colNames = "sku" : map fieldName nestedFields
           placeholders = replicate (length colNames) "?"
       in
-      [ "  let " <> nestedName <> "{..} = " <> fieldName
+      [ "  let " <> nestedName <> "{..} = " <> fieldName fld
       , "  _ <-"
       , "    execute"
       , "      conn"
@@ -319,47 +313,41 @@ generateNestedInsert schema _ FieldDef{..} = case fieldType of
       , "        VALUES (" <> T.intercalate ", " placeholders <> ")"
       , "      |]"
       , "      ( sku"
-      , "      , " <> T.intercalate "\n      , " (map (formatNestedFieldRef nestedName) nestedFields)
+      , "      , " <> T.intercalate "\n      , " (map formatFieldRef nestedFields)
       , "      )"
       , ""
       ]
   _ -> []
 
 formatFieldRef :: FieldDef -> Text
-formatFieldRef FieldDef{..} = case fieldType of
-  FEnum _ -> "show " <> fieldName
-  FVector _ -> "PGArray $ V.toList " <> fieldName
-  _ -> fieldName
-
-formatNestedFieldRef :: Text -> FieldDef -> Text
-formatNestedFieldRef _ FieldDef{..} = case fieldType of
-  FEnum _ -> "show " <> fieldName
-  FVector _ -> "PGArray $ V.toList " <> fieldName
-  _ -> fieldName
+formatFieldRef fld = case fieldType fld of
+  FEnum _ -> "show " <> fieldName fld
+  FVector _ -> "PGArray $ V.toList " <> fieldName fld
+  _ -> fieldName fld
 
 generateSelectFunction :: DomainSchema -> RecordDef -> Maybe Text
-generateSelectFunction schema rec@RecordDef{..} = case recordKind of
+generateSelectFunction schema rec = case recordKind rec of
   NewtypeOver innerType
     | "MenuItem" `T.isInfixOf` innerType -> Just $ generateInventorySelect schema rec
     | otherwise -> Nothing
   RecordType
-    | recordName `elem` ["InventoryResponse"] -> Nothing
+    | rec.recordName == "InventoryResponse" -> Nothing
     | isNestedRecord schema rec -> Nothing
-    | otherwise -> Just $ generateSimpleSelect schema rec
+    | otherwise -> Just $ generateSimpleSelect rec
 
 isNestedRecord :: DomainSchema -> RecordDef -> Bool
-isNestedRecord schema RecordDef{..} =
-  any (referencesThis . recordFields) (schemaRecords schema)
+isNestedRecord schema rec =
+  any referencesThis (schemaRecords schema)
   where
-    referencesThis fields = any (references recordName) fields
-    references name f = case fieldType f of
+    referencesThis r = any (references (recordName rec)) (recordFields r)
+    references name fld = case fieldType fld of
       FNested n -> n == name
       _ -> False
 
-generateSimpleSelect :: DomainSchema -> RecordDef -> Text
-generateSimpleSelect _ RecordDef{..} = T.unlines
-  [ "getAll" <> recordName <> "s :: Pool.Pool Connection -> IO [" <> recordName <> "]"
-  , "getAll" <> recordName <> "s pool = withConnection pool $ \\conn -> do"
+generateSimpleSelect :: RecordDef -> Text
+generateSimpleSelect rec = T.unlines
+  [ "getAll" <> recName <> "s :: Pool.Pool Connection -> IO [" <> recName <> "]"
+  , "getAll" <> recName <> "s pool = withConnection pool $ \\conn -> do"
   , "  query_ conn"
   , "    [sql|"
   , "      SELECT"
@@ -369,13 +357,11 @@ generateSimpleSelect _ RecordDef{..} = T.unlines
   , "    |]"
   ]
   where
-    tableName = toTableName recordName
-    simpleFields = filter (not . isNested) recordFields
+    recName = recordName rec
+    tableName = toTableName recName
+    simpleFields = filter (not . isNestedFieldType . fieldType) (recordFields rec)
     selectCols = map (("m." <>) . fieldName) simpleFields
-    orderCol = maybe "1" fieldName $ find (\f -> fieldName f == "sort") recordFields
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
+    orderCol = maybe "1" fieldName $ find (\f -> fieldName f == "sort") (recordFields rec)
 
 generateInventorySelect :: DomainSchema -> RecordDef -> Text
 generateInventorySelect _ _ = T.unlines
@@ -397,18 +383,18 @@ generateInventorySelect _ _ = T.unlines
   ]
 
 generateUpdateFunction :: DomainSchema -> RecordDef -> Maybe Text
-generateUpdateFunction schema rec@RecordDef{..} = case recordKind of
+generateUpdateFunction schema rec = case recordKind rec of
   NewtypeOver _ -> Nothing
   RecordType
-    | recordName `elem` ["InventoryResponse"] -> Nothing
+    | recordName rec == "InventoryResponse" -> Nothing
     | isNestedRecord schema rec -> Nothing
     | hasNestedField rec -> Just $ generateUpdateWithNested schema rec
-    | otherwise -> Just $ generateSimpleUpdate schema rec
+    | otherwise -> Just $ generateSimpleUpdate rec
 
-generateSimpleUpdate :: DomainSchema -> RecordDef -> Text
-generateSimpleUpdate _ RecordDef{..} = T.unlines
-  [ "update" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "update" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
+generateSimpleUpdate :: RecordDef -> Text
+generateSimpleUpdate rec = T.unlines
+  [ "update" <> recName <> " :: Pool.Pool Connection -> " <> recName <> " -> IO ()"
+  , "update" <> recName <> " pool " <> recName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -422,18 +408,16 @@ generateSimpleUpdate _ RecordDef{..} = T.unlines
   , "  pure ()"
   ]
   where
-    tableName = toTableName recordName
-    updateFields = filter (\f -> fieldName f /= "sku" && not (isNested f)) recordFields
+    recName = recordName rec
+    tableName = toTableName recName
+    updateFields = filter (\f -> fieldName f /= "sku" && not (isNestedFieldType (fieldType f))) (recordFields rec)
     setClauses = map (\f -> fieldName f <> " = ?") updateFields
     updateFieldRefs = map formatFieldRef updateFields
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
 
 generateUpdateWithNested :: DomainSchema -> RecordDef -> Text
-generateUpdateWithNested schema rec@RecordDef{..} = T.unlines $
-  [ "updateExisting" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "updateExisting" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
+generateUpdateWithNested schema rec = T.unlines $
+  [ "updateExisting" <> recName <> " :: Pool.Pool Connection -> " <> recName <> " -> IO ()"
+  , "updateExisting" <> recName <> " pool " <> recName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -449,26 +433,24 @@ generateUpdateWithNested schema rec@RecordDef{..} = T.unlines $
   [ "  pure ()"
   ]
   where
-    tableName = toTableName recordName
-    mainFields = filter (\f -> fieldName f /= "sku" && not (isNested f)) recordFields
-    nestedFields = filter isNested recordFields
+    recName = recordName rec
+    tableName = toTableName recName
+    mainFields = filter (\f -> fieldName f /= "sku" && not (isNestedFieldType (fieldType f))) (recordFields rec)
+    nestedFields = filter (isNestedFieldType . fieldType) (recordFields rec)
     mainSetClauses = map (\f -> fieldName f <> " = ?") mainFields
     mainUpdateRefs = map formatFieldRef mainFields
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
 
 generateNestedUpdate :: DomainSchema -> FieldDef -> [Text]
-generateNestedUpdate schema FieldDef{..} = case fieldType of
+generateNestedUpdate schema fld = case fieldType fld of
   FNested nestedName -> case findRecord schema nestedName of
     Nothing -> []
     Just nestedRec ->
       let nestedTableName = toTableName nestedName
           nestedFields = recordFields nestedRec
           setClauses = map (\f -> fieldName f <> " = ?") nestedFields
-          fieldRefs = map (formatNestedFieldRef nestedName) nestedFields
+          fieldRefs = map formatFieldRef nestedFields
       in
-      [ "  let " <> nestedName <> "{..} = " <> fieldName
+      [ "  let " <> nestedName <> "{..} = " <> fieldName fld
       , "  _ <-"
       , "    execute"
       , "      conn"
@@ -485,19 +467,19 @@ generateNestedUpdate schema FieldDef{..} = case fieldType of
   _ -> []
 
 generateDeleteFunction :: DomainSchema -> RecordDef -> Maybe Text
-generateDeleteFunction schema rec@RecordDef{..} = case recordKind of
+generateDeleteFunction schema rec = case recordKind rec of
   NewtypeOver _ -> Nothing
   RecordType
-    | recordName `elem` ["InventoryResponse"] -> Nothing
+    | recordName rec == "InventoryResponse" -> Nothing
     | isNestedRecord schema rec -> Nothing
     | hasNestedField rec -> Just $ generateDeleteWithNested schema rec
-    | otherwise -> Just $ generateSimpleDelete schema rec
+    | otherwise -> Just $ generateSimpleDelete rec
 
-generateSimpleDelete :: DomainSchema -> RecordDef -> Text
-generateSimpleDelete _ RecordDef{..} = T.unlines
-  [ "delete" <> recordName <> " :: Pool.Pool Connection -> UUID -> Handler InventoryResponse"
-  , "delete" <> recordName <> " pool uuid = do"
-  , "  liftIO $ putStrLn $ \"Received request to delete " <> T.toLower recordName <> " with UUID: \" ++ show uuid"
+generateSimpleDelete :: RecordDef -> Text
+generateSimpleDelete rec = T.unlines
+  [ "delete" <> recName <> " :: Pool.Pool Connection -> UUID -> Handler InventoryResponse"
+  , "delete" <> recName <> " pool uuid = do"
+  , "  liftIO $ putStrLn $ \"Received request to delete " <> T.toLower recName <> " with UUID: \" ++ show uuid"
   , "  result <- liftIO $ try @SomeException $ do"
   , "    withConnection pool $ \\conn ->"
   , "      execute"
@@ -515,13 +497,14 @@ generateSimpleDelete _ RecordDef{..} = T.unlines
   , "        else throwError err404"
   ]
   where
-    tableName = toTableName recordName
+    recName = recordName rec
+    tableName = toTableName recName
 
 generateDeleteWithNested :: DomainSchema -> RecordDef -> Text
-generateDeleteWithNested schema rec@RecordDef{..} = T.unlines $
-  [ "delete" <> recordName <> " :: Pool.Pool Connection -> UUID -> Handler InventoryResponse"
-  , "delete" <> recordName <> " pool uuid = do"
-  , "  liftIO $ putStrLn $ \"Received request to delete " <> T.toLower recordName <> " with UUID: \" ++ show uuid"
+generateDeleteWithNested _schema rec = T.unlines $
+  [ "delete" <> recName <> " :: Pool.Pool Connection -> UUID -> Handler InventoryResponse"
+  , "delete" <> recName <> " pool uuid = do"
+  , "  liftIO $ putStrLn $ \"Received request to delete " <> T.toLower recName <> " with UUID: \" ++ show uuid"
   , ""
   , "  result <- liftIO $ try @SomeException $ do"
   ] ++ map generateNestedDelete nestedFields ++
@@ -543,13 +526,11 @@ generateDeleteWithNested schema rec@RecordDef{..} = T.unlines $
   , "        else throwError err404"
   ]
   where
-    tableName = toTableName recordName
-    nestedFields = filter isNested recordFields
-    isNested f = case fieldType f of
-      FNested _ -> True
-      _ -> False
+    recName = recordName rec
+    tableName = toTableName recName
+    nestedFields = filter (isNestedFieldType . fieldType) (recordFields rec)
 
-    generateNestedDelete FieldDef{..} = case fieldType of
+    generateNestedDelete fld = case fieldType fld of
       FNested nestedName ->
         "    _ <- withConnection pool $ \\conn ->\n" <>
         "      execute\n" <>
