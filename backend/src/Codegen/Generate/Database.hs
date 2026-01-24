@@ -7,16 +7,15 @@ module Codegen.Generate.Database
   ) where
 
 import Codegen.Schema
-import Codegen.Generate.Common (GeneratedModule(..), moduleNameToPath, toSnakeCase)
+import Codegen.Generate.Common (GeneratedModule(..), moduleNameToPath, toTableName)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Maybe (fromMaybe, catMaybes, mapMaybe)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List (find)
 
--- | Generate the Database module
 generateDbModule :: DomainSchema -> GeneratedModule
 generateDbModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaDbModuleName schema)
+  { modulePath = moduleNameToPath (schemaDbModuleName schema <> ".Generated")
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -24,45 +23,45 @@ generateDbModule schema = GeneratedModule
       , ""
       , generateImports schema
       , ""
-      , "-- =============================================================================  "
+      , "-- ============================================"
       , "-- Database Configuration"
-      , "-- ============================================================================="
+      , "-- ============================================"
       , ""
       , generateDbConfig
       , ""
-      , "-- ============================================================================="
-      , "-- Connection Pool"
-      , "-- ============================================================================="
+      , "-- ============================================"
+      , "-- Connection Helpers"
+      , "-- ============================================"
       , ""
       , generateConnectionHelpers
       , ""
-      , "-- ============================================================================="
+      , "-- ============================================"
       , "-- Table Creation"
-      , "-- ============================================================================="
+      , "-- ============================================"
       , ""
       , generateCreateTables schema
       , ""
-      , "-- ============================================================================="
+      , "-- ============================================"
       , "-- Insert Operations"
-      , "-- ============================================================================="
+      , "-- ============================================"
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateInsertFunction schema) (schemaRecords schema)
       , ""
-      , "-- ============================================================================="
+      , "-- ============================================"
       , "-- Select Operations"
-      , "-- ============================================================================="
+      , "-- ============================================"
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateSelectFunction schema) (schemaRecords schema)
       , ""
-      , "-- ============================================================================="
+      , "-- ============================================"
       , "-- Update Operations"
-      , "-- ============================================================================="
+      , "-- ============================================"
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateUpdateFunction schema) (schemaRecords schema)
       , ""
-      , "-- ============================================================================="
+      , "-- ============================================"
       , "-- Delete Operations"
-      , "-- ============================================================================="
+      , "-- ============================================"
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateDeleteFunction schema) (schemaRecords schema)
       ]
@@ -77,9 +76,8 @@ generatePragmas = T.unlines
   ]
 
 generateModuleDecl :: DomainSchema -> Text
-generateModuleDecl schema = T.unlines
-  [ "module " <> schemaDbModuleName schema <> " where"
-  ]
+generateModuleDecl schema = 
+  "module " <> schemaDbModuleName schema <> ".Generated where"
 
 generateImports :: DomainSchema -> Text
 generateImports schema = T.unlines
@@ -93,7 +91,7 @@ generateImports schema = T.unlines
   , "import Data.UUID (UUID)"
   , "import Database.PostgreSQL.Simple"
   , "import Database.PostgreSQL.Simple.SqlQQ (sql)"
-  , "import Database.PostgreSQL.Simple.Types (PGArray (..))"
+  , "import Database.PostgreSQL.Simple.Types (PGArray(..))"
   , "import Servant (Handler)"
   , "import Servant.Server (err404)"
   , "import System.IO (hPutStrLn, stderr)"
@@ -129,7 +127,7 @@ generateConnectionHelpers = T.unlines
   , "  pure pool"
   , ""
   , "connectWithRetry :: DBConfig -> IO Connection"
-  , "connectWithRetry DBConfig {..} = go 5"
+  , "connectWithRetry DBConfig{..} = go 5"
   , "  where"
   , "    go :: Int -> IO Connection"
   , "    go retriesLeft = do"
@@ -159,10 +157,6 @@ generateConnectionHelpers = T.unlines
   , "withConnection = Pool.withResource"
   ]
 
--- =============================================================================
--- Table Creation
--- =============================================================================
-
 generateCreateTables :: DomainSchema -> Text
 generateCreateTables schema = T.unlines $
   [ "createTables :: Pool.Pool Connection -> IO ()"
@@ -186,33 +180,33 @@ generateCreateTableSql schema rec@RecordDef{..} = case recordKind of
     , "      conn"
     , "      [sql|"
     , "        CREATE TABLE IF NOT EXISTS " <> tableName <> " ("
-    ] ++ map (indent 12) (generateColumns schema rec)
+    ] ++ map ("          " <>) (generateColumns schema rec)
     ++ [ "        )"
-       , "    |]"
+       , "      |]"
        , ""
        ]
   where
     tableName = toTableName recordName
 
 generateColumns :: DomainSchema -> RecordDef -> [Text]
-generateColumns schema RecordDef{..} = 
+generateColumns _ RecordDef{..} =
   zipWith formatCol [0..] $ filter (not . isNestedField) recordFields
   where
     isNestedField f = case fieldType f of
       FNested _ -> True
       _ -> False
-    
+
     numFields = length $ filter (not . isNestedField) recordFields
-    
+
     formatCol :: Int -> FieldDef -> Text
-    formatCol idx f@FieldDef{..} = 
+    formatCol idx f@FieldDef{..} =
       colName <> " " <> sqlType <> constraints <> comma
       where
         colName = fromMaybe fieldName fieldDbColumn
         sqlType = fieldTypeToSql (fieldType f)
         constraints = generateConstraints f
         comma = if idx == numFields - 1 then "" else ","
-    
+
     generateConstraints FieldDef{..}
       | fieldName == "sku" = " PRIMARY KEY"
       | Required `elem` fieldValidations = " NOT NULL"
@@ -232,12 +226,8 @@ fieldTypeToSql = \case
   FList _ -> "TEXT[]"
   FMaybe inner -> fieldTypeToSql inner
   FEnum _ -> "TEXT"
-  FNested _ -> "TEXT"  -- Shouldn't happen
+  FNested _ -> "TEXT"
   FCustom _ -> "TEXT"
-
--- =============================================================================
--- Insert Operations
--- =============================================================================
 
 generateInsertFunction :: DomainSchema -> RecordDef -> Maybe Text
 generateInsertFunction schema rec@RecordDef{..} = case recordKind of
@@ -255,9 +245,9 @@ hasNestedField RecordDef{..} = any isNested recordFields
       _ -> False
 
 generateSimpleInsert :: DomainSchema -> RecordDef -> Text
-generateSimpleInsert schema RecordDef{..} = T.unlines
+generateSimpleInsert _ RecordDef{..} = T.unlines
   [ "insert" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "insert" <> recordName <> " pool " <> recordName <> " {..} = withConnection pool $ \\conn -> do"
+  , "insert" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -276,7 +266,6 @@ generateSimpleInsert schema RecordDef{..} = T.unlines
     colNames = map fieldName simpleFields
     placeholders = replicate (length simpleFields) "?"
     fieldRefs = map formatFieldRef simpleFields
-    
     isNested f = case fieldType f of
       FNested _ -> True
       _ -> False
@@ -284,7 +273,7 @@ generateSimpleInsert schema RecordDef{..} = T.unlines
 generateInsertWithNested :: DomainSchema -> RecordDef -> Text
 generateInsertWithNested schema rec@RecordDef{..} = T.unlines $
   [ "insert" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "insert" <> recordName <> " pool " <> recordName <> " {..} = withConnection pool $ \\conn -> do"
+  , "insert" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -306,23 +295,21 @@ generateInsertWithNested schema rec@RecordDef{..} = T.unlines $
     mainColNames = map fieldName mainFields
     mainPlaceholders = replicate (length mainFields) "?"
     mainFieldRefs = map formatFieldRef mainFields
-    
     isNested f = case fieldType f of
       FNested _ -> True
       _ -> False
 
 generateNestedInsert :: DomainSchema -> RecordDef -> FieldDef -> [Text]
-generateNestedInsert schema parentRec FieldDef{..} = case fieldType of
+generateNestedInsert schema _ FieldDef{..} = case fieldType of
   FNested nestedName -> case findRecord schema nestedName of
     Nothing -> []
     Just nestedRec ->
       let nestedTableName = toTableName nestedName
           nestedFields = recordFields nestedRec
-          colNames = "sku" : map fieldName nestedFields  -- FK first
+          colNames = "sku" : map fieldName nestedFields
           placeholders = replicate (length colNames) "?"
-          fieldRefs = "sku" : map (\f -> fieldName <> "." <> fieldName f) nestedFields
       in
-      [ "  let " <> nestedName <> " {..} = " <> fieldName
+      [ "  let " <> nestedName <> "{..} = " <> fieldName
       , "  _ <-"
       , "    execute"
       , "      conn"
@@ -331,7 +318,7 @@ generateNestedInsert schema parentRec FieldDef{..} = case fieldType of
       , "            (" <> T.intercalate ", " colNames <> ")"
       , "        VALUES (" <> T.intercalate ", " placeholders <> ")"
       , "      |]"
-      , "      ( sku"  -- FK reference
+      , "      ( sku"
       , "      , " <> T.intercalate "\n      , " (map (formatNestedFieldRef nestedName) nestedFields)
       , "      )"
       , ""
@@ -345,27 +332,23 @@ formatFieldRef FieldDef{..} = case fieldType of
   _ -> fieldName
 
 formatNestedFieldRef :: Text -> FieldDef -> Text
-formatNestedFieldRef prefix FieldDef{..} = case fieldType of
+formatNestedFieldRef _ FieldDef{..} = case fieldType of
   FEnum _ -> "show " <> fieldName
   FVector _ -> "PGArray $ V.toList " <> fieldName
   _ -> fieldName
 
--- =============================================================================
--- Select Operations
--- =============================================================================
-
 generateSelectFunction :: DomainSchema -> RecordDef -> Maybe Text
 generateSelectFunction schema rec@RecordDef{..} = case recordKind of
-  NewtypeOver innerType 
+  NewtypeOver innerType
     | "MenuItem" `T.isInfixOf` innerType -> Just $ generateInventorySelect schema rec
     | otherwise -> Nothing
   RecordType
     | recordName `elem` ["InventoryResponse"] -> Nothing
-    | isNestedRecord schema rec -> Nothing  -- Skip nested records
+    | isNestedRecord schema rec -> Nothing
     | otherwise -> Just $ generateSimpleSelect schema rec
 
 isNestedRecord :: DomainSchema -> RecordDef -> Bool
-isNestedRecord schema RecordDef{..} = 
+isNestedRecord schema RecordDef{..} =
   any (referencesThis . recordFields) (schemaRecords schema)
   where
     referencesThis fields = any (references recordName) fields
@@ -374,7 +357,7 @@ isNestedRecord schema RecordDef{..} =
       _ -> False
 
 generateSimpleSelect :: DomainSchema -> RecordDef -> Text
-generateSimpleSelect schema RecordDef{..} = T.unlines
+generateSimpleSelect _ RecordDef{..} = T.unlines
   [ "getAll" <> recordName <> "s :: Pool.Pool Connection -> IO [" <> recordName <> "]"
   , "getAll" <> recordName <> "s pool = withConnection pool $ \\conn -> do"
   , "  query_ conn"
@@ -390,13 +373,12 @@ generateSimpleSelect schema RecordDef{..} = T.unlines
     simpleFields = filter (not . isNested) recordFields
     selectCols = map (("m." <>) . fieldName) simpleFields
     orderCol = maybe "1" fieldName $ find (\f -> fieldName f == "sort") recordFields
-    
     isNested f = case fieldType f of
       FNested _ -> True
       _ -> False
 
 generateInventorySelect :: DomainSchema -> RecordDef -> Text
-generateInventorySelect schema _ = T.unlines
+generateInventorySelect _ _ = T.unlines
   [ "getAllMenuItems :: Pool.Pool Connection -> IO Inventory"
   , "getAllMenuItems pool = withConnection pool $ \\conn -> do"
   , "  items <- query_ conn"
@@ -414,10 +396,6 @@ generateInventorySelect schema _ = T.unlines
   , "  return $ Inventory $ V.fromList items"
   ]
 
--- =============================================================================
--- Update Operations
--- =============================================================================
-
 generateUpdateFunction :: DomainSchema -> RecordDef -> Maybe Text
 generateUpdateFunction schema rec@RecordDef{..} = case recordKind of
   NewtypeOver _ -> Nothing
@@ -428,14 +406,14 @@ generateUpdateFunction schema rec@RecordDef{..} = case recordKind of
     | otherwise -> Just $ generateSimpleUpdate schema rec
 
 generateSimpleUpdate :: DomainSchema -> RecordDef -> Text
-generateSimpleUpdate schema RecordDef{..} = T.unlines
+generateSimpleUpdate _ RecordDef{..} = T.unlines
   [ "update" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "update" <> recordName <> " pool " <> recordName <> " {..} = withConnection pool $ \\conn -> do"
+  , "update" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
   , "      [sql|"
-  , "        UPDATE " <> tableName <> ""
+  , "        UPDATE " <> tableName
   , "        SET " <> T.intercalate ", " setClauses
   , "        WHERE sku = ?"
   , "      |]"
@@ -448,7 +426,6 @@ generateSimpleUpdate schema RecordDef{..} = T.unlines
     updateFields = filter (\f -> fieldName f /= "sku" && not (isNested f)) recordFields
     setClauses = map (\f -> fieldName f <> " = ?") updateFields
     updateFieldRefs = map formatFieldRef updateFields
-    
     isNested f = case fieldType f of
       FNested _ -> True
       _ -> False
@@ -456,7 +433,7 @@ generateSimpleUpdate schema RecordDef{..} = T.unlines
 generateUpdateWithNested :: DomainSchema -> RecordDef -> Text
 generateUpdateWithNested schema rec@RecordDef{..} = T.unlines $
   [ "updateExisting" <> recordName <> " :: Pool.Pool Connection -> " <> recordName <> " -> IO ()"
-  , "updateExisting" <> recordName <> " pool " <> recordName <> " {..} = withConnection pool $ \\conn -> do"
+  , "updateExisting" <> recordName <> " pool " <> recordName <> "{..} = withConnection pool $ \\conn -> do"
   , "  _ <-"
   , "    execute"
   , "      conn"
@@ -477,7 +454,6 @@ generateUpdateWithNested schema rec@RecordDef{..} = T.unlines $
     nestedFields = filter isNested recordFields
     mainSetClauses = map (\f -> fieldName f <> " = ?") mainFields
     mainUpdateRefs = map formatFieldRef mainFields
-    
     isNested f = case fieldType f of
       FNested _ -> True
       _ -> False
@@ -492,7 +468,7 @@ generateNestedUpdate schema FieldDef{..} = case fieldType of
           setClauses = map (\f -> fieldName f <> " = ?") nestedFields
           fieldRefs = map (formatNestedFieldRef nestedName) nestedFields
       in
-      [ "  let " <> nestedName <> " {..} = " <> fieldName
+      [ "  let " <> nestedName <> "{..} = " <> fieldName
       , "  _ <-"
       , "    execute"
       , "      conn"
@@ -508,10 +484,6 @@ generateNestedUpdate schema FieldDef{..} = case fieldType of
       ]
   _ -> []
 
--- =============================================================================
--- Delete Operations
--- =============================================================================
-
 generateDeleteFunction :: DomainSchema -> RecordDef -> Maybe Text
 generateDeleteFunction schema rec@RecordDef{..} = case recordKind of
   NewtypeOver _ -> Nothing
@@ -522,7 +494,7 @@ generateDeleteFunction schema rec@RecordDef{..} = case recordKind of
     | otherwise -> Just $ generateSimpleDelete schema rec
 
 generateSimpleDelete :: DomainSchema -> RecordDef -> Text
-generateSimpleDelete schema RecordDef{..} = T.unlines
+generateSimpleDelete _ RecordDef{..} = T.unlines
   [ "delete" <> recordName <> " :: Pool.Pool Connection -> UUID -> Handler InventoryResponse"
   , "delete" <> recordName <> " pool uuid = do"
   , "  liftIO $ putStrLn $ \"Received request to delete " <> T.toLower recordName <> " with UUID: \" ++ show uuid"
@@ -573,11 +545,10 @@ generateDeleteWithNested schema rec@RecordDef{..} = T.unlines $
   where
     tableName = toTableName recordName
     nestedFields = filter isNested recordFields
-    
     isNested f = case fieldType f of
       FNested _ -> True
       _ -> False
-    
+
     generateNestedDelete FieldDef{..} = case fieldType of
       FNested nestedName ->
         "    _ <- withConnection pool $ \\conn ->\n" <>
@@ -587,16 +558,6 @@ generateDeleteWithNested schema rec@RecordDef{..} = T.unlines $
         "        (Only uuid)"
       _ -> ""
 
--- =============================================================================
--- Utilities
--- =============================================================================
-
 findRecord :: DomainSchema -> Text -> Maybe RecordDef
-findRecord schema name = 
+findRecord schema name =
   find (\r -> recordName r == name) (schemaRecords schema)
-
-toTableName :: Text -> Text
-toTableName name = T.toLower name <> "s"
-  -- Simple pluralization - could be made smarter
-  -- "MenuItem" -> "menuitems"
-  -- "StrainLineage" -> "strain_lineage" (special case)

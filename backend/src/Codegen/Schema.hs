@@ -11,22 +11,27 @@ module Codegen.Schema
   , Validation(..)
   , TypeKind(..)
   
-    -- * Smart Constructors
+  -- * Smart Constructors
   , field
   , enum
   , record
   , newtypeOver
+  
+  -- * Field Modifiers
+  , required
+  , withValidations
+  , withDbColumn
+  , withDescription
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
 import GHC.Generics (Generic)
 
--- | Top-level schema definition
+-- | Complete domain schema definition
 data DomainSchema = DomainSchema
-  { schemaModuleName :: Text           -- ^ e.g., "Types.Inventory"
-  , schemaDbModuleName :: Text         -- ^ e.g., "DB.Database"  
-  , schemaApiModuleName :: Text        -- ^ e.g., "API.Inventory"
+  { schemaModuleName :: Text       -- ^ e.g. "Types.Inventory"
+  , schemaDbModuleName :: Text     -- ^ e.g. "DB.Inventory"
+  , schemaApiModuleName :: Text    -- ^ e.g. "API.Inventory"
   , schemaEnums :: [EnumDef]
   , schemaRecords :: [RecordDef]
   } deriving (Show, Eq, Generic)
@@ -34,54 +39,55 @@ data DomainSchema = DomainSchema
 -- | Enum type definition
 data EnumDef = EnumDef
   { enumName :: Text
-  , enumDisplayName :: Text            -- ^ For UI/config naming
-  , enumVariants :: [Text]             -- ^ Non-empty list of constructors
+  , enumDisplayName :: Text
+  , enumVariants :: [Text]
   , enumDescription :: Maybe Text
-  , enumDeriving :: [Text]             -- ^ Additional deriving clauses
+  , enumDeriving :: [Text]
   } deriving (Show, Eq, Generic)
 
--- | Record/newtype definition
+-- | Record type definition
 data RecordDef = RecordDef
   { recordName :: Text
   , recordKind :: TypeKind
   , recordFields :: [FieldDef]
   , recordDescription :: Maybe Text
-  , recordDeriving :: [Text]           -- ^ e.g., ["Generic", "Show"]
+  , recordDeriving :: [Text]
   } deriving (Show, Eq, Generic)
 
+-- | Whether a record is a regular data type or a newtype wrapper
 data TypeKind
-  = RecordType                         -- ^ Regular record with fields
-  | NewtypeOver Text                   -- ^ Newtype wrapper over another type
+  = RecordType
+  | NewtypeOver Text  -- ^ Wraps the given type
   deriving (Show, Eq, Generic)
 
 -- | Field definition within a record
 data FieldDef = FieldDef
-  { fieldName :: Text                  -- ^ Haskell field name (e.g., "strain_lineage")
+  { fieldName :: Text
   , fieldType :: FieldType
   , fieldValidations :: [Validation]
-  , fieldDbColumn :: Maybe Text        -- ^ DB column name if different from fieldName
+  , fieldDbColumn :: Maybe Text      -- ^ Override column name in DB
   , fieldDescription :: Maybe Text
   } deriving (Show, Eq, Generic)
 
 -- | Supported field types
 data FieldType
-  = FText                              -- ^ Text
-  | FInt                               -- ^ Int
-  | FInteger                           -- ^ Integer (arbitrary precision)
-  | FDouble                            -- ^ Double
-  | FBool                              -- ^ Bool
-  | FUuid                              -- ^ UUID
-  | FUtcTime                           -- ^ UTCTime
-  | FMoney                             -- ^ Int (cents) - special handling for JSON
-  | FVector FieldType                  -- ^ Vector a (maps to PGArray)
-  | FList FieldType                    -- ^ [a]
-  | FMaybe FieldType                   -- ^ Maybe a
-  | FEnum Text                         -- ^ Reference to an enum type
-  | FNested Text                       -- ^ Nested record type
-  | FCustom Text                       -- ^ Custom type name (pass-through)
+  = FText
+  | FInt
+  | FInteger
+  | FDouble
+  | FBool
+  | FUuid
+  | FUtcTime
+  | FMoney                    -- ^ Stored as Int (cents)
+  | FVector FieldType         -- ^ Vector of items
+  | FList FieldType           -- ^ List of items
+  | FMaybe FieldType          -- ^ Optional field
+  | FEnum Text                -- ^ Reference to enum type
+  | FNested Text              -- ^ Reference to nested record
+  | FCustom Text              -- ^ Custom Haskell type
   deriving (Show, Eq, Generic)
 
--- | Validation rules (for documentation and potential runtime validation)
+-- | Validation rules for fields
 data Validation
   = Required
   | MaxLength Int
@@ -94,11 +100,11 @@ data Validation
   | Pattern Text
   deriving (Show, Eq, Generic)
 
--- =============================================================================
+-- ============================================
 -- Smart Constructors
--- =============================================================================
+-- ============================================
 
--- | Create a simple field
+-- | Create a basic field
 field :: Text -> FieldType -> FieldDef
 field name typ = FieldDef
   { fieldName = name
@@ -137,3 +143,23 @@ newtypeOver name innerType = RecordDef
   , recordDescription = Nothing
   , recordDeriving = ["Show", "Generic"]
   }
+
+-- ============================================
+-- Field Modifiers
+-- ============================================
+
+-- | Mark a field as required
+required :: FieldDef -> FieldDef
+required f = f { fieldValidations = Required : fieldValidations f }
+
+-- | Add validations to a field
+withValidations :: [Validation] -> FieldDef -> FieldDef
+withValidations vs f = f { fieldValidations = fieldValidations f ++ vs }
+
+-- | Set custom database column name
+withDbColumn :: Text -> FieldDef -> FieldDef
+withDbColumn col f = f { fieldDbColumn = Just col }
+
+-- | Add description to a field
+withDescription :: Text -> FieldDef -> FieldDef
+withDescription desc f = f { fieldDescription = Just desc }

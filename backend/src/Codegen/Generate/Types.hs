@@ -10,12 +10,11 @@ import Codegen.Schema
 import Codegen.Generate.Common (GeneratedModule(..), moduleNameToPath)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Maybe (fromMaybe, catMaybes)
+import Data.Maybe (fromMaybe, mapMaybe)
 
--- | Generate the complete Types module
 generateTypesModule :: DomainSchema -> GeneratedModule
 generateTypesModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaModuleName schema)
+  { modulePath = moduleNameToPath (schemaModuleName schema <> ".Generated")
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -23,28 +22,46 @@ generateTypesModule schema = GeneratedModule
       , ""
       , generateImports
       , ""
-      , "-- Enums"
+      , "-- ============================================"
+      , "-- Enum Types"
+      , "-- ============================================"
+      , ""
       , T.intercalate "\n\n" $ map generateEnum (schemaEnums schema)
       , ""
-      , "-- Records"
-      , T.intercalate "\n\n" $ map (generateRecord schema) 
+      , "-- ============================================"
+      , "-- Record Types"
+      , "-- ============================================"
+      , ""
+      , T.intercalate "\n\n" $ map (generateRecord schema)
           (filter isRegularRecord $ schemaRecords schema)
       , ""
-      , "-- Newtypes"
-      , T.intercalate "\n\n" $ map generateNewtype 
+      , "-- ============================================"
+      , "-- Newtype Wrappers"
+      , "-- ============================================"
+      , ""
+      , T.intercalate "\n\n" $ map generateNewtype
           (filter isNewtype $ schemaRecords schema)
       , ""
-      , "-- Sum Types"
-      , generateInventoryResponse  -- Special case for now
+      , "-- ============================================"
+      , "-- Response Types"
+      , "-- ============================================"
       , ""
-      , "-- Aeson Instances"
-      , T.intercalate "\n\n" $ map generateAesonInstances (schemaEnums schema)
-      , T.intercalate "\n\n" $ map (generateRecordAesonInstances schema) 
+      , generateInventoryResponse
+      , ""
+      , "-- ============================================"
+      , "-- JSON Instances"
+      , "-- ============================================"
+      , ""
+      , T.intercalate "\n" $ map generateAesonInstances (schemaEnums schema)
+      , T.intercalate "\n" $ map (generateRecordAesonInstances schema)
           (filter isRegularRecord $ schemaRecords schema)
       , generateNewtypeAesonInstances
       , generateInventoryResponseAeson
       , ""
+      , "-- ============================================"
       , "-- PostgreSQL Instances"
+      , "-- ============================================"
+      , ""
       , T.intercalate "\n\n" $ concatMap (generatePgInstances schema) (schemaRecords schema)
       ]
   }
@@ -52,7 +69,7 @@ generateTypesModule schema = GeneratedModule
     isRegularRecord r = case recordKind r of
       RecordType -> recordName r /= "InventoryResponse"
       _ -> False
-    
+
     isNewtype r = case recordKind r of
       NewtypeOver _ -> True
       _ -> False
@@ -66,7 +83,7 @@ generatePragmas = T.unlines
   ]
 
 generateModuleDecl :: DomainSchema -> Text
-generateModuleDecl schema = "module " <> schemaModuleName schema <> " where"
+generateModuleDecl schema = "module " <> schemaModuleName schema <> ".Generated where"
 
 generateImports :: Text
 generateImports = T.unlines
@@ -74,18 +91,14 @@ generateImports = T.unlines
   , "    ( ToJSON(toJSON), FromJSON(parseJSON), object, KeyValue((.=)) )"
   , "import Data.Text (Text)"
   , "import qualified Data.Text as T"
-  , "import Data.UUID ( UUID )"
+  , "import Data.UUID (UUID)"
   , "import qualified Data.Vector as V"
-  , "import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)"
-  , "import Database.PostgreSQL.Simple.ToField (ToField (..))"
-  , "import Database.PostgreSQL.Simple.ToRow (ToRow (..))"
-  , "import Database.PostgreSQL.Simple.Types (PGArray (..))"
-  , "import GHC.Generics ( Generic )"
+  , "import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)"
+  , "import Database.PostgreSQL.Simple.ToField (ToField(..))"
+  , "import Database.PostgreSQL.Simple.ToRow (ToRow(..))"
+  , "import Database.PostgreSQL.Simple.Types (PGArray(..))"
+  , "import GHC.Generics (Generic)"
   ]
-
--- =============================================================================
--- Enum Generation
--- =============================================================================
 
 generateEnum :: EnumDef -> Text
 generateEnum EnumDef{..} = T.unlines $
@@ -102,10 +115,6 @@ generateAesonInstances EnumDef{..} = T.unlines
   , "instance FromJSON " <> enumName
   ]
 
--- =============================================================================
--- Record Generation
--- =============================================================================
-
 generateRecord :: DomainSchema -> RecordDef -> Text
 generateRecord schema RecordDef{..} = T.unlines $
   [ "data " <> recordName <> " = " <> recordName ]
@@ -114,7 +123,7 @@ generateRecord schema RecordDef{..} = T.unlines $
 
 formatRecordFields :: DomainSchema -> [FieldDef] -> [Text]
 formatRecordFields _ [] = ["  {}"]
-formatRecordFields schema fields = 
+formatRecordFields schema fields =
   zipWith (formatField schema) [0::Int ..] fields ++ ["  }"]
   where
     formatField s 0 f = "  { " <> fieldName f <> " :: " <> fieldTypeToHaskell s (fieldType f)
@@ -124,12 +133,10 @@ generateNewtype :: RecordDef -> Text
 generateNewtype RecordDef{..} = case recordKind of
   NewtypeOver inner -> T.unlines
     [ "newtype " <> recordName <> " = " <> recordName
-    , "  { " <> accessorName <> " :: " <> inner
+    , "  { items :: " <> inner
     , "  }"
     , "  deriving (" <> T.intercalate ", " recordDeriving <> ")"
     ]
-    where
-      accessorName = "items"  -- For Inventory specifically
   _ -> ""
 
 generateInventoryResponse :: Text
@@ -140,12 +147,8 @@ generateInventoryResponse = T.unlines
   , "  deriving (Show, Generic)"
   ]
 
--- =============================================================================
--- Aeson Instances
--- =============================================================================
-
 generateRecordAesonInstances :: DomainSchema -> RecordDef -> Text
-generateRecordAesonInstances schema RecordDef{..} = T.unlines
+generateRecordAesonInstances _ RecordDef{..} = T.unlines
   [ "instance ToJSON " <> recordName
   , "instance FromJSON " <> recordName
   ]
@@ -176,16 +179,12 @@ generateInventoryResponseAeson = T.unlines
   , "instance FromJSON InventoryResponse"
   ]
 
--- =============================================================================
--- PostgreSQL Instances
--- =============================================================================
-
 generatePgInstances :: DomainSchema -> RecordDef -> [Text]
 generatePgInstances schema rec@RecordDef{..} = case recordKind of
-  NewtypeOver _ -> []  -- Newtypes don't need PG instances
-  RecordType 
-    | recordName == "InventoryResponse" -> []  -- Skip response type
-    | otherwise -> 
+  NewtypeOver _ -> []
+  RecordType
+    | recordName == "InventoryResponse" -> []
+    | otherwise ->
         [ generateToRowInstance schema rec
         , generateFromRowInstance schema rec
         ]
@@ -198,7 +197,6 @@ generateToRowInstance schema RecordDef{..} = T.unlines
   ]
   where
     simpleFields = filter (not . isNestedField) recordFields
-    
     isNestedField f = case fieldType f of
       FNested _ -> True
       _ -> False
@@ -210,7 +208,7 @@ toRowField _ FieldDef{..} = case fieldType of
   _ -> "toField " <> fieldName
 
 generateFromRowInstance :: DomainSchema -> RecordDef -> Text
-generateFromRowInstance schema rec@RecordDef{..} 
+generateFromRowInstance schema rec@RecordDef{..}
   | hasNestedRecord rec = generateFromRowWithNested schema rec
   | otherwise = generateSimpleFromRow schema rec
 
@@ -246,31 +244,27 @@ generateFromRowWithNested schema RecordDef{..} = T.unlines $
 
 fromRowFieldOrNested :: DomainSchema -> (Int, FieldDef) -> [Text]
 fromRowFieldOrNested schema (idx, f@FieldDef{..}) = case fieldType of
-  FNested nestedName -> 
+  FNested nestedName ->
     let prefix = if idx == 0 then "      <$> " else "      <*> "
     in case findRecord schema nestedName of
       Nothing -> [prefix <> "field"]
-      Just nested -> 
+      Just nested ->
         [ prefix <> "( " <> nestedName ]
         ++ map ("          " <>) (nestedFieldParsers nested)
         ++ [ "          )" ]
   _ -> [fromRowField schema idx f]
 
 nestedFieldParsers :: RecordDef -> [Text]
-nestedFieldParsers RecordDef{..} = 
+nestedFieldParsers RecordDef{..} =
   zipWith mkParser [0::Int ..] recordFields
   where
     mkParser 0 f = "<$> " <> fieldParser f
     mkParser _ f = "<*> " <> fieldParser f
-    
+
     fieldParser FieldDef{..} = case fieldType of
       FEnum _ -> "(read <$> field)"
       FVector _ -> "(V.fromList . fromPGArray <$> field)"
       _ -> "field"
-
--- =============================================================================
--- Utilities
--- =============================================================================
 
 fieldTypeToHaskell :: DomainSchema -> FieldType -> Text
 fieldTypeToHaskell schema = \case
@@ -294,7 +288,7 @@ fieldTypeToHaskell schema = \case
       | otherwise = t
 
 findRecord :: DomainSchema -> Text -> Maybe RecordDef
-findRecord schema name = 
+findRecord schema name =
   case filter (\r -> recordName r == name) (schemaRecords schema) of
     [r] -> Just r
     _ -> Nothing

@@ -39,23 +39,33 @@ common shared-properties
                 , bytestring
                 , unix
                 , http-types
-                , bytestring
-                , http-types
                 , case-insensitive
 
 library
     import: shared-properties
     exposed-modules: App
-               , DB.Database
-               , DB.Transaction
-               , Server
-               , Server.Transaction
-               , Types.Inventory
-               , Types.Transaction
-               , API.Inventory
-               , API.Transaction
+                   , DB.Database
+                   , DB.Transaction
+                   , Server
+                   , Server.Transaction
+                   , Types.Inventory
+                   , Types.Transaction
+                   , API.Inventory
+                   , API.Transaction
+                   -- Codegen modules
+                   , Codegen.Schema
+                   , Codegen.Run
+                   , Codegen.Generate.Common
+                   , Codegen.Generate.Types
+                   , Codegen.Generate.Database
+                   , Codegen.Generate.API
+                   , Codegen.Generate.Server
+                   -- Schema definitions
+                   , Schemas.Dispensary
     build-depends: refined
-                , string-conversions
+                 , string-conversions
+                 , filepath
+                 , directory
     hs-source-dirs: src
 
 executable cheeblr-backend
@@ -67,12 +77,11 @@ executable cheeblr-backend
     build-depends: cheeblr-backend
     pkgconfig-depends: libpq
 
--- executable domain-modeler
---     import: shared-properties
---     main-is: SqlGenerator.hs
---     hs-source-dirs: codegen
---     build-depends: base
---                 , filepath
---                 , directory
---                 , dhall
---                 , text
+executable domain-codegen
+    import: shared-properties
+    ghc-options: -rtsopts
+    main-is: Main.hs
+    hs-source-dirs: codegen
+    build-depends: cheeblr-backend
+                 , filepath
+                 , directory
