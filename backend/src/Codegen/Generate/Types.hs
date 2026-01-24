@@ -13,7 +13,7 @@ import qualified Data.Text as T
 
 generateTypesModule :: DomainSchema -> GeneratedModule
 generateTypesModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaModuleName schema <> ".Generated")
+  { modulePath = moduleNameToPath (generatedTypesModule schema)
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -21,35 +21,35 @@ generateTypesModule schema = GeneratedModule
       , ""
       , generateImports
       , ""
-      , "-- ============================================"
-      , "-- Enum Types"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- ENUM TYPES"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ map generateEnum (schemaEnums schema)
       , ""
-      , "-- ============================================"
-      , "-- Record Types"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- RECORD TYPES"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ map (generateRecord schema)
           (filter isRegularRecord $ schemaRecords schema)
       , ""
-      , "-- ============================================"
-      , "-- Newtype Wrappers"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- NEWTYPE WRAPPERS"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ map generateNewtype
           (filter isNewtype $ schemaRecords schema)
       , ""
-      , "-- ============================================"
-      , "-- Response Types"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- RESPONSE TYPES"
+      , "-- =============================================="
       , ""
       , generateInventoryResponse
       , ""
-      , "-- ============================================"
-      , "-- JSON Instances"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- JSON INSTANCES"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n" $ map generateAesonInstances (schemaEnums schema)
       , T.intercalate "\n" $ map generateRecordAesonInstances
@@ -57,9 +57,9 @@ generateTypesModule schema = GeneratedModule
       , generateNewtypeAesonInstances
       , generateInventoryResponseAeson
       , ""
-      , "-- ============================================"
-      , "-- PostgreSQL Instances"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- POSTGRESQL INSTANCES"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ concatMap (generatePgInstances schema) (schemaRecords schema)
       ]
@@ -82,7 +82,17 @@ generatePragmas = T.unlines
   ]
 
 generateModuleDecl :: DomainSchema -> Text
-generateModuleDecl schema = "module " <> schemaModuleName schema <> ".Generated where"
+generateModuleDecl schema = 
+  let modName = generatedTypesModule schema
+      exports = generateExports schema
+  in "module " <> modName <> "\n  ( " <> exports <> "\n  ) where"
+
+generateExports :: DomainSchema -> Text
+generateExports schema = 
+  let enumExports = map (\e -> enumName e <> "(..)") (schemaEnums schema)
+      recordExports = map (\r -> recordName r <> "(..)") (schemaRecords schema)
+      allExports = enumExports ++ recordExports
+  in T.intercalate "\n  , " allExports
 
 generateImports :: Text
 generateImports = T.unlines

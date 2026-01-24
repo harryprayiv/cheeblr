@@ -13,7 +13,7 @@ import Data.Maybe (mapMaybe)
 
 generateApiModule :: DomainSchema -> GeneratedModule
 generateApiModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaApiModuleName schema <> ".Generated")
+  { modulePath = moduleNameToPath (generatedApiModule schema)
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -21,15 +21,15 @@ generateApiModule schema = GeneratedModule
       , ""
       , generateImports schema
       , ""
-      , "-- ============================================"
-      , "-- API Type Definitions"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- API TYPE DEFINITIONS"
+      , "-- =============================================="
       , ""
       , generateApiTypes schema
       , ""
-      , "-- ============================================"
-      , "-- Proxy Definitions"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- API PROXIES"
+      , "-- =============================================="
       , ""
       , generateProxies schema
       ]
@@ -42,14 +42,30 @@ generatePragmas = T.unlines
   ]
 
 generateModuleDecl :: DomainSchema -> Text
-generateModuleDecl schema = 
-  "module " <> schemaApiModuleName schema <> ".Generated where"
+generateModuleDecl schema =
+  let modName = generatedApiModule schema
+      exports = generateExports schema
+  in "module " <> modName <> "\n  ( " <> exports <> "\n  ) where"
+
+generateExports :: DomainSchema -> Text
+generateExports schema = 
+  let apiTypes = mapMaybe (getApiTypeName schema) (schemaRecords schema)
+      proxyNames = map (\t -> T.toLower t <> "API") apiTypes
+  in T.intercalate "\n  , " (apiTypes ++ proxyNames)
+
+getApiTypeName :: DomainSchema -> RecordDef -> Maybe Text
+getApiTypeName schema rec = case recordKind rec of
+  NewtypeOver _ -> Just $ recordName rec <> "API"
+  RecordType
+    | recordName rec == "InventoryResponse" -> Nothing
+    | isNestedRecord schema rec -> Nothing
+    | otherwise -> Just $ recordName rec <> "API"
 
 generateImports :: DomainSchema -> Text
 generateImports schema = T.unlines
   [ "import Data.UUID (UUID)"
   , "import Servant"
-  , "import " <> schemaModuleName schema
+  , "import " <> generatedTypesModule schema
   ]
 
 generateApiTypes :: DomainSchema -> Text
@@ -89,7 +105,7 @@ generateCrudApi schema rec = T.unlines
 
 generateCollectionApi :: DomainSchema -> RecordDef -> Text
 generateCollectionApi schema rec = case recordKind rec of
-  NewtypeOver innerType -> 
+  NewtypeOver innerType ->
     let itemName = extractItemName innerType
         recName = recordName rec
         endpoint = T.toLower recName
@@ -105,15 +121,15 @@ generateCollectionApi schema rec = case recordKind rec of
   _ -> ""
 
 extractItemName :: Text -> Text
-extractItemName innerType = 
-  -- "V.Vector MenuItem" -> "MenuItem"
+extractItemName innerType =
+  -- Extract "MenuItem" from "V.Vector MenuItem"
   case T.words innerType of
     [_, name] -> name
     _ -> innerType
 
 findResponseType :: DomainSchema -> Text -> Text
 findResponseType schema _ =
-  -- Look for a response wrapper type
+  -- Find the response type in the schema (e.g., InventoryResponse)
   let responseTypes = filter isResponseType (schemaRecords schema)
   in case responseTypes of
     (r:_) -> recordName r

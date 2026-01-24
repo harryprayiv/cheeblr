@@ -10,33 +10,58 @@ module Codegen.Schema
   , FieldType(..)
   , Validation(..)
   , TypeKind(..)
-  
+
   -- * Smart Constructors
   , field
   , enum
   , record
   , newtypeOver
-  
+
   -- * Field Modifiers
   , required
   , withValidations
   , withDbColumn
   , withDescription
+
+  -- * Module Name Helpers
+  , generatedTypesModule
+  , generatedDbModule
+  , generatedApiModule
+  , generatedServerModule
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 
--- | Complete domain schema definition
+-- | Domain schema definition
+-- The schema now uses a single 'schemaName' (e.g., "Inventory") 
+-- and generates module paths under Generated/ prefix
 data DomainSchema = DomainSchema
-  { schemaModuleName :: Text       -- ^ e.g. "Types.Inventory"
-  , schemaDbModuleName :: Text     -- ^ e.g. "DB.Inventory"
-  , schemaApiModuleName :: Text    -- ^ e.g. "API.Inventory"
+  { schemaName :: Text
+    -- ^ The domain name (e.g., "Inventory")
   , schemaEnums :: [EnumDef]
+    -- ^ Enum type definitions
   , schemaRecords :: [RecordDef]
+    -- ^ Record type definitions
   } deriving (Show, Eq, Generic)
 
--- | Enum type definition
+-- | Get the generated types module name (e.g., "Generated.Types.Inventory")
+generatedTypesModule :: DomainSchema -> Text
+generatedTypesModule schema = "Generated.Types." <> schemaName schema
+
+-- | Get the generated DB module name (e.g., "Generated.DB.Inventory")
+generatedDbModule :: DomainSchema -> Text
+generatedDbModule schema = "Generated.DB." <> schemaName schema
+
+-- | Get the generated API module name (e.g., "Generated.API.Inventory")
+generatedApiModule :: DomainSchema -> Text
+generatedApiModule schema = "Generated.API." <> schemaName schema
+
+-- | Get the generated Server module name (e.g., "Generated.Server.Inventory")
+generatedServerModule :: DomainSchema -> Text
+generatedServerModule schema = "Generated.Server." <> schemaName schema
+
 data EnumDef = EnumDef
   { enumName :: Text
   , enumDisplayName :: Text
@@ -45,7 +70,6 @@ data EnumDef = EnumDef
   , enumDeriving :: [Text]
   } deriving (Show, Eq, Generic)
 
--- | Record type definition
 data RecordDef = RecordDef
   { recordName :: Text
   , recordKind :: TypeKind
@@ -54,22 +78,19 @@ data RecordDef = RecordDef
   , recordDeriving :: [Text]
   } deriving (Show, Eq, Generic)
 
--- | Whether a record is a regular data type or a newtype wrapper
 data TypeKind
   = RecordType
-  | NewtypeOver Text  -- ^ Wraps the given type
+  | NewtypeOver Text
   deriving (Show, Eq, Generic)
 
--- | Field definition within a record
 data FieldDef = FieldDef
   { fieldName :: Text
   , fieldType :: FieldType
   , fieldValidations :: [Validation]
-  , fieldDbColumn :: Maybe Text      -- ^ Override column name in DB
+  , fieldDbColumn :: Maybe Text
   , fieldDescription :: Maybe Text
   } deriving (Show, Eq, Generic)
 
--- | Supported field types
 data FieldType
   = FText
   | FInt
@@ -78,16 +99,15 @@ data FieldType
   | FBool
   | FUuid
   | FUtcTime
-  | FMoney                    -- ^ Stored as Int (cents)
-  | FVector FieldType         -- ^ Vector of items
-  | FList FieldType           -- ^ List of items
-  | FMaybe FieldType          -- ^ Optional field
-  | FEnum Text                -- ^ Reference to enum type
-  | FNested Text              -- ^ Reference to nested record
-  | FCustom Text              -- ^ Custom Haskell type
+  | FMoney
+  | FVector FieldType
+  | FList FieldType
+  | FMaybe FieldType
+  | FEnum Text
+  | FNested Text
+  | FCustom Text
   deriving (Show, Eq, Generic)
 
--- | Validation rules for fields
 data Validation
   = Required
   | MaxLength Int
@@ -99,10 +119,6 @@ data Validation
   | ValidUuid
   | Pattern Text
   deriving (Show, Eq, Generic)
-
--- ============================================
--- Smart Constructors
--- ============================================
 
 -- | Create a basic field
 field :: Text -> FieldType -> FieldDef
@@ -144,10 +160,6 @@ newtypeOver name innerType = RecordDef
   , recordDeriving = ["Show", "Generic"]
   }
 
--- ============================================
--- Field Modifiers
--- ============================================
-
 -- | Mark a field as required
 required :: FieldDef -> FieldDef
 required f = f { fieldValidations = Required : fieldValidations f }
@@ -156,7 +168,7 @@ required f = f { fieldValidations = Required : fieldValidations f }
 withValidations :: [Validation] -> FieldDef -> FieldDef
 withValidations vs f = f { fieldValidations = fieldValidations f ++ vs }
 
--- | Set custom database column name
+-- | Set database column name
 withDbColumn :: Text -> FieldDef -> FieldDef
 withDbColumn col f = f { fieldDbColumn = Just col }
 

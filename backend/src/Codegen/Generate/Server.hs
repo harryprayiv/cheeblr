@@ -12,7 +12,7 @@ import qualified Data.Text as T
 
 generateServerModule :: DomainSchema -> GeneratedModule
 generateServerModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaServerModuleName schema)
+  { modulePath = moduleNameToPath (generatedServerModule schema)
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -20,18 +20,13 @@ generateServerModule schema = GeneratedModule
       , ""
       , generateImports schema
       , ""
-      , "-- ============================================"
-      , "-- Server Implementation"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- SERVER IMPLEMENTATION"
+      , "-- =============================================="
       , ""
       , generateServerImpl schema
       ]
   }
-
--- Helper to get server module name
-schemaServerModuleName :: DomainSchema -> Text
-schemaServerModuleName schema = 
-  T.replace "API" "Server" (schemaApiModuleName schema) <> ".Generated"
 
 generatePragmas :: Text
 generatePragmas = T.unlines
@@ -41,8 +36,9 @@ generatePragmas = T.unlines
   ]
 
 generateModuleDecl :: DomainSchema -> Text
-generateModuleDecl schema = 
-  "module " <> schemaServerModuleName schema <> " where"
+generateModuleDecl schema =
+  let modName = generatedServerModule schema
+  in "module " <> modName <> " where"
 
 generateImports :: DomainSchema -> Text
 generateImports schema = T.unlines
@@ -56,19 +52,19 @@ generateImports schema = T.unlines
   , "import Database.PostgreSQL.Simple (Connection)"
   , "import Servant"
   , ""
-  , "import " <> schemaModuleName schema
-  , "import " <> schemaApiModuleName schema <> ".Generated"
-  , "import " <> schemaDbModuleName schema <> ".Generated"
+  , "import " <> generatedTypesModule schema
+  , "import " <> generatedApiModule schema
+  , "import " <> generatedDbModule schema
   ]
 
 generateServerImpl :: DomainSchema -> Text
-generateServerImpl schema = 
+generateServerImpl schema =
   case findMainRecord schema of
-    Nothing -> "-- No main record found to generate server for"
+    Nothing -> "-- No main record found for server generation"
     Just rec -> generateMainServer schema rec
 
 findMainRecord :: DomainSchema -> Maybe RecordDef
-findMainRecord schema = 
+findMainRecord schema =
   case filter isCollectionType (schemaRecords schema) of
     (r:_) -> Just r
     [] -> Nothing
@@ -78,7 +74,7 @@ findMainRecord schema =
       _ -> False
 
 generateMainServer :: DomainSchema -> RecordDef -> Text
-generateMainServer schema rec = 
+generateMainServer schema rec =
   let itemName = case recordKind rec of
         NewtypeOver inner -> extractItemName inner
         _ -> recordName rec
@@ -96,7 +92,7 @@ generateMainServer schema rec =
     , "    :<|> delete" <> itemName <> " pool"
     , "  where"
     , ""
-    , "    -- GET all items"
+    , "    -- | Get all items"
     , "    get" <> recName <> " :: Handler " <> responseType
     , "    get" <> recName <> " = do"
     , "      " <> T.toLower recName <> " <- liftIO $ getAll" <> itemName <> "s pool"
@@ -104,7 +100,7 @@ generateMainServer schema rec =
     , "      liftIO $ LBS.putStrLn $ encode $ " <> getDataCtor responseType <> " " <> T.toLower recName
     , "      return $ " <> getDataCtor responseType <> " " <> T.toLower recName
     , ""
-    , "    -- POST new item"
+    , "    -- | Add a new item"
     , "    add" <> itemName <> " :: " <> itemName <> " -> Handler " <> responseType
     , "    add" <> itemName <> " item = do"
     , "      liftIO $ putStrLn \"Received request to add " <> T.toLower itemName <> "\""
@@ -123,7 +119,7 @@ generateMainServer schema rec =
     , "          liftIO $ putStrLn $ \"Sending error response: \" ++ show (encode response)"
     , "          return response"
     , ""
-    , "    -- PUT update item"
+    , "    -- | Update an existing item"
     , "    update" <> itemName <> " :: " <> itemName <> " -> Handler " <> responseType
     , "    update" <> itemName <> " item = do"
     , "      liftIO $ putStrLn \"Received request to update " <> T.toLower itemName <> "\""
@@ -143,7 +139,7 @@ generateMainServer schema rec =
     ]
 
 extractItemName :: Text -> Text
-extractItemName innerType = 
+extractItemName innerType =
   case T.words innerType of
     [_, name] -> name
     _ -> innerType

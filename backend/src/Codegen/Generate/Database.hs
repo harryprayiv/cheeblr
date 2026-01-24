@@ -16,7 +16,7 @@ import Data.List (find)
 
 generateDbModule :: DomainSchema -> GeneratedModule
 generateDbModule schema = GeneratedModule
-  { modulePath = moduleNameToPath (schemaDbModuleName schema <> ".Generated")
+  { modulePath = moduleNameToPath (generatedDbModule schema)
   , moduleContent = T.unlines $ filter (not . T.null)
       [ generatePragmas
       , ""
@@ -24,45 +24,45 @@ generateDbModule schema = GeneratedModule
       , ""
       , generateImports schema
       , ""
-      , "-- ============================================"
-      , "-- Database Configuration"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- DATABASE CONFIGURATION"
+      , "-- =============================================="
       , ""
       , generateDbConfig
       , ""
-      , "-- ============================================"
-      , "-- Connection Helpers"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- CONNECTION HELPERS"
+      , "-- =============================================="
       , ""
       , generateConnectionHelpers
       , ""
-      , "-- ============================================"
-      , "-- Table Creation"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- TABLE CREATION"
+      , "-- =============================================="
       , ""
       , generateCreateTables schema
       , ""
-      , "-- ============================================"
-      , "-- Insert Operations"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- INSERT OPERATIONS"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateInsertFunction schema) (schemaRecords schema)
       , ""
-      , "-- ============================================"
-      , "-- Select Operations"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- SELECT OPERATIONS"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateSelectFunction schema) (schemaRecords schema)
       , ""
-      , "-- ============================================"
-      , "-- Update Operations"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- UPDATE OPERATIONS"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateUpdateFunction schema) (schemaRecords schema)
       , ""
-      , "-- ============================================"
-      , "-- Delete Operations"
-      , "-- ============================================"
+      , "-- =============================================="
+      , "-- DELETE OPERATIONS"
+      , "-- =============================================="
       , ""
       , T.intercalate "\n\n" $ mapMaybe (generateDeleteFunction schema) (schemaRecords schema)
       ]
@@ -77,8 +77,9 @@ generatePragmas = T.unlines
   ]
 
 generateModuleDecl :: DomainSchema -> Text
-generateModuleDecl schema = 
-  "module " <> schemaDbModuleName schema <> ".Generated where"
+generateModuleDecl schema =
+  let modName = generatedDbModule schema
+  in "module " <> modName <> " where"
 
 generateImports :: DomainSchema -> Text
 generateImports schema = T.unlines
@@ -96,7 +97,7 @@ generateImports schema = T.unlines
   , "import Servant (Handler)"
   , "import Servant.Server (err404)"
   , "import System.IO (hPutStrLn, stderr)"
-  , "import " <> schemaModuleName schema
+  , "import " <> generatedTypesModule schema
   ]
 
 generateDbConfig :: Text

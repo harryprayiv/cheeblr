@@ -8,9 +8,7 @@ import Codegen.Schema
 
 dispensarySchema :: DomainSchema
 dispensarySchema = DomainSchema
-  { schemaModuleName = "Types.Inventory"
-  , schemaDbModuleName = "DB.Inventory"
-  , schemaApiModuleName = "API.Inventory"
+  { schemaName = "Inventory"
   , schemaEnums =
       [ speciesEnum
       , itemCategoryEnum
