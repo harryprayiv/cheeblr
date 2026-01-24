@@ -50,8 +50,18 @@ generateModuleDecl schema =
 generateExports :: DomainSchema -> Text
 generateExports schema = 
   let apiTypes = mapMaybe (getApiTypeName schema) (schemaRecords schema)
-      proxyNames = map (\t -> T.toLower t <> "API") apiTypes
+      -- Get base names (MenuItem, Inventory) and create proxy names (menuitemAPI, inventoryAPI)
+      baseNames = mapMaybe (getBaseTypeName schema) (schemaRecords schema)
+      proxyNames = map (\t -> T.toLower t <> "API") baseNames
   in T.intercalate "\n  , " (apiTypes ++ proxyNames)
+
+getBaseTypeName :: DomainSchema -> RecordDef -> Maybe Text
+getBaseTypeName schema rec = case recordKind rec of
+  NewtypeOver _ -> Just $ recordName rec
+  RecordType
+    | recordName rec == "InventoryResponse" -> Nothing
+    | isNestedRecord schema rec -> Nothing
+    | otherwise -> Just $ recordName rec
 
 getApiTypeName :: DomainSchema -> RecordDef -> Maybe Text
 getApiTypeName schema rec = case recordKind rec of

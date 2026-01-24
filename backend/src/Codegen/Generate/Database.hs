@@ -88,7 +88,7 @@ generateImports schema = T.unlines
   , "import Control.Monad.IO.Class (liftIO)"
   , "import Control.Monad.Error.Class (throwError)"
   , "import qualified Data.Pool as Pool"
-  , "import Data.Text (Text, pack)"
+  , "import Data.Text (pack)"
   , "import qualified Data.Vector as V"
   , "import Data.UUID (UUID)"
   , "import Database.PostgreSQL.Simple"
@@ -334,7 +334,17 @@ generateSelectFunction schema rec = case recordKind rec of
   RecordType
     | rec.recordName == "InventoryResponse" -> Nothing
     | isNestedRecord schema rec -> Nothing
+    | isWrappedByCollection schema rec -> Nothing  -- Skip if wrapped by a newtype collection
     | otherwise -> Just $ generateSimpleSelect rec
+
+-- | Check if a record is wrapped by a newtype collection (e.g., MenuItem wrapped by Inventory)
+isWrappedByCollection :: DomainSchema -> RecordDef -> Bool
+isWrappedByCollection schema rec =
+  any wrapsThis (schemaRecords schema)
+  where
+    wrapsThis r = case recordKind r of
+      NewtypeOver inner -> recordName rec `T.isInfixOf` inner
+      _ -> False
 
 isNestedRecord :: DomainSchema -> RecordDef -> Bool
 isNestedRecord schema rec =

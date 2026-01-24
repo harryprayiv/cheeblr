@@ -61,11 +61,11 @@ library
                    , Codegen.Generate.API
                    , Codegen.Generate.Server
                    , Schemas.Dispensary
-                   -- Generated modules (created by domain-codegen)
-                   , Generated.Types.Inventory
-                   , Generated.DB.Inventory
-                   , Generated.API.Inventory
-                   , Generated.Server.Inventory
+                --    -- Generated modules (created by domain-codegen)
+                --    , Generated.Types.Inventory
+                --    , Generated.DB.Inventory
+                --    , Generated.API.Inventory
+                --    , Generated.Server.Inventory
     build-depends: refined
                  , string-conversions
                  , filepath

@@ -48,7 +48,6 @@ generateImports schema = T.unlines
   , "import qualified Data.ByteString.Lazy.Char8 as LBS"
   , "import Data.Pool (Pool)"
   , "import Data.Text (pack)"
-  , "import Data.UUID (UUID)"
   , "import Database.PostgreSQL.Simple (Connection)"
   , "import Servant"
   , ""

@@ -51,7 +51,8 @@ generateTypesModule schema = GeneratedModule
       , "-- JSON INSTANCES"
       , "-- =============================================="
       , ""
-      , T.intercalate "\n" $ map generateAesonInstances (schemaEnums schema)
+      , T.intercalate "\n" $ map generateAesonInstances 
+          (filter (not . hasDerivedAeson) $ schemaEnums schema)
       , T.intercalate "\n" $ map generateRecordAesonInstances
           (filter isRegularRecord $ schemaRecords schema)
       , generateNewtypeAesonInstances
@@ -72,6 +73,9 @@ generateTypesModule schema = GeneratedModule
     isNewtype r = case recordKind r of
       NewtypeOver _ -> True
       _ -> False
+
+    hasDerivedAeson e = 
+      "FromJSON" `elem` enumDeriving e || "ToJSON" `elem` enumDeriving e
 
 generatePragmas :: Text
 generatePragmas = T.unlines
