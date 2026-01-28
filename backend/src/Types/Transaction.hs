@@ -12,6 +12,7 @@ import Data.Aeson
 import GHC.Generics ( Generic )
 import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
 import qualified Data.Text as T
+import Data.List (isPrefixOf)
 
 data TransactionStatus
   = Created
@@ -415,24 +416,24 @@ parseDiscountType typ _
 instance FromRow TaxRecord where
   fromRow =
     TaxRecord
-      <$> (read <$> field)  -- taxCategory
-      <*> field  -- taxRate
-      <*> field  -- taxAmount
-      <*> field  -- taxDescription
+      <$> (parseTaxCategory <$> field)
+      <*> field
+      <*> field
+      <*> field
 
 -- FromRow instance for PaymentTransaction
 instance FromRow PaymentTransaction where
   fromRow =
     PaymentTransaction
-      <$> field  -- paymentId
-      <*> field  -- paymentTransactionId
-      <*> (read <$> field)  -- paymentMethod
-      <*> field  -- paymentAmount
-      <*> field  -- paymentTendered
-      <*> field  -- paymentChange
-      <*> field  -- paymentReference
-      <*> field  -- paymentApproved
-      <*> field  -- paymentAuthorizationCode
+      <$> field
+      <*> field
+      <*> (parsePaymentMethod <$> field)
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
 
 parseTransactionStatus :: String -> TransactionStatus
 parseTransactionStatus "CREATED" = Created
@@ -450,3 +451,37 @@ parseTransactionType "INVENTORY_ADJUSTMENT" = InventoryAdjustment
 parseTransactionType "MANAGER_COMP" = ManagerComp
 parseTransactionType "ADMINISTRATIVE" = Administrative
 parseTransactionType s = error $ "Invalid transaction type: " ++ s
+
+parsePaymentMethod :: String -> PaymentMethod
+parsePaymentMethod "CASH" = Cash
+parsePaymentMethod "Cash" = Cash
+parsePaymentMethod "DEBIT" = Debit
+parsePaymentMethod "Debit" = Debit
+parsePaymentMethod "CREDIT" = Credit
+parsePaymentMethod "Credit" = Credit
+parsePaymentMethod "ACH" = ACH
+parsePaymentMethod "GIFT_CARD" = GiftCard
+parsePaymentMethod "GiftCard" = GiftCard
+parsePaymentMethod "STORED_VALUE" = StoredValue
+parsePaymentMethod "StoredValue" = StoredValue
+parsePaymentMethod "MIXED" = Mixed
+parsePaymentMethod "Mixed" = Mixed
+parsePaymentMethod s
+  | "OTHER:" `isPrefixOf` s = Other (T.pack $ drop 6 s)
+  | "Other:" `isPrefixOf` s = Other (T.pack $ drop 6 s)
+  | otherwise = Other (T.pack s)
+
+parseTaxCategory :: String -> TaxCategory
+parseTaxCategory "REGULAR_SALES_TAX" = RegularSalesTax
+parseTaxCategory "RegularSalesTax" = RegularSalesTax
+parseTaxCategory "EXCISE_TAX" = ExciseTax
+parseTaxCategory "ExciseTax" = ExciseTax
+parseTaxCategory "CANNABIS_TAX" = CannabisTax
+parseTaxCategory "CannabisTax" = CannabisTax
+parseTaxCategory "LOCAL_TAX" = LocalTax
+parseTaxCategory "LocalTax" = LocalTax
+parseTaxCategory "MEDICAL_TAX" = MedicalTax
+parseTaxCategory "MedicalTax" = MedicalTax
+parseTaxCategory "NO_TAX" = NoTax
+parseTaxCategory "NoTax" = NoTax
+parseTaxCategory s = error $ "Unknown TaxCategory: " ++ s
