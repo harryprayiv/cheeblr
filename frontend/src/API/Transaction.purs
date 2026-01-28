@@ -3,16 +3,17 @@ module API.Transaction where
 import Prelude
 
 import Data.Either (Either(..))
+import Data.Maybe (Maybe, maybe)
 import Effect.Aff (Aff, attempt, error, throwError)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import NetworkConfig (currentConfig)
-import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
 import Types.Register (CloseRegisterRequest, CloseRegisterResult, OpenRegisterRequest, Register)
+import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
 import Types.UUID (UUID)
-import Yoga.JSON (writeJSON)
+import Yoga.JSON (readJSON_, writeJSON)
 
 baseUrl :: String
 baseUrl = currentConfig.apiBaseUrl
@@ -127,13 +128,19 @@ createTransaction transaction = do
             errorText
         )
 
+type ErrorResponse = { error :: String }
+
+parseErrorResponse :: String -> String
+parseErrorResponse str = 
+  maybe str _.error (readJSON_ str :: Maybe ErrorResponse)
+
 addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)
 addTransactionItem item = do
   let content = writeJSON item
   liftEffect $ Console.log "Adding item to transaction..."
   liftEffect $ Console.log $ "Sending content: " <> content
 
-  handleResponse "addTransactionItem" do
+  result <- attempt do
     response <- fetch (baseUrl <> "/transaction/item")
       { method: POST
       , body: content
@@ -143,7 +150,18 @@ addTransactionItem item = do
           , "Origin": currentConfig.appOrigin
           }
       }
-    fromJSON response.json
+    
+    if response.status >= 200 && response.status < 300
+      then fromJSON response.json
+      else do
+        errorText <- response.text
+        let cleanError = parseErrorResponse errorText
+        liftEffect $ Console.error $ "Server error: " <> cleanError
+        throwError (error cleanError)
+
+  pure case result of
+    Left err -> Left $ show err
+    Right parsed -> Right parsed
 
 removeTransactionItem :: UUID -> Aff (Either String Unit)
 removeTransactionItem itemId = do
