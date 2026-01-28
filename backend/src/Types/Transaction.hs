@@ -1,4 +1,5 @@
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Types.Transaction where
@@ -7,9 +8,10 @@ import Data.UUID (UUID)
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.Scientific (Scientific)
-import Data.Aeson ( ToJSON, FromJSON(parseJSON), (.:), (.:?), withObject )
+import Data.Aeson
 import GHC.Generics ( Generic )
 import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
+import qualified Data.Text as T
 
 data TransactionStatus
   = Created
@@ -54,9 +56,6 @@ data PaymentMethod
   | Mixed
   | Other Text
   deriving (Show, Eq, Ord, Generic, Read)
-
-instance ToJSON PaymentMethod
-instance FromJSON PaymentMethod
 
 data TaxCategory
   = RegularSalesTax
@@ -127,8 +126,37 @@ data PaymentTransaction = PaymentTransaction
   , paymentAuthorizationCode :: Maybe Text
   } deriving (Show, Eq, Generic)
 
+instance ToJSON PaymentMethod where
+  toJSON Cash = String "Cash"
+  toJSON Debit = String "Debit"
+  toJSON Credit = String "Credit"
+  toJSON ACH = String "ACH"
+  toJSON GiftCard = String "GiftCard"
+  toJSON StoredValue = String "StoredValue"
+  toJSON Mixed = String "Mixed"
+  toJSON (Other t) = String ("Other:" <> t)
+
 instance ToJSON PaymentTransaction
--- instance FromJSON PaymentTransaction
+
+instance FromJSON PaymentMethod where
+  parseJSON = withText "PaymentMethod" $ \case
+    "Cash" -> pure Cash
+    "CASH" -> pure Cash
+    "Debit" -> pure Debit
+    "DEBIT" -> pure Debit
+    "Credit" -> pure Credit
+    "CREDIT" -> pure Credit
+    "ACH" -> pure ACH
+    "GiftCard" -> pure GiftCard
+    "GIFT_CARD" -> pure GiftCard
+    "StoredValue" -> pure StoredValue
+    "STORED_VALUE" -> pure StoredValue
+    "Mixed" -> pure Mixed
+    "MIXED" -> pure Mixed
+    other
+      | "Other:" `T.isPrefixOf` other -> pure $ Other (T.drop 6 other)
+      | "OTHER:" `T.isPrefixOf` other -> pure $ Other (T.drop 6 other)
+      | otherwise -> pure $ Other other
 
 instance FromJSON PaymentTransaction where
   parseJSON = withObject "PaymentTransaction" $ \v -> PaymentTransaction
