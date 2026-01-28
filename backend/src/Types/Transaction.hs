@@ -7,8 +7,8 @@ import Data.UUID (UUID)
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.Scientific (Scientific)
-import Data.Aeson (ToJSON(..), FromJSON(..))
-import GHC.Generics
+import Data.Aeson ( ToJSON, FromJSON(parseJSON), (.:), (.:?), withObject )
+import GHC.Generics ( Generic )
 import Database.PostgreSQL.Simple.FromRow (FromRow(..), field)
 
 data TransactionStatus
@@ -128,7 +128,19 @@ data PaymentTransaction = PaymentTransaction
   } deriving (Show, Eq, Generic)
 
 instance ToJSON PaymentTransaction
-instance FromJSON PaymentTransaction
+-- instance FromJSON PaymentTransaction
+
+instance FromJSON PaymentTransaction where
+  parseJSON = withObject "PaymentTransaction" $ \v -> PaymentTransaction
+    <$> v .: "paymentId"
+    <*> v .: "paymentTransactionId"
+    <*> v .: "paymentMethod"
+    <*> v .: "paymentAmount"
+    <*> v .: "paymentTendered"
+    <*> v .: "paymentChange"
+    <*> v .:? "paymentReference"        -- .:? handles missing OR null -> Nothing
+    <*> v .: "paymentApproved"
+    <*> v .:? "paymentAuthorizationCode" -- .:? handles missing OR null -> Nothing
 
 data Transaction = Transaction
   { transactionId :: UUID
@@ -155,7 +167,30 @@ data Transaction = Transaction
   } deriving (Show, Eq, Generic)
 
 instance ToJSON Transaction
-instance FromJSON Transaction
+
+instance FromJSON Transaction where
+  parseJSON = withObject "Transaction" $ \v -> Transaction
+    <$> v .: "transactionId"
+    <*> v .: "transactionStatus"
+    <*> v .: "transactionCreated"
+    <*> v .:? "transactionCompleted"
+    <*> v .:? "transactionCustomerId"
+    <*> v .: "transactionEmployeeId"
+    <*> v .: "transactionRegisterId"
+    <*> v .: "transactionLocationId"
+    <*> v .: "transactionItems"
+    <*> v .: "transactionPayments"
+    <*> v .: "transactionSubtotal"
+    <*> v .: "transactionDiscountTotal"
+    <*> v .: "transactionTaxTotal"
+    <*> v .: "transactionTotal"
+    <*> v .: "transactionType"
+    <*> v .: "transactionIsVoided"
+    <*> v .:? "transactionVoidReason"
+    <*> v .: "transactionIsRefunded"
+    <*> v .:? "transactionRefundReason"
+    <*> v .:? "transactionReferenceTransactionId"
+    <*> v .:? "transactionNotes"
 
 data LedgerEntryType
   = SaleEntry

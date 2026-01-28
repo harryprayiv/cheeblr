@@ -11,10 +11,14 @@ import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap)
 import Data.Number as Number
 import Data.String (drop, take)
+import Data.Nullable (Nullable, toNullable)
 import Foreign (ForeignError(..), fail)
 import Foreign.Index (readProp)
 import Types.UUID (UUID)
 import Yoga.JSON (class ReadForeign, class WriteForeign, writeImpl, readImpl)
+
+maybeToNullable :: forall a. Maybe a -> Nullable a
+maybeToNullable = toNullable
 
 data TransactionStatus
   = Created
@@ -353,15 +357,25 @@ instance writeForeignTransactionItem :: WriteForeign TransactionItem where
   writeImpl (TransactionItem item) = writeImpl item
 
 instance writeForeignPaymentTransaction :: WriteForeign PaymentTransaction where
-  writeImpl (PaymentTransaction payment) = writeImpl payment
+  writeImpl (PaymentTransaction p) = writeImpl
+    { paymentId: p.paymentId
+    , paymentTransactionId: p.paymentTransactionId
+    , paymentMethod: p.paymentMethod
+    , paymentAmount: p.paymentAmount
+    , paymentTendered: p.paymentTendered
+    , paymentChange: p.paymentChange
+    , paymentReference: maybeToNullable p.paymentReference
+    , paymentApproved: p.paymentApproved
+    , paymentAuthorizationCode: maybeToNullable p.paymentAuthorizationCode
+    }
 
 instance writeForeignTransaction :: WriteForeign Transaction where
   writeImpl (Transaction tx) = writeImpl
     { transactionId: tx.transactionId
     , transactionStatus: tx.transactionStatus
     , transactionCreated: tx.transactionCreated
-    , transactionCompleted: tx.transactionCompleted
-    , transactionCustomerId: tx.transactionCustomerId
+    , transactionCompleted: maybeToNullable tx.transactionCompleted
+    , transactionCustomerId: maybeToNullable tx.transactionCustomerId
     , transactionEmployeeId: tx.transactionEmployeeId
     , transactionRegisterId: tx.transactionRegisterId
     , transactionLocationId: tx.transactionLocationId
@@ -373,11 +387,11 @@ instance writeForeignTransaction :: WriteForeign Transaction where
     , transactionTotal: tx.transactionTotal
     , transactionType: tx.transactionType
     , transactionIsVoided: tx.transactionIsVoided
-    , transactionVoidReason: tx.transactionVoidReason
+    , transactionVoidReason: maybeToNullable tx.transactionVoidReason
     , transactionIsRefunded: tx.transactionIsRefunded
-    , transactionRefundReason: tx.transactionRefundReason
-    , transactionReferenceTransactionId: tx.transactionReferenceTransactionId
-    , transactionNotes: tx.transactionNotes
+    , transactionRefundReason: maybeToNullable tx.transactionRefundReason
+    , transactionReferenceTransactionId: maybeToNullable tx.transactionReferenceTransactionId
+    , transactionNotes: maybeToNullable tx.transactionNotes
     }
 
 instance writeForeignTransactionType :: WriteForeign TransactionType where

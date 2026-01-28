@@ -508,9 +508,9 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                         , D.div [ DA.klass_ "col qty-col" ]
                                             [ text_ (show itemData.transactionItemQuantity) ]
                                         , D.div [ DA.klass_ "col price-col" ]
-                                            [ text_ (show itemData.transactionItemPricePerUnit) ]
+                                            [ text_ (formatDiscretePrice (toDiscrete itemData.transactionItemPricePerUnit)) ]
                                         , D.div [ DA.klass_ "col total-col" ]
-                                            [ text_ (show itemData.transactionItemTotal) ]
+                                            [ text_ (formatDiscretePrice (toDiscrete itemData.transactionItemTotal)) ]
                                         , D.div [ DA.klass_ "col actions-col" ]
                                             [ D.button
                                                 [ DA.klass_ "remove-btn"
