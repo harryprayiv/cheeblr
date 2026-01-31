@@ -1,11 +1,10 @@
-module UI.Common.Form where
+module Components.Form where
 
 import Prelude
 
 import Data.Enum (class BoundedEnum)
 import Data.Foldable (for_)
 import Data.Maybe (Maybe(..))
-import Data.String (Pattern(..), Replacement(..), replaceAll)
 import Deku.Attribute (Attribute)
 import Deku.Control (text, text_, elementify)
 import Deku.Core (Nut, attributeAtYourOwnRisk)
