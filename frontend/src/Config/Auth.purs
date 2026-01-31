@@ -39,7 +39,7 @@ devCustomer =
 devCashier :: DevUser
 devCashier =
   { userId: UUID("0a6f2deb-892b-4411-8025-08c1a4d61229")
-  , userName: "Cashier-1"
+  , userName: "cashier-1"
   , email: Just "cashier@example.com"
   , role: Cashier
   , locationId: Nothing

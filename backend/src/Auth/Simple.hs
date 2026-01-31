@@ -27,35 +27,35 @@ type AuthHeader = Header "X-User-Id" Text
 devUsers :: Map Text AuthenticatedUser
 devUsers = Map.fromList
   [ ("customer-1", AuthenticatedUser
-      { auUserId = read "11111111-1111-1111-1111-111111111111"
+      { auUserId = read "8244082f-a6bc-4d6c-9427-64a0ecdc10db"
       , auUserName = "Test Customer"
-      , auEmail = Just "customer@test.com"
+      , auEmail = Just "customer@example.com"
       , auRole = Customer
       , auLocationId = Nothing
       , auCreatedAt = read "2024-01-01 00:00:00 UTC"
       })
-  , ("Cashier-1", AuthenticatedUser
-      { auUserId = read "22222222-2222-2222-2222-222222222222"
+  , ("cashier-1", AuthenticatedUser
+      { auUserId = read "0a6f2deb-892b-4411-8025-08c1a4d61229"
       , auUserName = "Test Cashier"
-      , auEmail = Just "Cashier@test.com"
+      , auEmail = Just "cashier@example.com"
       , auRole = Cashier
       , auLocationId = Just (read "b2bd4b3a-d50f-4c04-90b1-01266735876b")
       , auCreatedAt = read "2024-01-01 00:00:00 UTC"
       })
   , ("manager-1", AuthenticatedUser
-      { auUserId = read "33333333-3333-3333-3333-333333333333"
+      { auUserId = read "8b75ea4a-00a4-4a2a-a5d5-a1bab8883802"
       , auUserName = "Test Manager"
-      , auEmail = Just "manager@test.com"
+      , auEmail = Just "manager@example.com"
       , auRole = Manager
       , auLocationId = Just (read "b2bd4b3a-d50f-4c04-90b1-01266735876b")
       , auCreatedAt = read "2024-01-01 00:00:00 UTC"
       })
   , ("admin-1", AuthenticatedUser
-      { auUserId = read "44444444-4444-4444-4444-444444444444"
+      { auUserId = read "d3a1f4f0-c518-4db3-aa43-e80b428d6304"
       , auUserName = "Test Admin"
-      , auEmail = Just "admin@test.com"
+      , auEmail = Just "admin@example.com"
       , auRole = Admin
-      , auLocationId = Nothing  -- Admin can see all locations
+      , auLocationId = Nothing  -- TODO: all locations
       , auCreatedAt = read "2024-01-01 00:00:00 UTC"
       })
   ]
