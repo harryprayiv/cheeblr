@@ -7,7 +7,7 @@
 module Types.Inventory where
 
 import Data.Aeson
-    ( ToJSON(toJSON), FromJSON(parseJSON), object, KeyValue((.=)), (.:), (.:?), withObject )
+    ( ToJSON(toJSON), FromJSON(parseJSON), object, KeyValue((.=)), (.:), withObject )
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID ( UUID )
