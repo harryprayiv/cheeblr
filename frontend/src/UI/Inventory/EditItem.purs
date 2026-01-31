@@ -23,7 +23,7 @@ import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Types.Inventory (InventoryResponse(..), MenuItem(..), StrainLineage(..))
-import UI.Components.Form (makeDescriptionField, makeDropdown, makeTextField)
+import Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber, formatCentsToDecimal)
 import Utils.Validation (validateMenuItem)
 

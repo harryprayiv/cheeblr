@@ -2,11 +2,11 @@ module API.Request where
 
 import Prelude
 
-import Affjax (Error, Request, Response, URL, defaultRequest, printError, request)
+import Affjax (Error, Request, Response, URL, defaultRequest, printError)
 import Affjax.RequestBody as RequestBody
 import Affjax.RequestHeader (RequestHeader(..))
 import Affjax.ResponseFormat as ResponseFormat
-import Data.Argonaut.Core (Json)
+import Affjax.Web as AW
 import Data.Either (Either(..))
 import Data.HTTP.Method (Method(..))
 import Data.Maybe (Maybe(..))
@@ -21,23 +21,23 @@ import Yoga.JSON (class ReadForeign, class WriteForeign, readJSON_, writeJSON)
 apiBaseUrl :: String
 apiBaseUrl = "http://localhost:8080"
 
--- | Build a request with authentication header
+-- | Build a request with authentication header (returns string for Yoga.JSON parsing)
 mkAuthenticatedRequest
   :: URL
   -> Method
-  -> Maybe Json
+  -> Maybe String
   -> UUID
-  -> Request Json
+  -> Request String
 mkAuthenticatedRequest url method body userId =
   defaultRequest
     { url = apiBaseUrl <> url
     , method = Left method
     , headers = 
-        [ RequestHeader "X-User-Id" userId
+        [ RequestHeader "X-User-Id" (show userId)
         , RequestHeader "Content-Type" "application/json"
         ]
-    , content = RequestBody.json <$> body
-    , responseFormat = ResponseFormat.json
+    , content = RequestBody.string <$> body
+    , responseFormat = ResponseFormat.string
     }
 
 -- | Perform an authenticated GET request
@@ -49,7 +49,7 @@ authGet
   -> Aff (Either String a)
 authGet authRef url = do
   userId <- liftEffect $ getCurrentUserId authRef
-  response <- request (mkAuthenticatedRequest url GET Nothing userId)
+  response <- AW.request (mkAuthenticatedRequest url GET Nothing userId)
   pure $ parseResponse response
 
 -- | Perform an authenticated POST request
@@ -64,7 +64,7 @@ authPost
 authPost authRef url body = do
   userId <- liftEffect $ getCurrentUserId authRef
   let jsonBody = writeJSON body
-  response <- request (mkAuthenticatedRequest url POST (Just jsonBody) userId)
+  response <- AW.request (mkAuthenticatedRequest url POST (Just jsonBody) userId)
   pure $ parseResponse response
 
 -- | Perform an authenticated PUT request
@@ -79,7 +79,7 @@ authPut
 authPut authRef url body = do
   userId <- liftEffect $ getCurrentUserId authRef
   let jsonBody = writeJSON body
-  response <- request (mkAuthenticatedRequest url PUT (Just jsonBody) userId)
+  response <- AW.request (mkAuthenticatedRequest url PUT (Just jsonBody) userId)
   pure $ parseResponse response
 
 -- | Perform an authenticated DELETE request
@@ -91,7 +91,7 @@ authDelete
   -> Aff (Either String a)
 authDelete authRef url = do
   userId <- liftEffect $ getCurrentUserId authRef
-  response <- request (mkAuthenticatedRequest url DELETE Nothing userId)
+  response <- AW.request (mkAuthenticatedRequest url DELETE Nothing userId)
   pure $ parseResponse response
 
 -- | Perform an authenticated PATCH request
@@ -106,20 +106,20 @@ authPatch
 authPatch authRef url body = do
   userId <- liftEffect $ getCurrentUserId authRef
   let jsonBody = writeJSON body
-  response <- request (mkAuthenticatedRequest url PATCH (Just jsonBody) userId)
+  response <- AW.request (mkAuthenticatedRequest url PATCH (Just jsonBody) userId)
   pure $ parseResponse response
 
 -- | Parse JSON response
 parseResponse
   :: forall a
    . ReadForeign a
-  => Either Error (Response Json)
+  => Either Error (Response String)
   -> Either String a
 parseResponse (Left err) = Left (printError err)
 parseResponse (Right res) =
   case readJSON_ res.body of
-    Left e -> Left $ "JSON parse error: " <> show e
-    Right a -> Right a
+    Nothing -> Left "JSON parse error"
+    Just a -> Right a
 
 -- | Helper for endpoints that return Unit/void
 authPostUnit
@@ -132,7 +132,7 @@ authPostUnit
 authPostUnit authRef url body = do
   userId <- liftEffect $ getCurrentUserId authRef
   let jsonBody = writeJSON body
-  response <- request (mkAuthenticatedRequest url POST (Just jsonBody) userId)
+  response <- AW.request (mkAuthenticatedRequest url POST (Just jsonBody) userId)
   pure $ case response of
     Left err -> Left (printError err)
     Right _ -> Right unit
@@ -144,7 +144,7 @@ authDeleteUnit
   -> Aff (Either String Unit)
 authDeleteUnit authRef url = do
   userId <- liftEffect $ getCurrentUserId authRef
-  response <- request (mkAuthenticatedRequest url DELETE Nothing userId)
+  response <- AW.request (mkAuthenticatedRequest url DELETE Nothing userId)
   pure $ case response of
     Left err -> Left (printError err)
     Right _ -> Right unit

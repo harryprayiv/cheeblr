@@ -2,18 +2,15 @@ module Components.AuthGuard where
 
 import Prelude
 
-import Deku.Core (Nut)
-import Deku.Control (blank)
+import Deku.Core (Nut, fixed)
+import Deku.Hooks (guard)
 import FRP.Poll (Poll)
 import Types.Auth (UserCapabilities, UserRole(..))
 
 -- | Render children only if capability check passes
 whenCapable :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut
 whenCapable capsPoll checkFn children =
-  capsPoll <#> \caps ->
-    if checkFn caps
-    then children
-    else blank
+  guard (capsPoll <#> checkFn) children
 
 -- | Render children only if user can view inventory
 whenCanViewInventory :: Poll UserCapabilities -> Nut -> Nut
@@ -78,10 +75,7 @@ whenCanViewCompliance caps = whenCapable caps _.capCanViewCompliance
 -- | Render children only if user has specific role or higher
 whenRoleAtLeast :: Poll UserRole -> UserRole -> Nut -> Nut
 whenRoleAtLeast rolePoll minRole children =
-  rolePoll <#> \role ->
-    if role >= minRole
-    then children
-    else blank
+  guard (rolePoll <#> (_ >= minRole)) children
 
 -- | Render children only if user is a Cashier or higher
 whenCashierOrAbove :: Poll UserRole -> Nut -> Nut
@@ -96,17 +90,15 @@ whenAdmin :: Poll UserRole -> Nut -> Nut
 whenAdmin role = whenRoleAtLeast role Admin
 
 -- | Render with fallback for unauthorized users
+-- Uses two guards to show either authorized or unauthorized content
 withFallback :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut -> Nut
 withFallback capsPoll checkFn authorized unauthorized =
-  capsPoll <#> \caps ->
-    if checkFn caps
-    then authorized
-    else unauthorized
+  fixed
+    [ guard (capsPoll <#> checkFn) authorized
+    , guard (capsPoll <#> (checkFn >>> not)) unauthorized
+    ]
 
--- | Simple disabled wrapper - renders but visually disabled
+-- | Simple disabled wrapper - for now just renders children
+-- TODO: implement actual disabled styling based on capability
 disabledUnless :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut
-disabledUnless capsPoll checkFn children =
-  capsPoll <#> \caps ->
-    if checkFn caps
-    then children
-    else children -- In real implementation, would wrap with disabled styling
+disabledUnless _capsPoll _checkFn children = children

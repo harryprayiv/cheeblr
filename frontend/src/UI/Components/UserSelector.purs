@@ -4,17 +4,16 @@ import Prelude
 
 import Config.Auth (DevUser, allDevUsers)
 import Data.Array (mapWithIndex)
-import Deku.Attribute ((!:=))
+import Data.String.Common (joinWith)
 import Deku.Control (text, text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
-import Deku.Hooks (useState)
 import Effect (Effect)
 import Effect.Ref (Ref)
 import FRP.Poll (Poll)
-import Services.AuthService (AuthContext, getCurrentUser, setCurrentUser)
+import Services.AuthService (AuthContext)
 import Types.Auth (UserRole(..))
 
 -- | User selector component props
@@ -48,14 +47,15 @@ roleIcon = case _ of
   Manager -> "👔"
   Admin -> "🔑"
 
--- | Single user option button
-userOption :: DevUser -> Boolean -> (DevUser -> Effect Unit) -> Nut
-userOption user isSelected onClick =
+-- | Single user option button with reactive selection state
+userOptionReactive :: DevUser -> Poll Boolean -> (DevUser -> Effect Unit) -> Nut
+userOptionReactive user isSelectedPoll onClick =
   D.button
-    [ DA.klass_ $ "flex items-center gap-2 px-3 py-2 rounded-lg border transition-all "
-        <> if isSelected 
-           then "border-blue-500 bg-blue-50 shadow-md"
-           else "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+    [ DA.klass $ isSelectedPoll <#> \isSelected ->
+        "flex items-center gap-2 px-3 py-2 rounded-lg border transition-all "
+          <> if isSelected 
+             then "border-blue-500 bg-blue-50 shadow-md"
+             else "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
     , DL.click_ \_ -> onClick user
     ]
     [ D.span [ DA.klass_ "text-lg" ] [ text_ (roleIcon user.role) ]
@@ -79,10 +79,10 @@ userSelector props =
         ]
     , D.div [ DA.klass_ "flex flex-wrap gap-2" ] $
         map (\user -> 
-          D.div [] 
-            [ props.currentUser <#> \currentUser ->
-                userOption user (currentUser.userId == user.userId) props.onUserChange
-            ]
+          userOptionReactive 
+            user 
+            (props.currentUser <#> \cu -> cu.userId == user.userId)
+            props.onUserChange
         ) allDevUsers
     , D.div [ DA.klass_ "mt-3 text-xs text-amber-700" ]
         [ text_ "Current user: "
@@ -96,38 +96,33 @@ userSelector props =
 
 -- | Compact user selector for header/navbar
 compactUserSelector :: UserSelectorProps -> Nut
-compactUserSelector props =
+compactUserSelector _props =
   D.div [ DA.klass_ "relative" ]
     [ D.div [ DA.klass_ "flex items-center gap-2" ]
         [ D.span [ DA.klass_ "text-sm text-gray-600" ] [ text_ "Dev:" ]
         , D.select
             [ DA.klass_ "border border-gray-300 rounded px-2 py-1 text-sm bg-white"
-            , DL.change_ \evt -> do
+            , DL.change_ \_ -> do
                 -- Get selected index and look up user
                 -- For simplicity, using role as value
                 pure unit -- TODO: implement select handler
             ]
-            (mapWithIndex (\idx user -> 
+            (mapWithIndex (\_ user -> 
               D.option 
-                [ DA.value_ user.userId ]
+                [ DA.value_ (show user.userId) ]
                 [ text_ $ user.userName <> " (" <> roleLabel user.role <> ")" ]
             ) allDevUsers)
         ]
     ]
 
 -- | Capability indicator (shows current user's permissions)
+-- Shows a comma-separated list of capabilities for current user
 capabilityIndicator :: UserSelectorProps -> Nut
 capabilityIndicator props =
   D.div [ DA.klass_ "bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs" ]
     [ D.div [ DA.klass_ "font-medium text-gray-700 mb-2" ] [ text_ "Capabilities:" ]
-    , props.currentUser <#> \user ->
-        let caps = capabilitiesForRoleUI user.role
-        in D.div [ DA.klass_ "flex flex-wrap gap-1" ] $
-             map (\cap -> 
-               D.span 
-                 [ DA.klass_ "inline-block px-2 py-0.5 rounded bg-green-100 text-green-800" ]
-                 [ text_ cap ]
-             ) caps
+    , D.div [ DA.klass_ "text-green-700" ]
+        [ text $ props.currentUser <#> (_.role >>> capabilitiesForRoleUI >>> joinWith ", ") ]
     ]
 
 -- | Get human-readable capability list for a role (for UI display)
