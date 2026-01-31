@@ -7,9 +7,11 @@ import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Now (now)
+import Effect.Ref (Ref)
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import NetworkConfig (currentConfig)
+import Services.AuthService (AuthContext, getCurrentUserId)
 import Types.Inventory (Inventory, InventoryResponse(..), MenuItem)
 import Config.LiveView (QueryMode(..), FetchConfig)
 import Yoga.JSON (writeJSON)
@@ -17,8 +19,13 @@ import Yoga.JSON (writeJSON)
 baseUrl :: String
 baseUrl = currentConfig.apiBaseUrl
 
-writeInventory :: MenuItem -> Aff (Either String InventoryResponse)
-writeInventory menuItem = do
+-- | Get the current user ID as a string for the X-User-Id header
+getUserIdHeader :: Ref AuthContext -> Aff String
+getUserIdHeader authRef = liftEffect $ show <$> getCurrentUserId authRef
+
+writeInventory :: Ref AuthContext -> MenuItem -> Aff (Either String InventoryResponse)
+writeInventory authRef menuItem = do
+  userId <- getUserIdHeader authRef
   result <- attempt do
     let content = writeJSON menuItem
     liftEffect $ Console.log "Creating new menu item..."
@@ -31,6 +38,7 @@ writeInventory menuItem = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
@@ -39,8 +47,9 @@ writeInventory menuItem = do
     Left err -> Left $ "Create error: " <> show err
     Right response -> Right response
 
-readInventory :: Aff (Either String InventoryResponse)
-readInventory = do
+readInventory :: Ref AuthContext -> Aff (Either String InventoryResponse)
+readInventory authRef = do
+  userId <- getUserIdHeader authRef
   result <- attempt do
     liftEffect $ Console.log $ "Fetching inventory from: " <> baseUrl <>
       "/inventory"
@@ -50,6 +59,7 @@ readInventory = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     liftEffect $ Console.log "Got response, parsing JSON..."
@@ -61,8 +71,9 @@ readInventory = do
     Left err -> Left $ "Failed to read inventory: " <> show err
     Right response -> Right response
 
-updateInventory :: MenuItem -> Aff (Either String InventoryResponse)
-updateInventory menuItem = do
+updateInventory :: Ref AuthContext -> MenuItem -> Aff (Either String InventoryResponse)
+updateInventory authRef menuItem = do
+  userId <- getUserIdHeader authRef
   result <- attempt do
     let content = writeJSON menuItem
     liftEffect $ Console.log "Updating menu item..."
@@ -75,6 +86,7 @@ updateInventory menuItem = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
 
@@ -84,8 +96,9 @@ updateInventory menuItem = do
     Left err -> Left $ "Update error: " <> show err
     Right response -> Right response
 
-deleteInventory :: String -> Aff (Either String InventoryResponse)
-deleteInventory itemId = do
+deleteInventory :: Ref AuthContext -> String -> Aff (Either String InventoryResponse)
+deleteInventory authRef itemId = do
+  userId <- getUserIdHeader authRef
   result <- attempt do
     response <- fetch (baseUrl <> "/inventory/" <> itemId)
       { method: DELETE
@@ -93,6 +106,7 @@ deleteInventory itemId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json :: Aff InventoryResponse
@@ -116,8 +130,9 @@ fetchInventoryFromJson config = do
     Left err -> Left $ "JSON fetch error: " <> show err
     Right inventory -> Right $ InventoryData inventory
 
-fetchInventoryFromHttp :: FetchConfig -> Aff (Either String InventoryResponse)
-fetchInventoryFromHttp config = do
+fetchInventoryFromHttp :: Ref AuthContext -> FetchConfig -> Aff (Either String InventoryResponse)
+fetchInventoryFromHttp authRef config = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log "Starting HTTP fetch..."
   liftEffect $ Console.log $ "Using endpoint: " <> config.apiEndpoint
   result <- attempt do
@@ -129,6 +144,7 @@ fetchInventoryFromHttp config = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
 
@@ -146,11 +162,11 @@ fetchInventoryFromHttp config = do
       pure $ Right response
 
 fetchInventory
-  :: FetchConfig -> QueryMode -> Aff (Either String InventoryResponse)
-fetchInventory config = case _ of
+  :: Ref AuthContext -> FetchConfig -> QueryMode -> Aff (Either String InventoryResponse)
+fetchInventory authRef config = case _ of
   JsonMode -> do
     liftEffect $ Console.log "Using JSON mode (local file)"
     fetchInventoryFromJson config
   HttpMode -> do
     liftEffect $ Console.log "Using HTTP mode (backend API)"
-    fetchInventoryFromHttp config
+    fetchInventoryFromHttp authRef config

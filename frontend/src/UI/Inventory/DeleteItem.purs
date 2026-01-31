@@ -15,10 +15,12 @@ import Deku.Hooks (useState, (<#~>))
 import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Types.Inventory (InventoryResponse(..))
 
-deleteItem :: String -> String -> Nut
-deleteItem itemId itemName = Deku.do
+deleteItem :: Ref AuthContext -> String -> String -> Nut
+deleteItem authRef itemId itemName = Deku.do
   setStatusMessage /\ statusMessageEvent <- useState ""
   setSubmitting /\ submittingEvent <- useState false
   setSuccess /\ successEvent <- useState false
@@ -48,7 +50,7 @@ deleteItem itemId itemName = Deku.do
             , DL.click_ \_ -> do
                 setSubmitting true
                 void $ setFiber =<< launchAff do
-                  result <- deleteInventory itemId
+                  result <- deleteInventory authRef itemId
                   liftEffect $ case result of
                     Right (Message msg) -> do
                       Console.log $ "Deletion successful: " <> msg
@@ -104,6 +106,6 @@ deleteItem itemId itemName = Deku.do
         ]
     ]
 
-renderDeleteConfirmation :: String -> String -> Nut
-renderDeleteConfirmation itemId itemName =
-  deleteItem itemId itemName
+renderDeleteConfirmation :: Ref AuthContext -> String -> String -> Nut
+renderDeleteConfirmation authRef itemId itemName =
+  deleteItem authRef itemId itemName

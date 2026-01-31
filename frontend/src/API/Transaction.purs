@@ -7,9 +7,11 @@ import Data.Maybe (Maybe, maybe)
 import Effect.Aff (Aff, attempt, error, throwError)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import NetworkConfig (currentConfig)
+import Services.AuthService (AuthContext, getCurrentUserId)
 import Types.Register (CloseRegisterRequest, CloseRegisterResult, OpenRegisterRequest, Register)
 import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
 import Types.UUID (UUID)
@@ -17,6 +19,10 @@ import Yoga.JSON (readJSON_, writeJSON)
 
 baseUrl :: String
 baseUrl = currentConfig.apiBaseUrl
+
+-- | Get the current user ID as a string for the X-User-Id header
+getUserIdHeader :: Ref AuthContext -> Aff String
+getUserIdHeader authRef = liftEffect $ show <$> getCurrentUserId authRef
 
 handleResponse :: forall a. String -> Aff a -> Aff (Either String a)
 handleResponse endpoint action = do
@@ -28,8 +34,9 @@ handleResponse endpoint action = do
       pure $ Left errorMsg
     Right response -> pure $ Right response
 
-getRegister :: UUID -> Aff (Either String Register)
-getRegister registerId = do
+getRegister :: Ref AuthContext -> UUID -> Aff (Either String Register)
+getRegister authRef registerId = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Fetching register: " <> show registerId
 
   handleResponse "getRegister" do
@@ -39,12 +46,14 @@ getRegister registerId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-createRegister :: Register -> Aff (Either String Register)
-createRegister register = do
+createRegister :: Ref AuthContext -> Register -> Aff (Either String Register)
+createRegister authRef register = do
+  userId <- getUserIdHeader authRef
   let content = writeJSON register
   liftEffect $ Console.log "Creating new register..."
   liftEffect $ Console.log $ "Sending content: " <> content
@@ -57,12 +66,14 @@ createRegister register = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-openRegister :: OpenRegisterRequest -> UUID -> Aff (Either String Register)
-openRegister request registerId = do
+openRegister :: Ref AuthContext -> OpenRegisterRequest -> UUID -> Aff (Either String Register)
+openRegister authRef request registerId = do
+  userId <- getUserIdHeader authRef
   let content = writeJSON request
   liftEffect $ Console.log $ "Opening register: " <> show registerId
   liftEffect $ Console.log $ "Sending content: " <> content
@@ -75,12 +86,14 @@ openRegister request registerId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-closeRegister :: CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
-closeRegister request registerId = do
+closeRegister :: Ref AuthContext -> CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
+closeRegister authRef request registerId = do
+  userId <- getUserIdHeader authRef
   let content = writeJSON request
   liftEffect $ Console.log $ "Closing register: " <> show registerId
   liftEffect $ Console.log $ "Sending content: " <> content
@@ -93,12 +106,14 @@ closeRegister request registerId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-createTransaction :: Transaction -> Aff (Either String Transaction)
-createTransaction transaction = do
+createTransaction :: Ref AuthContext -> Transaction -> Aff (Either String Transaction)
+createTransaction authRef transaction = do
+  userId <- getUserIdHeader authRef
   let content = writeJSON transaction
   liftEffect $ Console.log "Creating new transaction..."
   liftEffect $ Console.log $ "Sending content: " <> content
@@ -111,6 +126,7 @@ createTransaction transaction = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
 
@@ -134,8 +150,9 @@ parseErrorResponse :: String -> String
 parseErrorResponse str = 
   maybe str _.error (readJSON_ str :: Maybe ErrorResponse)
 
-addTransactionItem :: TransactionItem -> Aff (Either String TransactionItem)
-addTransactionItem item = do
+addTransactionItem :: Ref AuthContext -> TransactionItem -> Aff (Either String TransactionItem)
+addTransactionItem authRef item = do
+  userId <- getUserIdHeader authRef
   let content = writeJSON item
   liftEffect $ Console.log "Adding item to transaction..."
   liftEffect $ Console.log $ "Sending content: " <> content
@@ -148,6 +165,7 @@ addTransactionItem item = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     
@@ -163,8 +181,9 @@ addTransactionItem item = do
     Left err -> Left $ show err
     Right parsed -> Right parsed
 
-removeTransactionItem :: UUID -> Aff (Either String Unit)
-removeTransactionItem itemId = do
+removeTransactionItem :: Ref AuthContext -> UUID -> Aff (Either String Unit)
+removeTransactionItem authRef itemId = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Removing item from transaction: " <> show itemId
 
   handleResponse "removeTransactionItem" do
@@ -174,12 +193,14 @@ removeTransactionItem itemId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     pure unit
 
-clearTransaction :: UUID -> Aff (Either String Unit)
-clearTransaction transactionId = do
+clearTransaction :: Ref AuthContext -> UUID -> Aff (Either String Unit)
+clearTransaction authRef transactionId = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Clearing transaction: " <> show transactionId
 
   result <- attempt do
@@ -189,6 +210,7 @@ clearTransaction transactionId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     pure unit
@@ -198,8 +220,9 @@ clearTransaction transactionId = do
     Right _ -> Right unit
 
 addPaymentTransaction
-  :: PaymentTransaction -> Aff (Either String PaymentTransaction)
-addPaymentTransaction payment = do
+  :: Ref AuthContext -> PaymentTransaction -> Aff (Either String PaymentTransaction)
+addPaymentTransaction authRef payment = do
+  userId <- getUserIdHeader authRef
   let content = writeJSON payment
   liftEffect $ Console.log "Adding payment to transaction..."
   liftEffect $ Console.log $ "Sending content: " <> content
@@ -212,28 +235,31 @@ addPaymentTransaction payment = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-removePaymentTransaction :: UUID -> Aff (Either String Unit)
-removePaymentTransaction paymentId = do
+removePaymentTransaction :: Ref AuthContext -> UUID -> Aff (Either String Unit)
+removePaymentTransaction authRef paymentId = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Removing payment transaction: " <> show paymentId
 
   handleResponse "removePaymentTransaction" do
-    -- Fixed warning: ignored response with underscore
     _ <- fetch (baseUrl <> "/transaction/payment/" <> show paymentId)
       { method: DELETE
       , headers:
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     pure unit
 
-finalizeTransaction :: UUID -> Aff (Either String Transaction)
-finalizeTransaction transactionId = do
+finalizeTransaction :: Ref AuthContext -> UUID -> Aff (Either String Transaction)
+finalizeTransaction authRef transactionId = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Finalizing transaction: " <> show transactionId
 
   handleResponse "finalizeTransaction" do
@@ -244,12 +270,14 @@ finalizeTransaction transactionId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-getTransaction :: UUID -> Aff (Either String Transaction)
-getTransaction transactionId = do
+getTransaction :: Ref AuthContext -> UUID -> Aff (Either String Transaction)
+getTransaction authRef transactionId = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Fetching transaction: " <> show transactionId
 
   handleResponse "getTransaction" do
@@ -259,12 +287,14 @@ getTransaction transactionId = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json
 
-voidTransaction :: UUID -> String -> Aff (Either String Transaction)
-voidTransaction transactionId reason = do
+voidTransaction :: Ref AuthContext -> UUID -> String -> Aff (Either String Transaction)
+voidTransaction authRef transactionId reason = do
+  userId <- getUserIdHeader authRef
   liftEffect $ Console.log $ "Voiding transaction: " <> show transactionId
 
   handleResponse "voidTransaction" do
@@ -275,6 +305,7 @@ voidTransaction transactionId reason = do
           { "Content-Type": "application/json"
           , "Accept": "application/json"
           , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
           }
       }
     fromJSON response.json

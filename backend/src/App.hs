@@ -51,14 +51,17 @@ run = do
   putStrLn "=================================="
 
   let
-    -- Define custom header name with correct type
+    -- Define custom header names with correct type
     hXRequestedWith :: CI.CI B8.ByteString
     hXRequestedWith = CI.mk (B8.pack "x-requested-with")
+    
+    hXUserId :: CI.CI B8.ByteString
+    hXUserId = CI.mk (B8.pack "x-user-id")
     
     -- Very permissive CORS policy for development
     corsPolicy = simpleCorsResourcePolicy
         { corsOrigins = Nothing -- Allow all origins
-        , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith]
+        , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith, hXUserId]
         , corsMethods = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
         , corsMaxAge = Just 86400 -- 24 hours
         , corsVaryOrigin = False
@@ -85,6 +88,6 @@ handleOptionsMiddleware app req responder =
       [ (hContentType, B8.pack "text/plain")
       , (CI.mk $ B8.pack "Access-Control-Allow-Origin", B8.pack "*")
       , (CI.mk $ B8.pack "Access-Control-Allow-Methods", B8.pack "GET, POST, PUT, DELETE, OPTIONS")
-      , (CI.mk $ B8.pack "Access-Control-Allow-Headers", B8.pack "Content-Type, Authorization, Accept, Origin, Content-Length, x-requested-with")
+      , (CI.mk $ B8.pack "Access-Control-Allow-Headers", B8.pack "Content-Type, Authorization, Accept, Origin, Content-Length, x-requested-with, x-user-id")
       , (CI.mk $ B8.pack "Access-Control-Max-Age", B8.pack "86400")
       ]

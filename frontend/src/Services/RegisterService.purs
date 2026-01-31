@@ -9,6 +9,8 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Types.Register (Register)
 import Types.UUID (UUID, parseUUID)
 import Utils.UUIDGen (genUUID)
@@ -16,8 +18,8 @@ import Web.HTML (window)
 import Web.HTML.Window (localStorage)
 import Web.Storage.Storage (getItem, setItem)
 
-getOrInitLocalRegister :: UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-getOrInitLocalRegister locationId employeeId setRegister setError = do
+getOrInitLocalRegister :: Ref AuthContext -> UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+getOrInitLocalRegister authRef locationId employeeId setRegister setError = do
   w <- window
   storage <- localStorage w
   storedRegId <- getItem "register_id" storage
@@ -33,7 +35,7 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
 
   launchAff_ do
     -- Try to get existing register first
-    getResult <- API.getRegister registerId
+    getResult <- API.getRegister authRef registerId
 
     case getResult of
       -- Register exists, use it
@@ -60,7 +62,7 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
             , registerLastTransactionTime: Nothing
             }
 
-        createResult <- API.createRegister newRegister
+        createResult <- API.createRegister authRef newRegister
 
         case createResult of
           Right register -> do
@@ -70,7 +72,7 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
                 , openRegisterStartingCash: 0
                 }
 
-            openResult <- API.openRegister openRequest register.registerId
+            openResult <- API.openRegister authRef openRequest register.registerId
 
             liftEffect $ case openResult of
               Right openedRegister -> do
@@ -84,8 +86,8 @@ getOrInitLocalRegister locationId employeeId setRegister setError = do
             liftEffect $ setError ("Failed to create register: " <> createErr)
 
 -- create a local register if it doesn't exist
-initLocalRegister :: UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-initLocalRegister locationId employeeId setRegister setError = do
+initLocalRegister :: Ref AuthContext -> UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+initLocalRegister authRef locationId employeeId setRegister setError = do
 
   w <- window
   storage <- localStorage w
@@ -101,7 +103,7 @@ initLocalRegister locationId employeeId setRegister setError = do
       pure newId
 
   launchAff_ do
-    getResult <- API.getRegister registerId
+    getResult <- API.getRegister authRef registerId
 
     case getResult of
       Right register -> do
@@ -111,7 +113,7 @@ initLocalRegister locationId employeeId setRegister setError = do
             , openRegisterStartingCash: 0
             }
 
-        openResult <- API.openRegister openRequest register.registerId
+        openResult <- API.openRegister authRef openRequest register.registerId
 
         liftEffect $ case openResult of
           Right openedRegister -> do
@@ -138,7 +140,7 @@ initLocalRegister locationId employeeId setRegister setError = do
             , registerLastTransactionTime: Nothing
             }
 
-        createResult <- API.createRegister newRegister
+        createResult <- API.createRegister authRef newRegister
 
         case createResult of
           Right register -> do
@@ -148,7 +150,7 @@ initLocalRegister locationId employeeId setRegister setError = do
                 , openRegisterStartingCash: 0
                 }
 
-            openResult <- API.openRegister openRequest register.registerId
+            openResult <- API.openRegister authRef openRequest register.registerId
 
             liftEffect $ case openResult of
               Right openedRegister -> do
@@ -163,8 +165,8 @@ initLocalRegister locationId employeeId setRegister setError = do
 
 
 -- || local Register creation
-createLocalRegister :: String -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-createLocalRegister name locationId setRegister setError = do
+createLocalRegister :: Ref AuthContext -> String -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+createLocalRegister authRef name locationId setRegister setError = do
   launchAff_ do
 
     _ <- liftEffect genUUID
@@ -183,7 +185,7 @@ createLocalRegister name locationId setRegister setError = do
         , registerLastTransactionTime: Nothing
         }
 
-    result <- API.createRegister newRegister
+    result <- API.createRegister authRef newRegister
 
     liftEffect case result of
       Right register -> do
@@ -192,8 +194,8 @@ createLocalRegister name locationId setRegister setError = do
       Left err -> do
         setError ("Failed to create register: " <> err)
 
-closeLocalRegister :: UUID -> UUID -> Int -> (String -> Effect Unit) -> Effect Unit
-closeLocalRegister registerId employeeId countedCash setMessage = do
+closeLocalRegister :: Ref AuthContext -> UUID -> UUID -> Int -> (String -> Effect Unit) -> Effect Unit
+closeLocalRegister authRef registerId employeeId countedCash setMessage = do
   launchAff_ do
     let
       closeRequest =
@@ -201,7 +203,7 @@ closeLocalRegister registerId employeeId countedCash setMessage = do
         , closeRegisterCountedCash: countedCash
         }
 
-    result <- API.closeRegister closeRequest registerId
+    result <- API.closeRegister authRef closeRequest registerId
 
     liftEffect case result of
       Right closeResult -> do

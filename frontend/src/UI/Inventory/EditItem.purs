@@ -22,13 +22,15 @@ import Deku.Hooks (useState)
 import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Types.Inventory (InventoryResponse(..), MenuItem(..), StrainLineage(..))
 import Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber, formatCentsToDecimal)
 import Utils.Validation (validateMenuItem)
 
-editItem :: MenuItem -> Nut
-editItem (MenuItem item) = Deku.do
+editItem :: Ref AuthContext -> MenuItem -> Nut
+editItem authRef (MenuItem item) = Deku.do
   let (StrainLineage lineage) = item.strain_lineage
   let categoryValue = show item.category
   let speciesValue = show lineage.species
@@ -334,7 +336,7 @@ editItem (MenuItem item) = Deku.do
                       liftEffect $ Console.log $
                         "Description after validation: '" <> description <> "'"
 
-                      result <- updateInventory menuItem
+                      result <- updateInventory authRef menuItem
                       liftEffect case result of
                         Right (Message msg) -> do
                           Console.info "Submission successful"

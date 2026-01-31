@@ -18,14 +18,16 @@ import Deku.Hooks (useState, (<#~>))
 import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Types.Inventory (InventoryResponse(..))
 import Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber)
 import Utils.UUIDGen (genUUID)
 import Utils.Validation (validateMenuItem)
 
-createItem :: String -> Nut
-createItem initialUUID = Deku.do
+createItem :: Ref AuthContext -> String -> Nut
+createItem authRef initialUUID = Deku.do
 
   setSku /\ skuValue <- useState initialUUID
   setName /\ nameValue <- useState ""
@@ -388,7 +390,7 @@ createItem initialUUID = Deku.do
                   Right menuItem -> do
                     liftEffect $ Console.info "Form validated successfully:"
                     liftEffect $ Console.logShow menuItem
-                    result <- writeInventory menuItem
+                    result <- writeInventory authRef menuItem
                     liftEffect case result of
                       Right (Message msg) -> do
                         Console.info "Submission successful"
