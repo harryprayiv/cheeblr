@@ -1,3 +1,4 @@
+-- FILE: ./backend/src/Types/Inventory.hs
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -6,7 +7,7 @@
 module Types.Inventory where
 
 import Data.Aeson
-    ( ToJSON(toJSON), FromJSON(parseJSON), object, KeyValue((.=)) )
+    ( ToJSON(toJSON), FromJSON(parseJSON), object, KeyValue((.=)), (.:), (.:?), withObject )
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.UUID ( UUID )
@@ -16,6 +17,7 @@ import Database.PostgreSQL.Simple.ToField (ToField (..))
 import Database.PostgreSQL.Simple.ToRow (ToRow (..))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import GHC.Generics ( Generic )
+import Types.Auth (UserCapabilities, AuthenticatedUser, capabilitiesForRole, auRole)
 
 data Species
   = Indica
@@ -132,16 +134,21 @@ instance ToJSON Inventory where
 instance FromJSON Inventory where
   parseJSON v = Inventory <$> parseJSON v
 
+-- | Response that includes both data and user capabilities
 data InventoryResponse
-  = InventoryData Inventory
+  = InventoryData 
+      { inventoryItems :: Inventory
+      , inventoryCapabilities :: UserCapabilities
+      }
   | Message Text
   deriving (Show, Generic)
 
 instance ToJSON InventoryResponse where
-  toJSON (InventoryData inv) =
+  toJSON (InventoryData inv caps) =
     object
       [ "type" .= T.pack "data"
-      , "value" .= toJSON inv 
+      , "value" .= toJSON inv
+      , "capabilities" .= toJSON caps
       ]
   toJSON (Message msg) =
     object
@@ -149,4 +156,21 @@ instance ToJSON InventoryResponse where
       , "value" .= msg
       ]
 
-instance FromJSON InventoryResponse
+instance FromJSON InventoryResponse where
+  parseJSON = withObject "InventoryResponse" $ \v -> do
+    typ <- v .: "type"
+    case (typ :: Text) of
+      "data" -> InventoryData 
+        <$> v .: "value"
+        <*> v .: "capabilities"
+      "message" -> Message <$> v .: "value"
+      _ -> fail "Unknown InventoryResponse type"
+
+-- | For backwards compatibility / simple messages that don't need capabilities
+simpleMessage :: Text -> InventoryResponse
+simpleMessage = Message
+
+-- | Create an inventory response with capabilities
+inventoryWithCapabilities :: Inventory -> AuthenticatedUser -> InventoryResponse
+inventoryWithCapabilities inv user = 
+  InventoryData inv (Types.Auth.capabilitiesForRole $ Types.Auth.auRole user)

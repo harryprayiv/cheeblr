@@ -22,6 +22,7 @@ common shared-properties
                 , servant-server
                 , transformers
                 , aeson
+                , containers
                 , wai
                 , warp 
                 , opaleye
@@ -50,6 +51,8 @@ library
                    , Server.Transaction
                    , Types.Inventory
                    , Types.Transaction
+                   , Types.Auth
+                   , Auth.Simple
                    , API.Inventory
                    , API.Transaction
                    -- Codegen modules

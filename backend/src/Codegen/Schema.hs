@@ -31,12 +31,8 @@ module Codegen.Schema
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
 import GHC.Generics (Generic)
 
--- | Domain schema definition
--- The schema now uses a single 'schemaName' (e.g., "Inventory") 
--- and generates module paths under Generated/ prefix
 data DomainSchema = DomainSchema
   { schemaName :: Text
     -- ^ The domain name (e.g., "Inventory")
