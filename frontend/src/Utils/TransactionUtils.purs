@@ -13,6 +13,8 @@ import Effect (Effect)
 import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Services.TransactionService (getTransaction)
 import Types.Inventory (MenuItem(..))
 import Types.Transaction (PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..))
@@ -80,13 +82,14 @@ getTransactionItems :: Transaction -> Array TransactionItem
 getTransactionItems (Transaction tx) = tx.transactionItems
 
 updateTransactionData
-  :: Transaction
+  :: Ref AuthContext
+  -> Transaction
   -> (Transaction -> Effect Unit)
   -> Aff Unit
-updateTransactionData (Transaction tx) setTransaction = do
+updateTransactionData authRef (Transaction tx) setTransaction = do
   liftEffect $ Console.log $ "Updating transaction data for ID: " <> show
     tx.transactionId
-  result <- getTransaction tx.transactionId
+  result <- getTransaction authRef tx.transactionId
   liftEffect $ case result of
     Right updatedTx -> do
       Console.log "Successfully fetched updated transaction data"

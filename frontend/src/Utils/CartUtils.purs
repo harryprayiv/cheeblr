@@ -14,6 +14,8 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Services.TransactionService as TransactionService
 import Types.Inventory (MenuItem(..))
 import Types.Register (CartTotals)
@@ -171,7 +173,8 @@ findExistingItem (MenuItem menuItem) items =
    find (\(TransactionItem txItem) -> txItem.transactionItemMenuItemSku == menuItem.sku) items
 
 addItemToCart
-  :: MenuItem
+  :: Ref AuthContext
+  -> MenuItem
   -> Int
   -> Array TransactionItem
   -> UUID
@@ -181,6 +184,7 @@ addItemToCart
   -> (Boolean -> Effect Unit)
   -> Effect Unit
 addItemToCart
+  authRef
   menuItem@(MenuItem record)
   qty
   currentItems
@@ -214,7 +218,7 @@ addItemToCart
       setStatusMessage "Adding item to transaction..."
 
       void $ launchAff_ do
-        result <- TransactionService.createTransactionItem
+        result <- TransactionService.createTransactionItem authRef
           transactionId
           record.sku
           qty
@@ -238,20 +242,21 @@ addItemToCart
         liftEffect $ setIsProcessing false
 
 removeItemFromCart
-  :: UUID
+  :: Ref AuthContext
+  -> UUID
   -> Array TransactionItem
   -> (Array TransactionItem -> Effect Unit)
   -> (CartTotals -> Effect Unit)
   -> (Boolean -> Effect Unit) -- For loading state
   -> Effect Unit
-removeItemFromCart itemId currentItems setItems setTotals setIsProcessing = do
+removeItemFromCart authRef itemId currentItems setItems setTotals setIsProcessing = do
   -- Set loading state
   setIsProcessing true
 
   -- Make a backend call to release the reservation
   void $ launchAff_ do
     -- Call backend to remove the transaction item
-    result <- TransactionService.removeTransactionItem itemId
+    result <- TransactionService.removeTransactionItem authRef itemId
 
     liftEffect $ case result of
       Right _ -> do

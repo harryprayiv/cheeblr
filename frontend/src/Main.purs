@@ -26,6 +26,7 @@ import MenuLiveView (createMenuLiveView)
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
+import Services.AuthService (newAuthRef)
 import Services.RegisterService as RegisterService
 import Services.TransactionService (startTransaction)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
@@ -41,6 +42,9 @@ run aff { push } = aff >>= liftEffect <<< push
 
 main :: Effect Unit
 main = do
+  -- Create auth context ref (shared across all components)
+  authRef <- newAuthRef
+
   currentRoute <- liftST Poll.create
   inventoryState <- liftST Poll.create
   loadingState <- liftST Poll.create
@@ -48,6 +52,7 @@ main = do
   registerState <- liftST Poll.create
 
   RegisterService.initLocalRegister
+    authRef
     dummyLocationId
     dummyEmployeeId
     ( \register -> do
@@ -78,7 +83,7 @@ main = do
 
           launchAff_ do
             liftEffect $ Console.log "Loading inventory data..."
-            result <- fetchInventory defaultViewConfig.fetchConfig
+            result <- fetchInventory authRef defaultViewConfig.fetchConfig
               defaultViewConfig.mode
 
             liftEffect $ case result of
@@ -101,7 +106,7 @@ main = do
           newUUID <- genUUID
           let newUUIDStr = show newUUID
           Console.log $ "Generated new UUID for Create page: " <> newUUIDStr
-          currentRoute.push $ Tuple r (createItem newUUIDStr)
+          currentRoute.push $ Tuple r (createItem authRef newUUIDStr)
 
         Edit uuid -> do
           let actualUuid = if uuid == "test" then testItemUUID else uuid
@@ -110,7 +115,7 @@ main = do
           loadingState.push true
           launchAff_ do
             liftEffect $ Console.log "Fetching inventory for edit..."
-            result <- readInventory
+            result <- readInventory authRef
 
             liftEffect case result of
               Right (InventoryData (Inventory items)) -> do
@@ -122,7 +127,7 @@ main = do
                   of
                   Just menuItem -> do
                     Console.log $ "Found item with UUID: " <> actualUuid
-                    currentRoute.push $ Tuple r (editItem menuItem)
+                    currentRoute.push $ Tuple r (editItem authRef menuItem)
                   Nothing -> do
                     Console.error $ "Item with UUID " <> actualUuid <>
                       " not found"
@@ -155,7 +160,7 @@ main = do
           launchAff_ do
             liftEffect $ Console.log
               "Fetching inventory for delete confirmation..."
-            result <- readInventory
+            result <- readInventory authRef
 
             liftEffect case result of
               Right (InventoryData (Inventory items)) -> do
@@ -168,7 +173,7 @@ main = do
                   Just (MenuItem item) -> do
                     Console.log $ "Found item with UUID: " <> actualUuid
                     currentRoute.push $ Tuple r
-                      (renderDeleteConfirmation actualUuid item.name)
+                      (renderDeleteConfirmation authRef actualUuid item.name)
                   Nothing -> do
                     Console.error $ "Item with UUID " <> actualUuid <>
                       " not found"
@@ -206,7 +211,7 @@ main = do
             (liveCart showUpdateFunction inventoryState.poll)
 
           launchAff_ do
-            result <- fetchInventory defaultViewConfig.fetchConfig
+            result <- fetchInventory authRef defaultViewConfig.fetchConfig
               defaultViewConfig.mode
 
             liftEffect $ case result of
@@ -235,19 +240,20 @@ main = do
 
           -- Create the component FIRST with empty polls (just like LiveCart does)
           RegisterService.getOrInitLocalRegister
+            authRef
             dummyLocationId
             dummyEmployeeId
             ( \register -> do
                 -- Push the route IMMEDIATELY with the polls
                 currentRoute.push $ Tuple r
-                  ( createTransaction inventoryState.poll
+                  ( createTransaction authRef inventoryState.poll
                       transactionState.poll
                       register
                   )
                 
                 -- NOW start the transaction (it will update transactionState.poll)
                 launchAff_ do
-                  txResult <- startTransaction
+                  txResult <- startTransaction authRef
                     { employeeId: fromMaybe register.registerId register.registerOpenedBy
                     , registerId: register.registerId
                     , locationId: register.registerLocationId
@@ -269,7 +275,7 @@ main = do
 
           -- NOW fetch inventory (exactly like LiveCart does)
           launchAff_ do
-            result <- fetchInventory defaultViewConfig.fetchConfig
+            result <- fetchInventory authRef defaultViewConfig.fetchConfig
               defaultViewConfig.mode
 
             liftEffect $ case result of

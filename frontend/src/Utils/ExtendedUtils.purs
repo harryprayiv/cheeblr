@@ -15,6 +15,8 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
+import Services.AuthService (AuthContext)
 import Services.TransactionService as TransactionService
 import Types.Inventory (MenuItem(..), Inventory(..))
 import Types.Register (CartTotals)
@@ -215,7 +217,8 @@ findExistingItem (MenuItem menuItem) items =
   find (\(TransactionItem txItem) -> txItem.transactionItemMenuItemSku == menuItem.sku) items
 
 addItemToCart
-  :: MenuItem
+  :: Ref AuthContext
+  -> MenuItem
   -> Int
   -> Array TransactionItem
   -> UUID
@@ -225,6 +228,7 @@ addItemToCart
   -> (Boolean -> Effect Unit)
   -> Effect Unit
 addItemToCart
+  authRef
   menuItem@(MenuItem record)
   qty
   currentItems
@@ -258,7 +262,7 @@ addItemToCart
       setStatusMessage $ "Reserving " <> show qty <> " of " <> record.name <> "..."
       
       void $ launchAff_ do
-        result <- TransactionService.createTransactionItem
+        result <- TransactionService.createTransactionItem authRef
           transactionId
           record.sku
           qty
@@ -285,13 +289,14 @@ addItemToCart
         liftEffect $ setIsProcessing false
 
 removeItemFromCart
-  :: UUID
+  :: Ref AuthContext
+  -> UUID
   -> Array TransactionItem
   -> (Array TransactionItem -> Effect Unit)
   -> (CartTotals -> Effect Unit)
   -> (Boolean -> Effect Unit)
   -> Effect Unit
-removeItemFromCart itemId currentItems setItems setTotals setIsProcessing = do
+removeItemFromCart authRef itemId currentItems setItems setTotals setIsProcessing = do
   setIsProcessing true
   
   -- Find item info for better messaging
@@ -302,7 +307,7 @@ removeItemFromCart itemId currentItems setItems setTotals setIsProcessing = do
   Console.log $ "Removing item ID: " <> show itemId <> itemInfo
 
   void $ launchAff_ do
-    result <- TransactionService.removeTransactionItem itemId
+    result <- TransactionService.removeTransactionItem authRef itemId
 
     liftEffect $ case result of
       Right _ -> do

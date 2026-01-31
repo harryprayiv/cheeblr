@@ -2,16 +2,14 @@ module UI.Transaction.CreateTransaction where
 
 import Prelude
 
-import Control.Comonad.Traced (listen)
-import Data.Array (filter, find, null, (:), length, head)
+import Data.Array (filter, find, null, (:))
 import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Foldable (for_)
-import Data.Int (floor)
 import Data.Int as Int
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
 import Data.Number as Number
 import Data.String (Pattern(..), contains, toLower, trim)
@@ -29,7 +27,9 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
+import Effect.Ref (Ref)
 import FRP.Poll (Poll)
+import Services.AuthService (AuthContext)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register, CartTotals)
@@ -43,8 +43,8 @@ import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input
 import Web.PointerEvent.PointerEvent as PointerEvent
 
-createTransaction :: Poll Inventory -> Poll Transaction -> Register -> Nut
-createTransaction inventoryPoll transactionPoll register = Deku.do
+createTransaction :: Ref AuthContext -> Poll Inventory -> Poll Transaction -> Register -> Nut
+createTransaction authRef inventoryPoll transactionPoll register = Deku.do
   -- Debug hook for inventory
   setDebugInfo /\ debugInfoValue <- useState ""
   
@@ -434,6 +434,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                                                       transaction
                                                                                   ).transactionId
                                                                               addItemToCart
+                                                                                authRef
                                                                                 menuItem
                                                                                 qtyVal
                                                                                 cartItems
@@ -516,6 +517,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                 [ DA.klass_ "remove-btn"
                                                 , DL.click_ \_ -> do
                                                     removeItemFromCart
+                                                      authRef
                                                       itemData.transactionItemId
                                                       cartItems
                                                       setCartItems
@@ -714,6 +716,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
   
                                   void $ launchAff_ do
                                     result <- TransactionService.addPayment
+                                      authRef
                                       (unwrap txn).transactionId
                                       method
                                       amountInCents
@@ -779,6 +782,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                                                     void $ launchAff_ do
                                                       result <-
                                                         TransactionService.removePaymentTransaction
+                                                          authRef
                                                           p.paymentId
                                                       liftEffect $ case result of
                                                         Right _ -> do
@@ -824,6 +828,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
 
                         void $ launchAff_ do
                           result <- TransactionService.clearTransaction
+                            authRef
                             (unwrap transaction).transactionId
 
                           liftEffect $ case result of
@@ -839,20 +844,6 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
                   ) <$> cartItemsValue <*> transactionPoll
               ]
               [ text_ "Clear Items" ]
-          -- [ D.button
-          --     [ DA.klass_ "cancel-btn"
-          --     , runOn DL.click $
-          --         ( \cartItems -> do
-          --             if null cartItems then do
-          --               setStatusMessage "No items to clear"
-          --             else do
-          --               setCartItems []
-          --               setPayments []
-          --               setCartTotals emptyCartTotals
-          --               setStatusMessage "Transaction cleared"
-          --         ) <$> cartItemsValue
-          --     ]
-          --     [ text_ "Clear Items" ]
           , D.div
               [ DA.klass_ "payment-summary" ]
               [ (Tuple <$> cartTotalsValue <*> paymentsValue) <#~>
@@ -946,6 +937,7 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
   
                           void $ launchAff_ do
                             result <- TransactionService.finalizeTransaction
+                              authRef
                               (unwrap transaction).transactionId
                             liftEffect $ case result of
                               Right _ -> do
@@ -974,7 +966,8 @@ createTransaction inventoryPoll transactionPoll register = Deku.do
 
 
 addItemToCart
-  :: MenuItem
+  :: Ref AuthContext
+  -> MenuItem
   -> Int
   -> Array TransactionItem
   -> UUID
@@ -984,6 +977,7 @@ addItemToCart
   -> (Boolean -> Effect Unit)
   -> Effect Unit
 addItemToCart
+  authRef
   menuItem@(MenuItem record)
   qty
   currentItems
@@ -1013,6 +1007,7 @@ addItemToCart
     -- Create the transaction item through the API
     void $ launchAff_ do
       result <- TransactionService.createTransactionItem
+        authRef
         transactionId
         record.sku
         qty
