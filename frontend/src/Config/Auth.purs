@@ -71,7 +71,7 @@ allDevUsers = [devCustomer, devCashier, devManager, devAdmin]
 
 -- | Default dev user (Cashier-1, matching backend default)
 defaultDevUser :: DevUser
-defaultDevUser = devCashier
+defaultDevUser = devAdmin
 
 -- | Convert DevUser to AuthenticatedUser
 toAuthenticatedUser :: DevUser -> AuthenticatedUser
