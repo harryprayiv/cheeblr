@@ -171,6 +171,44 @@ let
     echo "All services stopped."
   '';
 
+  launch-dev = pkgs.writeShellScriptBin "launch-dev" ''
+    set -euo pipefail
+
+    PROJECT_DIR="$(pwd)"
+
+    echo "Launching ${name} in separate Alacritty windows..."
+    echo "Project: $PROJECT_DIR"
+
+    # Database
+    ${pkgs.alacritty}/bin/alacritty \
+      --title "${name} - Database" \
+      --working-directory "$PROJECT_DIR" \
+      -e ${pkgs.direnv}/bin/direnv exec "$PROJECT_DIR" db-start &
+
+    # Give DB time to initialize
+    echo "Waiting for database to start..."
+    sleep 8
+
+    # Backend
+    ${pkgs.alacritty}/bin/alacritty \
+      --title "${name} - Backend" \
+      --working-directory "$PROJECT_DIR" \
+      -e ${pkgs.direnv}/bin/direnv exec "$PROJECT_DIR" backend-start &
+
+    sleep 3
+
+    # Frontend
+    ${pkgs.alacritty}/bin/alacritty \
+      --title "${name} - Frontend" \
+      --working-directory "$PROJECT_DIR" \
+      -e ${pkgs.direnv}/bin/direnv exec "$PROJECT_DIR" frontend-start &
+
+    echo "All windows launched."
+    echo "  Database:  window 1"
+    echo "  Backend:   window 2 (http://${host}:${backendPort})"
+    echo "  Frontend:  window 3 (http://${host}:${frontendPort})"
+  '';
+
   # Database start script
   db-start = pkgs.writeShellScriptBin "db-start" ''
     #!/usr/bin/env bash
@@ -375,8 +413,8 @@ let
   '';
 
 in {
-  inherit deploy stop;
-  inherit db-start db-stop; 
+  inherit deploy stop launch-dev;
+  inherit db-start db-stop;
   inherit frontend-start frontend-stop;
   inherit backend-start backend-stop;
 }

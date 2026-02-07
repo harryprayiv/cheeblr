@@ -282,13 +282,16 @@ let
     deployModule.stop
     
 
-    # Individual Componenty Launchers
+    # Individual Component Launchers
     deployModule.db-start
     deployModule.db-stop
     deployModule.backend-start
     deployModule.backend-stop    
     deployModule.frontend-start
-    deployModule.frontend-stop     
+    deployModule.frontend-stop 
+
+    deployModule.launch-dev # launch them all  granularly
+
 
     # Additional tools specifically for the scripts
     coreutils
@@ -311,6 +314,8 @@ let
     openssl
     lsof
     tmux
+    alacritty # my terminal of preference
+    direnv
   ];
 
   # Darwin-specific inputs
