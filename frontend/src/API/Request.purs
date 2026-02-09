@@ -2,45 +2,41 @@ module API.Request where
 
 import Prelude
 
-import Affjax (Error, Request, Response, URL, defaultRequest, printError)
-import Affjax.RequestBody as RequestBody
-import Affjax.RequestHeader (RequestHeader(..))
-import Affjax.ResponseFormat as ResponseFormat
-import Affjax.Web as AW
 import Data.Either (Either(..))
-import Data.HTTP.Method (Method(..))
-import Data.Maybe (Maybe(..))
-import Effect.Aff (Aff)
+import Effect.Aff (Aff, attempt, error, throwError)
 import Effect.Class (liftEffect)
+import Effect.Class.Console as Console
 import Effect.Ref (Ref)
+import Fetch (Method(..), fetch)
+import Fetch.Yoga.Json (fromJSON)
+import NetworkConfig (currentConfig)
 import Services.AuthService (AuthContext, getCurrentUserId)
-import Types.UUID (UUID)
-import Yoga.JSON (class ReadForeign, class WriteForeign, readJSON_, writeJSON)
+import Yoga.JSON (class ReadForeign, class WriteForeign, writeJSON)
 
--- | API base URL (configurable for different environments)
+type URL = String
+
 apiBaseUrl :: String
-apiBaseUrl = "http://localhost:8080"
+apiBaseUrl = currentConfig.apiBaseUrl
 
--- | Build a request with authentication header (returns string for Yoga.JSON parsing)
-mkAuthenticatedRequest
-  :: URL
-  -> Method
-  -> Maybe String
-  -> UUID
-  -> Request String
-mkAuthenticatedRequest url method body userId =
-  defaultRequest
-    { url = apiBaseUrl <> url
-    , method = Left method
-    , headers = 
-        [ RequestHeader "X-User-Id" (show userId)
-        , RequestHeader "Content-Type" "application/json"
-        ]
-    , content = RequestBody.string <$> body
-    , responseFormat = ResponseFormat.string
-    }
+-- | Get the current user's ID as a string for the X-User-Id header.
+getUserIdHeader :: Ref AuthContext -> Aff String
+getUserIdHeader authRef = liftEffect $ show <$> getCurrentUserId authRef
 
--- | Perform an authenticated GET request
+-- | Wraps an Aff action with error handling. All request helpers use this
+-- | so error handling is consistent across the app.
+runRequest :: forall a. String -> Aff a -> Aff (Either String a)
+runRequest label action = do
+  result <- attempt action
+  case result of
+    Left err -> do
+      let errorMsg = label <> " error: " <> show err
+      liftEffect $ Console.error errorMsg
+      pure $ Left errorMsg
+    Right value ->
+      pure $ Right value
+
+-- | GET with parsed JSON response.
+-- | Used by: readInventory, getRegister, getTransaction, fetchInventoryFromHttp
 authGet
   :: forall a
    . ReadForeign a
@@ -48,11 +44,44 @@ authGet
   -> URL
   -> Aff (Either String a)
 authGet authRef url = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  response <- AW.request (mkAuthenticatedRequest url GET Nothing userId)
-  pure $ parseResponse response
+  userId <- getUserIdHeader authRef
+  runRequest ("GET " <> url) do
+    response <- fetch (apiBaseUrl <> url)
+      { method: GET
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    fromJSON response.json
 
--- | Perform an authenticated POST request
+-- | GET to a full URL (not prefixed with apiBaseUrl).
+-- | Used by: fetchInventoryFromHttp when endpoint differs from apiBaseUrl.
+authGetFullUrl
+  :: forall a
+   . ReadForeign a
+  => Ref AuthContext
+  -> String
+  -> Aff (Either String a)
+authGetFullUrl authRef fullUrl = do
+  userId <- getUserIdHeader authRef
+  runRequest ("GET " <> fullUrl) do
+    response <- fetch fullUrl
+      { method: GET
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    fromJSON response.json
+
+-- | POST with JSON body and parsed JSON response.
+-- | Used by: writeInventory, createRegister, openRegister, closeRegister,
+-- |          addPaymentTransaction, voidTransaction
 authPost
   :: forall req res
    . WriteForeign req
@@ -62,12 +91,22 @@ authPost
   -> req
   -> Aff (Either String res)
 authPost authRef url body = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  let jsonBody = writeJSON body
-  response <- AW.request (mkAuthenticatedRequest url POST (Just jsonBody) userId)
-  pure $ parseResponse response
+  userId <- getUserIdHeader authRef
+  runRequest ("POST " <> url) do
+    response <- fetch (apiBaseUrl <> url)
+      { method: POST
+      , body: writeJSON body
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    fromJSON response.json
 
--- | Perform an authenticated PUT request
+-- | PUT with JSON body and parsed JSON response.
+-- | Used by: updateInventory
 authPut
   :: forall req res
    . WriteForeign req
@@ -77,12 +116,22 @@ authPut
   -> req
   -> Aff (Either String res)
 authPut authRef url body = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  let jsonBody = writeJSON body
-  response <- AW.request (mkAuthenticatedRequest url PUT (Just jsonBody) userId)
-  pure $ parseResponse response
+  userId <- getUserIdHeader authRef
+  runRequest ("PUT " <> url) do
+    response <- fetch (apiBaseUrl <> url)
+      { method: PUT
+      , body: writeJSON body
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    fromJSON response.json
 
--- | Perform an authenticated DELETE request
+-- | DELETE with parsed JSON response.
+-- | Used by: deleteInventory
 authDelete
   :: forall a
    . ReadForeign a
@@ -90,12 +139,86 @@ authDelete
   -> URL
   -> Aff (Either String a)
 authDelete authRef url = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  response <- AW.request (mkAuthenticatedRequest url DELETE Nothing userId)
-  pure $ parseResponse response
+  userId <- getUserIdHeader authRef
+  runRequest ("DELETE " <> url) do
+    response <- fetch (apiBaseUrl <> url)
+      { method: DELETE
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    fromJSON response.json
 
--- | Perform an authenticated PATCH request
-authPatch
+-- | DELETE that discards the response body.
+-- | Used by: removeTransactionItem, removePaymentTransaction
+authDeleteUnit
+  :: Ref AuthContext
+  -> URL
+  -> Aff (Either String Unit)
+authDeleteUnit authRef url = do
+  userId <- getUserIdHeader authRef
+  runRequest ("DELETE " <> url) do
+    _ <- fetch (apiBaseUrl <> url)
+      { method: DELETE
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    pure unit
+
+-- | POST with no body, discards response. 
+-- | Used by: clearTransaction
+authPostUnit
+  :: Ref AuthContext
+  -> URL
+  -> Aff (Either String Unit)
+authPostUnit authRef url = do
+  userId <- getUserIdHeader authRef
+  runRequest ("POST " <> url) do
+    _ <- fetch (apiBaseUrl <> url)
+      { method: POST
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    pure unit
+
+-- | POST with no body, parsed JSON response.
+-- | Used by: finalizeTransaction
+authPostEmpty
+  :: forall a
+   . ReadForeign a
+  => Ref AuthContext
+  -> URL
+  -> Aff (Either String a)
+authPostEmpty authRef url = do
+  userId <- getUserIdHeader authRef
+  runRequest ("POST " <> url) do
+    response <- fetch (apiBaseUrl <> url)
+      { method: POST
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    fromJSON response.json
+
+-- | POST with JSON body that checks HTTP status before parsing.
+-- | On non-2xx responses, reads the error body as text and returns it as
+-- | a Left. This gives callers the raw server error message.
+-- | Used by: createTransaction, addTransactionItem
+authPostChecked
   :: forall req res
    . WriteForeign req
   => ReadForeign res
@@ -103,48 +226,31 @@ authPatch
   -> URL
   -> req
   -> Aff (Either String res)
-authPatch authRef url body = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  let jsonBody = writeJSON body
-  response <- AW.request (mkAuthenticatedRequest url PATCH (Just jsonBody) userId)
-  pure $ parseResponse response
-
--- | Parse JSON response
-parseResponse
-  :: forall a
-   . ReadForeign a
-  => Either Error (Response String)
-  -> Either String a
-parseResponse (Left err) = Left (printError err)
-parseResponse (Right res) =
-  case readJSON_ res.body of
-    Nothing -> Left "JSON parse error"
-    Just a -> Right a
-
--- | Helper for endpoints that return Unit/void
-authPostUnit
-  :: forall req
-   . WriteForeign req
-  => Ref AuthContext
-  -> URL
-  -> req
-  -> Aff (Either String Unit)
-authPostUnit authRef url body = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  let jsonBody = writeJSON body
-  response <- AW.request (mkAuthenticatedRequest url POST (Just jsonBody) userId)
-  pure $ case response of
-    Left err -> Left (printError err)
-    Right _ -> Right unit
-
--- | Helper for endpoints that return Unit/void
-authDeleteUnit
-  :: Ref AuthContext
-  -> URL
-  -> Aff (Either String Unit)
-authDeleteUnit authRef url = do
-  userId <- liftEffect $ getCurrentUserId authRef
-  response <- AW.request (mkAuthenticatedRequest url DELETE Nothing userId)
-  pure $ case response of
-    Left err -> Left (printError err)
-    Right _ -> Right unit
+authPostChecked authRef url body = do
+  userId <- getUserIdHeader authRef
+  result <- attempt do
+    response <- fetch (apiBaseUrl <> url)
+      { method: POST
+      , body: writeJSON body
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept": "application/json"
+          , "Origin": currentConfig.appOrigin
+          , "X-User-Id": userId
+          }
+      }
+    if response.status >= 200 && response.status < 300 then
+      fromJSON response.json
+    else do
+      errorText <- response.text
+      throwError
+        ( error $ "Server returned status " <> show response.status
+            <> ": "
+            <> errorText
+        )
+  case result of
+    Left err -> do
+      liftEffect $ Console.error $ "POST " <> url <> " error: " <> show err
+      pure $ Left $ show err
+    Right value ->
+      pure $ Right value
