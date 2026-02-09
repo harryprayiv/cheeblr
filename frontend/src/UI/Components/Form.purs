@@ -1,4 +1,4 @@
-module Components.Form where
+module UI.Components.Form where
 
 import Prelude
 

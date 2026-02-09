@@ -1,4 +1,4 @@
-module Components.UserSelector where
+module UI.Components.UserSelector where
 
 import Prelude
 

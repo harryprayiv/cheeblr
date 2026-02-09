@@ -3,7 +3,7 @@ module Config.LiveView where
 import Prelude
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
-import NetworkConfig (currentConfig)
+import Config.Network (currentConfig)
 
 defaultConfig :: FetchConfig
 defaultConfig =

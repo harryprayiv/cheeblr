@@ -1,4 +1,4 @@
-module MenuLiveView where
+module UI.Inventory.MenuLiveView where
 
 import Prelude
 

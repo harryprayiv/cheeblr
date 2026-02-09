@@ -9,7 +9,7 @@ import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
-import NetworkConfig (currentConfig)
+import Config.Network (currentConfig)
 import Services.AuthService (AuthContext, getCurrentUserId)
 import Yoga.JSON (class ReadForeign, class WriteForeign, writeJSON)
 

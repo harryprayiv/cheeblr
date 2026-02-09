@@ -20,7 +20,7 @@ import Types.Inventory (MenuItem(..))
 import Types.Transaction (PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..))
 import Types.UUID (UUID)
 import Data.Int as Int 
-import Utils.UUIDGen (genUUID)
+import Utils.UUID (genUUID)
 
 menuItemToTransactionItem
   :: MenuItem

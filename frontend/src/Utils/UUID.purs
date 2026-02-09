@@ -1,4 +1,4 @@
-module Utils.UUIDGen where
+module Utils.UUID where
 
 import Prelude
 

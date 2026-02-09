@@ -1,4 +1,4 @@
-module Components.AuthGuard where
+module UI.Components.AuthGuard where
 
 import Prelude
 

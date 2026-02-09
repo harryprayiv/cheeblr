@@ -1,4 +1,4 @@
-module CreateItem where
+module UI.Inventory.CreateItem where
 
 import Prelude
 
@@ -21,9 +21,9 @@ import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
 import Types.Inventory (InventoryResponse(..))
-import Components.Form (makeDescriptionField, makeDropdown, makeTextField)
+import UI.Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber)
-import Utils.UUIDGen (genUUID)
+import Utils.UUID (genUUID)
 import Utils.Validation (validateMenuItem)
 
 createItem :: Ref AuthContext -> String -> Nut

@@ -1,4 +1,4 @@
-module EditItem where
+module UI.Inventory.EditItem where
 
 import Prelude
 
@@ -25,7 +25,7 @@ import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
 import Types.Inventory (InventoryResponse(..), MenuItem(..), StrainLineage(..))
-import Components.Form (makeDescriptionField, makeDropdown, makeTextField)
+import UI.Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber, formatCentsToDecimal)
 import Utils.Validation (validateMenuItem)
 

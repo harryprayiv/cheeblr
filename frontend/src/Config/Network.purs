@@ -1,4 +1,4 @@
-module NetworkConfig where
+module Config.Network where
 
 -- Environment configuration settings
 type EnvironmentConfig =

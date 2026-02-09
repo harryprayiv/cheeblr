@@ -22,7 +22,7 @@ import Types.Inventory (ItemCategory(..), MenuItem(..))
 import Types.Transaction (DiscountRecord, DiscountType(..), PaymentMethod(..), PaymentTransaction(..), TaxCategory(..), TaxRecord, Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID)
 import Utils.Formatting (uuidToString)
-import Utils.UUIDGen (genUUID)
+import Utils.UUID (genUUID)
 
 data RegisterError
   = InvalidTransaction

@@ -1,4 +1,4 @@
-module DeleteItem where
+module UI.Inventory.DeleteItem where
 
 import Prelude
 
