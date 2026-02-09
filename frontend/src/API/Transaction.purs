@@ -14,7 +14,6 @@ import Types.UUID (UUID)
 import Yoga.JSON (readJSON_)
 
 -- Register operations
-
 getRegister :: Ref AuthContext -> UUID -> Aff (Either String Register)
 getRegister authRef registerId =
   Request.authGet authRef ("/register/" <> show registerId)
@@ -32,7 +31,6 @@ closeRegister authRef request registerId =
   Request.authPost authRef ("/register/close/" <> show registerId) request
 
 -- Transaction lifecycle
-
 createTransaction :: Ref AuthContext -> Transaction -> Aff (Either String Transaction)
 createTransaction authRef transaction =
   Request.authPostChecked authRef "/transaction" transaction
@@ -50,7 +48,6 @@ voidTransaction authRef transactionId reason =
   Request.authPost authRef ("/transaction/void/" <> show transactionId) reason
 
 -- Transaction items
-
 addTransactionItem :: Ref AuthContext -> TransactionItem -> Aff (Either String TransactionItem)
 addTransactionItem authRef item = do
   result <- Request.authPostChecked authRef "/transaction/item" item
@@ -68,7 +65,6 @@ clearTransaction authRef transactionId =
   Request.authPostUnit authRef ("/transaction/clear/" <> show transactionId)
 
 -- Payments
-
 addPaymentTransaction :: Ref AuthContext -> PaymentTransaction -> Aff (Either String PaymentTransaction)
 addPaymentTransaction authRef payment =
   Request.authPost authRef "/transaction/payment" payment
@@ -78,7 +74,6 @@ removePaymentTransaction authRef paymentId =
   Request.authDeleteUnit authRef ("/transaction/payment/" <> show paymentId)
 
 -- Error parsing helper
-
 type ErrorResponse = { error :: String }
 
 -- | Attempts to extract the "error" field from a JSON error response string.
