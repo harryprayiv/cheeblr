@@ -17,14 +17,177 @@ import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
 import Services.TransactionService as TransactionService
-import Types.Inventory (MenuItem(..))
 import Types.Register (CartTotals)
 import Types.Transaction (TaxCategory(..), TransactionItem(..))
 import Types.UUID (UUID)
 import Utils.Money (formatMoney')
 import Utils.UUIDGen (genUUID)
+import Types.Inventory (MenuItem(..), Inventory(..))
 
--- Base cart totals structure
+formatPrice :: DiscreteMoney USD -> String
+formatPrice = formatMoney'
+
+formatDiscretePrice :: Discrete USD -> String
+formatDiscretePrice = formatMoney' <<< fromDiscrete'
+
+getCartQuantityForSku :: UUID -> Array TransactionItem -> Int
+getCartQuantityForSku sku cartItems =
+  case find (\(TransactionItem item) -> item.transactionItemMenuItemSku == sku) cartItems of
+    Just (TransactionItem item) -> item.transactionItemQuantity
+    Nothing -> 0
+
+isItemAvailable :: MenuItem -> Int -> Array TransactionItem -> Boolean
+isItemAvailable (MenuItem item) requestedQty cartItems =
+  let
+    currentInCart = getCartQuantityForSku item.sku cartItems
+    totalRequestedQty = currentInCart + requestedQty
+  in
+    totalRequestedQty <= item.quantity
+
+getAvailableQuantity :: MenuItem -> Array TransactionItem -> Int
+getAvailableQuantity (MenuItem item) cartItems =
+  let
+    currentInCart = getCartQuantityForSku item.sku cartItems
+  in
+    item.quantity - currentInCart
+
+findUnavailableItems :: Array TransactionItem -> Inventory -> Array { id :: UUID, name :: String }
+findUnavailableItems cartItems (Inventory inventory) =
+  cartItems 
+    # filter (\(TransactionItem item) -> 
+        case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
+          Just (MenuItem menuItem) -> 
+            menuItem.quantity < item.transactionItemQuantity
+          Nothing -> 
+            true
+      )
+    # map (\(TransactionItem item) -> 
+        let 
+          name = case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
+            Just (MenuItem menuItem) -> menuItem.name
+            Nothing -> "Unknown Item"
+        in
+          { id: item.transactionItemId, name }
+      )
+
+removeItemFromTransaction
+  :: UUID
+  -> Array TransactionItem
+  -> (Array TransactionItem -> Effect Unit)
+  -> Effect Unit
+removeItemFromTransaction itemId currentItems updateItems = do
+  updateItems
+    (filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems)
+
+findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
+findExistingItem (MenuItem menuItem) items =
+  find (\(TransactionItem txItem) -> txItem.transactionItemMenuItemSku == menuItem.sku) items
+
+addItemToCart
+  :: Ref AuthContext
+  -> MenuItem
+  -> Int
+  -> Array TransactionItem
+  -> UUID
+  -> (Array TransactionItem -> Effect Unit)
+  -> (CartTotals -> Effect Unit)
+  -> (String -> Effect Unit)
+  -> (Boolean -> Effect Unit)
+  -> Effect Unit
+addItemToCart
+  authRef
+  menuItem@(MenuItem record)
+  qty
+  currentItems
+  transactionId
+  setItems
+  setTotals
+  setStatusMessage
+  setIsProcessing = do
+
+  if qty <= 0 then
+    setStatusMessage "Quantity must be greater than 0"
+  else do
+    let
+      currentQtyInCart =
+        case
+          find (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
+            currentItems
+          of
+          Just (TransactionItem item) -> item.transactionItemQuantity
+          Nothing -> 0
+
+      totalRequestedQty = currentQtyInCart + qty
+
+    if totalRequestedQty > record.quantity then
+      setStatusMessage $ "Cannot add " <> show qty <> " more items. Only "
+        <> show (record.quantity - currentQtyInCart)
+        <> " more available."
+    else do
+      setIsProcessing true
+      setStatusMessage $ "Reserving " <> show qty <> " of " <> record.name <> "..."
+      
+      void $ launchAff_ do
+        result <- TransactionService.createTransactionItem authRef
+          transactionId
+          record.sku
+          qty
+          (unwrap record.price)
+
+        liftEffect $ case result of
+          Right addedItem -> do
+            let newItems = addedItem : currentItems
+            let newTotals = calculateCartTotals newItems
+
+            setTotals newTotals
+            setItems newItems
+            setStatusMessage $ "Added " <> show qty <> " of " <> record.name <> " to cart"
+            Console.log $ "Added and reserved item: " <> record.name <> ", Quantity: " <> show qty
+
+          Left err -> do
+            let errorMsg = if err == "Product not available" 
+                           then "This item has just been reserved by another customer. Please refresh inventory."
+                           else "Error: " <> err
+            setStatusMessage errorMsg
+            Console.error $ "Failed to reserve item: " <> err
+
+        liftEffect $ setIsProcessing false
+
+removeItemFromCart
+  :: Ref AuthContext
+  -> UUID
+  -> Array TransactionItem
+  -> (Array TransactionItem -> Effect Unit)
+  -> (CartTotals -> Effect Unit)
+  -> (Boolean -> Effect Unit)
+  -> Effect Unit
+removeItemFromCart authRef itemId currentItems setItems setTotals setIsProcessing = do
+  setIsProcessing true
+  
+  let itemInfo = case find (\(TransactionItem item) -> item.transactionItemId == itemId) currentItems of
+                   Just (TransactionItem item) -> ", SKU: " <> show item.transactionItemMenuItemSku
+                   Nothing -> ""
+                   
+  Console.log $ "Removing item ID: " <> show itemId <> itemInfo
+
+  void $ launchAff_ do
+    result <- TransactionService.removeTransactionItem authRef itemId
+
+    liftEffect $ case result of
+      Right _ -> do
+        let
+          newItems = filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems
+        let newTotals = calculateCartTotals newItems
+
+        setTotals newTotals
+        setItems newItems
+        Console.log $ "Successfully removed item and released reservation: " <> show itemId
+
+      Left err -> do
+        Console.error $ "Error removing item: " <> err
+
+    liftEffect $ setIsProcessing false
+
 emptyCartTotals :: CartTotals
 emptyCartTotals =
   { subtotal: Discrete 0
@@ -33,7 +196,6 @@ emptyCartTotals =
   , discountTotal: Discrete 0
   }
 
--- Calculate cart totals from transaction items
 calculateCartTotals :: Array TransactionItem -> CartTotals
 calculateCartTotals items =
   foldl addItemToTotals emptyCartTotals items
@@ -52,13 +214,6 @@ calculateCartTotals items =
       , total: totals.total + itemTotal
       , discountTotal: totals.discountTotal
       }
-
--- Format price helpers
-formatPrice :: DiscreteMoney USD -> String
-formatPrice = formatMoney'
-
-formatDiscretePrice :: Discrete USD -> String
-formatDiscretePrice = formatMoney' <<< fromDiscrete'
 
 addItemToTransaction
   :: MenuItem
@@ -158,123 +313,3 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
 
         Nothing ->
           updateItems (newItem : currentItems)
-
-removeItemFromTransaction
-  :: UUID
-  -> Array TransactionItem
-  -> (Array TransactionItem -> Effect Unit)
-  -> Effect Unit
-removeItemFromTransaction itemId currentItems updateItems = do
-  updateItems
-    (filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems)
-
-findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
-findExistingItem (MenuItem menuItem) items =
-   find (\(TransactionItem txItem) -> txItem.transactionItemMenuItemSku == menuItem.sku) items
-
-addItemToCart
-  :: Ref AuthContext
-  -> MenuItem
-  -> Int
-  -> Array TransactionItem
-  -> UUID
-  -> (Array TransactionItem -> Effect Unit)
-  -> (CartTotals -> Effect Unit)
-  -> (String -> Effect Unit)
-  -> (Boolean -> Effect Unit)
-  -> Effect Unit
-addItemToCart
-  authRef
-  menuItem@(MenuItem record)
-  qty
-  currentItems
-  transactionId
-  setItems
-  setTotals
-  setStatusMessage
-  setIsProcessing = do
-
-  if qty <= 0 then
-    setStatusMessage "Quantity must be greater than 0"
-  else do
-    let
-      currentQtyInCart =
-        case
-          find (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
-            currentItems
-          of
-          Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0
-
-      totalRequestedQty = currentQtyInCart + qty
-
-    if totalRequestedQty > record.quantity then
-      setStatusMessage $ "Cannot add " <> show qty <> " more items. Only "
-        <> show (record.quantity - currentQtyInCart)
-        <> " more available."
-    else do
-      -- Set processing state but don't block UI updates
-      setIsProcessing true
-      setStatusMessage "Adding item to transaction..."
-
-      void $ launchAff_ do
-        result <- TransactionService.createTransactionItem authRef
-          transactionId
-          record.sku
-          qty
-          (unwrap record.price)
-
-        liftEffect $ case result of
-          Right addedItem -> do
-            let newItems = addedItem : currentItems
-            let newTotals = calculateCartTotals newItems
-
-            setTotals newTotals
-            setItems newItems
-            setStatusMessage "Item added to transaction and reserved"
-            Console.log $ "Added and reserved item: " <> record.name
-
-          Left err -> do
-            setStatusMessage $ "Error: " <> err
-            Console.error $ "Failed to reserve item: " <> err
-
-        -- Always reset the processing state
-        liftEffect $ setIsProcessing false
-
-removeItemFromCart
-  :: Ref AuthContext
-  -> UUID
-  -> Array TransactionItem
-  -> (Array TransactionItem -> Effect Unit)
-  -> (CartTotals -> Effect Unit)
-  -> (Boolean -> Effect Unit) -- For loading state
-  -> Effect Unit
-removeItemFromCart authRef itemId currentItems setItems setTotals setIsProcessing = do
-  -- Set loading state
-  setIsProcessing true
-
-  -- Make a backend call to release the reservation
-  void $ launchAff_ do
-    -- Call backend to remove the transaction item
-    result <- TransactionService.removeTransactionItem authRef itemId
-
-    liftEffect $ case result of
-      Right _ -> do
-        -- Item reservation released, update the cart
-        let
-          newItems = filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems
-
-        -- Recalculate totals  
-        let newTotals = calculateCartTotals newItems
-
-        -- Update state
-        setTotals newTotals
-        setItems newItems
-        Console.log $ "Removed item and released reservation with ID: " <> show
-          itemId
-
-      Left err -> do
-        Console.error $ "Error removing item: " <> err
-
-    -- End loading state  
-    liftEffect $ setIsProcessing false
