@@ -30,6 +30,7 @@ import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import FRP.Poll (Poll)
 import Services.AuthService (AuthContext)
+import Services.TransactionService (getRemainingBalance, paymentsCoversTotal)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register, CartTotals)
@@ -37,7 +38,6 @@ import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction
 import Types.UUID (UUID(..))
 import Utils.CartUtils (emptyCartTotals, formatDiscretePrice, removeItemFromCart)
 import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
-import Utils.TransactionUtils (getRemainingBalance, paymentsCoversTotal)
 import Web.Event.Event (target)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input
@@ -1025,7 +1025,6 @@ addItemToCart
                     else TransactionItem i
                   ) currentItems
                 Nothing ->
-                  -- Add new item
                   newItem : currentItems
           
           let newTotals = TransactionService.calculateCartTotals updatedItems

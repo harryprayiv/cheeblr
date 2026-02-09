@@ -5,6 +5,7 @@ import Prelude
 import API.Transaction as API
 import Data.Array (filter, foldl)
 import Data.Either (Either(..))
+import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Int (floor, toNumber)
@@ -242,3 +243,25 @@ calculateCartTotals items =
       , total: totals.total + itemTotal
       , discountTotal: totals.discountTotal
       }
+
+-- | Sum all payment amounts in an array of payments.
+calculateTotalPayments :: Array PaymentTransaction -> Discrete USD
+calculateTotalPayments payments =
+  foldl
+    ( \acc (PaymentTransaction payment) ->
+        acc + toDiscrete payment.paymentAmount
+    )
+    (Discrete 0)
+    payments
+
+-- | Check whether the payments on hand cover the transaction total.
+paymentsCoversTotal :: Array PaymentTransaction -> Transaction -> Boolean
+paymentsCoversTotal payments (Transaction tx) =
+  calculateTotalPayments payments >= toDiscrete tx.transactionTotal
+
+-- | Calculate remaining balance: total minus what's been paid.
+-- | Returns 0 if overpaid.
+getRemainingBalance :: Array PaymentTransaction -> Transaction -> Discrete USD
+getRemainingBalance payments (Transaction tx) =
+  max (Discrete 0)
+    (toDiscrete tx.transactionTotal - calculateTotalPayments payments)
