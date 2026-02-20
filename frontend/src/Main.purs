@@ -23,7 +23,7 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import FRP.Poll as Poll
 import UI.Inventory.MenuLiveView (createMenuLiveView)
-import Route (Route(..), nav, route)
+import UI.Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
 import Services.AuthService (newAuthRef)
