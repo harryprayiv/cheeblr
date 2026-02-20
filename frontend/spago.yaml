@@ -85,7 +85,7 @@ package:
   #       - yoga-json: ">=5.1.0 <6.0.0"
 workspace:
   packageSet:
-    registry: 71.0.0
+    registry: 73.2.0
   extraPackages:
     money:
       git: "https://github.com/rowtype-yoga/purescript-money.git"
