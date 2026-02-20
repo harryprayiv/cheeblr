@@ -53,35 +53,35 @@ newtype Registry (k :: Symbol) = Registry (Array (Entry k))
 mkRegistry :: forall k. Array { value :: String, label :: String } -> Registry k
 mkRegistry pairs = Registry $
   mapWithIndex
-    (\i { value, label } ->
-      { tag: Tag value, label, ordinal: i })
+    (\i { value, label: lbl } ->
+      { tag: Tag value, label: lbl, ordinal: i })
     pairs
 
 -- | Validated tag construction. Returns Nothing if the value
 -- | is not in the registry.
 mkTag :: forall k. Registry k -> String -> Maybe (Tag k)
-mkTag (Registry entries) str =
-  case find (\e -> unTag e.tag == str) entries of
+mkTag (Registry es) str =
+  case find (\e -> unTag e.tag == str) es of
     Just e -> Just e.tag
     Nothing -> Nothing
 
 -- | Check membership without constructing.
 member :: forall k. Registry k -> Tag k -> Boolean
-member (Registry entries) tag =
-  case find (\e -> e.tag == tag) entries of
+member (Registry es) tag =
+  case find (\e -> e.tag == tag) es of
     Just _ -> true
     Nothing -> false
 
 -- | Check membership by raw string.
 memberStr :: forall k. Registry k -> String -> Boolean
-memberStr (Registry entries) str =
-  case find (\e -> unTag e.tag == str) entries of
+memberStr (Registry es) str =
+  case find (\e -> unTag e.tag == str) es of
     Just _ -> true
     Nothing -> false
 
 -- | All tags in registry order.
 values :: forall k. Registry k -> Array (Tag k)
-values (Registry entries) = map _.tag (sortBy (comparing _.ordinal) entries)
+values (Registry es) = map _.tag (sortBy (comparing _.ordinal) es)
 
 -- | All entries in registry order.
 entries :: forall k. Registry k -> Array (Entry k)
