@@ -33,15 +33,6 @@
               "debug": ">=6.0.2 <7.0.0"
             },
             {
-              "deku-core": "*"
-            },
-            {
-              "deku-css": "*"
-            },
-            {
-              "deku-dom": "*"
-            },
-            {
               "effect": ">=4.0.0 <5.0.0"
             },
             {
@@ -137,9 +128,6 @@
             "css",
             "datetime",
             "debug",
-            "deku-core",
-            "deku-css",
-            "deku-dom",
             "distributive",
             "dodo-printer",
             "effect",
@@ -150,7 +138,6 @@
             "exists",
             "fetch",
             "fetch-yoga-json",
-            "filterable",
             "float32",
             "foldable-traversable",
             "foreign",
@@ -161,7 +148,6 @@
             "functors",
             "gen",
             "http-methods",
-            "hyrule",
             "identity",
             "integers",
             "invariant",
@@ -170,27 +156,21 @@
             "js-fetch",
             "js-promise",
             "js-promise-aff",
-            "js-timers",
             "js-uri",
             "language-cst-parser",
             "lazy",
             "lcg",
             "linear-algebra",
             "lists",
-            "literals",
             "maybe",
             "media-types",
-            "minibench",
             "mmorph",
             "money",
             "newtype",
             "node-buffer",
-            "node-child-process",
             "node-event-emitter",
             "node-fs",
-            "node-os",
             "node-path",
-            "node-process",
             "node-streams",
             "nonempty",
             "now",
@@ -202,10 +182,8 @@
             "parsing",
             "partial",
             "pipes",
-            "posix-types",
             "prelude",
             "profunctor",
-            "psci-support",
             "quickcheck",
             "quickcheck-laws",
             "random",
@@ -232,8 +210,6 @@
             "unfoldable",
             "unicode",
             "unsafe-coerce",
-            "unsafe-reference",
-            "untagged-union",
             "uuid",
             "validation",
             "variant",
@@ -242,11 +218,8 @@
             "web-events",
             "web-file",
             "web-html",
-            "web-pointerevents",
             "web-storage",
             "web-streams",
-            "web-touchevents",
-            "web-uievents",
             "yoga-json",
             "yoga-tree"
           ]
@@ -850,89 +823,6 @@
       }
     },
     "extra_packages": {
-      "deku-core": {
-        "git": "https://github.com/mikesol/purescript-deku.git",
-        "ref": "276f48adde3d9354f61917f7e9ae2ae7b43df6b2",
-        "subdir": "deku-core",
-        "dependencies": [
-          "hyrule",
-          "untagged-union"
-        ]
-      },
-      "deku-css": {
-        "git": "https://github.com/mikesol/purescript-deku.git",
-        "ref": "06a06a2908b2a400a0ab9224c8128aa5988e674d",
-        "subdir": "deku-css",
-        "dependencies": [
-          "css",
-          "deku-core",
-          "hyrule"
-        ]
-      },
-      "deku-dom": {
-        "git": "https://github.com/mikesol/purescript-deku.git",
-        "ref": "276f48adde3d9354f61917f7e9ae2ae7b43df6b2",
-        "subdir": "deku-dom",
-        "dependencies": [
-          "hyrule",
-          "untagged-union",
-          "web-pointerevents",
-          "web-touchevents"
-        ]
-      },
-      "dodo-printer": {
-        "repo": "https://github.com/natefaubion/purescript-dodo-printer",
-        "version": "master",
-        "dependencies": [
-          "aff",
-          "ansi",
-          "arrays",
-          "avar",
-          "console",
-          "ansi",
-          "arrays",
-          "avar",
-          "console",
-          "control",
-          "effect",
-          "either",
-          "exceptions",
-          "foldable-traversable",
-          "integers",
-          "lists",
-          "maybe",
-          "minibench",
-          "newtype",
-          "node-buffer",
-          "node-child-process",
-          "node-fs",
-          "node-os",
-          "node-path",
-          "node-process",
-          "node-streams",
-          "parallel",
-          "partial",
-          "prelude",
-          "safe-coerce",
-          "strings",
-          "tuples"
-        ]
-      },
-      "hyrule": {
-        "git": "https://github.com/mikesol/purescript-hyrule.git",
-        "ref": "a2a32e02a0d8518d906ec5fb3192261f63667338",
-        "dependencies": [
-          "avar",
-          "effect",
-          "filterable",
-          "free",
-          "js-timers",
-          "random",
-          "unsafe-reference",
-          "web-html",
-          "web-uievents"
-        ]
-      },
       "linear-algebra": {
         "git": "https://github.com/rowtype-yoga/purescript-linear-algebra.git",
         "ref": "d7b640afab25a3abdc6b9e8d55a2f9389d6a40eb",
@@ -958,71 +848,6 @@
           "newtype",
           "prelude",
           "rationals"
-        ]
-      },
-      "tidy": {
-        "repo": "https://github.com/natefaubion/purescript-tidy.git",
-        "version": "v0.10.0",
-        "dependencies": [
-          "arrays",
-          "dodo-printer",
-          "foldable-traversable",
-          "lists",
-          "maybe",
-          "ordered-collections",
-          "partial",
-          "prelude",
-          "language-cst-parser",
-          "strings",
-          "tuples"
-        ]
-      },
-      "tidy-codegen": {
-        "repo": "https://github.com/natefaubion/purescript-tidy-codegen",
-        "version": "main",
-        "dependencies": [
-          "aff",
-          "ansi",
-          "arrays",
-          "avar",
-          "bifunctors",
-          "console",
-          "control",
-          "dodo-printer",
-          "effect",
-          "either",
-          "enums",
-          "exceptions",
-          "filterable",
-          "foldable-traversable",
-          "free",
-          "identity",
-          "integers",
-          "language-cst-parser",
-          "lazy",
-          "lists",
-          "maybe",
-          "newtype",
-          "node-buffer",
-          "node-child-process",
-          "node-fs",
-          "node-path",
-          "node-process",
-          "node-streams",
-          "ordered-collections",
-          "parallel",
-          "partial",
-          "posix-types",
-          "prelude",
-          "record",
-          "safe-coerce",
-          "st",
-          "strings",
-          "tidy",
-          "transformers",
-          "tuples",
-          "type-equality",
-          "unicode"
         ]
       },
       "vector": {
@@ -1279,39 +1104,6 @@
         "prelude"
       ]
     },
-    "deku-core": {
-      "type": "git",
-      "url": "https://github.com/mikesol/purescript-deku.git",
-      "rev": "276f48adde3d9354f61917f7e9ae2ae7b43df6b2",
-      "subdir": "deku-core",
-      "dependencies": [
-        "hyrule",
-        "untagged-union"
-      ]
-    },
-    "deku-css": {
-      "type": "git",
-      "url": "https://github.com/mikesol/purescript-deku.git",
-      "rev": "06a06a2908b2a400a0ab9224c8128aa5988e674d",
-      "subdir": "deku-css",
-      "dependencies": [
-        "css",
-        "deku-core",
-        "hyrule"
-      ]
-    },
-    "deku-dom": {
-      "type": "git",
-      "url": "https://github.com/mikesol/purescript-deku.git",
-      "rev": "276f48adde3d9354f61917f7e9ae2ae7b43df6b2",
-      "subdir": "deku-dom",
-      "dependencies": [
-        "hyrule",
-        "untagged-union",
-        "web-pointerevents",
-        "web-touchevents"
-      ]
-    },
     "distributive": {
       "type": "registry",
       "version": "6.0.0",
@@ -1325,33 +1117,17 @@
       ]
     },
     "dodo-printer": {
-      "type": "git",
-      "url": "https://github.com/natefaubion/purescript-dodo-printer",
-      "rev": "7a3c7f050754478d15b72d20cebb1d99d9c0f338",
+      "type": "registry",
+      "version": "2.2.3",
+      "integrity": "sha256-z6LZV9tXQPBZvHqzUYyCYGB7zHq6u7TOgV6Pr0wiobs=",
       "dependencies": [
-        "aff",
         "ansi",
-        "arrays",
-        "avar",
-        "console",
-        "control",
-        "effect",
         "either",
-        "exceptions",
         "foldable-traversable",
         "integers",
         "lists",
         "maybe",
-        "minibench",
         "newtype",
-        "node-buffer",
-        "node-child-process",
-        "node-fs",
-        "node-os",
-        "node-path",
-        "node-process",
-        "node-streams",
-        "parallel",
         "partial",
         "prelude",
         "safe-coerce",
@@ -1466,19 +1242,6 @@
         "prelude",
         "transformers",
         "yoga-json"
-      ]
-    },
-    "filterable": {
-      "type": "registry",
-      "version": "5.0.0",
-      "integrity": "sha256-be7ci1Bzwud2waqoCtNGsTBZbt7fi+gCLvGddQQRJ3A=",
-      "dependencies": [
-        "arrays",
-        "either",
-        "foldable-traversable",
-        "identity",
-        "lists",
-        "ordered-collections"
       ]
     },
     "float32": {
@@ -1628,22 +1391,6 @@
         "strings"
       ]
     },
-    "hyrule": {
-      "type": "git",
-      "url": "https://github.com/mikesol/purescript-hyrule.git",
-      "rev": "a2a32e02a0d8518d906ec5fb3192261f63667338",
-      "dependencies": [
-        "avar",
-        "effect",
-        "filterable",
-        "free",
-        "js-timers",
-        "random",
-        "unsafe-reference",
-        "web-html",
-        "web-uievents"
-      ]
-    },
     "identity": {
       "type": "registry",
       "version": "6.0.0",
@@ -1743,14 +1490,6 @@
         "aff",
         "foreign",
         "js-promise"
-      ]
-    },
-    "js-timers": {
-      "type": "registry",
-      "version": "6.1.0",
-      "integrity": "sha256-mYEL4zjFOzrDeVCnR9Hg3pcZaBZilB6zPGaZ4fzRmzg=",
-      "dependencies": [
-        "effect"
       ]
     },
     "js-uri": {
@@ -1853,20 +1592,6 @@
         "unfoldable"
       ]
     },
-    "literals": {
-      "type": "registry",
-      "version": "1.0.2",
-      "integrity": "sha256-ZkGRFD6gb8etYvyMYpX1Z7lx1Tql7R1VGnD1Dzinup8=",
-      "dependencies": [
-        "integers",
-        "maybe",
-        "numbers",
-        "partial",
-        "prelude",
-        "typelevel-prelude",
-        "unsafe-coerce"
-      ]
-    },
     "maybe": {
       "type": "registry",
       "version": "6.0.0",
@@ -1885,20 +1610,6 @@
       "dependencies": [
         "newtype",
         "prelude"
-      ]
-    },
-    "minibench": {
-      "type": "registry",
-      "version": "4.0.1",
-      "integrity": "sha256-zd/YnOqnzz/ers1umv5rgJOyPntF2zFpcLVbPWQIbYU=",
-      "dependencies": [
-        "console",
-        "effect",
-        "integers",
-        "numbers",
-        "partial",
-        "prelude",
-        "refs"
       ]
     },
     "mmorph": {
@@ -1948,24 +1659,6 @@
         "unsafe-coerce"
       ]
     },
-    "node-child-process": {
-      "type": "registry",
-      "version": "11.1.0",
-      "integrity": "sha256-Um7g75gXKEX51ZlviJWocTjUENUW1qHgqGqhYKkka74=",
-      "dependencies": [
-        "exceptions",
-        "foreign",
-        "foreign-object",
-        "functions",
-        "node-event-emitter",
-        "node-fs",
-        "node-os",
-        "node-streams",
-        "nullable",
-        "posix-types",
-        "unsafe-coerce"
-      ]
-    },
     "node-event-emitter": {
       "type": "registry",
       "version": "3.0.0",
@@ -2004,54 +1697,12 @@
         "unsafe-coerce"
       ]
     },
-    "node-os": {
-      "type": "registry",
-      "version": "5.1.0",
-      "integrity": "sha256-UtQiPiZy5ouV832ubww/U8KlpVYny9xsW8WWfYOEgtA=",
-      "dependencies": [
-        "arrays",
-        "bifunctors",
-        "console",
-        "control",
-        "datetime",
-        "effect",
-        "either",
-        "exceptions",
-        "foldable-traversable",
-        "foreign",
-        "foreign-object",
-        "functions",
-        "maybe",
-        "node-buffer",
-        "nullable",
-        "partial",
-        "posix-types",
-        "prelude",
-        "unsafe-coerce"
-      ]
-    },
     "node-path": {
       "type": "registry",
       "version": "5.0.1",
       "integrity": "sha256-j7n/SmpVz0FOMJl4XZop3ofJ+MeIPkMNqUEUKHEL6Us=",
       "dependencies": [
         "effect"
-      ]
-    },
-    "node-process": {
-      "type": "registry",
-      "version": "11.2.0",
-      "integrity": "sha256-onzKeNmaeYfN3HSDPqSFTrrP2Yl9tnVsfKKhnf2plxM=",
-      "dependencies": [
-        "effect",
-        "foreign",
-        "foreign-object",
-        "maybe",
-        "node-event-emitter",
-        "node-streams",
-        "posix-types",
-        "prelude",
-        "unsafe-coerce"
       ]
     },
     "node-streams": {
@@ -2213,15 +1864,6 @@
         "tuples"
       ]
     },
-    "posix-types": {
-      "type": "registry",
-      "version": "6.0.0",
-      "integrity": "sha256-Je5jG439F/SFO/IvVevZnWVxDIonrehlKuJkefP2lHE=",
-      "dependencies": [
-        "maybe",
-        "prelude"
-      ]
-    },
     "prelude": {
       "type": "registry",
       "version": "6.0.2",
@@ -2241,16 +1883,6 @@
         "newtype",
         "prelude",
         "tuples"
-      ]
-    },
-    "psci-support": {
-      "type": "registry",
-      "version": "6.0.0",
-      "integrity": "sha256-mC945xpp0qnYugdbnlzZExDRr8bW4mDbdsQl0H8KmIQ=",
-      "dependencies": [
-        "console",
-        "effect",
-        "prelude"
       ]
     },
     "quickcheck": {
@@ -2511,16 +2143,19 @@
       ]
     },
     "tidy": {
-      "type": "git",
-      "url": "https://github.com/natefaubion/purescript-tidy.git",
-      "rev": "42db77a3d9b0985021d970404195ca8bb2857ee0",
+      "type": "registry",
+      "version": "0.11.1",
+      "integrity": "sha256-YVBajrHqEC0A5OpY5QwXgDzkqbdVs+Ym7qIM/A64MGA=",
       "dependencies": [
         "arrays",
+        "control",
         "dodo-printer",
+        "either",
         "foldable-traversable",
         "language-cst-parser",
         "lists",
         "maybe",
+        "newtype",
         "ordered-collections",
         "partial",
         "prelude",
@@ -2529,23 +2164,17 @@
       ]
     },
     "tidy-codegen": {
-      "type": "git",
-      "url": "https://github.com/natefaubion/purescript-tidy-codegen",
-      "rev": "df39cf0962b2627eb758cdc1f932c6cbf8f086a7",
+      "type": "registry",
+      "version": "4.0.1",
+      "integrity": "sha256-nUrlcibw49Celk529Db7FWB519G+rnK4/exHnMmA1wI=",
       "dependencies": [
-        "aff",
-        "ansi",
         "arrays",
-        "avar",
         "bifunctors",
-        "console",
         "control",
         "dodo-printer",
         "effect",
         "either",
         "enums",
-        "exceptions",
-        "filterable",
         "foldable-traversable",
         "free",
         "identity",
@@ -2555,16 +2184,8 @@
         "lists",
         "maybe",
         "newtype",
-        "node-buffer",
-        "node-child-process",
-        "node-fs",
-        "node-path",
-        "node-process",
-        "node-streams",
         "ordered-collections",
-        "parallel",
         "partial",
-        "posix-types",
         "prelude",
         "record",
         "safe-coerce",
@@ -2665,32 +2286,6 @@
       "integrity": "sha256-0L1QsaY20OILjfU5TV72d3U/tSjhmL9hJ32WMp857Lk=",
       "dependencies": []
     },
-    "unsafe-reference": {
-      "type": "registry",
-      "version": "5.0.0",
-      "integrity": "sha256-ttSJTQUnK8AK2eGOsfRxLUJEDPL6pnmExjbiOqfwC6I=",
-      "dependencies": [
-        "prelude"
-      ]
-    },
-    "untagged-union": {
-      "type": "registry",
-      "version": "1.0.0",
-      "integrity": "sha256-MQvpb13TZEBoi9n/AoQ7ugniSQqbN6XQmAjii9pqJRk=",
-      "dependencies": [
-        "assert",
-        "console",
-        "effect",
-        "foreign",
-        "foreign-object",
-        "literals",
-        "maybe",
-        "newtype",
-        "psci-support",
-        "tuples",
-        "unsafe-coerce"
-      ]
-    },
     "uuid": {
       "type": "registry",
       "version": "9.0.0",
@@ -2788,18 +2383,6 @@
         "web-storage"
       ]
     },
-    "web-pointerevents": {
-      "type": "registry",
-      "version": "2.0.0",
-      "integrity": "sha256-mQbm1V36u3It2WdYMAXtzLBJl3uRAhN4BjeZTw3LWN8=",
-      "dependencies": [
-        "effect",
-        "maybe",
-        "prelude",
-        "web-dom",
-        "web-uievents"
-      ]
-    },
     "web-storage": {
       "type": "registry",
       "version": "5.0.0",
@@ -2821,22 +2404,6 @@
         "nullable",
         "prelude",
         "tuples"
-      ]
-    },
-    "web-touchevents": {
-      "type": "registry",
-      "version": "4.0.0",
-      "integrity": "sha256-H02c53BJlHDlAgogj/x8bM7PagJjhMMrMPYy9I7Rf0s=",
-      "dependencies": [
-        "web-uievents"
-      ]
-    },
-    "web-uievents": {
-      "type": "registry",
-      "version": "5.0.0",
-      "integrity": "sha256-yh9uVLIGu8wE1+jwLehtfsRfR1eyiShhIMMhBPqKybE=",
-      "dependencies": [
-        "web-html"
       ]
     },
     "yoga-json": {
