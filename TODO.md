@@ -15,7 +15,6 @@ These are relatively clean, as you noted. The key types and where they live:
 **`Types.Transaction`** — depends on `Types.UUID` and `Data.Finance.Money.Extended`. This is your heaviest type module. It defines `Transaction`, `TransactionItem`, `PaymentTransaction`, `PaymentMethod`, `DiscountType`, `TaxCategory`, `TaxRecord`, `Account`, `LedgerEntry`, plus all serialization. The ledger/accounting types (`Account`, `LedgerEntry`, `LedgerEntryType`, `AccountType`) are defined here but appear to be unused in the actual application — they're aspirational types that never got wired up.
 
 **`Types.Common`** — depends on `Types.Inventory` and `Types.UUID`. This is where things start getting tangled. It defines:
-- `ServiceError` (used by `Services.API` only)
 - `ValidationRule` newtype (used everywhere in forms)
 - `FieldConfig`, `DropdownConfig`, `TextAreaConfig` (form configuration types)
 - `FormValue` and `FieldValidator` typeclasses with instances for `ItemCategory`, `Species`, `UUID`, etc.
@@ -30,7 +29,7 @@ These are relatively clean, as you noted. The key types and where they live:
 
 **`Config.Network`** — leaf module, no internal dependencies. Just `apiBaseUrl` and `appOrigin`.
 
-**`Config.Entity`** — depends on `Types.UUID`. Just dummy UUIDs for dev/testing. Used in `Main` and `Services.CashRegister`.
+**`Config.Entity`** — depends on `Types.UUID`. Just dummy UUIDs for dev/testing. Used in `Main`.
 
 **`Config.Auth`** — depends on `Types.Auth` and `Types.UUID`. Defines `DevUser` and hardcoded dev users. Provides `toAuthenticatedUser`, `devUserCapabilities`, `findDevUserById`. This is your dev-mode authentication stub.
 
@@ -51,11 +50,6 @@ This is your auth context manager. It wraps a `Ref AuthContext` and exposes:
 - A large number of capability-checking functions (`canViewInventory`, `canCreateItem`, `canEditItem`...) — 15+ individual functions that all do the same thing with different field accessors.
 
 **Structural issue**: The auth ref (`Ref AuthContext`) gets threaded through almost everything as the first argument. It's effectively a global that's passed explicitly. Every API call, every service call, every UI component takes `Ref AuthContext` as its first parameter.
-
-### `Services.API`
-Depends on: `Types.Common`, `Types.Inventory`
-
-This defines a `MonadService` typeclass with `addMenuItem`, plus `LiveService`, `MockService`, and `AppService` implementations. **This module appears to be entirely unused** — nothing in the app imports `Services.API`. It's a vestigial abstraction layer that was never integrated. The actual API calls go through `API.Request` directly.
 
 ### `Services.RegisterService`
 Depends on: `API.Transaction`, `Services.AuthService`, `Types.Register`, `Types.UUID`, `Utils.UUID`, `Web.Storage`
@@ -88,14 +82,7 @@ This is your largest service module. It wraps `API.Transaction` calls with loggi
 2. Pure business logic (tax calculation, total calculation, payment validation)
 3. UI state management (`removeItemFromCart` takes `setItems`, `setTotals`, `setCheckingInventory` callbacks)
 
-The tax calculation in `createTransactionItem` hardcodes an 8% sales tax rate. Meanwhile `Services.CashRegister` has a completely separate tax calculation with different rates (8% sales + 15% cannabis). These are two independent tax systems that don't share code.
-
-### `Services.CashRegister`
-Depends on: `Config.Entity`, `Types.Inventory`, `Types.Transaction`, `Types.UUID`, `Utils.Formatting`, `Utils.UUID`
-
-This is a **completely self-contained transaction processing engine** that doesn't use the API at all. It has its own `RegisterState`, `TransactionBuilder`, `RegisterError` types, and implements the full flow: `initializeTransaction` → `addItemToTransaction` → `applyDiscount` → `addPayment` → `finalizeTransaction`. It also has `generateReceipt`, `openRegister`, `closeRegister`, `processRefund`, and tax calculation.
-
-**This module appears to be entirely unused by the rest of the application.** Nothing imports `Services.CashRegister`. It's a parallel implementation of the transaction flow that lives in `Services.TransactionService` + `API.Transaction`. It looks like an earlier local-only implementation that was superseded when you added the Haskell backend, but never removed.
+The tax calculation in `createTransactionItem` hardcodes an 8% sales tax rate.
 
 ---
 
@@ -174,7 +161,6 @@ Depends on: `Services.AuthService`, `Services.TransactionService`, `Types.Invent
 So you have **three different "add to cart" implementations** across the codebase:
 - `Utils.CartUtils.addItemToCart` — calls the API, used by `CreateTransaction`
 - `Utils.CartUtils.addItemToTransaction` — local only with 15% tax, used by `LiveCart`
-- `Services.CashRegister.addItemToTransaction` — local only with 8%+15% tax, unused
 
 And **three different "calculate totals" implementations**:
 - `Utils.CartUtils.calculateCartTotals`
@@ -273,7 +259,7 @@ Register initialization happens at startup via `RegisterService.initLocalRegiste
 
 **Callback-heavy state management**: Both `RegisterService` and the cart operations take success/error callbacks instead of returning values. This makes composition difficult and leads to deeply nested callback chains in `Main`.
 
-**Dead code**: `Services.CashRegister` (entire module), `Services.API` (entire module), `UI.Components.AuthGuard` (defined but unused), `UI.Components.UserSelector` (defined but unused), ledger types in `Types.Transaction`.
+**Unused code**:`UI.Components.AuthGuard` (defined but unused), `UI.Components.UserSelector` (defined but unused), ledger types in `Types.Transaction`.
 
 **Domain specificity in generic layers**: `Utils.Formatting`, `Utils.Validation`, `Types.Common`, and `Config.InventoryFields` all have hard dependencies on dispensary-specific types (`ItemCategory`, `Species`, `StrainLineage`).
 
