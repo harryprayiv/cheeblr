@@ -23,10 +23,6 @@ import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import FRP.Poll (Poll)
 
-----------------------------------------------------------------------
--- Form Field State (runtime state per field)
-----------------------------------------------------------------------
-
 type FormFieldState =
   { key :: String
   , descriptor :: FieldDescriptor
@@ -38,47 +34,30 @@ type FormFieldState =
   , setTouched :: Boolean -> Effect Unit
   }
 
-----------------------------------------------------------------------
--- Form State
-----------------------------------------------------------------------
-
 type FormState =
   { fields :: Array FormFieldState
   , fieldMap :: Map String FormFieldState
   , isFormValid :: Poll Boolean
-  , valuesRef :: Ref (Map String String)   -- snapshot-able current values
+  , valuesRef :: Ref (Map String String)
   }
 
--- | Read all current values synchronously (for submit handlers).
 readValues :: FormState -> Effect (Map String String)
 readValues form = Ref.read form.valuesRef
 
--- | Read a single field's current value.
 readValue :: FormState -> String -> Effect (Maybe String)
 readValue form key = do
   vals <- Ref.read form.valuesRef
   pure $ Map.lookup key vals
 
-----------------------------------------------------------------------
--- Form builder
-----------------------------------------------------------------------
-
--- | Build a form from schema + initial values, then pass the
--- | completed FormState to your render callback.
--- |
--- | Usage:
--- |   buildForm productSchema initVals \formState ->
--- |     D.div_ [ renderForm formState { ... } ]
 buildForm
   :: FormSchema
   -> Array { key :: String, value :: String }
-  -> Ref (Map String String)        -- shared values ref (caller creates)
+  -> Ref (Map String String)
   -> (FormState -> Nut)
   -> Nut
 buildForm schema initialValues valuesRef renderFn =
   buildFields schema initialValues valuesRef [] renderFn
 
--- | Internal: recursively create useState triples for each field.
 buildFields
   :: Array FieldDescriptor
   -> Array { key :: String, value :: String }
@@ -89,7 +68,6 @@ buildFields
 buildFields descriptors initVals valuesRef accumulated renderFn =
   case Data.Array.uncons descriptors of
     Nothing ->
-      -- All fields allocated — assemble FormState
       let
         fieldMap = Map.fromFoldable $
           accumulated <#> \fs -> fs.key /\ fs
@@ -99,29 +77,33 @@ buildFields descriptors initVals valuesRef accumulated renderFn =
         renderFn formState
 
     Just { head: desc, tail: rest } ->
-      Deku.do
-        setValue /\ valuePoll <- useState (lookupInitial desc.key initVals)
-        setValid /\ validPoll <- useState (Nothing :: Maybe Boolean)
-        setTouched /\ touchedPoll <- useState false
+      let
+        initVal = lookupInitial desc.key initVals
+        -- Pre-validate non-empty initial values (edit mode)
+        initValid =
+          if initVal == "" then Nothing
+          else Just (runValidation desc.validation (desc.formatInput initVal))
+        initTouched = initVal /= ""
+      in
+        Deku.do
+          setValue /\ valuePoll <- useState initVal
+          setValid /\ validPoll <- useState initValid
+          setTouched /\ touchedPoll <- useState initTouched
 
-        let
-          fieldState =
-            { key: desc.key
-            , descriptor: desc
-            , value: valuePoll
-            , setValue
-            , isValid: validPoll
-            , setValid
-            , touched: touchedPoll
-            , setTouched
-            }
+          let
+            fieldState =
+              { key: desc.key
+              , descriptor: desc
+              , value: valuePoll
+              , setValue
+              , isValid: validPoll
+              , setValid
+              , touched: touchedPoll
+              , setTouched
+              }
 
-        buildFields rest initVals valuesRef
-          (accumulated <> [ fieldState ]) renderFn
-
-----------------------------------------------------------------------
--- Single field renderer
-----------------------------------------------------------------------
+          buildFields rest initVals valuesRef
+            (accumulated <> [ fieldState ]) renderFn
 
 renderField :: Ref (Map String String) -> FormFieldState -> Nut
 renderField valuesRef fs =
@@ -141,19 +123,16 @@ renderField valuesRef fs =
   in
     D.div
       [ DA.klass_ "form-field" ]
-      [ -- Label
+      [
         D.label
           [ DA.klass_ "form-field-label" ]
           [ text_ fs.descriptor.label ]
 
-      -- Input (type-dependent)
       , renderInputElement fs.descriptor.fieldType handleInput fs.value
 
-      -- Validation indicator
       , validationIndicator fs
       ]
 
--- | Render the validation state indicator for a field.
 validationIndicator :: FormFieldState -> Nut
 validationIndicator fs =
   ((/\) <$> fs.isValid <*> fs.touched) <#~> \(valid /\ wasTouched) ->
@@ -168,10 +147,6 @@ validationIndicator fs =
           [ text_ "✓" ]
       _, _ ->
         D.span_ []
-
-----------------------------------------------------------------------
--- Input element rendering (by FieldType)
-----------------------------------------------------------------------
 
 renderInputElement :: FieldType -> (String -> Effect Unit) -> Poll String -> Nut
 renderInputElement fieldType handleInput valuePoll = case fieldType of
@@ -244,11 +219,6 @@ renderInputElement fieldType handleInput valuePoll = case fieldType of
     where
     mkOpt opt = D.option [ DA.value_ opt.value ] [ text_ opt.label ]
 
-----------------------------------------------------------------------
--- Full form renderer
-----------------------------------------------------------------------
-
--- | Render a complete form with title, fields, status, and submit.
 renderForm
   :: FormState
   -> { title :: String
@@ -266,12 +236,10 @@ renderForm formState opts =
         [ DA.klass_ "form-fields" ]
         (formState.fields <#> renderField formState.valuesRef)
 
-    -- Status
     , opts.statusMessage <#~> \msg ->
         if msg == "" then D.span_ []
         else D.div [ DA.klass_ "form-status" ] [ text_ msg ]
 
-    -- Submit
     , formState.isFormValid <#~> \valid ->
         D.button
           [ DA.klass_ $
@@ -284,17 +252,12 @@ renderForm formState opts =
           [ text_ opts.submitLabel ]
     ]
 
-----------------------------------------------------------------------
--- Helpers
-----------------------------------------------------------------------
-
 lookupInitial :: String -> Array { key :: String, value :: String } -> String
 lookupInitial key initVals =
   case Data.Array.find (\iv -> iv.key == key) initVals of
     Just iv -> iv.value
     Nothing -> ""
 
--- | Combine validity polls of all validatable fields.
 computeFormValidity :: Array FormFieldState -> Poll Boolean
 computeFormValidity fields =
   let

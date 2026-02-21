@@ -2,6 +2,7 @@ module Cheeblr.UI.Navigation where
 
 import Prelude
 
+import Cheeblr.Core.Product (Product)
 import Data.Maybe (Maybe(..))
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text_)
@@ -14,14 +15,11 @@ import Deku.Hooks (useState, (<#~>))
 import Effect (Effect)
 import FRP.Poll (Poll)
 
-----------------------------------------------------------------------
--- Pages
-----------------------------------------------------------------------
-
 data Page
   = InventoryPage
   | CreateItemPage
-  | EditItemPage         -- needs a product ID, handled by parent
+  | EditItemPage Product
+  | DeleteConfirmPage Product
   | TransactionPage
   | RegisterPage
   | ReportsPage
@@ -31,14 +29,11 @@ derive instance Eq Page
 instance Show Page where
   show InventoryPage = "Inventory"
   show CreateItemPage = "Create Item"
-  show EditItemPage = "Edit Item"
+  show (EditItemPage _) = "Edit Item"
+  show (DeleteConfirmPage _) = "Delete Item"
   show TransactionPage = "New Transaction"
   show RegisterPage = "Register"
   show ReportsPage = "Reports"
-
-----------------------------------------------------------------------
--- Navigation Bar
-----------------------------------------------------------------------
 
 navBar :: Poll Page -> (Page -> Effect Unit) -> Nut
 navBar currentPagePoll setPage =
@@ -61,7 +56,6 @@ navBar currentPagePoll setPage =
         )
     ]
 
--- | Pages shown in the nav bar.
 mainPages :: Array Page
 mainPages =
   [ InventoryPage

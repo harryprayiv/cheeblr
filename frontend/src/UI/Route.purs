@@ -4,10 +4,15 @@ import Prelude
 
 import Cheeblr.API.Auth (AuthContext)
 import Cheeblr.API.Inventory as InventoryAPI
-import Cheeblr.UI.Auth.UserSwitcher (userSwitcher)
-import Cheeblr.UI.Navigation (Page(..), navBar)
-import Cheeblr.UI.Transaction.TransactionPage (transactionPage)
+import Cheeblr.Core.Money (formatCurrency)
 import Cheeblr.Core.Product (Product(..), ProductList(..), ProductResponse(..))
+import Cheeblr.Core.Tag (unTag)
+import Cheeblr.UI.Auth.UserSwitcher (userSwitcher)
+import Cheeblr.UI.Inventory.ProductForm (FormMode(..), mkProductForm)
+import Cheeblr.UI.Navigation (Page(..), navBar)
+import Cheeblr.UI.Register.RegisterPage (registerPage)
+import Cheeblr.UI.Register.RegisterService as RS
+import Cheeblr.UI.Transaction.TransactionPage (transactionPage)
 import Data.Either (Either(..))
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text_)
@@ -22,21 +27,30 @@ import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Ref (Ref)
+import Effect.Unsafe (unsafePerformEffect)
 import FRP.Poll (Poll)
+import Types.UUID (UUID(..))
 
-----------------------------------------------------------------------
--- App Shell
-----------------------------------------------------------------------
+-- | Default location ID for register initialization
+defaultLocationId :: UUID
+defaultLocationId = UUID "b2bd4b3a-d50f-4c04-90b1-01266735876b"
 
--- | Top-level application component.
--- | Manages navigation state and renders the current page.
 appShell :: Ref AuthContext -> Nut
-appShell authRef = Deku.do
+appShell authRef =
+  let
+    registerHandle :: RS.RegisterHandle
+    registerHandle = unsafePerformEffect RS.newRegisterHandle
+  in
+    appShellInner authRef registerHandle
+
+appShellInner :: Ref AuthContext -> RS.RegisterHandle -> Nut
+appShellInner authRef registerHandle = Deku.do
   setPage /\ currentPage <- useState InventoryPage
   setInventory /\ inventoryPoll <- useState (ProductList [])
   setStatus /\ statusPoll <- useState ""
 
   let
+    loadInventory :: Effect Unit
     loadInventory = launchAff_ do
       result <- InventoryAPI.read authRef
       liftEffect case result of
@@ -46,36 +60,36 @@ appShell authRef = Deku.do
           Console.error err
           setStatus ("Failed to load inventory: " <> err)
 
+    initRegister :: Effect Unit
+    initRegister =
+      RS.initRegister authRef registerHandle defaultLocationId
+        (\_ -> Console.log "Register initialized")
+        (\err -> Console.error $ "Register init failed: " <> err)
+
     onUserSwitch _ = loadInventory
 
   D.div
     [ DA.klass_ "app-shell"
-    -- Load inventory on mount
-    , DL.load_ \_ -> loadInventory
+    , DL.load_ \_ -> do
+        loadInventory
+        initRegister
     ]
-    [ -- Dev toolbar
+    [
       D.div
         [ DA.klass_ "dev-toolbar" ]
         [ userSwitcher authRef onUserSwitch ]
 
-    -- Navigation
     , navBar currentPage setPage
 
-    -- Status
     , statusPoll <#~> \msg ->
         if msg == "" then D.span_ []
         else D.div [ DA.klass_ "app-status" ] [ text_ msg ]
 
-    -- Page content (reactive)
     , currentPage <#~> \page ->
         D.div
           [ DA.klass_ "page-content" ]
-          [ renderPage authRef page inventoryPoll setPage setStatus ]
+          [ renderPage authRef page inventoryPoll setPage setStatus loadInventory registerHandle ]
     ]
-
-----------------------------------------------------------------------
--- Page Router
-----------------------------------------------------------------------
 
 renderPage
   :: Ref AuthContext
@@ -83,52 +97,104 @@ renderPage
   -> Poll ProductList
   -> (Page -> Effect Unit)
   -> (String -> Effect Unit)
+  -> Effect Unit
+  -> RS.RegisterHandle
   -> Nut
-renderPage authRef page inventoryPoll setPage setStatus =
+renderPage authRef page inventoryPoll setPage setStatus loadInventory registerHandle =
   case page of
     InventoryPage ->
       D.div
         [ DA.klass_ "inventory-page" ]
-        [ D.h2_ [ text_ "Inventory" ]
-        , D.button
-            [ DA.klass_ "btn-primary"
-            , DL.click_ \_ -> setPage CreateItemPage
+        [ D.div
+            [ DA.klass_ "inventory-header" ]
+            [ D.h2_ [ text_ "Inventory" ]
+            , D.button
+                [ DA.klass_ "btn-primary"
+                , DL.click_ \_ -> setPage CreateItemPage
+                ]
+                [ text_ "Add Product" ]
             ]
-            [ text_ "Add Product" ]
         , inventoryPoll <#~> \(ProductList items) ->
             D.div
               [ DA.klass_ "inventory-list" ]
               (items <#> \product ->
-                inventoryRow product (setPage EditItemPage)
+                inventoryRow product
+                  (\p -> setPage (EditItemPage p))
+                  (\p -> setPage (DeleteConfirmPage p))
               )
         ]
 
     CreateItemPage ->
-      D.div_
-        [ D.h2_ [ text_ "Create Item" ]
-        , text_ "TODO: wire mkProductForm CreateMode"
-        , D.button
-            [ DL.click_ \_ -> setPage InventoryPage ]
-            [ text_ "← Back" ]
+      D.div
+        [ DA.klass_ "create-item-page" ]
+        [ D.button
+            [ DA.klass_ "btn-back"
+            , DL.click_ \_ -> setPage InventoryPage
+            ]
+            [ text_ "← Back to Inventory" ]
+        , unsafePerformEffect $ mkProductForm authRef CreateMode \_ -> do
+            loadInventory
+            setPage InventoryPage
         ]
 
-    EditItemPage ->
-      D.div_
-        [ D.h2_ [ text_ "Edit Item" ]
-        , text_ "TODO: wire mkProductForm (EditMode product)"
-        , D.button
-            [ DL.click_ \_ -> setPage InventoryPage ]
-            [ text_ "← Back" ]
+    EditItemPage product ->
+      D.div
+        [ DA.klass_ "edit-item-page" ]
+        [ D.button
+            [ DA.klass_ "btn-back"
+            , DL.click_ \_ -> setPage InventoryPage
+            ]
+            [ text_ "← Back to Inventory" ]
+        , unsafePerformEffect $ mkProductForm authRef (EditMode product) \_ -> do
+            loadInventory
+            setPage InventoryPage
+        ]
+
+    DeleteConfirmPage product@(Product p) ->
+      D.div
+        [ DA.klass_ "delete-confirm-page" ]
+        [ D.h2_ [ text_ "Delete Product" ]
+        , D.div
+            [ DA.klass_ "delete-confirm-details" ]
+            [ D.p_ [ text_ ("Are you sure you want to delete " <> p.name <> "?") ]
+            , D.div
+                [ DA.klass_ "delete-product-summary" ]
+                [ D.span_ [ text_ (p.brand <> " — " <> p.name) ]
+                , D.span_ [ text_ (unTag p.category <> " · " <> formatCurrency p.price) ]
+                , D.span_ [ text_ (show p.quantity <> " in stock") ]
+                ]
+            ]
+        , D.div
+            [ DA.klass_ "delete-confirm-actions" ]
+            [ D.button
+                [ DA.klass_ "btn-danger"
+                , DL.click_ \_ -> do
+                    setStatus "Deleting..."
+                    launchAff_ do
+                      result <- InventoryAPI.remove authRef (show p.sku)
+                      liftEffect case result of
+                        Right _ -> do
+                          setStatus ""
+                          loadInventory
+                          setPage InventoryPage
+                        Left err -> do
+                          Console.error err
+                          setStatus ("Delete failed: " <> err)
+                ]
+                [ text_ "Confirm Delete" ]
+            , D.button
+                [ DA.klass_ "btn-secondary"
+                , DL.click_ \_ -> setPage InventoryPage
+                ]
+                [ text_ "Cancel" ]
+            ]
         ]
 
     TransactionPage ->
       transactionPage authRef inventoryPoll
 
     RegisterPage ->
-      D.div_
-        [ D.h2_ [ text_ "Register Management" ]
-        , text_ "TODO: register open/close UI"
-        ]
+      registerPage authRef registerHandle
 
     ReportsPage ->
       D.div_
@@ -136,17 +202,31 @@ renderPage authRef page inventoryPoll setPage setStatus =
         , text_ "TODO: reports UI"
         ]
 
-----------------------------------------------------------------------
--- Inventory Row (simple list item)
-----------------------------------------------------------------------
-
-inventoryRow :: Product -> Effect Unit -> Nut
-inventoryRow (Product p) onEdit =
+inventoryRow :: Product -> (Product -> Effect Unit) -> (Product -> Effect Unit) -> Nut
+inventoryRow product@(Product p) onEdit onDelete =
   D.div
-    [ DA.klass_ "inventory-row"
-    , DL.click_ \_ -> onEdit
-    ]
-    [ D.span [ DA.klass_ "inv-name" ] [ text_ p.name ]
-    , D.span [ DA.klass_ "inv-brand" ] [ text_ p.brand ]
-    , D.span [ DA.klass_ "inv-qty" ] [ text_ (show p.quantity) ]
+    [ DA.klass_ "inventory-row" ]
+    [ D.div
+        [ DA.klass_ "inv-info"
+        , DL.click_ \_ -> onEdit product
+        ]
+        [ D.span [ DA.klass_ "inv-name" ] [ text_ p.name ]
+        , D.span [ DA.klass_ "inv-brand" ] [ text_ p.brand ]
+        , D.span [ DA.klass_ "inv-category" ] [ text_ (unTag p.category) ]
+        , D.span [ DA.klass_ "inv-qty" ] [ text_ (show p.quantity) ]
+        , D.span [ DA.klass_ "inv-price" ] [ text_ (formatCurrency p.price) ]
+        ]
+    , D.div
+        [ DA.klass_ "inv-actions" ]
+        [ D.button
+            [ DA.klass_ "btn-edit"
+            , DL.click_ \_ -> onEdit product
+            ]
+            [ text_ "Edit" ]
+        , D.button
+            [ DA.klass_ "btn-delete"
+            , DL.click_ \_ -> onDelete product
+            ]
+            [ text_ "Delete" ]
+        ]
     ]

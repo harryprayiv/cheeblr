@@ -3,11 +3,12 @@ module Cheeblr.UI.Transaction.PaymentForm where
 import Prelude
 
 import Cheeblr.Core.Cart (CartTotals, remainingBalance, isFullyPaid, totalPayments)
-import Cheeblr.Core.Money (formatCurrency, toDollars)
+import Cheeblr.Core.Money (formatCurrency, parseDollars, toDollars, zeroCents)
 import Cheeblr.UI.FormHelpers (getInputValue, getSelectValue)
 import Data.Array (null)
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete)
+import Data.Maybe (Maybe(..))
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text_)
 import Deku.Core (Nut)
@@ -17,11 +18,10 @@ import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useState, (<#~>))
 import Effect (Effect)
+import Effect.Ref (Ref)
+import Effect.Ref as Ref
+import Effect.Unsafe (unsafePerformEffect)
 import FRP.Poll (Poll)
-
-----------------------------------------------------------------------
--- Payment Method
-----------------------------------------------------------------------
 
 data PaymentMethod = Cash | Card | Other
 
@@ -37,43 +37,75 @@ parsePaymentMethod "Cash" = Cash
 parsePaymentMethod "Card" = Card
 parsePaymentMethod _ = Other
 
-----------------------------------------------------------------------
--- Payment Entry
-----------------------------------------------------------------------
-
 type PaymentEntry =
   { method :: PaymentMethod
   , amount :: Discrete USD
   }
 
-----------------------------------------------------------------------
--- Payment Form Component
-----------------------------------------------------------------------
-
 paymentForm
   :: Poll CartTotals
-  -> Poll (Array (Discrete USD))        -- existing payments
-  -> (PaymentEntry -> Effect Unit)       -- on add payment
-  -> (Effect Unit)                       -- on finalize
+  -> Poll (Array (Discrete USD))
+  -> (PaymentEntry -> Effect Unit)
+  -> (Effect Unit)
   -> Nut
-paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
+paymentForm totalsPoll paymentsPoll onAddPayment onFinalize =
+  let
+    -- Refs to imperatively read current input values
+    amountRef :: Ref String
+    amountRef = unsafePerformEffect (Ref.new "")
+
+    methodRef :: Ref String
+    methodRef = unsafePerformEffect (Ref.new "Cash")
+  in
+    paymentFormInner totalsPoll paymentsPoll onAddPayment onFinalize amountRef methodRef
+
+paymentFormInner
+  :: Poll CartTotals
+  -> Poll (Array (Discrete USD))
+  -> (PaymentEntry -> Effect Unit)
+  -> (Effect Unit)
+  -> Ref String
+  -> Ref String
+  -> Nut
+paymentFormInner totalsPoll paymentsPoll onAddPayment onFinalize amountRef methodRef = Deku.do
   setAmount /\ amountPoll <- useState ""
   setMethod /\ methodPoll <- useState "Cash"
   setError /\ errorPoll <- useState ""
 
   let
+    updateAmount :: String -> Effect Unit
+    updateAmount val = do
+      Ref.write val amountRef
+      setAmount val
+
+    updateMethod :: String -> Effect Unit
+    updateMethod val = do
+      Ref.write val methodRef
+      setMethod val
+
     handleAddPayment :: Effect Unit
     handleAddPayment = do
-      -- Read current amount from the input
-      -- In practice this needs the STRef pattern or to be called
-      -- from within a reactive context. Simplified here.
-      pure unit
+      amountStr <- Ref.read amountRef
+      methodStr <- Ref.read methodRef
+      case parseDollars amountStr of
+        Nothing -> setError "Please enter a valid dollar amount"
+        Just amount ->
+          if amount <= zeroCents then
+            setError "Amount must be greater than zero"
+          else do
+            onAddPayment
+              { method: parsePaymentMethod methodStr
+              , amount
+              }
+            -- Reset input
+            updateAmount ""
+            setError ""
 
   D.div
     [ DA.klass_ "payment-form" ]
     [ D.h3_ [ text_ "Payment" ]
 
-    -- Remaining balance display
+    -- Payment summary
     , ((/\) <$> totalsPoll <*> paymentsPoll) <#~> \(totals /\ payments) ->
         let
           remaining = remainingBalance totals payments
@@ -88,7 +120,7 @@ paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
             , summaryRow "Remaining" (formatCurrency remaining)
             ]
 
-    -- Payment method selector
+    -- Method selector
     , D.div
         [ DA.klass_ "payment-method-row" ]
         [ D.label_ [ text_ "Method" ]
@@ -96,7 +128,7 @@ paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
             [ DA.klass_ "payment-method-select"
             , DL.change_ \evt -> do
                 val <- getSelectValue evt
-                setMethod val
+                updateMethod val
             ]
             [ D.option [ DA.value_ "Cash" ] [ text_ "Cash" ]
             , D.option [ DA.value_ "Card" ] [ text_ "Card" ]
@@ -114,7 +146,7 @@ paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
             , DA.value amountPoll
             , DL.input_ \evt -> do
                 val <- getInputValue evt
-                setAmount val
+                updateAmount val
                 setError ""
             ] []
         ]
@@ -123,7 +155,7 @@ paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
     , totalsPoll <#~> \totals ->
         D.div
           [ DA.klass_ "payment-quick-amounts" ]
-          [ quickButton "Exact" (formatAmount totals.total) setAmount
+          [ quickButton "Exact" (formatAmount totals.total) updateAmount
           ]
 
     -- Error display
@@ -131,12 +163,10 @@ paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
         if err == "" then D.span_ []
         else D.div [ DA.klass_ "payment-error" ] [ text_ err ]
 
-    -- Add Payment button
+    -- Add Payment button (actually wired now)
     , D.button
         [ DA.klass_ "payment-add-btn"
-        , DL.click_ \_ -> pure unit
-            -- Actual implementation: read amountPoll and methodPoll
-            -- via STRef, validate, call onAddPayment
+        , DL.click_ \_ -> handleAddPayment
         ]
         [ text_ "Add Payment" ]
 
@@ -151,10 +181,6 @@ paymentForm totalsPoll paymentsPoll onAddPayment onFinalize = Deku.do
         else
           D.span_ []
     ]
-
-----------------------------------------------------------------------
--- Helpers
-----------------------------------------------------------------------
 
 summaryRow :: String -> String -> Nut
 summaryRow lbl amount =
