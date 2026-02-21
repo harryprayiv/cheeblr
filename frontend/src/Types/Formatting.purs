@@ -1,4 +1,4 @@
-module Types.Common where
+module Types.Formatting where
 
 import Prelude
 
@@ -10,32 +10,10 @@ import Data.Maybe (Maybe(..))
 import Data.Number (fromString) as Number
 import Data.String (trim)
 import Effect (Effect)
-import Foreign (Foreign)
 import Type.Proxy (Proxy(..))
 import Types.Inventory (ItemCategory(..), Species(..))
 import Types.UUID (UUID, parseUUID)
 import Yoga.JSON (class WriteForeign, writeImpl)
-
-newtype ForeignRequestBody = ForeignRequestBody Foreign
-
-data ServiceError
-  = APIError String
-  | ServiceValidationError String
-  | NotFoundError String
-  | AuthorizationError String
-  | NetworkError String
-  | UnknownError String
-
-derive instance eqServiceError :: Eq ServiceError
-derive instance ordServiceError :: Ord ServiceError
-
-instance showServiceError :: Show ServiceError where
-  show (APIError msg) = "API Error: " <> msg
-  show (ServiceValidationError msg) = "Validation Error: " <> msg
-  show (NotFoundError msg) = "Not Found: " <> msg
-  show (AuthorizationError msg) = "Authorization Error: " <> msg
-  show (NetworkError msg) = "Network Error: " <> msg
-  show (UnknownError msg) = "Unknown Error: " <> msg
 
 type HTMLFormField (r :: Row Type) =
   ( __tag :: Proxy "HTMLFormField"

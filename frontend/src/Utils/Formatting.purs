@@ -20,11 +20,8 @@ import Effect (Effect)
 import Effect.Random (random)
 import Partial.Unsafe (unsafePartial)
 import Types.Inventory (Inventory(..), ItemCategory, MenuItem(..), Species, StrainLineage(..))
-import Types.UUID (UUID(..))
+import Types.UUID (UUID)
 import Data.Array (catMaybes, filter, find, range, replicate, (!!))
-
-uuidToString :: UUID -> String
-uuidToString (UUID uuid) = uuid
 
 getItemName :: MenuItem -> String
 getItemName (MenuItem item) = item.name

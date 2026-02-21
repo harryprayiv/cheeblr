@@ -23,7 +23,7 @@ import Services.AuthService (AuthContext)
 import Types.Inventory (InventoryResponse(..))
 import UI.Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber)
-import Utils.UUID (genUUID)
+import Types.UUID (genUUID)
 import Utils.Validation (validateMenuItem)
 
 createItem :: Ref AuthContext -> String -> Nut

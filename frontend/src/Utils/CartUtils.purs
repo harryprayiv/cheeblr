@@ -21,7 +21,7 @@ import Types.Register (CartTotals)
 import Types.Transaction (TaxCategory(..), TransactionItem(..))
 import Types.UUID (UUID)
 import Utils.Money (formatMoney')
-import Utils.UUID (genUUID)
+import Types.UUID (genUUID)
 import Types.Inventory (MenuItem(..), Inventory(..))
 
 formatPrice :: DiscreteMoney USD -> String

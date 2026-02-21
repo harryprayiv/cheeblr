@@ -158,7 +158,7 @@ Depends on: `Services.AuthService`, `Services.TransactionService`, `Types.Invent
 
 3. **Effectful cart operations without API calls**: `addItemToTransaction` (local-only, generates UUIDs, builds transaction items with hardcoded 15% tax)
 
-So you have **three different "add to cart" implementations** across the codebase:
+So you have **two different "add to cart" implementations** across the codebase:
 - `Utils.CartUtils.addItemToCart` — calls the API, used by `CreateTransaction`
 - `Utils.CartUtils.addItemToTransaction` — local only with 15% tax, used by `LiveCart`
 

@@ -15,7 +15,7 @@ import Effect (Effect)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import FRP.Poll (Poll)
-import Types.Common (DropdownConfig, FieldConfig, TextAreaConfig, ValidationRule, HTMLFormField)
+import Types.Formatting (DropdownConfig, FieldConfig, TextAreaConfig, ValidationRule, HTMLFormField)
 import Utils.Formatting (getAllEnumValues)
 import Utils.Validation (runValidation)
 import Web.Event.Event (target)

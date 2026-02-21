@@ -4,7 +4,7 @@ import Prelude
 
 import Data.Maybe (Maybe(..))
 import Data.String (trim)
-import Types.Common (DropdownConfig, ValidationRule(..), FieldConfig)
+import Types.Formatting (DropdownConfig, ValidationRule(..), FieldConfig)
 import Types.Inventory (ItemCategory, Species)
 import Utils.Formatting (formatCentsToDisplayDollars, getAllEnumValues)
 import Utils.Validation (allOf, alphanumeric, anyOf, commaList, dollarAmount, extendedAlphanumeric, fraction, maxLength, nonEmpty, nonNegativeInteger, percentage, validMeasurementUnit, validUrl)

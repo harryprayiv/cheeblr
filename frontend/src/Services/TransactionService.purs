@@ -21,7 +21,7 @@ import Services.AuthService (AuthContext)
 import Types.Register (CartTotals)
 import Types.Transaction (PaymentMethod, PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID)
-import Utils.UUID (genUUID)
+import Types.UUID (genUUID)
 
 emptyCartTotals :: CartTotals
 emptyCartTotals =

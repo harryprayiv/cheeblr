@@ -32,7 +32,7 @@ import Services.TransactionService (startTransaction)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
 import UI.Transaction.CreateTransaction (createTransaction)
 import UI.Transaction.LiveCart (liveCart)
-import Utils.UUID (genUUID)
+import Types.UUID (genUUID)
 
 testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
