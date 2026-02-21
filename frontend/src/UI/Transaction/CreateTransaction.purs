@@ -32,12 +32,12 @@ import FRP.Poll (Poll)
 import Services.AuthService (AuthContext)
 import Services.TransactionService (getRemainingBalance, paymentsCoversTotal)
 import Services.TransactionService as TransactionService
-import Types.Inventory (Inventory(..), MenuItem(..))
+import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
 import Types.Register (Register, CartTotals)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID(..))
 import Utils.CartUtils (emptyCartTotals, formatDiscretePrice, removeItemFromCart)
-import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
+import Utils.Formatting (formatCentsToDollars)
 import Web.Event.Event (target)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input

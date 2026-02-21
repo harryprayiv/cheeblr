@@ -25,12 +25,12 @@ import Effect (Effect)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import FRP.Poll (Poll)
-import Types.Inventory (Inventory(..), MenuItem(..))
+import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
 import Types.Register (CartTotals)
 import Types.Transaction (TransactionItem(..))
 import Types.UUID (UUID)
 import Utils.CartUtils (addItemToTransaction, calculateCartTotals, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromTransaction)
-import Utils.Formatting (findItemNameBySku, formatCentsToDollars)
+import Utils.Formatting (formatCentsToDollars)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input
 import Web.PointerEvent.PointerEvent as PointerEvent

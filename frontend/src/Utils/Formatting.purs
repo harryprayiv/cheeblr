@@ -6,68 +6,24 @@ import Config.LiveView (LiveViewConfig, SortField(..), SortOrder(..))
 import Data.Array (length, uncons) as Array
 import Data.Either (Either(..))
 import Data.Enum (class BoundedEnum, fromEnum, toEnum)
-import Data.Int (floor, fromString, toNumber) as Int
+import Data.Int (fromString, toNumber) as Int
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Number (fromString) as Number
-import Data.String (Pattern(..), joinWith, replace, split, take, toLower, trim)
+import Data.String (Pattern(..), split, take, trim)
 import Data.String as String
-import Data.String.Pattern (Replacement(..))
 import Data.String.Regex (regex, replace) as Regex
 import Data.String.Regex.Flags (global) as Regex
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
-import Effect (Effect)
-import Effect.Random (random)
 import Partial.Unsafe (unsafePartial)
-import Types.Inventory (Inventory(..), ItemCategory, MenuItem(..), Species, StrainLineage(..))
-import Types.UUID (UUID)
-import Data.Array (catMaybes, filter, find, range, replicate, (!!))
-
-getItemName :: MenuItem -> String
-getItemName (MenuItem item) = item.name
-
-findItemNameBySku :: UUID -> Inventory -> String
-findItemNameBySku sku (Inventory items) =
-  case find (\(MenuItem item) -> item.sku == sku) items of
-    Just (MenuItem item) -> item.name
-    Nothing -> "Unknown Item"
-
-findItemBySku :: UUID -> Inventory -> Maybe MenuItem
-findItemBySku sku (Inventory items) =
-  find (\(MenuItem item) -> item.sku == sku) items
-
-generateClassName
-  :: { category :: ItemCategory, subcategory :: String, species :: Species }
-  -> String
-generateClassName item =
-  "species-" <> toClassName (show item.species)
-    <> " category-"
-    <> toClassName (show item.category)
-    <> " subcategory-"
-    <> toClassName item.subcategory
-
-toClassName :: String -> String
-toClassName str = toLower (replace (Pattern " ") (Replacement "-") str)
-
--- | Generate a random integer in a given range (inclusive)
-randomInt :: Int -> Int -> Effect Int
-randomInt min max = do
-  r <- random
-  pure $ Int.floor $ r * Int.toNumber (max - min + 1) + Int.toNumber min
+import Types.Inventory (MenuItem(..), StrainLineage(..))
+import Data.Array (catMaybes, filter, range, (!!))
 
 ensureNumber :: String -> String
 ensureNumber str = fromMaybe "0.0" $ map show $ Number.fromString $ trim str
 
 ensureInt :: String -> String
 ensureInt str = fromMaybe "0" $ map show $ Int.fromString $ trim str
-
-padStart :: Int -> String -> String
-padStart targetLength str =
-  let
-    paddingLength = max 0 (targetLength - String.length str) -- Ensure no negative padding
-    padding = replicate paddingLength "0" -- Create an Array String
-  in
-    joinWith "" padding <> str
 
 parseCommaList :: String -> Array String
 parseCommaList str =

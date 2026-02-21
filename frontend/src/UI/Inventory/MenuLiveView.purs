@@ -14,8 +14,8 @@ import Deku.Hooks ((<#~>))
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import FRP.Poll (Poll)
-import Types.Inventory (Inventory(..), MenuItem(..), StrainLineage(..))
-import Utils.Formatting (compareMenuItems, formatCentsToDollars, generateClassName, summarizeLongText)
+import Types.Inventory (generateClassName, Inventory(..), MenuItem(..), StrainLineage(..))
+import Utils.Formatting (compareMenuItems, formatCentsToDollars, summarizeLongText)
 
 createMenuLiveView :: Poll Inventory -> Poll Boolean -> Poll String -> Nut
 createMenuLiveView inventoryPoll loadingPoll errorPoll =

@@ -2,14 +2,17 @@ module Types.Inventory where
 
 import Prelude
 
-import Data.Enum (class BoundedEnum, class Enum, Cardinality(..))
+import Data.Array (find)
+import Data.Enum (class BoundedEnum, class Enum, Cardinality(Cardinality))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Generic.Rep (class Generic)
-import Data.Int as Int
+import Data.Int (floor, toNumber) as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap)
 import Data.Show.Generic (genericShow)
+import Data.String (Pattern(..), replace, toLower)
+import Data.String.Pattern (Replacement(..))
 import Foreign (Foreign, F, ForeignError(..), fail, typeOf)
 import Foreign.Index (readProp)
 import Types.UUID (UUID, parseUUID)
@@ -408,3 +411,29 @@ instance showStrainLineage :: Show StrainLineage where
       <> ", species: "
       <> show lineage.species
       <> " }"
+
+getItemName :: MenuItem -> String
+getItemName (MenuItem item) = item.name
+
+findItemNameBySku :: UUID -> Inventory -> String
+findItemNameBySku sku (Inventory items) =
+  case find (\(MenuItem item) -> item.sku == sku) items of
+    Just (MenuItem item) -> item.name
+    Nothing -> "Unknown Item"
+
+findItemBySku :: UUID -> Inventory -> Maybe MenuItem
+findItemBySku sku (Inventory items) =
+  find (\(MenuItem item) -> item.sku == sku) items
+
+generateClassName
+  :: { category :: ItemCategory, subcategory :: String, species :: Species }
+  -> String
+generateClassName item =
+  "species-" <> toClassName (show item.species)
+    <> " category-"
+    <> toClassName (show item.category)
+    <> " subcategory-"
+    <> toClassName item.subcategory
+
+toClassName :: String -> String
+toClassName str = toLower (replace (Pattern " ") (Replacement "-") str)

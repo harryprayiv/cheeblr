@@ -2,21 +2,23 @@ module Types.UUID where
 
 import Prelude
 
-
-import Data.Int (hexadecimal, toStringAs)
-import Data.Int.Bits ((.|.))
-import Data.String (joinWith)
-import Effect (Effect)
-import Types.UUID (UUID(..))
-import Utils.Formatting (padStart, randomInt)
+import Data.Array (replicate)
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
+import Data.Int (floor, toNumber) as Int
+import Data.Int (hexadecimal, toStringAs)
+import Data.Int.Bits ((.|.))
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype)
+import Data.String (joinWith)
+import Data.String as String
 import Data.String.Regex (regex, test)
 import Data.String.Regex.Flags (noFlags)
+import Effect (Effect)
+import Effect.Random (random)
 import Foreign (ForeignError(..), fail)
 import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
+
 
 newtype UUID = UUID String
 
@@ -37,6 +39,20 @@ instance readForeignUUID :: ReadForeign UUID where
     case parseUUID str of
       Just uuid -> pure uuid
       Nothing -> fail (ForeignError $ "Invalid UUID format: " <> str)
+
+-- | Generate a random integer in a given range (inclusive)
+randomInt :: Int -> Int -> Effect Int
+randomInt min max = do
+  r <- random
+  pure $ Int.floor $ r * Int.toNumber (max - min + 1) + Int.toNumber min
+
+padStart :: Int -> String -> String
+padStart targetLength str =
+  let
+    paddingLength = max 0 (targetLength - String.length str) -- Ensure no negative padding
+    padding = replicate paddingLength "0" -- Create an Array String
+  in
+    joinWith "" padding <> str
 
 uuidToString :: UUID -> String
 uuidToString (UUID uuid) = uuid
