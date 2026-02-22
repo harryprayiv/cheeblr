@@ -29,7 +29,6 @@ emptyCartTotals =
   , discountTotal: Discrete 0
   }
 
-
 startTransaction
   :: Ref AuthContext
   -> { employeeId :: UUID
@@ -51,7 +50,6 @@ startTransaction authRef params = do
 
   let zeroMoney = fromDiscrete' (Discrete 0)
 
-  -- Create transaction with the Transaction constructor to match Haskell backend
   let
     transaction = Transaction
       { transactionId: transactionId
@@ -107,7 +105,6 @@ createTransactionItem authRef transactionId menuItemSku quantity pricePerUnit = 
       taxCents = floor (toNumber subtotalCents * salesTaxRate)
       totalCents = subtotalCents + taxCents
 
-      -- Use prefixed field names to match Haskell
       salesTax =
         { taxCategory: RegularSalesTax
         , taxRate: salesTaxRate
@@ -196,33 +193,6 @@ finalizeTransaction authRef transactionId = do
   liftEffect $ Console.log $ "Finalizing transaction: " <> show transactionId
   API.finalizeTransaction authRef transactionId
 
--- removeItemFromCart
---   :: Ref AuthContext
---   -> UUID
---   -> Array TransactionItem
---   -> (Array TransactionItem -> Effect Unit)
---   -> (CartTotals -> Effect Unit)
---   -> (Boolean -> Effect Unit)
---   -> Effect Unit
--- removeItemFromCart authRef itemId currentItems setItems setTotals setCheckingInventory = do
---   setCheckingInventory true
-  
---   void $ launchAff_ do
---     result <- removeTransactionItem authRef itemId
-    
---     liftEffect $ case result of
---       Right _ -> do
---         let newItems = filter 
---               (\(TransactionItem item) -> item.transactionItemId /= itemId) 
---               currentItems
---         let newTotals = calculateCartTotals newItems
---         setItems newItems
---         setTotals newTotals
---         setCheckingInventory false
---       Left err -> do
---         setCheckingInventory false
---         Console.error $ "Failed to remove item: " <> err
-
 calculateCartTotals :: Array TransactionItem -> CartTotals
 calculateCartTotals items =
   foldl addItemToTotals emptyCartTotals items
@@ -242,7 +212,6 @@ calculateCartTotals items =
       , discountTotal: totals.discountTotal
       }
 
--- | Sum all payment amounts in an array of payments.
 calculateTotalPayments :: Array PaymentTransaction -> Discrete USD
 calculateTotalPayments payments =
   foldl
@@ -252,13 +221,10 @@ calculateTotalPayments payments =
     (Discrete 0)
     payments
 
--- | Check whether the payments on hand cover the transaction total.
 paymentsCoversTotal :: Array PaymentTransaction -> Transaction -> Boolean
 paymentsCoversTotal payments (Transaction tx) =
   calculateTotalPayments payments >= toDiscrete tx.transactionTotal
 
--- | Calculate remaining balance: total minus what's been paid.
--- | Returns 0 if overpaid.
 getRemainingBalance :: Array PaymentTransaction -> Transaction -> Discrete USD
 getRemainingBalance payments (Transaction tx) =
   max (Discrete 0)
