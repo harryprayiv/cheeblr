@@ -11,7 +11,6 @@ import Data.Number (fromString) as Number
 import Data.String (trim)
 import Effect (Effect)
 import Type.Proxy (Proxy(..))
-import Types.Inventory (ItemCategory(..), Species(..))
 import Types.UUID (UUID, parseUUID)
 import Yoga.JSON (class WriteForeign, writeImpl)
 
@@ -124,28 +123,6 @@ instance formValueInt :: FormValue Int where
     Just n -> ValidationSuccess n
     Nothing -> ValidationError "Invalid integer format"
 
-instance formValueItemCategory :: FormValue ItemCategory where
-  fromFormValue str = case str of
-    "Flower" -> ValidationSuccess Flower
-    "PreRolls" -> ValidationSuccess PreRolls
-    "Vaporizers" -> ValidationSuccess Vaporizers
-    "Edibles" -> ValidationSuccess Edibles
-    "Drinks" -> ValidationSuccess Drinks
-    "Concentrates" -> ValidationSuccess Concentrates
-    "Topicals" -> ValidationSuccess Topicals
-    "Tinctures" -> ValidationSuccess Tinctures
-    "Accessories" -> ValidationSuccess Accessories
-    _ -> ValidationError "Invalid category value"
-
-instance formValueSpecies :: FormValue Species where
-  fromFormValue str = case str of
-    "Indica" -> ValidationSuccess Indica
-    "IndicaDominantHybrid" -> ValidationSuccess IndicaDominantHybrid
-    "Hybrid" -> ValidationSuccess Hybrid
-    "SativaDominantHybrid" -> ValidationSuccess SativaDominantHybrid
-    "Sativa" -> ValidationSuccess Sativa
-    _ -> ValidationError "Invalid species value"
-
 instance formValueUUID :: FormValue UUID where
   fromFormValue str = case parseUUID (trim str) of
     Just uuid -> ValidationSuccess uuid
@@ -188,15 +165,3 @@ instance fieldValidatorUUID :: FieldValidator UUID where
     Just uuid -> Right uuid
     Nothing -> Left "Must be a valid UUID"
   validationError _ = "Invalid UUID format"
-
-instance fieldValidatorItemCategory :: FieldValidator ItemCategory where
-  validateField str = case fromFormValue str of
-    ValidationSuccess cat -> Right cat
-    ValidationError err -> Left err
-  validationError _ = "Must be a valid category"
-
-instance fieldValidatorSpecies :: FieldValidator Species where
-  validateField str = case fromFormValue str of
-    ValidationSuccess species -> Right species
-    ValidationError err -> Left err
-  validationError _ = "Must be a valid species"
