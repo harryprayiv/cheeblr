@@ -1,9 +1,3 @@
-Let me do a thorough dependency analysis of your codebase. I'll map out every module's imports and identify the tangled areas.
-
-Let me start by building the full picture:
-
----
-
 ## Module Dependency Graph
 
 ### Layer 1: Pure Types (no internal dependencies)
