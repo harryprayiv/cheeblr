@@ -18,7 +18,7 @@ import Effect (Effect)
 import Effect.Random (random)
 import Foreign (ForeignError(..), fail)
 import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
-
+import Data.Validation.Semigroup (V, invalid)
 
 newtype UUID = UUID String
 
@@ -102,3 +102,10 @@ genUUID = do
   pure $ UUID uuid
   where
   toHex = toStringAs hexadecimal
+
+
+validateUUID :: String -> String -> V (Array String) UUID
+validateUUID fieldName str =
+  case parseUUID (String.trim str) of
+    Just uuid -> pure uuid
+    Nothing -> invalid [ fieldName <> " must be a valid UUID" ]

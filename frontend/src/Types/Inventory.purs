@@ -2,7 +2,10 @@ module Types.Inventory where
 
 import Prelude
 
+import Config.LiveView (LiveViewConfig, SortField(..), SortOrder(..))
 import Data.Array (find)
+import Data.Array as Array
+import Data.Either (Either(..))
 import Data.Enum (class BoundedEnum, class Enum, Cardinality(Cardinality))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
@@ -11,12 +14,18 @@ import Data.Int (floor, toNumber) as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap)
 import Data.Show.Generic (genericShow)
-import Data.String (Pattern(..), replace, toLower)
+import Data.String (Pattern(..), joinWith, replace, toLower)
 import Data.String.Pattern (Replacement(..))
+import Data.Tuple (Tuple)
+import Data.Tuple.Nested ((/\))
+import Data.Validation.Semigroup (V, invalid, toEither, andThen)
 import Foreign (Foreign, F, ForeignError(..), fail, typeOf)
 import Foreign.Index (readProp)
-import Types.UUID (UUID, parseUUID)
+import Types.UUID (UUID, parseUUID, validateUUID)
+import Utils.Formatting (invertOrdering, parseCommaList)
+import Utils.Validation (validateInt, validateNumber, validatePercentage, validateString, validateUrl)
 import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
+
 
 data InventoryResponse
   = InventoryData Inventory
@@ -269,9 +278,6 @@ instance writeForeignInventoryResponse :: WriteForeign InventoryResponse where
     { type: "data", value: inventory }
   writeImpl (Message msg) = writeImpl { type: "message", value: msg }
 
--- In frontend/src/Types/Inventory.purs
--- Update the readForeignMenuItem to handle integer cents from backend
-
 instance readForeignMenuItem :: ReadForeign MenuItem where
   readImpl json = do
     sort <- readProp "sort" json >>= readImpl
@@ -437,3 +443,138 @@ generateClassName item =
 
 toClassName :: String -> String
 toClassName str = toLower (replace (Pattern " ") (Replacement "-") str)
+
+
+validateCategory :: String -> String -> V (Array String) ItemCategory
+validateCategory fieldName str = case str of
+  "Flower" -> pure Flower
+  "PreRolls" -> pure PreRolls
+  "Vaporizers" -> pure Vaporizers
+  "Edibles" -> pure Edibles
+  "Drinks" -> pure Drinks
+  "Concentrates" -> pure Concentrates
+  "Topicals" -> pure Topicals
+  "Tinctures" -> pure Tinctures
+  "Accessories" -> pure Accessories
+  _ -> invalid [ fieldName <> " has invalid category value" ]
+
+validateSpecies :: String -> String -> V (Array String) Species
+validateSpecies fieldName str = case str of
+  "Indica" -> pure Indica
+  "IndicaDominantHybrid" -> pure IndicaDominantHybrid
+  "Hybrid" -> pure Hybrid
+  "SativaDominantHybrid" -> pure SativaDominantHybrid
+  "Sativa" -> pure Sativa
+  _ -> invalid [ fieldName <> " has invalid species value" ]
+
+mapValidationErrors :: forall a. V (Array String) a -> Either String a
+mapValidationErrors validation =
+  case toEither validation of
+    Left errors -> Left (joinWith ", " errors)
+    Right value -> Right value
+
+validateMenuItem :: MenuItemFormInput -> Either String MenuItem
+validateMenuItem input =
+  case toEither validationResult of
+    Left errors -> Left (joinWith ", " errors)
+    Right result -> Right result
+  where
+  validationResult =
+    validateUUID "SKU" input.sku `andThen` \sku ->
+      validateString "Name" input.name `andThen` \name ->
+        validateString "Brand" input.brand `andThen` \brand ->
+          validateNumber "Price" input.price `andThen` \priceValue ->
+            validateInt "Quantity" input.quantity `andThen` \quantity ->
+              validateString "Measure Unit" input.measure_unit `andThen`
+                \measure_unit ->
+                  validateString "Per Package" input.per_package `andThen`
+                    \per_package ->
+                      validateCategory "Category" input.category `andThen`
+                        \category ->
+                          validateString "Subcategory" input.subcategory
+                            `andThen` \subcategory ->
+                              validateStrainLineage input.strain_lineage
+                                `andThen` \strain_lineage ->
+                                  validateInt "Sort" input.sort `andThen`
+                                    \sort ->
+                                      -- Convert dollars to cents and create Discrete value
+                                      let
+                                        priceCents = Int.floor
+                                          (priceValue * 100.0)
+                                      in
+                                        pure $ MenuItem
+                                          { sort
+                                          , sku
+                                          , brand
+                                          , name
+                                          , price: Discrete priceCents
+                                          , measure_unit
+                                          , per_package
+                                          , quantity
+                                          , category
+                                          , subcategory
+                                          , description: input.description
+                                          , tags: parseCommaList input.tags
+                                          , effects: parseCommaList
+                                              input.effects
+                                          , strain_lineage
+                                          }
+
+validateStrainLineage
+  :: StrainLineageFormInput -> V (Array String) StrainLineage
+validateStrainLineage input =
+  validatePercentage "THC" input.thc `andThen` \thc ->
+    validatePercentage "CBG" input.cbg `andThen` \cbg ->
+      validateString "Strain" input.strain `andThen` \strain ->
+        validateString "Creator" input.creator `andThen` \creator ->
+          validateSpecies "Species" input.species `andThen` \species ->
+            validateString "Dominant Terpene" input.dominant_terpene `andThen`
+              \dominant_terpene ->
+                validateUrl "Leafly URL" input.leafly_url `andThen`
+                  \leafly_url ->
+                    validateUrl "Image URL" input.img `andThen` \img ->
+                      pure $ StrainLineage
+                        { thc
+                        , cbg
+                        , strain
+                        , creator
+                        , species
+                        , dominant_terpene
+                        , terpenes: parseCommaList input.terpenes
+                        , lineage: parseCommaList input.lineage
+                        , leafly_url
+                        , img
+                        }
+
+compareMenuItems :: LiveViewConfig -> MenuItem -> MenuItem -> Ordering
+compareMenuItems config (MenuItem item1) (MenuItem item2) =
+  let
+    StrainLineage meta1 = item1.strain_lineage
+    StrainLineage meta2 = item2.strain_lineage
+
+    compareByField :: Tuple SortField SortOrder -> Ordering
+    compareByField (sortField /\ sortOrder) =
+      let
+        fieldComparison = case sortField of
+          SortByOrder -> compare item1.sort item2.sort
+          SortByName -> compare item1.name item2.name
+          SortByCategory -> compare item1.category item2.category
+          SortBySubCategory -> compare item1.subcategory item2.subcategory
+          SortBySpecies -> compare meta1.species meta2.species
+          SortBySKU -> compare item1.sku item2.sku
+          SortByPrice -> compare item1.price item2.price
+          SortByQuantity -> compare item1.quantity item2.quantity
+      in
+        case sortOrder of
+          Ascending -> fieldComparison
+          Descending -> invertOrdering fieldComparison
+
+    compareWithPriority :: Array (Tuple SortField SortOrder) -> Ordering
+    compareWithPriority priorities = case Array.uncons priorities of
+      Nothing -> EQ
+      Just { head: priority, tail: rest } ->
+        case compareByField priority of
+          EQ -> compareWithPriority rest
+          result -> result
+  in
+    compareWithPriority config.sortFields

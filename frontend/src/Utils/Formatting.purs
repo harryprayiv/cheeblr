@@ -16,7 +16,7 @@ import Data.String.Regex.Flags (global) as Regex
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
 import Partial.Unsafe (unsafePartial)
-import Types.Inventory (MenuItem(..), StrainLineage(..))
+-- import Types.Inventory (MenuItem(..), StrainLineage(..))
 import Data.Array (catMaybes, filter, range, (!!))
 
 ensureNumber :: String -> String
@@ -87,39 +87,6 @@ formatCentsToDecimal cents =
 
 getAllEnumValues :: ∀ a. BoundedEnum a => Bounded a => Array a
 getAllEnumValues = catMaybes $ map toEnum $ range 0 (fromEnum (top :: a))
-
-compareMenuItems :: LiveViewConfig -> MenuItem -> MenuItem -> Ordering
-compareMenuItems config (MenuItem item1) (MenuItem item2) =
-  let
-    StrainLineage meta1 = item1.strain_lineage
-    StrainLineage meta2 = item2.strain_lineage
-
-    compareByField :: Tuple SortField SortOrder -> Ordering
-    compareByField (sortField /\ sortOrder) =
-      let
-        fieldComparison = case sortField of
-          SortByOrder -> compare item1.sort item2.sort
-          SortByName -> compare item1.name item2.name
-          SortByCategory -> compare item1.category item2.category
-          SortBySubCategory -> compare item1.subcategory item2.subcategory
-          SortBySpecies -> compare meta1.species meta2.species
-          SortBySKU -> compare item1.sku item2.sku
-          SortByPrice -> compare item1.price item2.price
-          SortByQuantity -> compare item1.quantity item2.quantity
-      in
-        case sortOrder of
-          Ascending -> fieldComparison
-          Descending -> invertOrdering fieldComparison
-
-    compareWithPriority :: Array (Tuple SortField SortOrder) -> Ordering
-    compareWithPriority priorities = case Array.uncons priorities of
-      Nothing -> EQ
-      Just { head: priority, tail: rest } ->
-        case compareByField priority of
-          EQ -> compareWithPriority rest
-          result -> result
-  in
-    compareWithPriority config.sortFields
 
 invertOrdering :: Ordering -> Ordering
 invertOrdering LT = GT

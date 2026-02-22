@@ -4,21 +4,16 @@ import Prelude
 
 import Data.Array (all, any)
 import Data.Either (Either(..))
-import Data.Finance.Money (Discrete(..))
 import Data.Int (fromString)
-import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Number (fromString) as Number
-import Data.String (joinWith)
 import Data.String (length, toLower, trim) as String
 import Data.String.Regex (Regex, regex, test)
 import Data.String.Regex.Flags (RegexFlags, noFlags)
-import Data.Validation.Semigroup (V, invalid, toEither, andThen)
+import Data.Validation.Semigroup (V, invalid)
 import Partial.Unsafe (unsafeCrashWith)
 import Types.Formatting (ValidationRule(..))
-import Types.Inventory (ItemCategory(..), MenuItem(..), MenuItemFormInput, Species(..), StrainLineage(..), StrainLineageFormInput)
-import Types.UUID (UUID, parseUUID)
-import Utils.Formatting (parseCommaList)
+import Types.UUID (parseUUID)
 
 mkValidationRule :: (String -> Boolean) -> ValidationRule
 mkValidationRule = ValidationRule
@@ -250,113 +245,6 @@ validateUrl fieldName str =
           str
       ) then invalid [ fieldName <> " must be a valid URL" ]
   else pure str
-
-validateUUID :: String -> String -> V (Array String) UUID
-validateUUID fieldName str =
-  case parseUUID (String.trim str) of
-    Just uuid -> pure uuid
-    Nothing -> invalid [ fieldName <> " must be a valid UUID" ]
-
-validateCategory :: String -> String -> V (Array String) ItemCategory
-validateCategory fieldName str = case str of
-  "Flower" -> pure Flower
-  "PreRolls" -> pure PreRolls
-  "Vaporizers" -> pure Vaporizers
-  "Edibles" -> pure Edibles
-  "Drinks" -> pure Drinks
-  "Concentrates" -> pure Concentrates
-  "Topicals" -> pure Topicals
-  "Tinctures" -> pure Tinctures
-  "Accessories" -> pure Accessories
-  _ -> invalid [ fieldName <> " has invalid category value" ]
-
-validateSpecies :: String -> String -> V (Array String) Species
-validateSpecies fieldName str = case str of
-  "Indica" -> pure Indica
-  "IndicaDominantHybrid" -> pure IndicaDominantHybrid
-  "Hybrid" -> pure Hybrid
-  "SativaDominantHybrid" -> pure SativaDominantHybrid
-  "Sativa" -> pure Sativa
-  _ -> invalid [ fieldName <> " has invalid species value" ]
-
-mapValidationErrors :: forall a. V (Array String) a -> Either String a
-mapValidationErrors validation =
-  case toEither validation of
-    Left errors -> Left (joinWith ", " errors)
-    Right value -> Right value
-
-validateMenuItem :: MenuItemFormInput -> Either String MenuItem
-validateMenuItem input =
-  case toEither validationResult of
-    Left errors -> Left (joinWith ", " errors)
-    Right result -> Right result
-  where
-  validationResult =
-    validateUUID "SKU" input.sku `andThen` \sku ->
-      validateString "Name" input.name `andThen` \name ->
-        validateString "Brand" input.brand `andThen` \brand ->
-          validateNumber "Price" input.price `andThen` \priceValue ->
-            validateInt "Quantity" input.quantity `andThen` \quantity ->
-              validateString "Measure Unit" input.measure_unit `andThen`
-                \measure_unit ->
-                  validateString "Per Package" input.per_package `andThen`
-                    \per_package ->
-                      validateCategory "Category" input.category `andThen`
-                        \category ->
-                          validateString "Subcategory" input.subcategory
-                            `andThen` \subcategory ->
-                              validateStrainLineage input.strain_lineage
-                                `andThen` \strain_lineage ->
-                                  validateInt "Sort" input.sort `andThen`
-                                    \sort ->
-                                      -- Convert dollars to cents and create Discrete value
-                                      let
-                                        priceCents = Int.floor
-                                          (priceValue * 100.0)
-                                      in
-                                        pure $ MenuItem
-                                          { sort
-                                          , sku
-                                          , brand
-                                          , name
-                                          , price: Discrete priceCents
-                                          , measure_unit
-                                          , per_package
-                                          , quantity
-                                          , category
-                                          , subcategory
-                                          , description: input.description
-                                          , tags: parseCommaList input.tags
-                                          , effects: parseCommaList
-                                              input.effects
-                                          , strain_lineage
-                                          }
-
-validateStrainLineage
-  :: StrainLineageFormInput -> V (Array String) StrainLineage
-validateStrainLineage input =
-  validatePercentage "THC" input.thc `andThen` \thc ->
-    validatePercentage "CBG" input.cbg `andThen` \cbg ->
-      validateString "Strain" input.strain `andThen` \strain ->
-        validateString "Creator" input.creator `andThen` \creator ->
-          validateSpecies "Species" input.species `andThen` \species ->
-            validateString "Dominant Terpene" input.dominant_terpene `andThen`
-              \dominant_terpene ->
-                validateUrl "Leafly URL" input.leafly_url `andThen`
-                  \leafly_url ->
-                    validateUrl "Image URL" input.img `andThen` \img ->
-                      pure $ StrainLineage
-                        { thc
-                        , cbg
-                        , strain
-                        , creator
-                        , species
-                        , dominant_terpene
-                        , terpenes: parseCommaList input.terpenes
-                        , lineage: parseCommaList input.lineage
-                        , leafly_url
-                        , img
-                        }
 
 unsafeRegex :: String -> RegexFlags -> Regex
 unsafeRegex pattern flags =

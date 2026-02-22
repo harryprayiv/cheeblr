@@ -20,11 +20,10 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
-import Types.Inventory (InventoryResponse(..))
+import Types.Inventory (InventoryResponse(..), validateMenuItem)
+import Types.UUID (genUUID)
 import UI.Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber)
-import Types.UUID (genUUID)
-import Utils.Validation (validateMenuItem)
 
 createItem :: Ref AuthContext -> String -> Nut
 createItem authRef initialUUID = Deku.do

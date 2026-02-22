@@ -24,10 +24,9 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
-import Types.Inventory (InventoryResponse(..), MenuItem(..), StrainLineage(..))
+import Types.Inventory (InventoryResponse(..), MenuItem(..), StrainLineage(..), validateMenuItem)
 import UI.Components.Form (makeDescriptionField, makeDropdown, makeTextField)
 import Utils.Formatting (ensureInt, ensureNumber, formatCentsToDecimal)
-import Utils.Validation (validateMenuItem)
 
 editItem :: Ref AuthContext -> MenuItem -> Nut
 editItem authRef (MenuItem item) = Deku.do
