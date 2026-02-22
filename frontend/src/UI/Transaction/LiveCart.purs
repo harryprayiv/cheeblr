@@ -5,7 +5,6 @@ import Prelude
 import Data.Array (filter, find, null, sort)
 import Data.Array (nub) as Array
 import Data.Foldable (for_)
-import Data.Int (floor, toNumber)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -29,7 +28,7 @@ import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
 import Types.Register (CartTotals)
 import Types.Transaction (TransactionItem(..))
 import Types.UUID (UUID)
-import Utils.CartUtils (addItemToTransaction, calculateCartTotals, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromTransaction)
+import Services.RegisterService (addItemToTransaction, calculateCartTotals, emptyCartTotals, formatDiscretePrice, formatPrice, removeItemFromTransaction)
 import Utils.Formatting (formatCentsToDollars)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input

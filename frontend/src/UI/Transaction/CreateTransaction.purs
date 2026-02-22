@@ -23,7 +23,6 @@ import Deku.DOM.Listeners (runOn)
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot, useState, (<#~>))
-import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
@@ -33,10 +32,10 @@ import Services.AuthService (AuthContext)
 import Services.TransactionService (getRemainingBalance, paymentsCoversTotal)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
-import Types.Register (Register, CartTotals)
+import Types.Register (Register)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID(..))
-import Utils.CartUtils (emptyCartTotals, formatDiscretePrice, removeItemFromCart)
+import Services.RegisterService (addItemToCart, emptyCartTotals, formatDiscretePrice, removeItemFromCart)
 import Utils.Formatting (formatCentsToDollars)
 import Web.Event.Event (target)
 import Web.Event.Event as Event
@@ -963,76 +962,3 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
           if msg == "" then D.div_ []
           else D.div [ DA.klass_ "status-message" ] [ text_ msg ]
       ]
-
-
-addItemToCart
-  :: Ref AuthContext
-  -> MenuItem
-  -> Int
-  -> Array TransactionItem
-  -> UUID
-  -> (Array TransactionItem -> Effect Unit)
-  -> (CartTotals -> Effect Unit)
-  -> (String -> Effect Unit)
-  -> (Boolean -> Effect Unit)
-  -> Effect Unit
-addItemToCart
-  authRef
-  menuItem@(MenuItem record)
-  qty
-  currentItems
-  transactionId
-  setItems
-  setTotals
-  setStatusMessage
-  setCheckingInventory = do
-  
-  if qty <= 0 then  
-    setStatusMessage "Quantity must be greater than 0"
-  else do
-    setCheckingInventory true
-    setStatusMessage "Checking inventory..."
-    
-    -- Check for existing item in cart
-    let existingItem = find 
-          (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku) 
-          currentItems
-    
-    let currentQtyInCart = case existingItem of
-          Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0 
-    
-    let totalRequestedQty = currentQtyInCart + qty
-    
-    -- Create the transaction item through the API
-    void $ launchAff_ do
-      result <- TransactionService.createTransactionItem
-        authRef
-        transactionId
-        record.sku
-        qty
-        (unwrap record.price)
-      
-      liftEffect $ case result of
-        Right newItem -> do
-          -- Update local state with the new item
-          let updatedItems = case existingItem of
-                Just (TransactionItem existing) ->
-                  -- Update existing item quantity
-                  map (\(TransactionItem i) -> 
-                    if i.transactionItemId == existing.transactionItemId 
-                    then TransactionItem (i { transactionItemQuantity = totalRequestedQty })
-                    else TransactionItem i
-                  ) currentItems
-                Nothing ->
-                  newItem : currentItems
-          
-          let newTotals = TransactionService.calculateCartTotals updatedItems
-          setItems updatedItems
-          setTotals newTotals
-          setCheckingInventory false
-          setStatusMessage $ "Added " <> record.name <> " to cart"
-          
-        Left err -> do
-          setCheckingInventory false
-          setStatusMessage $ "Failed to add item: " <> err

@@ -3,7 +3,7 @@ module Services.TransactionService where
 import Prelude
 
 import API.Transaction as API
-import Data.Array (filter, foldl)
+import Data.Array (foldl)
 import Data.Either (Either(..))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
@@ -11,8 +11,7 @@ import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Int (floor, toNumber)
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
-import Effect (Effect)
-import Effect.Aff (Aff, launchAff_)
+import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Now (nowDateTime)
@@ -20,8 +19,7 @@ import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
 import Types.Register (CartTotals)
 import Types.Transaction (PaymentMethod, PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
-import Types.UUID (UUID)
-import Types.UUID (genUUID)
+import Types.UUID (UUID, genUUID)
 
 emptyCartTotals :: CartTotals
 emptyCartTotals =
@@ -198,32 +196,32 @@ finalizeTransaction authRef transactionId = do
   liftEffect $ Console.log $ "Finalizing transaction: " <> show transactionId
   API.finalizeTransaction authRef transactionId
 
-removeItemFromCart
-  :: Ref AuthContext
-  -> UUID
-  -> Array TransactionItem
-  -> (Array TransactionItem -> Effect Unit)
-  -> (CartTotals -> Effect Unit)
-  -> (Boolean -> Effect Unit)
-  -> Effect Unit
-removeItemFromCart authRef itemId currentItems setItems setTotals setCheckingInventory = do
-  setCheckingInventory true
+-- removeItemFromCart
+--   :: Ref AuthContext
+--   -> UUID
+--   -> Array TransactionItem
+--   -> (Array TransactionItem -> Effect Unit)
+--   -> (CartTotals -> Effect Unit)
+--   -> (Boolean -> Effect Unit)
+--   -> Effect Unit
+-- removeItemFromCart authRef itemId currentItems setItems setTotals setCheckingInventory = do
+--   setCheckingInventory true
   
-  void $ launchAff_ do
-    result <- removeTransactionItem authRef itemId
+--   void $ launchAff_ do
+--     result <- removeTransactionItem authRef itemId
     
-    liftEffect $ case result of
-      Right _ -> do
-        let newItems = filter 
-              (\(TransactionItem item) -> item.transactionItemId /= itemId) 
-              currentItems
-        let newTotals = calculateCartTotals newItems
-        setItems newItems
-        setTotals newTotals
-        setCheckingInventory false
-      Left err -> do
-        setCheckingInventory false
-        Console.error $ "Failed to remove item: " <> err
+--     liftEffect $ case result of
+--       Right _ -> do
+--         let newItems = filter 
+--               (\(TransactionItem item) -> item.transactionItemId /= itemId) 
+--               currentItems
+--         let newTotals = calculateCartTotals newItems
+--         setItems newItems
+--         setTotals newTotals
+--         setCheckingInventory false
+--       Left err -> do
+--         setCheckingInventory false
+--         Console.error $ "Failed to remove item: " <> err
 
 calculateCartTotals :: Array TransactionItem -> CartTotals
 calculateCartTotals items =
