@@ -19,6 +19,7 @@ data Route
   | Delete String
   | CreateTransaction
   | TransactionHistory
+  | Edit String
 
 derive instance Eq Route
 derive instance Ord Route
@@ -31,6 +32,7 @@ route :: RouteDuplex' Route
 route = root $ G.sum
   { "LiveView": G.noArgs
   , "Create": "create" / G.noArgs
+  , "Edit": "edit" / (string segment)
   , "Delete": "delete" / (string segment)
   , "CreateTransaction": "transaction" / "create" / G.noArgs
   , "TransactionHistory": "transaction" / "history" / G.noArgs
@@ -43,12 +45,11 @@ nav currentRoute = D.nav [ DA.klass_ "navbar" ]
           [ DA.klass_ "nav" ]
           [ navItem LiveView "/#/" "LiveView" currentRoute
           , navItem Create "/#/create" "Create Item" currentRoute
-          , D.div [ DA.klass_ "border-l mx-2 h-6" ] []
           , navItem CreateTransaction "/#/transaction/create" "New Transaction"
               currentRoute
-          , navItem TransactionHistory "/#/transaction/history"
-              "Transaction History"
-              currentRoute
+          -- , navItem TransactionHistory "/#/transaction/history"
+          --     "Transaction History"
+          --     currentRoute
           ]
       ]
   ]
