@@ -1253,14 +1253,13 @@ button.tx-delete-btn:hover {
 /* Important: Row structure using flex with fixed width */
 .inventory-row {
   display: flex;
-  padding: 0.5rem 0;
-  border-bottom: 1px solid var(--bg-light, #575656);
-  cursor: pointer;
-  width: 100%;
+  border-bottom: 1px solid var(--bg-light);
+  padding: 8px 0;
+  background-color: var(--bg-dark);
 }
 
 .inventory-row:hover {
-  background-color: var(--bg-medium, #171717);
+  background-color: var(--bg-light);
 }
 
 .inventory-row.out-of-stock {
@@ -2101,14 +2100,17 @@ button.tx-delete-btn:hover {
 
 .inventory-table-header {
   display: flex;
-  background-color: var(--bg-dark);
+  background-color: var(--bg-light);
   color: var(--fg-light);
   font-weight: bold;
-  padding: 8px 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 0;
   position: sticky;
   top: 0;
   z-index: 10;
-  border-bottom: 2px solid var(--bg-light);
+  border-bottom: 2px solid var(--green-dark);
 }
 
 .inventory-table-body {
@@ -2119,10 +2121,15 @@ button.tx-delete-btn:hover {
   display: flex;
   border-bottom: 1px solid var(--bg-light);
   padding: 8px 0;
+  background-color: var(--bg-dark);
+}
+
+.inventory-row:nth-child(even) {
+  background-color: var(--bg-medium);
 }
 
 .inventory-row:hover {
-  background-color: var(--bg-medium);
+  background-color: var(--bg-light);
 }
 
 .inventory-row.out-of-stock {
