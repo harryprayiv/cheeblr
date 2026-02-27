@@ -210,27 +210,7 @@ The realworld app uses `parSequence_` and `parallel`/`sequential` to load multip
 
 CreateItem and EditItem each have 20+ `useState` calls and duplicate almost all their structure. The realworld app's form pattern is much lighter — fields are composed with small helpers and validation happens at submission time.
 
-## Refactoring Plan
-
-### Phase 1: Extract route logic from Main
-
-**Goal:** Main.purs matcher becomes a thin dispatch layer.
-
-- Create a `Pages/` directory with modules like `Pages.LiveView`, `Pages.EditItem`, `Pages.CreateTransaction`
-- Each page module exports a single function that takes polls and returns `Nut`
-- Each page owns its own data loading internally (like the realworld components do with `launchAff_` inside `Deku.do`)
-- Main just creates top-level polls, wires routing, and delegates
-
-```purescript
--- Target Main.purs matcher shape:
-matcher _ r = do
-  currentRoute.push $ Tuple r case r of
-    LiveView -> Pages.LiveView.page authPoll inventoryPoll
-    Create -> Pages.CreateItem.page authPoll
-    Edit uuid -> Pages.EditItem.page authPoll uuid
-    CreateTransaction -> Pages.CreateTransaction.page authPoll inventoryPoll
-    -- etc
-```
+## Refactoring Steps Left
 
 ### Phase 2: Replace Ref AuthContext with Poll AuthState
 
@@ -240,15 +220,6 @@ matcher _ r = do
 - Create a top-level `Poll AuthState` in Main
 - API functions take a token string, not a ref — the caller extracts the token from the poll at the call site
 - This eliminates the ref threading and makes components testable in isolation
-
-### Phase 3: Break up RegisterService
-
-**Goal:** Single-responsibility modules.
-
-- `Services.Cart` — addItemToCart, removeItemFromCart, calculateCartTotals, emptyCartTotals, availability checks
-- `Services.Register` — register CRUD only (init, open, close, get)
-- Keep `Services.TransactionService` for transaction API calls but move `calculateCartTotals` to Cart (you currently have it duplicated in both RegisterService and TransactionService)
-- Formatting functions like `formatPrice`, `formatDiscretePrice` belong in `Utils.Money` (where some already live — consolidate the rest)
 
 ### Phase 4: Unify form handling
 
@@ -273,18 +244,9 @@ run aff { push } = aff >>= liftEffect <<< push
 
 Use `parSequence_` for routes that need multiple resources (CreateTransaction needs both inventory and a register).
 
-### Phase 6: Clean up duplication
-
-- `initLocalRegister` and `getOrInitLocalRegister` share ~80% of their code — extract the common pattern
-- `calculateCartTotals` exists in both RegisterService and TransactionService — pick one home
-- `emptyCartTotals` is defined in both places too
-
 ## Suggested Priority Order
 
-1. **Phase 3 first** (break up RegisterService) — lowest risk, highest immediate clarity gain
-2. **Phase 6** (dedup) — quick wins while you're already in those files
 3. **Phase 4** (unify forms) — big LOC reduction, CreateItem+EditItem are your largest files
-4. **Phase 1** (extract from Main) — makes everything else easier going forward
 5. **Phase 2** (auth polls) — most invasive change, touches every API call
 6. **Phase 5** (parallel loading) — polish, do last
 
