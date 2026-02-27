@@ -47,9 +47,6 @@ nav currentRoute = D.nav [ DA.klass_ "navbar" ]
           , navItem Create "/#/create" "Create Item" currentRoute
           , navItem CreateTransaction "/#/transaction/create" "New Transaction"
               currentRoute
-          -- , navItem TransactionHistory "/#/transaction/history"
-          --     "Transaction History"
-          --     currentRoute
           ]
       ]
   ]
