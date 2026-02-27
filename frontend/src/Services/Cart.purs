@@ -2,24 +2,25 @@ module Services.Cart where
 
 import Prelude
 
+import Data.Array (filter, find, (:))
 import Data.Either (Either(..))
+import Data.Finance.Money (Discrete(..))
+import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
+import Data.Int as Int
 import Data.Maybe (Maybe(..))
+import Data.Newtype (unwrap)
 import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import Services.AuthService (AuthContext)
-import Types.Register (CartTotals)
-import Types.UUID (UUID, genUUID)
-import Data.Array (filter, find, foldl, (:))
-import Data.Finance.Money (Discrete(..))
-import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
-import Data.Int as Int
-import Data.Newtype (unwrap)
+import Services.TransactionService (calculateCartTotals)
 import Services.TransactionService as TransactionService
-import Types.Transaction (TaxCategory(..), TransactionItem(..))
 import Types.Inventory (MenuItem(..), Inventory(..))
+import Types.Register (CartTotals)
+import Types.Transaction (TaxCategory(..), TransactionItem(..))
+import Types.UUID (UUID, genUUID)
 
 getCartQuantityForSku :: UUID -> Array TransactionItem -> Int
 getCartQuantityForSku sku cartItems =
@@ -280,31 +281,3 @@ removeItemFromCart authRef itemId currentItems setItems setTotals setIsProcessin
         Console.error $ "Error removing item: " <> err
 
     liftEffect $ setIsProcessing false
-
-emptyCartTotals :: CartTotals
-emptyCartTotals =
-  { subtotal: Discrete 0
-  , taxTotal: Discrete 0
-  , total: Discrete 0
-  , discountTotal: Discrete 0
-  }
-
-calculateCartTotals :: Array TransactionItem -> CartTotals
-calculateCartTotals items =
-  foldl addItemToTotals emptyCartTotals items
-  where
-  addItemToTotals :: CartTotals -> TransactionItem -> CartTotals
-  addItemToTotals totals (TransactionItem item) =
-    let
-      itemSubtotal = toDiscrete item.transactionItemSubtotal
-      itemTaxTotal = foldl (\acc tax -> acc + (toDiscrete tax.taxAmount))
-        (Discrete 0)
-        item.transactionItemTaxes
-      itemTotal = toDiscrete item.transactionItemTotal
-    in
-      { subtotal: totals.subtotal + itemSubtotal
-      , taxTotal: totals.taxTotal + itemTaxTotal
-      , total: totals.total + itemTotal
-      , discountTotal: totals.discountTotal
-      }
-

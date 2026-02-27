@@ -2,7 +2,6 @@ module UI.Transaction.CreateTransaction where
 
 import Prelude
 
-import Services.Cart (addItemToCart, emptyCartTotals, removeItemFromCart)
 import Data.Array (filter, find, null, (:))
 import Data.Array as Array
 import Data.Either (Either(..))
@@ -30,7 +29,8 @@ import Effect.Class.Console as Console
 import Effect.Ref (Ref)
 import FRP.Poll (Poll)
 import Services.AuthService (AuthContext)
-import Services.TransactionService (getRemainingBalance, paymentsCoversTotal)
+import Services.Cart (addItemToCart, removeItemFromCart)
+import Services.TransactionService (emptyCartTotals, getRemainingBalance, paymentsCoversTotal)
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
 import Types.Register (Register)
