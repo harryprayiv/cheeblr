@@ -11,6 +11,12 @@ import Data.Maybe (Maybe)
 import Data.Number as Number
 import Data.String (trim)
 
+formatPrice :: DiscreteMoney USD -> String
+formatPrice = formatMoney'
+
+formatDiscretePrice :: Discrete USD -> String
+formatDiscretePrice = formatMoney' <<< fromDiscrete'
+
 -- | Convert a dollar amount (as a Number) to cents (as a Discrete USD)
 -- | Example: fromDollars 12.34 = Discrete 1234
 fromDollars :: Number -> Discrete USD

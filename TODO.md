@@ -182,4 +182,111 @@ The safe way to do this without breaking anything:
 
 Each step is a pure mechanical refactor — move function, update imports, verify compilation. No logic changes. No behavior changes. The key lesson from yesterday: never change logic and structure simultaneously.
 
-Want me to start with step 1 and produce the actual file?
+___
+
+Newest Comparison to Deku Real World
+
+Looking at both codebases, here's what stands out. The realworld app has a clear architectural pattern that your cheeblr app has drifted from as it's grown. Let me break down the key differences and a concrete refactoring plan.
+
+## Core Architectural Gaps
+
+**1. Main.purs is doing way too much**
+
+The realworld app's `matcher` is ~30 lines. Yours is ~200+. Each route handler in your Main inlines fetching logic, error handling, state pushing, and even component construction. The realworld app delegates all of that: the matcher just wires polls to components, and data loading is a simple `run` + `parSequence_` pattern.
+
+**2. Auth threading is heavy**
+
+You pass `Ref AuthContext` through literally everything. The realworld app passes `Poll AuthState` and extracts tokens at the call site. Your approach forces every function signature to carry the ref, whereas polls compose naturally.
+
+**3. RegisterService is a grab bag**
+
+`RegisterService.purs` contains: register CRUD, cart math, price formatting, inventory availability checking, and item add/remove logic. In the realworld pattern, these would be separate concerns — API effects stay in the API layer, cart logic lives in a cart service, formatting stays in utils.
+
+**4. No parallel loading**
+
+The realworld app uses `parSequence_` and `parallel`/`sequential` to load multiple resources concurrently. Your route handlers do sequential fetches with manual error handling at each step.
+
+**5. Forms are monolithic**
+
+CreateItem and EditItem each have 20+ `useState` calls and duplicate almost all their structure. The realworld app's form pattern is much lighter — fields are composed with small helpers and validation happens at submission time.
+
+## Refactoring Plan
+
+### Phase 1: Extract route logic from Main
+
+**Goal:** Main.purs matcher becomes a thin dispatch layer.
+
+- Create a `Pages/` directory with modules like `Pages.LiveView`, `Pages.EditItem`, `Pages.CreateTransaction`
+- Each page module exports a single function that takes polls and returns `Nut`
+- Each page owns its own data loading internally (like the realworld components do with `launchAff_` inside `Deku.do`)
+- Main just creates top-level polls, wires routing, and delegates
+
+```purescript
+-- Target Main.purs matcher shape:
+matcher _ r = do
+  currentRoute.push $ Tuple r case r of
+    LiveView -> Pages.LiveView.page authPoll inventoryPoll
+    Create -> Pages.CreateItem.page authPoll
+    Edit uuid -> Pages.EditItem.page authPoll uuid
+    CreateTransaction -> Pages.CreateTransaction.page authPoll inventoryPoll
+    -- etc
+```
+
+### Phase 2: Replace Ref AuthContext with Poll AuthState
+
+**Goal:** Auth flows through polls, not refs.
+
+- Define an `AuthState` ADT similar to the realworld app (SignedIn user | SignedOut)
+- Create a top-level `Poll AuthState` in Main
+- API functions take a token string, not a ref — the caller extracts the token from the poll at the call site
+- This eliminates the ref threading and makes components testable in isolation
+
+### Phase 3: Break up RegisterService
+
+**Goal:** Single-responsibility modules.
+
+- `Services.Cart` — addItemToCart, removeItemFromCart, calculateCartTotals, emptyCartTotals, availability checks
+- `Services.Register` — register CRUD only (init, open, close, get)
+- Keep `Services.TransactionService` for transaction API calls but move `calculateCartTotals` to Cart (you currently have it duplicated in both RegisterService and TransactionService)
+- Formatting functions like `formatPrice`, `formatDiscretePrice` belong in `Utils.Money` (where some already live — consolidate the rest)
+
+### Phase 4: Unify form handling
+
+**Goal:** CreateItem and EditItem share a single form component.
+
+- Create `UI.Inventory.ItemForm` that takes a `Maybe MenuItem` — Nothing for create, Just for edit
+- The form module owns all 20+ `useState` calls internally, initialized from the Maybe
+- Export the form as a single `Nut`-returning function
+- CreateItem and EditItem become thin wrappers that fetch data (if editing) and call the shared form
+- Consider grouping related fields into records to reduce the number of individual state variables — e.g., a `StrainLineageState` record instead of 10 separate fields
+
+### Phase 5: Adopt the `run` + parallel loading pattern
+
+**Goal:** Clean async data loading.
+
+Steal the realworld app's `run` helper directly:
+
+```purescript
+run :: forall a r. Aff a -> { push :: a -> Effect Unit | r } -> Aff Unit
+run aff { push } = aff >>= liftEffect <<< push
+```
+
+Use `parSequence_` for routes that need multiple resources (CreateTransaction needs both inventory and a register).
+
+### Phase 6: Clean up duplication
+
+- `initLocalRegister` and `getOrInitLocalRegister` share ~80% of their code — extract the common pattern
+- `calculateCartTotals` exists in both RegisterService and TransactionService — pick one home
+- `emptyCartTotals` is defined in both places too
+
+## Suggested Priority Order
+
+1. **Phase 3 first** (break up RegisterService) — lowest risk, highest immediate clarity gain
+2. **Phase 6** (dedup) — quick wins while you're already in those files
+3. **Phase 4** (unify forms) — big LOC reduction, CreateItem+EditItem are your largest files
+4. **Phase 1** (extract from Main) — makes everything else easier going forward
+5. **Phase 2** (auth polls) — most invasive change, touches every API call
+6. **Phase 5** (parallel loading) — polish, do last
+
+The key insight from the realworld app isn't any single technique — it's that components are self-contained units that receive data via polls and handle their own lifecycle. Your current architecture has Main orchestrating everything, which is why it's grown unwieldy. Push the logic down into the pages/components and Main becomes trivially simple.
+

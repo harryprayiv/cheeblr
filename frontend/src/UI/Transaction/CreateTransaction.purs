@@ -2,6 +2,7 @@ module UI.Transaction.CreateTransaction where
 
 import Prelude
 
+import Services.Cart (addItemToCart, emptyCartTotals, removeItemFromCart)
 import Data.Array (filter, find, null, (:))
 import Data.Array as Array
 import Data.Either (Either(..))
@@ -35,8 +36,8 @@ import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
 import Types.Register (Register)
 import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID(..))
-import Services.RegisterService (addItemToCart, emptyCartTotals, formatDiscretePrice, removeItemFromCart)
 import Utils.Formatting (formatCentsToDollars)
+import Utils.Money (formatDiscretePrice)
 import Web.Event.Event (target)
 import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input
@@ -44,9 +45,6 @@ import Web.PointerEvent.PointerEvent as PointerEvent
 
 createTransaction :: Ref AuthContext -> Poll Inventory -> Poll Transaction -> Register -> Nut
 createTransaction authRef inventoryPoll transactionPoll register = Deku.do
-
-  setDebugInfo /\ debugInfoValue <- useState ""
-
 
   setCartItems /\ cartItemsValue <- useHot []
   setCartTotals /\ cartTotalsValue <- useHot emptyCartTotals
@@ -94,7 +92,6 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
     [ DA.klass_ "transaction-container"
     , DL.load_ \_ -> do
         liftEffect $ Console.log "CreateTransaction component loading with initialized transaction"
-        liftEffect $ setDebugInfo "Waiting for inventory data..."
     ]
     [
       D.div
