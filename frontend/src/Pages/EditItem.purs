@@ -21,12 +21,12 @@ import Effect.Ref (Ref)
 import FRP.Poll as Poll
 import Services.AuthService (AuthContext)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
-import UI.Inventory.EditItem (editItem, renderError)
+import UI.Inventory.ItemForm (FormMode(..), itemForm)
 
 testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
 
-data PageStatus = Loading | Loaded MenuItem | Error String
+data PageStatus = Loading | Ready Nut | Error String
 
 page :: Ref AuthContext -> String -> Effect Nut
 page authRef rawUuid = do
@@ -43,7 +43,7 @@ page authRef rawUuid = do
         case find (\(MenuItem item) -> show item.sku == uuid) items of
           Just menuItem -> do
             Console.log $ "Found item: " <> uuid
-            status.push (Loaded menuItem)
+            status.push (Ready (itemForm authRef (EditMode menuItem)))
           Nothing -> do
             Console.error $ "Item not found: " <> uuid
             status.push (Error $ "Item with UUID " <> uuid <> " not found")
@@ -55,7 +55,7 @@ page authRef rawUuid = do
   pure $ (pure Loading <|> status.poll) <#~> case _ of
     Loading ->
       D.div [ DA.klass_ "loading-indicator" ] [ text_ "Loading item..." ]
-    Loaded menuItem ->
-      editItem authRef menuItem
+    Ready nut -> nut
     Error msg ->
-      renderError msg
+      D.div [ DA.klass_ "error-message bg-red-100 border-l-4 border-red-500 text-red-700 p-4" ]
+        [ text_ $ "Error: " <> msg ]
