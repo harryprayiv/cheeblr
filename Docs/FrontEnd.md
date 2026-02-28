@@ -7,6 +7,7 @@
 - [Module Map](#module-map)
 - [Routing](#routing)
 - [State Management](#state-management)
+- [Async Loading Pattern](#async-loading-pattern)
 - [Authentication & Authorization](#authentication--authorization)
 - [API Layer](#api-layer)
 - [Domain Types](#domain-types)
@@ -36,7 +37,8 @@ Cheeblr is a cannabis dispensary point-of-sale system. The frontend is a PureScr
 | HTTP | **Fetch** (purescript-fetch) with **Yoga.JSON** for (de)serialization |
 | Money | **Data.Finance.Money** — `Discrete USD` (cents), `Dense USD`, formatting via `Data.Finance.Money.Format` |
 | Validation | Custom `ValidationRule` newtype + **Data.Validation.Semigroup** for accumulating errors |
-| Async effects | **Effect.Aff** for all API calls; `launchAff_` to fire-and-forget from `Effect` |
+| Async effects | **Effect.Aff** for all API calls; `run` helper to push results into polls, `parSequence_` for parallel loading, `killFiber` for cancellation on route change |
+| Parallelism | **Control.Parallel** — `parallel`/`sequential` for concurrent data fetching within a single route |
 | Storage | **Web.Storage.Storage** (localStorage) for persisting the register ID across sessions |
 
 ---
@@ -44,9 +46,9 @@ Cheeblr is a cannabis dispensary point-of-sale system. The frontend is a PureScr
 ## Architecture
 
 ```
-Main.purs                        -- entry point, routing, global state
+Main.purs                        -- entry point, routing, async loading orchestration
 │
-├── Pages/                       -- one module per route, wires services → UI
+├── Pages/                       -- pure renderers: Poll Status → Nut
 │   ├── LiveView                 -- inventory grid (read-only)
 │   ├── CreateItem               -- new MenuItem form
 │   ├── EditItem                 -- edit existing MenuItem
@@ -105,7 +107,7 @@ Main.purs                        -- entry point, routing, global state
 
 | Module | Purpose |
 |---|---|
-| `Main` | Bootstraps the app: creates auth & route polls, pre-inits the register, sets up `matchesWith` routing, renders `nav` + routed page |
+| `Main` | Bootstraps the app: creates auth & route polls, pre-inits the register, sets up `matchesWith` routing with `run` + `parSequence_` for async loading, cancels in-flight loads on route change via `killFiber`, renders `nav` + routed page |
 | `Route` | Defines the `Route` ADT and the `RouteDuplex'` codec; also exports the `nav` bar component |
 | `Config.Network` | `localConfig` / `networkConfig` environment records (`apiBaseUrl`, `appOrigin`); `currentConfig` selects which is active |
 | `Config.LiveView` | `LiveViewConfig` record, `QueryMode` (JsonMode / HttpMode), `SortField` / `SortOrder`, default configs |
@@ -140,7 +142,11 @@ data Route
 
 Navigation is defined in `Route.nav`, which renders a `<nav>` bar with links and highlights the active route by comparing against the `Poll Route`.
 
-`Main.purs` calls `matchesWith (parse route) matcher` where `matcher` pattern-matches on the route, instantiates the page's `Nut`, and pushes it into a `Poll (Tuple Route Nut)` that Deku renders.
+`Main.purs` calls `matchesWith (parse route) matcher` where `matcher`:
+1. Cancels any in-flight loading from the previous route via `killFiber`
+2. Launches the current route's loaders in parallel via `parSequence_`
+3. Builds the page `Nut` (passing `pure Loading <|> poll` so pages always start with a loading state)
+4. Pushes the `Tuple Route Nut` for Deku to render
 
 ---
 
@@ -163,6 +169,11 @@ cell.poll :: Poll a
 |---|---|---|
 | `authState` | `Poll AuthState` | Seeded with `defaultAuthState` (`SignedIn devAdmin`) |
 | `currentRoute` | `Poll (Tuple Route Nut)` | Updated on every hash change |
+| `inventory` | `Poll InventoryLoadStatus` | Pushed by `run` on `LiveView` route |
+| `editItem` | `Poll EditItemStatus` | Pushed by `run` on `Edit` route |
+| `deleteItem` | `Poll DeleteItemStatus` | Pushed by `run` on `Delete` route |
+| `txPage` | `Poll TxPageStatus` | Pushed by `run` on `CreateTransaction` route |
+| `prevAction` | `Ref (Aff Unit)` | Tracks the previous route's loading fiber for cancellation |
 
 ### Component-level state
 
@@ -180,6 +191,100 @@ let isFormValid = ado
       -- ...
       in all (fromMaybe false) [vN, vB, ...]
 ```
+
+---
+
+## Async Loading Pattern
+
+The app follows the pattern from [purescript-deku-realworld](https://github.com/mfp22/purescript-deku-realworld): all async data loading is centralized in `Main.purs`, and pages are pure renderers that receive `Poll`s of typed status ADTs.
+
+### The `run` helper
+
+```purescript
+run :: forall a r. Aff a -> { push :: a -> Effect Unit | r } -> Aff Unit
+run aff { push } = aff >>= liftEffect <<< push
+```
+
+Takes an `Aff` computation and a poll creator (anything with a `push` field), runs the computation, and pushes the result. This decouples data fetching from rendering.
+
+### Route-driven loading with `parSequence_`
+
+Inside the route matcher, each route declares its loaders as an array of `Aff Unit` actions (each built with `run`). `parSequence_` runs them all in parallel:
+
+```purescript
+newAction <- launchAff $ killFiber (error "route changed") pa *>
+  parSequence_ case r of
+    LiveView ->
+      [ run (loadInventoryStatus userId) inventory ]
+    CreateTransaction ->
+      [ run (loadTxPageData userId) txPage ]
+    Edit uuid ->
+      [ run (loadEditItem userId uuid) editItem ]
+    Delete uuid ->
+      [ run (loadDeleteItem userId uuid) deleteItem ]
+    _ -> []
+```
+
+### Fiber cancellation on route change
+
+A `Ref (Aff Unit)` (`prevAction`) tracks the previous route's loading fiber. On every route change, `killFiber` cancels it before launching new loaders. This prevents stale data from arriving after the user has navigated away.
+
+### Loading status ADTs
+
+Each route that needs async data defines a status ADT:
+
+```purescript
+-- Pages.LiveView
+data InventoryLoadStatus = InventoryLoading | InventoryLoaded Inventory | InventoryError String
+
+-- Pages.EditItem
+data EditItemStatus = EditLoading | EditReady MenuItem | EditNotFound String | EditError String
+
+-- Pages.DeleteItem
+data DeleteItemStatus = DeleteLoading | DeleteReady String String | DeleteNotFound String | DeleteError String
+
+-- Pages.CreateTransaction
+data TxPageStatus = TxPageLoading | TxPageReady Inventory Register Transaction | TxPageError String
+```
+
+Pages receive `pure Loading <|> poll` so they always render a loading state initially, then the loaded data once it arrives.
+
+### Parallel loading for CreateTransaction
+
+The `CreateTransaction` route is the most complex — it needs inventory, a register, and a new transaction. These are loaded in parallel using `sequential`/`parallel`:
+
+```purescript
+loadTxPageData userId = do
+  Tuple invResult regTxResult <- sequential $
+    Tuple
+      <$> parallel (loadInventoryResult userId)
+      <*> parallel (loadRegisterAndStartTx userId)
+  -- combine results into TxPageStatus
+```
+
+The register initialization (which is callback-based) is wrapped into `Aff` via `makeAff`:
+
+```purescript
+getOrInitRegisterAff :: String -> UUID -> UUID -> Aff (Either String Register)
+getOrInitRegisterAff userId locationId employeeId =
+  makeAff \cb -> do
+    RegisterService.getOrInitLocalRegister userId locationId employeeId
+      (\register -> cb (Right (Right register)))
+      (\err -> cb (Right (Left err)))
+    pure nonCanceler
+```
+
+### Loading functions
+
+All loading functions are pure `Aff` computations defined in `Main.purs`:
+
+| Function | Returns | Description |
+|---|---|---|
+| `loadInventoryStatus` | `Aff InventoryLoadStatus` | Fetches inventory via `fetchInventory`, wraps in status ADT |
+| `loadEditItem` | `Aff EditItemStatus` | Fetches full inventory, finds item by UUID |
+| `loadDeleteItem` | `Aff DeleteItemStatus` | Same fetch-and-find, extracts item ID and name |
+| `loadTxPageData` | `Aff TxPageStatus` | Parallel loads inventory + (register init → start transaction) |
+| `getOrInitRegisterAff` | `Aff (Either String Register)` | `makeAff` wrapper around callback-based `RegisterService.getOrInitLocalRegister` |
 
 ---
 
@@ -486,33 +591,77 @@ Defines the form system's core types:
 
 ## Pages
 
+All pages are **pure renderers** that receive `Poll`s of typed status ADTs. They contain no `launchAff_`, no `Poll.create`, and no `Effect` wrappers. Async loading is handled entirely by `Main.purs`.
+
 ### `Pages.LiveView`
 
-Fetches inventory via `fetchInventory` using `defaultViewConfig`, pushes result into `inventoryState.poll`, and renders via `UI.Inventory.MenuLiveView.createMenuLiveView`. Manages loading and error polls separately.
+```purescript
+page :: Poll AuthState -> Poll InventoryLoadStatus -> Nut
+```
+
+Receives a `Poll InventoryLoadStatus` and pattern matches on it:
+- `InventoryLoading` → loading indicator
+- `InventoryLoaded inv` → delegates to `UI.Inventory.MenuLiveView.renderInventory` with `defaultViewConfig`
+- `InventoryError err` → error message
+
+Data is loaded by `Main.loadInventoryStatus` which calls `fetchInventory` with the default view config.
 
 ### `Pages.CreateItem`
 
-Generates a fresh UUID via `genUUID`, passes it to `UI.Inventory.ItemForm.itemForm userId (CreateMode uuid)`.
+```purescript
+page :: Poll AuthState -> UserId -> String -> Nut
+```
+
+Takes a pre-generated UUID string (created in `Main`'s matcher via `genUUID`) and passes it to `UI.Inventory.ItemForm.itemForm userId (CreateMode uuid)`. No async loading needed — this is a pure form.
 
 ### `Pages.EditItem`
 
-Fetches full inventory, finds the `MenuItem` matching the UUID from the URL, then renders `itemForm userId (EditMode menuItem)`. Falls back to error UI if not found.
+```purescript
+page :: Poll AuthState -> UserId -> Poll EditItemStatus -> Nut
+```
+
+Receives a `Poll EditItemStatus` and pattern matches:
+- `EditLoading` → loading indicator
+- `EditReady menuItem` → renders `itemForm userId (EditMode menuItem)`
+- `EditNotFound uuid` → error via `renderError`
+- `EditError msg` → error via `renderError`
+
+Data is loaded by `Main.loadEditItem` which fetches the full inventory and finds the item by UUID.
 
 ### `Pages.DeleteItem`
 
-Same fetch-and-find pattern, then renders `UI.Inventory.DeleteItem.renderDeleteConfirmation userId itemId itemName`.
+```purescript
+page :: Poll AuthState -> UserId -> Poll DeleteItemStatus -> Nut
+```
+
+Receives a `Poll DeleteItemStatus` and pattern matches:
+- `DeleteLoading` → loading indicator
+- `DeleteReady itemId itemName` → renders `UI.Inventory.DeleteItem.renderDeleteConfirmation`
+- `DeleteNotFound uuid` → error via `renderError`
+- `DeleteError msg` → error via `renderError`
+
+Data is loaded by `Main.loadDeleteItem` which fetches inventory and extracts the item's ID and name.
 
 ### `Pages.CreateTransaction`
 
-The most complex page. Orchestrates:
-1. Register initialization via `RegisterService.getOrInitLocalRegister`
-2. Inventory fetch for item selection
-3. Transaction creation via `TransactionService.startTransaction`
-4. Renders `UI.Transaction.CreateTransaction.createTransaction` with all reactive state
+```purescript
+page :: Poll AuthState -> UserId -> Poll TxPageStatus -> Nut
+```
+
+The most complex page. Receives a `Poll TxPageStatus` with all data loaded in parallel by `Main.loadTxPageData`:
+- `TxPageLoading` → loading indicator
+- `TxPageReady inventory register transaction` → renders `UI.Transaction.CreateTransaction.createTransaction` with `pure inventory` and `pure transaction` as polls, plus the register record
+- `TxPageError err` → error via `renderError`
+
+The loading function runs inventory fetch and register-init-then-start-transaction concurrently using `parallel`/`sequential`. The register initialization callback is wrapped into `Aff` via `makeAff`.
 
 ### `Pages.TransactionHistory`
 
-Placeholder: renders `"Transaction History - Coming Soon"`.
+```purescript
+page :: Nut
+```
+
+Placeholder: renders `"Transaction History - Coming Soon"`. No async loading, returns a `Nut` directly.
 
 ---
 
@@ -534,14 +683,18 @@ itemForm :: UserId -> FormMode -> Nut
 - `isFormValid` is a derived `Poll Boolean` using `ado` across all validation polls
 - On submit: collects all field values, runs `validateMenuItem`, then calls `writeInventory` (create) or `updateInventory` (edit)
 - Uses helper functions: `vTextField`, `readOnlyField`, `textAreaField`, `selectField`, `plainTextField`, `sectionHeading`
+- Also exports `renderError :: String -> Nut` used by multiple pages for consistent error display
 
 ### `UI.Inventory.MenuLiveView`
 
 ```purescript
 createMenuLiveView :: Poll Inventory -> Poll Boolean -> Poll String -> Nut
+renderInventory :: LiveViewConfig -> Inventory -> Nut
 ```
 
-Renders a grid of `renderItem` cards. Applies `compareMenuItems` sorting and optional out-of-stock filtering from `defaultViewConfig`. Each card shows brand, name, image, category, species, strain, price, description (truncated), quantity, and edit/delete action links.
+`renderInventory` is the pure rendering function used by the refactored `Pages.LiveView`. It takes a `LiveViewConfig` and an `Inventory`, applies `compareMenuItems` sorting and optional out-of-stock filtering, and renders a grid of `renderItem` cards. Each card shows brand, name, image, category, species, strain, price, description (truncated), quantity, and edit/delete action links.
+
+`createMenuLiveView` is the older poll-based wrapper that manages loading and error state internally — still available but no longer used by the page.
 
 ### `UI.Inventory.DeleteItem`
 
@@ -639,12 +792,12 @@ Manages the register lifecycle. Uses `localStorage` to persist a register UUID a
 | `getOrCreateRegisterId` | Reads from localStorage or generates + stores a new UUID |
 | `createAndOpenRegister` | Creates register via API, then immediately opens it |
 | `openExistingRegister` | Opens an already-created register |
-| `getOrInitLocalRegister` | Tries `GET /register/:id`; if not found, creates + opens. **Used by `Pages.CreateTransaction`** |
-| `initLocalRegister` | Tries GET; if found, re-opens; if not found, creates + opens. **Used by `Main` for pre-init** |
+| `getOrInitLocalRegister` | Tries `GET /register/:id`; if not found, creates + opens. **Wrapped by `Main.getOrInitRegisterAff` for use in parallel loading** |
+| `initLocalRegister` | Tries GET; if found, re-opens; if not found, creates + opens. **Used by `Main` for pre-init on startup** |
 | `createLocalRegister` | Creates a named register at a location |
 | `closeLocalRegister` | Closes a register, reports variance |
 
-All functions take callbacks `(Register -> Effect Unit)` and `(String -> Effect Unit)` for success/error.
+All functions take callbacks `(Register -> Effect Unit)` and `(String -> Effect Unit)` for success/error. `Main.getOrInitRegisterAff` wraps `getOrInitLocalRegister` into `Aff (Either String Register)` via `makeAff` so it can participate in parallel loading.
 
 ### `Services.TransactionService`
 
@@ -835,8 +988,18 @@ clearStorage :: Effect Unit
 - `Types/` — pure domain models with serialization instances
 - `Config/` — compile-time constants, no effects
 - `UI/` — presentational components organized by domain
-- `Pages/` — route handlers that wire services into UI
+- `Pages/` — pure renderers that receive `Poll`s of status ADTs (no async loading)
 - `Utils/` — pure helper functions
+- `Main.purs` — owns all async loading, route matching, and fiber lifecycle
+
+### Async loading architecture
+- All data fetching is centralized in `Main.purs` using the `run` helper pattern
+- Pages are pure functions from `Poll Status -> Nut` with no side effects
+- Route changes cancel in-flight loading via `killFiber` on the previous fiber
+- `parSequence_` runs multiple loaders in parallel per route
+- Callback-based APIs (like `RegisterService`) are wrapped into `Aff` via `makeAff`
+- Each route's loader returns a typed status ADT; pages pattern match on `Loading | Ready data | Error msg`
+- Pages receive `pure Loading <|> poll` to always start with a loading state
 
 ### Known issues / tech debt
 - **Tax rate inconsistency:** `Services.Cart.addItemToTransaction` uses 15% hardcoded tax; `Services.TransactionService.createTransactionItem` uses 8%. The API-backed flow should be canonical.
@@ -845,9 +1008,10 @@ clearStorage :: Effect Unit
 - **`TransactionHistory` is a stub.**
 - **Register ID in localStorage:** `getOrCreateRegisterId` persists across sessions but there's no UI to reset it.
 - **`refreshRate` in `LiveViewConfig` is defined but no polling/auto-refresh is implemented.**
+- **`createMenuLiveView` is vestigial:** The old poll-based wrapper in `UI.Inventory.MenuLiveView` is still exported but no longer used by `Pages.LiveView`, which calls `renderInventory` directly.
 
 ### Error handling pattern
-All API calls return `Either String a`. Pages and services pattern match on the result and push errors into a status message poll or error poll for display. `attempt` from `Effect.Aff` is used to catch exceptions from `fetch` / `fromJSON`.
+All API calls return `Either String a`. Loading functions in `Main.purs` wrap these into typed status ADTs. Pages pattern match on error variants and delegate to `renderError` for consistent error display. `attempt` from `Effect.Aff` is used to catch exceptions from `fetch` / `fromJSON`.
 
 ### Serialization conventions
 - PureScript `Maybe a` → JSON `Nullable a` (via `toNullable`) for writes
