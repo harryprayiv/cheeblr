@@ -11,7 +11,6 @@
 - [Database Schema](#database-schema)
 - [Transaction Processing](#transaction-processing)
 - [Inventory Reservation System](#inventory-reservation-system)
-- [Code Generation System](#code-generation-system)
 - [Security and Configuration](#security-and-configuration)
 - [Development Guidelines](#development-guidelines)
 
@@ -19,7 +18,7 @@
 
 The Cheeblr backend is a Haskell-based API server built for inventory and transaction management in cannabis dispensary retail operations. It provides inventory tracking with reservation-based availability, point-of-sale transaction processing, cash register operations, compliance verification, and financial reporting stubs.
 
-The system uses a layered architecture with Servant for type-safe API definitions, PostgreSQL for persistence, and a schema-driven code generation system for the inventory domain. All monetary values are stored as integer cents to avoid floating-point rounding.
+The system uses a layered architecture with Servant for type-safe API definitions and PostgreSQL for persistence. All monetary values are stored as integer cents to avoid floating-point rounding.
 
 ## Architecture
 
@@ -30,8 +29,7 @@ The system uses a layered architecture with Servant for type-safe API definition
 3. **Database Layer** (`DB/`): `DB.Database` handles inventory CRUD and connection pooling. `DB.Transaction` handles all transaction, register, reservation, and payment database operations.
 4. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
 5. **Types Layer** (`Types/`): Domain models — `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities).
-6. **Code Generation** (`Codegen/`, `Schemas/`): Schema-driven Haskell module generator for types, database, API, and server modules. Currently used for the inventory domain via `Schemas.Dispensary`.
-7. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, middleware setup.
+6. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, middleware setup.
 
 ### Key Technologies
 
@@ -735,75 +733,6 @@ data InventoryException
 
 The `addTransactionItemHandler` catches these and returns structured JSON error responses with `err400`.
 
-## Code Generation System
-
-The `Codegen/` module tree provides schema-driven Haskell code generation for domain modules.
-
-### Schema Definition (`Codegen/Schema.hs`)
-
-A `DomainSchema` describes a domain:
-
-```haskell
-data DomainSchema = DomainSchema
-  { schemaName :: Text          -- e.g. "Inventory"
-  , schemaEnums :: [EnumDef]    -- enum type definitions
-  , schemaRecords :: [RecordDef] -- record/newtype definitions
-  }
-```
-
-**Field types** (`FieldType`): `FText | FInt | FInteger | FDouble | FBool | FUuid | FUtcTime | FMoney | FVector FieldType | FList FieldType | FMaybe FieldType | FEnum Text | FNested Text | FCustom Text`
-
-**Validations**: `Required | MaxLength Int | MinLength Int | MinValue Double | MaxValue Double | NonNegative | ValidUrl | ValidUuid | Pattern Text`
-
-**Record kinds**: `RecordType` (normal data type) or `NewtypeOver Text` (newtype wrapper like `Inventory` over `V.Vector MenuItem`).
-
-Builder combinators: `field`, `enum`, `record`, `newtypeOver`, `required`, `withValidations`, `withDbColumn`, `withDescription`.
-
-### Dispensary Schema (`Schemas/Dispensary.hs`)
-
-Defines the inventory domain schema used for code generation:
-
-```haskell
-dispensarySchema :: DomainSchema
-dispensarySchema = DomainSchema
-  { schemaName = "Inventory"
-  , schemaEnums = [speciesEnum, itemCategoryEnum]
-  , schemaRecords = [strainLineageRecord, menuItemRecord, inventoryRecord, inventoryResponseRecord]
-  }
-```
-
-This schema captures field types, validations, nesting relationships (e.g., `MenuItem` contains `FNested "StrainLineage"`), and collection wrappers (`Inventory` is `NewtypeOver "V.Vector MenuItem"`).
-
-### Code Generators
-
-`Codegen.Run.generateAll` produces four modules from a schema:
-
-| Generator | Output | What it generates |
-|---|---|---|
-| `Generate.Types` | `Generated/Types/<Name>.hs` | Data types, enums, Aeson instances, `FromRow`/`ToRow` instances |
-| `Generate.Database` | `Generated/DB/<Name>.hs` | `DBConfig`, connection helpers, `createTables`, insert/select/update/delete functions |
-| `Generate.API` | `Generated/API/<Name>.hs` | Servant API type definitions, proxy values |
-| `Generate.Server` | `Generated/Server/<Name>.hs` | Server handler implementations |
-
-### Key Generation Behaviors
-
-- **Nested records** (e.g., `StrainLineage` inside `MenuItem`): Generates separate table inserts/updates, JOIN-based selects, cascading deletes (nested table first)
-- **Newtype collections** (e.g., `Inventory`): Generates collection-style API (CRUD on inner item type) and custom select that JOINs nested tables
-- **Enums**: Generates Haskell ADTs with configurable deriving clauses; enums with `FromJSON`/`ToJSON` in their deriving list get generic instances, others get explicit instances
-- **`FromRow` instances**: Handles nested records by inlining field parsers, vector fields via `PGArray` conversion, enum fields via `read`
-- **Response types**: Records with `"Response"` suffix are treated specially (used as return types, not as standalone tables)
-
-### Running Code Generation
-
-```haskell
-import Codegen.Run (runCodegen)
-import Schemas.Dispensary (dispensarySchema)
-
-main = runCodegen dispensarySchema
-```
-
-This writes four `.hs` files to `src/Generated/`. The generated code is not currently used by the main application (the hand-written modules in `Types/`, `DB/`, `API/`, and `Server/` are used instead), but the codegen infrastructure is in place for future migration.
-
 ## Security and Configuration
 
 ### CORS Configuration
@@ -842,8 +771,6 @@ Two layers of CORS handling:
 - `Server/` and `Server.hs` — Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`.
 - `DB/` — Database operations. Parameterized queries, connection pooling, all SQL lives here.
 - `Types/` — Domain models with serialization instances. No effects.
-- `Codegen/` — Schema-driven code generation framework.
-- `Schemas/` — Domain schema definitions for codegen.
 
 ### Database Patterns
 
@@ -875,6 +802,5 @@ Enums are stored in the database as SCREAMING_SNAKE_CASE text (`"CREATED"`, `"IN
 - **Ledger and compliance are stubs**: Endpoints exist and types are defined, but no database tables or real logic back them.
 - **`PaymentMethod.Other` text dropped on DB write**: `showPaymentMethod (Other text) = "OTHER"` — the custom text payload is lost in the database.
 - **`DiscountType` round-trip lossy**: `parseDiscountType` reconstructs from a `(Text, Maybe Int)` tuple, but `PercentOff` stores the percent as `Scientific` in Haskell while the DB stores it as a nullable `NUMERIC` on the discount row.
-- **Generated code not wired in**: The codegen system produces modules to `Generated/` but the application uses the hand-written equivalents. Migration is pending.
 - **No inventory reservation expiry**: Reservations with status `"Reserved"` persist indefinitely if a transaction is abandoned without being cleared or finalized.
 - **`error` calls in DB layer**: Several functions (e.g., `finalizeTransaction`, `refundTransaction`) use `error` for "impossible" states (record not found after insert/update), which would crash the server thread rather than returning an HTTP error.

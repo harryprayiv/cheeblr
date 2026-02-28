@@ -16,7 +16,6 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 ## 🌟 Features
 
 ### Inventory Management
-- **Schema-Driven Code Generation**: Backend includes a codegen system (`Codegen/`) that generates Haskell types, database operations, API definitions, and server handlers from a domain schema — designed to support arbitrary domains beyond cannabis
 - **Comprehensive Product Tracking**: Detailed cannabis product data including strain lineage, THC/CBD content, terpene profiles, species classification, and Leafly integration
 - **Real-Time Inventory Reservations**: Items are reserved when added to a transaction cart, preventing overselling during concurrent sessions. Reservations are released on item removal or transaction cancellation, and committed on finalization
 - **Role-Based Access Control**: Dev-mode auth system with four roles (Customer, Cashier, Manager, Admin) and 15 granular capabilities governing inventory CRUD, transaction processing, register management, and reporting access
@@ -65,7 +64,6 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | Server | **Warp** |
 | JSON | **Aeson** (derived + manual instances) |
 | Auth | Dev-mode `X-User-Id` header lookup with role-based capabilities |
-| Codegen | Schema-driven generator for types, DB, API, and server modules |
 
 ### Infrastructure
 | Concern | Technology |
@@ -168,9 +166,7 @@ App.hs (bootstrap, CORS, middleware)
   ├── Auth/Simple.hs (dev auth: X-User-Id → role → capabilities)
   ├── DB/Database.hs (inventory CRUD, connection pooling)
   ├── DB/Transaction.hs (transactions, reservations, registers, payments)
-  ├── Types/ (domain models with Aeson + postgresql-simple instances)
-  ├── Codegen/ (schema-driven code generation framework)
-  └── Schemas/Dispensary.hs (inventory domain schema definition)
+  └── Types/ (domain models with Aeson + postgresql-simple instances)
 ```
 
 ### Data Flow
@@ -218,11 +214,9 @@ App.hs (bootstrap, CORS, middleware)
 - ✅ Dev auth with `X-User-Id` header and user switcher widget
 - ✅ Centralized async loading with fiber cancellation on route change
 - ✅ Parallel data loading for POS page (inventory + register + transaction)
-- ✅ Schema-driven code generation framework (types, DB, API, server)
 - ✅ `InventoryResponse` includes user capabilities for frontend UI gating
 
 ### In Progress
-- 🔄 Wiring generated code into the main application (replacing hand-written equivalents)
 - 🔄 Daily financial reporting (endpoints exist, implementation pending)
 - 🔄 Compliance verification system (types and stubs defined)
 
