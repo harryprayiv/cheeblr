@@ -190,25 +190,13 @@ Looking at both codebases, here's what stands out. The realworld app has a clear
 
 ## Core Architectural Gaps
 
-**1. Main.purs is doing way too much**
-
-The realworld app's `matcher` is ~30 lines. Yours is ~200+. Each route handler in your Main inlines fetching logic, error handling, state pushing, and even component construction. The realworld app delegates all of that: the matcher just wires polls to components, and data loading is a simple `run` + `parSequence_` pattern.
-
 **2. Auth threading is heavy**
 
 You pass `Ref AuthContext` through literally everything. The realworld app passes `Poll AuthState` and extracts tokens at the call site. Your approach forces every function signature to carry the ref, whereas polls compose naturally.
 
-**3. RegisterService is a grab bag**
-
-`RegisterService.purs` contains: register CRUD, cart math, price formatting, inventory availability checking, and item add/remove logic. In the realworld pattern, these would be separate concerns — API effects stay in the API layer, cart logic lives in a cart service, formatting stays in utils.
-
 **4. No parallel loading**
 
 The realworld app uses `parSequence_` and `parallel`/`sequential` to load multiple resources concurrently. Your route handlers do sequential fetches with manual error handling at each step.
-
-**5. Forms are monolithic**
-
-CreateItem and EditItem each have 20+ `useState` calls and duplicate almost all their structure. The realworld app's form pattern is much lighter — fields are composed with small helpers and validation happens at submission time.
 
 ## Refactoring Steps Left
 
