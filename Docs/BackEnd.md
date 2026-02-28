@@ -5,288 +5,308 @@
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Core Components](#core-components)
+- [Authentication & Authorization](#authentication--authorization)
 - [API Reference](#api-reference)
 - [Data Models](#data-models)
 - [Database Schema](#database-schema)
 - [Transaction Processing](#transaction-processing)
+- [Inventory Reservation System](#inventory-reservation-system)
+- [Code Generation System](#code-generation-system)
 - [Security and Configuration](#security-and-configuration)
 - [Development Guidelines](#development-guidelines)
 
 ## Overview
 
-The Cheeblr backend is a Haskell-based API server built for inventory and transaction management in retail operations, with a focus on cannabis dispensary requirements. It provides comprehensive functionality for inventory tracking, point-of-sale operations, sales transactions, and compliance reporting.
+The Cheeblr backend is a Haskell-based API server built for inventory and transaction management in cannabis dispensary retail operations. It provides inventory tracking with reservation-based availability, point-of-sale transaction processing, cash register operations, compliance verification, and financial reporting stubs.
 
-The system is designed with a layered architecture following functional programming principles and leverages PostgreSQL for data persistence. It supports real-time inventory management, transaction processing, cash register operations, and financial reporting.
+The system uses a layered architecture with Servant for type-safe API definitions, PostgreSQL for persistence, and a schema-driven code generation system for the inventory domain. All monetary values are stored as integer cents to avoid floating-point rounding.
 
 ## Architecture
 
-The backend follows a clean, layered architecture pattern:
-
 ### Architectural Layers
 
-1. **API Layer**: Defines the RESTful API endpoints using Servant's type-level DSL
-2. **Server Layer**: Implements the API handlers and routes requests
-3. **Database Layer**: Manages database interactions and provides CRUD operations
-4. **Application Core**: Configures and bootstraps the application
-5. **Types Layer**: Defines the domain models and data types
+1. **API Layer** (`API/`): Type-level API definitions using Servant's DSL. `API.Inventory` defines the inventory CRUD endpoints with auth headers. `API.Transaction` defines the POS, register, ledger, and compliance endpoints plus all request/response types that aren't domain models.
+2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`): Request handlers. `Server` handles inventory endpoints with capability checks. `Server.Transaction` implements all POS subsystem handlers (transactions, registers, ledger, compliance).
+3. **Database Layer** (`DB/`): `DB.Database` handles inventory CRUD and connection pooling. `DB.Transaction` handles all transaction, register, reservation, and payment database operations.
+4. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
+5. **Types Layer** (`Types/`): Domain models — `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities).
+6. **Code Generation** (`Codegen/`, `Schemas/`): Schema-driven Haskell module generator for types, database, API, and server modules. Currently used for the inventory domain via `Schemas.Dispensary`.
+7. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, middleware setup.
 
 ### Key Technologies
 
-- **Servant**: Type-level web API definition and server implementation
-- **PostgreSQL**: Primary database with `postgresql-simple` library
-- **Warp**: High-performance HTTP server
-- **Resource Pooling**: Connection management via `resource-pool`
-- **CORS**: Cross-Origin Resource Sharing support for web integration
+| Concern | Library |
+|---|---|
+| API definition | **Servant** — type-level web DSL |
+| Database | **postgresql-simple** with `sql` quasiquoter |
+| Connection pooling | **resource-pool** (`Data.Pool`) |
+| HTTP server | **Warp** |
+| JSON | **Aeson** (derived + manual instances) |
+| CORS | **wai-cors** with custom OPTIONS middleware |
+| UUID generation | **uuid** + **uuid-v4** (`Data.UUID.V4.nextRandom`) |
 
 ### System Flow
 
-1. Client requests are received by the Warp server
-2. Servant routes requests to the appropriate handler
-3. Handlers process business logic and interact with the database layer
-4. Database layer manages PostgreSQL connections and executes queries
-5. Results are transformed back into API responses
-6. Responses are sent back to the client
+1. Warp receives request, custom OPTIONS middleware handles preflight
+2. `wai-cors` applies CORS headers
+3. Servant routes to handler in `Server` (inventory) or `Server.Transaction` (POS subsystem)
+4. Inventory handlers extract user from `X-User-Id` header via `Auth.Simple.lookupUser`, check capabilities
+5. Handlers interact with database layer (`DB.Database` or `DB.Transaction`)
+6. Database layer uses connection pool, executes parameterized queries
+7. Results serialized as JSON and returned
 
 ## Core Components
 
 ### Main Application (`App.hs`)
 
-The application entry point handles server configuration, database initialization, and middleware setup:
+Bootstraps the server: reads system username for DB config, initializes connection pool, creates all tables, configures CORS, and starts Warp on port 8080.
 
 ```haskell
-run :: IO ()
-run = do
-  currentUser <- getLoginName
-  let config =
-        AppConfig
-          { dbConfig =
-              DBConfig
-                { dbHost = "localhost"
-                , dbPort = 5432
-                , dbName = "cheeblr"
-                , dbUser = currentUser
-                , dbPassword = "postgres"
-                , poolSize = 10
-                }
-          , serverPort = 8080
-          }
-
-  pool <- initializeDB (dbConfig config)
-  createTables pool
-  createTransactionTables pool
-  
-  putStrLn $ "Starting server on all interfaces, port " ++ show (serverPort config)
-  putStrLn "=================================="
-  putStrLn $ "Server running on port " ++ show (serverPort config)
-  putStrLn "You can access this application from other devices on your network using:"
-  putStrLn $ "http://YOUR_MACHINE_IP:" ++ show (serverPort config)
-  putStrLn "=================================="
-
-  -- Configure CORS and start server
-  let corsPolicy = CorsResourcePolicy {...}
-  let app = cors (const $ Just corsPolicy) $ serve api (combinedServer pool)
-  
-  Warp.run (serverPort config) app
+data AppConfig = AppConfig
+  { dbConfig :: DBConfig
+  , serverPort :: Int
+  }
 ```
 
-### API Definition (`API/Inventory.hs` and `API/Transaction.hs`)
+Default configuration:
+- **Database**: `localhost:5432/cheeblr`, current system user, password `"postgres"`, pool size 10
+- **Server**: port 8080, binds all interfaces
 
-The API is defined using Servant's type-level DSL:
+CORS is configured to allow any origin (`corsOrigins = Nothing`) with all standard methods and custom headers (`x-requested-with`, `x-user-id`). A separate `handleOptionsMiddleware` intercepts `OPTIONS` requests directly to handle preflight before Servant routing.
 
-#### Inventory API
+### Combined Server (`Server.hs`)
 
 ```haskell
-type InventoryAPI =
-  "inventory" :> Get '[JSON] InventoryResponse
-    :<|> "inventory" :> ReqBody '[JSON] MenuItem :> Post '[JSON] InventoryResponse
-    :<|> "inventory" :> ReqBody '[JSON] MenuItem :> Put '[JSON] InventoryResponse
-    :<|> "inventory" :> Capture "sku" UUID :> Delete '[JSON] InventoryResponse
+type API = InventoryAPI :<|> PosAPI
+
+combinedServer :: Pool Connection -> Server API
+combinedServer pool = inventoryServer pool :<|> posServerImpl pool
 ```
 
-#### Transaction API
+`inventoryServer` handles the four inventory CRUD endpoints. Each handler extracts the user from the `X-User-Id` header via `lookupUser`, derives capabilities from the user's role, and gates write operations behind capability checks (`capCanCreateItem`, `capCanEditItem`, `capCanDeleteItem`). Read (GET) is allowed for all authenticated users.
 
-Provides comprehensive endpoints for transaction management:
+The inventory GET response includes the user's `UserCapabilities` alongside the inventory data, allowing the frontend to render UI based on permissions.
+
+### POS Server (`Server/Transaction.hs`)
 
 ```haskell
-type TransactionAPI =
-  "transaction" :> Get '[JSON] [Transaction]
-    :<|> "transaction" :> Capture "id" UUID :> Get '[JSON] Transaction
-    :<|> "transaction" :> ReqBody '[JSON] Transaction :> Post '[JSON] Transaction
-    :<|> "transaction" :> Capture "id" UUID :> ReqBody '[JSON] Transaction :> Put '[JSON] Transaction
-    :<|> "transaction" :> "void" :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Transaction
-    :<|> "transaction" :> "refund" :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Transaction
-    :<|> "transaction" :> "item" :> ReqBody '[JSON] TransactionItem :> Post '[JSON] TransactionItem
-    :<|> "transaction" :> "item" :> Capture "id" UUID :> Delete '[JSON] NoContent
-    :<|> "transaction" :> "payment" :> ReqBody '[JSON] PaymentTransaction :> Post '[JSON] PaymentTransaction
-    :<|> "transaction" :> "payment" :> Capture "id" UUID :> Delete '[JSON] NoContent
-    :<|> "transaction" :> "finalize" :> Capture "id" UUID :> Post '[JSON] Transaction
+posServerImpl :: Pool Connection -> Server PosAPI
+posServerImpl pool =
+  transactionServer pool
+    :<|> registerServer pool
+    :<|> ledgerServer pool
+    :<|> complianceServer pool
 ```
 
-#### Register API
+Four sub-servers compose the POS API:
+- **transactionServer**: Full transaction CRUD, item management, payment management, finalization, clearing, plus inventory availability/reservation/release endpoints
+- **registerServer**: Register CRUD, open/close operations
+- **ledgerServer**: Stub implementations — returns empty lists or `501 Not Implemented`
+- **complianceServer**: Stub implementations — echoes verification, returns `501` for record lookup, returns placeholder report
 
-Handles operations related to cash registers:
+## Authentication & Authorization
+
+### Dev Auth Model (`Auth/Simple.hs`)
+
+Authentication uses a fixed map of dev users, looked up by the `X-User-Id` request header. There is no real authentication — the header is trusted.
 
 ```haskell
-type RegisterAPI =
-  "register" :> Get '[JSON] [Register]
-    :<|> "register" :> Capture "id" UUID :> Get '[JSON] Register
-    :<|> "register" :> ReqBody '[JSON] Register :> Post '[JSON] Register
-    :<|> "register" :> Capture "id" UUID :> ReqBody '[JSON] Register :> Put '[JSON] Register
-    :<|> "register" :> "open" :> Capture "id" UUID :> ReqBody '[JSON] OpenRegisterRequest :> Post '[JSON] Register
-    :<|> "register" :> "close" :> Capture "id" UUID :> ReqBody '[JSON] CloseRegisterRequest :> Post '[JSON] CloseRegisterResult
+type AuthHeader = Header "X-User-Id" Text
+
+lookupUser :: Maybe Text -> AuthenticatedUser
 ```
 
-### Database Layer (`DB/Database.hs` and `DB/Transaction.hs`)
+`lookupUser` tries two maps in sequence:
+1. **By key name**: `"customer-1"`, `"cashier-1"`, `"manager-1"`, `"admin-1"` (case-insensitive)
+2. **By UUID string**: The actual UUID values for each dev user
 
-Manages database connections and operations:
+If no header is provided or no match is found, defaults to `cashier-1`.
 
-- Connection pooling for efficient resource management
-- Retry logic with exponential backoff for connection failures
-- Prepared statements for query execution
-- Transaction safety
+### Dev Users
 
-Key database functions include:
+| Key | Role | UUID |
+|---|---|---|
+| `customer-1` | Customer | `8244082f-a6bc-4d6c-9427-64a0ecdc10db` |
+| `cashier-1` | Cashier | `0a6f2deb-892b-4411-8025-08c1a4d61229` |
+| `manager-1` | Manager | `8b75ea4a-00a4-4a2a-a5d5-a1bab8883802` |
+| `admin-1` | Admin | `d3a1f4f0-c518-4db3-aa43-e80b428d6304` |
+
+All dev users have `auLocationId = Just "b2bd4b3a-..."` except Customer and Admin (which have `Nothing`).
+
+### Roles & Capabilities (`Types/Auth.hs`)
 
 ```haskell
-initializeDB :: DBConfig -> IO (Pool.Pool Connection)
-createTables :: Pool.Pool Connection -> IO ()
-createTransactionTables :: ConnectionPool -> IO ()
-getAllMenuItems :: Pool.Pool Connection -> IO Inventory
-insertMenuItem :: Pool.Pool Connection -> MenuItem -> IO ()
-updateExistingMenuItem :: Pool.Pool Connection -> MenuItem -> IO ()
-deleteMenuItem :: Pool.Pool Connection -> UUID -> Handler InventoryResponse
+data UserRole = Customer | Cashier | Manager | Admin
 ```
+
+`capabilitiesForRole` maps each role to a `UserCapabilities` record with 15 boolean fields:
+
+| Capability | Customer | Cashier | Manager | Admin |
+|---|---|---|---|---|
+| `capCanViewInventory` | ✓ | ✓ | ✓ | ✓ |
+| `capCanCreateItem` | ✗ | ✗ | ✓ | ✓ |
+| `capCanEditItem` | ✗ | ✓ | ✓ | ✓ |
+| `capCanDeleteItem` | ✗ | ✗ | ✓ | ✓ |
+| `capCanProcessTransaction` | ✗ | ✓ | ✓ | ✓ |
+| `capCanVoidTransaction` | ✗ | ✗ | ✓ | ✓ |
+| `capCanRefundTransaction` | ✗ | ✗ | ✓ | ✓ |
+| `capCanApplyDiscount` | ✗ | ✗ | ✓ | ✓ |
+| `capCanManageRegisters` | ✗ | ✗ | ✓ | ✓ |
+| `capCanOpenRegister` | ✗ | ✓ | ✓ | ✓ |
+| `capCanCloseRegister` | ✗ | ✓ | ✓ | ✓ |
+| `capCanViewReports` | ✗ | ✗ | ✓ | ✓ |
+| `capCanViewAllLocations` | ✗ | ✗ | ✗ | ✓ |
+| `capCanManageUsers` | ✗ | ✗ | ✗ | ✓ |
+| `capCanViewCompliance` | ✗ | ✓ | ✓ | ✓ |
+
+### Capability Enforcement
+
+`requireAuth` is a reusable handler combinator:
+
+```haskell
+requireAuth :: Maybe Text -> (UserCapabilities -> Bool) -> Text -> Handler AuthenticatedUser
+```
+
+It looks up the user, checks the capability predicate, and either returns the user or throws `err403`. Currently, only inventory write endpoints use explicit capability checks (directly in handlers rather than via `requireAuth`). Transaction endpoints do not yet enforce capabilities.
+
+### InventoryResponse with Capabilities
+
+The `GET /inventory` response includes the requesting user's capabilities:
+
+```haskell
+data InventoryResponse
+  = InventoryData { inventoryItems :: Inventory, inventoryCapabilities :: UserCapabilities }
+  | Message Text
+```
+
+JSON shape for `InventoryData`:
+```json
+{ "type": "data", "value": [...items...], "capabilities": {...} }
+```
+
+This allows the frontend to gate UI elements without a separate capabilities endpoint.
 
 ## API Reference
 
 ### Inventory Endpoints
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/inventory` | Retrieve all inventory items |
-| POST | `/inventory` | Add a new inventory item |
-| PUT | `/inventory` | Update an existing inventory item |
-| DELETE | `/inventory/:sku` | Delete an inventory item by SKU |
+All inventory endpoints require the `X-User-Id` header.
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/inventory` | Any role | Returns all inventory items with user capabilities |
+| POST | `/inventory` | `capCanCreateItem` | Add a new menu item |
+| PUT | `/inventory` | `capCanEditItem` | Update an existing menu item |
+| DELETE | `/inventory/:sku` | `capCanDeleteItem` | Delete a menu item by SKU UUID |
+
+**Note**: `GET /inventory` returns `available_quantity` (stock minus active reservations) rather than raw `quantity`, via a LEFT JOIN on `inventory_reservation`.
 
 ### Transaction Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/transaction` | Get all transactions |
-| GET | `/transaction/:id` | Get a transaction by ID |
+|---|---|---|
+| GET | `/transaction` | List all transactions (newest first) |
+| GET | `/transaction/:id` | Get transaction by ID with items and payments |
 | POST | `/transaction` | Create a new transaction |
 | PUT | `/transaction/:id` | Update a transaction |
-| POST | `/transaction/void/:id` | Void a transaction |
-| POST | `/transaction/refund/:id` | Refund a transaction |
-| POST | `/transaction/item` | Add an item to a transaction |
-| DELETE | `/transaction/item/:id` | Remove an item from a transaction |
-| POST | `/transaction/payment` | Add a payment to a transaction |
-| DELETE | `/transaction/payment/:id` | Remove a payment from a transaction |
-| POST | `/transaction/finalize/:id` | Finalize a transaction |
+| POST | `/transaction/void/:id` | Void a transaction with reason |
+| POST | `/transaction/refund/:id` | Create a refund (inverse transaction) |
+| POST | `/transaction/item` | Add item to transaction (with inventory reservation) |
+| DELETE | `/transaction/item/:id` | Remove item (releases reservation) |
+| POST | `/transaction/payment` | Add payment to transaction |
+| DELETE | `/transaction/payment/:id` | Remove payment |
+| POST | `/transaction/finalize/:id` | Finalize transaction (commits reservations, decrements stock) |
+| POST | `/transaction/clear/:id` | Clear all items/payments, release reservations, reset totals |
 
-### Register Management Endpoints
+### Inventory Availability Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/register` | Get all registers |
+|---|---|---|
+| GET | `/inventory/available/:sku` | Get total, reserved, and available quantity for a SKU |
+| POST | `/inventory/reserve` | Create an inventory reservation |
+| DELETE | `/inventory/release/:id` | Release a reservation |
+
+### Register Endpoints
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/register` | List all registers |
 | GET | `/register/:id` | Get register by ID |
 | POST | `/register` | Create a register |
 | PUT | `/register/:id` | Update a register |
-| POST | `/register/open/:id` | Open a register |
-| POST | `/register/close/:id` | Close a register |
+| POST | `/register/open/:id` | Open register with starting cash |
+| POST | `/register/close/:id` | Close register, report variance |
 
-### Ledger and Compliance Endpoints
+### Ledger Endpoints (stubs)
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/ledger/entry` | Get all ledger entries |
-| GET | `/ledger/account` | Get all accounts |
-| POST | `/ledger/report/daily` | Generate daily report |
-| POST | `/compliance/verification` | Verify customer compliance |
-| GET | `/compliance/record/:transaction_id` | Get compliance record |
-| POST | `/compliance/report` | Generate compliance report |
+| Method | Endpoint | Status |
+|---|---|---|
+| GET | `/ledger/entry` | Returns `[]` |
+| GET | `/ledger/entry/:id` | Returns `501` |
+| GET | `/ledger/account` | Returns `[]` |
+| GET | `/ledger/account/:id` | Returns `501` |
+| POST | `/ledger/account` | Returns `501` |
+| POST | `/ledger/report/daily` | Returns zeroed `DailyReportResult` |
+
+### Compliance Endpoints (stubs)
+
+| Method | Endpoint | Status |
+|---|---|---|
+| POST | `/compliance/verification` | Echoes back the input |
+| GET | `/compliance/record/:transaction_id` | Returns `501` |
+| POST | `/compliance/report` | Returns placeholder text |
 
 ## Data Models
 
-### Inventory Models
-
-The core inventory data model consists of:
+### Inventory Models (`Types/Inventory.hs`)
 
 #### MenuItem
 
-Represents a product in the inventory:
-
 ```haskell
 data MenuItem = MenuItem
-  { sort :: Int
-  , sku :: UUID
-  , brand :: Text
-  , name :: Text
-  , price :: Int  -- Stored as cents
-  , measure_unit :: Text
-  , per_package :: Text
-  , quantity :: Int
-  , category :: ItemCategory
-  , subcategory :: Text
+  { sort :: Int, sku :: UUID, brand :: Text, name :: Text
+  , price :: Int              -- cents
+  , measure_unit :: Text, per_package :: Text, quantity :: Int
+  , category :: ItemCategory, subcategory :: Text
   , description :: Text
-  , tags :: V.Vector Text
-  , effects :: V.Vector Text
+  , tags :: V.Vector Text, effects :: V.Vector Text
   , strain_lineage :: StrainLineage
   }
 ```
 
-#### ItemCategory
-
-```haskell
-data ItemCategory
-  = Flower
-  | PreRolls
-  | Vaporizers
-  | Edibles
-  | Drinks
-  | Concentrates
-  | Topicals
-  | Tinctures
-  | Accessories
-  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, Read)
-```
+Has manual `ToRow`/`FromRow` instances. `FromRow` reads 23 columns (13 from `menu_items` + 10 from `strain_lineage` via JOIN). Enums (`category`, `species`) are stored as `TEXT` and round-tripped via `show`/`read`.
 
 #### StrainLineage
 
-Contains detailed information for cannabis products:
-
 ```haskell
 data StrainLineage = StrainLineage
-  { thc :: Text
-  , cbg :: Text
-  , strain :: Text
-  , creator :: Text
-  , species :: Species
-  , dominant_terpene :: Text
-  , terpenes :: V.Vector Text
-  , lineage :: V.Vector Text
-  , leafly_url :: Text
-  , img :: Text
+  { thc :: Text, cbg :: Text, strain :: Text, creator :: Text
+  , species :: Species, dominant_terpene :: Text
+  , terpenes :: V.Vector Text, lineage :: V.Vector Text
+  , leafly_url :: Text, img :: Text
   }
 ```
 
-#### Species
+#### Enums
+
+- **Species**: `Indica | IndicaDominantHybrid | Hybrid | SativaDominantHybrid | Sativa` — derived `FromJSON`/`ToJSON`
+- **ItemCategory**: `Flower | PreRolls | Vaporizers | Edibles | Drinks | Concentrates | Topicals | Tinctures | Accessories` — derived `FromJSON`/`ToJSON`
+
+#### Inventory & InventoryResponse
 
 ```haskell
-data Species
-  = Indica
-  | IndicaDominantHybrid
-  | Hybrid
-  | SativaDominantHybrid
-  | Sativa
-  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, Read)
+newtype Inventory = Inventory { items :: V.Vector MenuItem }
+
+data InventoryResponse
+  = InventoryData { inventoryItems :: Inventory, inventoryCapabilities :: UserCapabilities }
+  | Message Text
 ```
 
-### Transaction Models
+`Inventory` serializes as a bare JSON array (custom `ToJSON`/`FromJSON`). `InventoryResponse` serializes as `{ "type": "data"|"message", "value": ..., "capabilities": ... }`.
+
+### Transaction Models (`Types/Transaction.hs`)
 
 #### Transaction
-
-The core transaction model:
 
 ```haskell
 data Transaction = Transaction
@@ -300,10 +320,10 @@ data Transaction = Transaction
   , transactionLocationId :: UUID
   , transactionItems :: [TransactionItem]
   , transactionPayments :: [PaymentTransaction]
-  , transactionSubtotal :: Int
-  , transactionDiscountTotal :: Int
-  , transactionTaxTotal :: Int
-  , transactionTotal :: Int
+  , transactionSubtotal :: Int          -- cents
+  , transactionDiscountTotal :: Int     -- cents
+  , transactionTaxTotal :: Int          -- cents
+  , transactionTotal :: Int             -- cents
   , transactionType :: TransactionType
   , transactionIsVoided :: Bool
   , transactionVoidReason :: Maybe Text
@@ -314,30 +334,7 @@ data Transaction = Transaction
   }
 ```
 
-#### TransactionStatus
-
-```haskell
-data TransactionStatus
-  = Created
-  | InProgress
-  | Completed
-  | Voided
-  | Refunded
-  deriving (Show, Eq, Ord, Generic, Read)
-```
-
-#### TransactionType
-
-```haskell
-data TransactionType
-  = Sale
-  | Return
-  | Exchange
-  | InventoryAdjustment
-  | ManagerComp
-  | Administrative
-  deriving (Show, Eq, Ord, Generic, Read)
-```
+Has a custom `FromJSON` instance using `.:?` for optional fields. `FromRow` reads 19 columns from the `transaction` table and initializes `transactionItems`/`transactionPayments` as `[]` (populated separately by `getTransactionById`).
 
 #### TransactionItem
 
@@ -347,13 +344,15 @@ data TransactionItem = TransactionItem
   , transactionItemTransactionId :: UUID
   , transactionItemMenuItemSku :: UUID
   , transactionItemQuantity :: Int
-  , transactionItemPricePerUnit :: Int
+  , transactionItemPricePerUnit :: Int  -- cents
   , transactionItemDiscounts :: [DiscountRecord]
   , transactionItemTaxes :: [TaxRecord]
-  , transactionItemSubtotal :: Int
-  , transactionItemTotal :: Int
+  , transactionItemSubtotal :: Int      -- cents
+  , transactionItemTotal :: Int         -- cents
   }
 ```
+
+`FromRow` reads 7 columns; `transactionItemDiscounts` and `transactionItemTaxes` are populated separately.
 
 #### PaymentTransaction
 
@@ -362,18 +361,152 @@ data PaymentTransaction = PaymentTransaction
   { paymentId :: UUID
   , paymentTransactionId :: UUID
   , paymentMethod :: PaymentMethod
-  , paymentAmount :: Int
-  , paymentTendered :: Int
-  , paymentChange :: Int
+  , paymentAmount :: Int          -- cents
+  , paymentTendered :: Int        -- cents
+  , paymentChange :: Int          -- cents
   , paymentReference :: Maybe Text
   , paymentApproved :: Bool
   , paymentAuthorizationCode :: Maybe Text
   }
 ```
 
+#### InventoryReservation
+
+```haskell
+data InventoryReservation = InventoryReservation
+  { reservationItemSku :: UUID
+  , reservationTransactionId :: UUID
+  , reservationQuantity :: Int
+  , reservationStatus :: Text     -- "Reserved" | "Released" | "Completed"
+  }
+```
+
+#### Enums
+
+| Type | Values | DB format |
+|---|---|---|
+| `TransactionStatus` | `Created \| InProgress \| Completed \| Voided \| Refunded` | SCREAMING_SNAKE (`CREATED`, `IN_PROGRESS`, etc.) |
+| `TransactionType` | `Sale \| Return \| Exchange \| InventoryAdjustment \| ManagerComp \| Administrative` | SCREAMING_SNAKE |
+| `PaymentMethod` | `Cash \| Debit \| Credit \| ACH \| GiftCard \| StoredValue \| Mixed \| Other Text` | SCREAMING_SNAKE; `Other` stored as `"OTHER"` (text payload dropped on DB write) |
+| `TaxCategory` | `RegularSalesTax \| ExciseTax \| CannabisTax \| LocalTax \| MedicalTax \| NoTax` | SCREAMING_SNAKE |
+| `DiscountType` | `PercentOff Scientific \| AmountOff Int \| BuyOneGetOne \| Custom Text Int` | String discriminator + nullable percent column |
+
+**JSON parsing**: `PaymentMethod` and `TransactionStatus`/`TransactionType` accept both PascalCase and SCREAMING_SNAKE on read. DB parsing (`FromRow`) uses SCREAMING_SNAKE exclusively.
+
+#### Supporting Types
+
+```haskell
+data TaxRecord = TaxRecord
+  { taxCategory :: TaxCategory, taxRate :: Scientific
+  , taxAmount :: Int, taxDescription :: Text }
+
+data DiscountRecord = DiscountRecord
+  { discountType :: DiscountType, discountAmount :: Int
+  , discountReason :: Text, discountApprovedBy :: Maybe UUID }
+```
+
+#### Compliance Types
+
+```haskell
+data VerificationType = AgeVerification | MedicalCardVerification | IDScan
+  | VisualInspection | PatientRegistration | PurchaseLimitCheck
+
+data VerificationStatus = VerifiedStatus | FailedStatus | ExpiredStatus | NotRequiredStatus
+
+data CustomerVerification = CustomerVerification
+  { customerVerificationId :: UUID, customerVerificationCustomerId :: UUID
+  , customerVerificationType :: VerificationType
+  , customerVerificationStatus :: VerificationStatus
+  , customerVerificationVerifiedBy :: UUID, customerVerificationVerifiedAt :: UTCTime
+  , customerVerificationExpiresAt :: Maybe UTCTime
+  , customerVerificationNotes :: Maybe Text
+  , customerVerificationDocumentId :: Maybe Text }
+
+data ReportingStatus = NotRequired | Pending | Submitted | Acknowledged | Failed
+
+data ComplianceRecord = ComplianceRecord
+  { complianceRecordId :: UUID, complianceRecordTransactionId :: UUID
+  , complianceRecordVerifications :: [CustomerVerification]
+  , complianceRecordIsCompliant :: Bool
+  , complianceRecordRequiresStateReporting :: Bool
+  , complianceRecordReportingStatus :: ReportingStatus
+  , complianceRecordReportedAt :: Maybe UTCTime
+  , complianceRecordReferenceId :: Maybe Text
+  , complianceRecordNotes :: Maybe Text }
+
+data InventoryStatus = Available | OnHold | Reserved | Sold | Damaged
+  | Expired | InTransit | UnderReview | Recalled
+```
+
+These types have `ToJSON`/`FromJSON` instances but are only used by the stub compliance endpoints currently.
+
+#### Ledger Types
+
+```haskell
+data LedgerEntryType = SaleEntry | Tax | Discount | Payment | Refund | Void | Adjustment | Fee
+data AccountType = Asset | Liability | Equity | Revenue | Expense
+
+data Account = Account
+  { accountId :: UUID, accountCode :: Text, accountName :: Text
+  , accountIsDebitNormal :: Bool, accountParentAccountId :: Maybe UUID
+  , accountType :: AccountType }
+
+data LedgerEntry = LedgerEntry
+  { ledgerEntryId :: UUID, ledgerEntryTransactionId :: UUID
+  , ledgerEntryAccountId :: UUID, ledgerEntryAmount :: Int
+  , ledgerEntryIsDebit :: Bool, ledgerEntryTimestamp :: UTCTime
+  , ledgerEntryType :: LedgerEntryType, ledgerEntryDescription :: Text }
+```
+
+Defined with JSON instances but not yet backed by database operations.
+
+### Request/Response Types (`API/Transaction.hs`)
+
+These types live in the API module rather than Types:
+
+```haskell
+data Register = Register
+  { registerId :: UUID, registerName :: Text, registerLocationId :: UUID
+  , registerIsOpen :: Bool
+  , registerCurrentDrawerAmount :: Int, registerExpectedDrawerAmount :: Int
+  , registerOpenedAt :: Maybe UTCTime, registerOpenedBy :: Maybe UUID
+  , registerLastTransactionTime :: Maybe UTCTime }
+
+data OpenRegisterRequest = OpenRegisterRequest
+  { openRegisterEmployeeId :: UUID, openRegisterStartingCash :: Int }
+
+data CloseRegisterRequest = CloseRegisterRequest
+  { closeRegisterEmployeeId :: UUID, closeRegisterCountedCash :: Int }
+
+data CloseRegisterResult = CloseRegisterResult
+  { closeRegisterResultRegister :: Register, closeRegisterResultVariance :: Int }
+
+data AvailableInventory = AvailableInventory
+  { availableTotal :: Int, availableReserved :: Int, availableActual :: Int }
+
+data ReservationRequest = ReservationRequest
+  { reserveItemSku :: UUID, reserveTransactionId :: UUID, reserveQuantity :: Int }
+
+data DailyReportRequest = DailyReportRequest
+  { dailyReportDate :: UTCTime, dailyReportLocationId :: UUID }
+
+data DailyReportResult = DailyReportResult
+  { dailyReportCash :: Int, dailyReportCard :: Int, dailyReportOther :: Int
+  , dailyReportTotal :: Int, dailyReportTransactions :: Int }
+
+data ComplianceReportRequest = ComplianceReportRequest
+  { complianceReportStartDate :: UTCTime, complianceReportEndDate :: UTCTime
+  , complianceReportLocationId :: UUID }
+
+newtype ComplianceReportResult = ComplianceReportResult
+  { complianceReportContent :: Text }
+```
+
 ## Database Schema
 
-### menu_items Table
+### Inventory Tables
+
+#### `menu_items`
 
 ```sql
 CREATE TABLE IF NOT EXISTS menu_items (
@@ -393,7 +526,7 @@ CREATE TABLE IF NOT EXISTS menu_items (
 )
 ```
 
-### strain_lineage Table
+#### `strain_lineage`
 
 ```sql
 CREATE TABLE IF NOT EXISTS strain_lineage (
@@ -411,165 +544,337 @@ CREATE TABLE IF NOT EXISTS strain_lineage (
 )
 ```
 
-### transaction Table
+### Transaction Tables
+
+All transaction tables are created by `createTransactionTables` which checks for table existence before creating (using `information_schema.tables` queries rather than `CREATE TABLE IF NOT EXISTS` for the conditional logic).
+
+#### `transaction`
 
 ```sql
 CREATE TABLE IF NOT EXISTS transaction (
-  id UUID PRIMARY KEY,
-  status TEXT NOT NULL,
-  created TIMESTAMP WITH TIME ZONE NOT NULL,
-  completed TIMESTAMP WITH TIME ZONE,
-  customer_id UUID,
-  employee_id UUID NOT NULL,
-  register_id UUID NOT NULL,
-  location_id UUID NOT NULL,
-  subtotal INTEGER NOT NULL,
-  discount_total INTEGER NOT NULL,
-  tax_total INTEGER NOT NULL,
-  total INTEGER NOT NULL,
-  transaction_type TEXT NOT NULL,
-  is_voided BOOLEAN NOT NULL DEFAULT FALSE,
-  void_reason TEXT,
-  is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
-  refund_reason TEXT,
-  reference_transaction_id UUID,
-  notes TEXT
+    id UUID PRIMARY KEY,
+    status TEXT NOT NULL,
+    created TIMESTAMP WITH TIME ZONE NOT NULL,
+    completed TIMESTAMP WITH TIME ZONE,
+    customer_id UUID,
+    employee_id UUID NOT NULL,
+    register_id UUID NOT NULL,
+    location_id UUID NOT NULL,
+    subtotal INTEGER NOT NULL,
+    discount_total INTEGER NOT NULL,
+    tax_total INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    transaction_type TEXT NOT NULL,
+    is_voided BOOLEAN NOT NULL DEFAULT FALSE,
+    void_reason TEXT,
+    is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
+    refund_reason TEXT,
+    reference_transaction_id UUID,
+    notes TEXT
 )
 ```
 
-Additional transaction-related tables:
-- `transaction_item`: Stores line items within transactions
-- `discount`: Stores applied discounts
-- `transaction_tax`: Stores tax applications
-- `payment_transaction`: Stores payment details
-- `register`: Stores cash register information
+#### `transaction_item`
+
+```sql
+CREATE TABLE IF NOT EXISTS transaction_item (
+    id UUID PRIMARY KEY,
+    transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
+    menu_item_sku UUID NOT NULL,
+    quantity INTEGER NOT NULL,
+    price_per_unit INTEGER NOT NULL,
+    subtotal INTEGER NOT NULL,
+    total INTEGER NOT NULL
+)
+```
+
+#### `transaction_tax`
+
+```sql
+CREATE TABLE IF NOT EXISTS transaction_tax (
+    id UUID PRIMARY KEY,
+    transaction_item_id UUID NOT NULL REFERENCES transaction_item(id) ON DELETE CASCADE,
+    category TEXT NOT NULL,
+    rate NUMERIC NOT NULL,
+    amount INTEGER NOT NULL,
+    description TEXT NOT NULL
+)
+```
+
+#### `discount`
+
+```sql
+CREATE TABLE IF NOT EXISTS discount (
+    id UUID PRIMARY KEY,
+    transaction_item_id UUID REFERENCES transaction_item(id) ON DELETE CASCADE,
+    transaction_id UUID REFERENCES transaction(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    percent NUMERIC,
+    reason TEXT NOT NULL,
+    approved_by UUID
+)
+```
+
+#### `payment_transaction`
+
+```sql
+CREATE TABLE IF NOT EXISTS payment_transaction (
+    id UUID PRIMARY KEY,
+    transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
+    method TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    tendered INTEGER NOT NULL,
+    change_amount INTEGER NOT NULL,
+    reference TEXT,
+    approved BOOLEAN NOT NULL DEFAULT FALSE,
+    authorization_code TEXT
+)
+```
+
+#### `register`
+
+```sql
+CREATE TABLE IF NOT EXISTS register (
+    id UUID PRIMARY KEY,
+    name TEXT NOT NULL,
+    location_id UUID NOT NULL,
+    is_open BOOLEAN NOT NULL DEFAULT FALSE,
+    current_drawer_amount INTEGER NOT NULL DEFAULT 0,
+    expected_drawer_amount INTEGER NOT NULL DEFAULT 0,
+    opened_at TIMESTAMP WITH TIME ZONE,
+    opened_by UUID,
+    last_transaction_time TIMESTAMP WITH TIME ZONE
+)
+```
+
+#### `inventory_reservation`
+
+```sql
+CREATE TABLE IF NOT EXISTS inventory_reservation (
+    id UUID PRIMARY KEY,
+    item_sku UUID NOT NULL,
+    transaction_id UUID NOT NULL,
+    quantity INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+)
+```
 
 ## Transaction Processing
 
-### Transaction Flow
+### Transaction Lifecycle
 
-1. **Creation**: Transaction is created with status `Created`
-2. **Item Addition**: Items are added to the transaction
-3. **Discount Application**: Optional discounts are applied
-4. **Payment Addition**: One or more payments are added
-5. **Finalization**: Transaction is finalized, changing status to `Completed`
+1. **Creation** (`POST /transaction`): Transaction created with status `CREATED`, zero totals, empty items/payments. Checks for duplicate transaction IDs.
+2. **Item Addition** (`POST /transaction/item`): Validates inventory availability (stock minus active reservations), creates an `inventory_reservation` with status `"Reserved"`, inserts the transaction item with associated taxes and discounts.
+3. **Payment Addition** (`POST /transaction/payment`): Inserts payment, then auto-updates transaction status — if total payments ≥ transaction total, status becomes `COMPLETED`, otherwise `IN_PROGRESS`.
+4. **Finalization** (`POST /transaction/finalize/:id`): Decrements actual `menu_items.quantity` by reserved amounts, changes reservation status from `"Reserved"` to `"Completed"`, sets transaction status to `COMPLETED` with completion timestamp.
 
-### Transaction Operations
+### Transaction Reversal Operations
 
-The system includes comprehensive transaction processing capabilities:
+**Void** (`POST /transaction/void/:id`): Sets status to `VOIDED`, marks `is_voided = TRUE`, records reason. Does not create a new transaction or reverse inventory.
 
-```haskell
-createTransaction :: ConnectionPool -> Transaction -> IO Transaction
-getTransaction :: ConnectionPool -> UUID -> IO (Maybe Transaction)
-updateTransaction :: ConnectionPool -> UUID -> Transaction -> IO Transaction
-addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
-deleteTransactionItem :: ConnectionPool -> UUID -> IO ()
-addPaymentTransaction :: ConnectionPool -> PaymentTransaction -> IO PaymentTransaction
-deletePaymentTransaction :: ConnectionPool -> UUID -> IO ()
-finalizeTransaction :: ConnectionPool -> UUID -> IO Transaction
+**Refund** (`POST /transaction/refund/:id`): Creates a new inverse transaction with negated monetary amounts, type `Return`, referencing the original transaction. Marks the original as `is_refunded = TRUE`. The refund transaction gets its own UUID and items/payments are negated copies of the original.
+
+### Clear Transaction (`POST /transaction/clear/:id`)
+
+Resets a transaction to empty state:
+1. Releases all active reservations (status → `"Released"`)
+2. Deletes all taxes, discounts, transaction items, and payments
+3. Resets monetary totals to 0
+4. Sets status back to `CREATED`
+
+### Automatic Total Recalculation
+
+`updateTransactionTotals` is called after item removal. It recalculates subtotal, discount total, tax total, and total from the database using `COALESCE(SUM(...), 0)` queries. Similarly, `updateTransactionPaymentStatus` checks if payments cover the total and updates status accordingly.
+
+### Data Assembly Pattern
+
+`getTransactionById` fetches the base transaction row, then separately fetches:
+- Transaction items (which themselves fetch their discounts and taxes)
+- Payments
+
+This multi-query assembly pattern means `transactionItems` and `transactionPayments` in the `FromRow` instance are initialized as `pure []` and populated after the main query.
+
+## Inventory Reservation System
+
+The reservation system prevents overselling by tracking inventory commitments before finalization.
+
+### Flow
+
+1. **Check availability**: `addTransactionItem` queries `menu_items.quantity` minus `SUM(inventory_reservation.quantity)` where status is `"Reserved"`
+2. **Reserve**: If sufficient, creates a reservation row with status `"Reserved"`
+3. **On item removal**: Reservation status set to `"Released"`
+4. **On finalization**: Actual `menu_items.quantity` decremented, reservation status set to `"Completed"`
+5. **On clear**: All reservations for the transaction set to `"Released"`
+
+### Inventory Query with Reservations
+
+`getAllMenuItems` returns `available_quantity` rather than raw `quantity`:
+
+```sql
+SELECT m.*, m.quantity - COALESCE(r.reserved_qty, 0) as available_quantity
+FROM menu_items m
+LEFT JOIN (
+    SELECT item_sku, SUM(quantity) as reserved_qty
+    FROM inventory_reservation
+    WHERE status = 'Reserved'
+    GROUP BY item_sku
+) r ON r.item_sku = m.sku
 ```
 
-### Refund and Void Operations
+### Error Handling
 
-The system supports two key transaction reversal operations:
-
-```haskell
-voidTransaction :: ConnectionPool -> UUID -> Text -> IO Transaction
-voidTransaction pool transactionId reason = do
-  -- Update transaction status to VOIDED
-  -- Mark transaction as voided with reason
-  -- Return updated transaction
-```
+Custom exceptions for inventory operations:
 
 ```haskell
-refundTransaction :: ConnectionPool -> UUID -> Text -> IO Transaction
-refundTransaction pool transactionId reason = do
-  -- Get original transaction
-  -- Create new inverse transaction with negative amounts
-  -- Mark as Return type and reference original transaction
-  -- Mark original as refunded
-  -- Return new refund transaction
+data InventoryException
+  = ItemNotFound UUID
+  | InsufficientInventory UUID Int Int  -- sku, requested, available
 ```
 
-### Register Operations
+The `addTransactionItemHandler` catches these and returns structured JSON error responses with `err400`.
 
-The system supports cash register operations:
+## Code Generation System
+
+The `Codegen/` module tree provides schema-driven Haskell code generation for domain modules.
+
+### Schema Definition (`Codegen/Schema.hs`)
+
+A `DomainSchema` describes a domain:
 
 ```haskell
-openRegister :: ConnectionPool -> UUID -> OpenRegisterRequest -> IO Register
-closeRegister :: ConnectionPool -> UUID -> CloseRegisterRequest -> IO CloseRegisterResult
+data DomainSchema = DomainSchema
+  { schemaName :: Text          -- e.g. "Inventory"
+  , schemaEnums :: [EnumDef]    -- enum type definitions
+  , schemaRecords :: [RecordDef] -- record/newtype definitions
+  }
 ```
+
+**Field types** (`FieldType`): `FText | FInt | FInteger | FDouble | FBool | FUuid | FUtcTime | FMoney | FVector FieldType | FList FieldType | FMaybe FieldType | FEnum Text | FNested Text | FCustom Text`
+
+**Validations**: `Required | MaxLength Int | MinLength Int | MinValue Double | MaxValue Double | NonNegative | ValidUrl | ValidUuid | Pattern Text`
+
+**Record kinds**: `RecordType` (normal data type) or `NewtypeOver Text` (newtype wrapper like `Inventory` over `V.Vector MenuItem`).
+
+Builder combinators: `field`, `enum`, `record`, `newtypeOver`, `required`, `withValidations`, `withDbColumn`, `withDescription`.
+
+### Dispensary Schema (`Schemas/Dispensary.hs`)
+
+Defines the inventory domain schema used for code generation:
+
+```haskell
+dispensarySchema :: DomainSchema
+dispensarySchema = DomainSchema
+  { schemaName = "Inventory"
+  , schemaEnums = [speciesEnum, itemCategoryEnum]
+  , schemaRecords = [strainLineageRecord, menuItemRecord, inventoryRecord, inventoryResponseRecord]
+  }
+```
+
+This schema captures field types, validations, nesting relationships (e.g., `MenuItem` contains `FNested "StrainLineage"`), and collection wrappers (`Inventory` is `NewtypeOver "V.Vector MenuItem"`).
+
+### Code Generators
+
+`Codegen.Run.generateAll` produces four modules from a schema:
+
+| Generator | Output | What it generates |
+|---|---|---|
+| `Generate.Types` | `Generated/Types/<Name>.hs` | Data types, enums, Aeson instances, `FromRow`/`ToRow` instances |
+| `Generate.Database` | `Generated/DB/<Name>.hs` | `DBConfig`, connection helpers, `createTables`, insert/select/update/delete functions |
+| `Generate.API` | `Generated/API/<Name>.hs` | Servant API type definitions, proxy values |
+| `Generate.Server` | `Generated/Server/<Name>.hs` | Server handler implementations |
+
+### Key Generation Behaviors
+
+- **Nested records** (e.g., `StrainLineage` inside `MenuItem`): Generates separate table inserts/updates, JOIN-based selects, cascading deletes (nested table first)
+- **Newtype collections** (e.g., `Inventory`): Generates collection-style API (CRUD on inner item type) and custom select that JOINs nested tables
+- **Enums**: Generates Haskell ADTs with configurable deriving clauses; enums with `FromJSON`/`ToJSON` in their deriving list get generic instances, others get explicit instances
+- **`FromRow` instances**: Handles nested records by inlining field parsers, vector fields via `PGArray` conversion, enum fields via `read`
+- **Response types**: Records with `"Response"` suffix are treated specially (used as return types, not as standalone tables)
+
+### Running Code Generation
+
+```haskell
+import Codegen.Run (runCodegen)
+import Schemas.Dispensary (dispensarySchema)
+
+main = runCodegen dispensarySchema
+```
+
+This writes four `.hs` files to `src/Generated/`. The generated code is not currently used by the main application (the hand-written modules in `Types/`, `DB/`, `API/`, and `Server/` are used instead), but the codegen infrastructure is in place for future migration.
 
 ## Security and Configuration
 
 ### CORS Configuration
 
-The backend implements a permissive CORS policy suitable for development:
+Two layers of CORS handling:
 
-```haskell
-corsPolicy =
-  CorsResourcePolicy
-    { corsOrigins = Nothing  -- Allow any origin
-    , corsMethods = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
-    , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength]
-    , corsExposedHeaders = Nothing
-    , corsMaxAge = Just 3600
-    , corsVaryOrigin = False
-    , corsRequireOrigin = False
-    , corsIgnoreFailures = False
-    }
-```
+1. **`handleOptionsMiddleware`**: Intercepts all `OPTIONS` requests before Servant, returning `200` with permissive CORS headers. This prevents Servant from returning `405 Method Not Allowed` for preflight requests.
+
+2. **`wai-cors` middleware**: Applied to all other requests with:
+   - `corsOrigins = Nothing` (any origin)
+   - Methods: GET, POST, PUT, DELETE, OPTIONS
+   - Request headers: `Content-Type`, `Accept`, `Authorization`, `Origin`, `Content-Length`, `x-requested-with`, `x-user-id`
+   - `corsMaxAge = 86400` (24 hours)
+   - `corsIgnoreFailures = True`
 
 ### Server Configuration
 
-Server defaults:
-- **Port**: 8080
-- **Database**: localhost:5432/cheeblr
-- **Username**: Current system user (obtained via `getLoginName`)
-- **Password**: "postgres"
-- **Connection Pool Size**: 10
+| Setting | Value |
+|---|---|
+| Port | 8080 |
+| DB host | localhost |
+| DB port | 5432 |
+| DB name | cheeblr |
+| DB user | Current system user (`getLoginName`) |
+| DB password | `"postgres"` |
+| Pool size | 10 |
+| Pool idle timeout | 0.5 seconds |
+| Pool max connections | 10 |
 
 ## Development Guidelines
 
-### Environment Setup
+### Project Structure Convention
 
-1. Ensure PostgreSQL is installed and running
-2. Use the provided connection details or update for your environment
-3. Tables will be automatically created if they don't exist
+- `API/` — Servant type definitions and request/response types. No business logic.
+- `Auth/` — Authentication/authorization. Currently dev-only with fixed users.
+- `Server/` and `Server.hs` — Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`.
+- `DB/` — Database operations. Parameterized queries, connection pooling, all SQL lives here.
+- `Types/` — Domain models with serialization instances. No effects.
+- `Codegen/` — Schema-driven code generation framework.
+- `Schemas/` — Domain schema definitions for codegen.
 
-### Build and Run
+### Database Patterns
 
-Build the project:
-```bash
-cabal build
-```
+- **Connection pooling**: All database operations use `withConnection pool $ \conn -> ...`
+- **Retry logic**: `connectWithRetry` attempts 5 connections with 5-second delays
+- **Table creation**: `createTables` (inventory) uses `CREATE TABLE IF NOT EXISTS`; `createTransactionTables` checks `information_schema.tables` first
+- **Parameterized queries**: All queries use `?` placeholders via `postgresql-simple`
+- **RETURNING clauses**: Insert operations use `RETURNING` to get the inserted row back
+- **Cascade deletes**: `transaction_item`, `transaction_tax`, `discount`, `payment_transaction` all cascade on parent deletion
 
-Run the server:
-```bash
-cabal run
-```
+### Enum Serialization Convention
 
-### Coding Patterns
-
-The codebase employs several Haskell patterns:
-
-1. **Resource Management**: Uses `withConnection` pattern to ensure resource cleanup
-2. **Error Handling**: Structured error responses and exception handling
-3. **Type Safety**: Leverages Haskell's type system for API definitions
-4. **Functional Composition**: Pipeline-style data transformations
+Enums are stored in the database as SCREAMING_SNAKE_CASE text (`"CREATED"`, `"IN_PROGRESS"`, `"CANNABIS_TAX"`, etc.) via explicit `show*` functions in `DB.Transaction`. JSON serialization uses PascalCase via Aeson's generic deriving, but `FromJSON` instances accept both forms for interop with the frontend.
 
 ### Error Handling
 
-The backend implements robust error handling:
-- Try/catch blocks around database operations
-- Descriptive error messages for client feedback
-- Logging of errors to stderr for server monitoring
-- Status message formatting for client consumption
+- Database operations use `try @SomeException` with descriptive error messages
+- Transaction item addition uses custom `InventoryException` types caught and converted to `err400` with JSON error bodies
+- Missing resources return `err404`
+- Unimplemented endpoints return `err501`
+- Capability violations return `err403`
+- Server logging goes to both stdout (handler activity) and stderr (database operations, table creation)
 
-### Database Optimization
+### Known Issues / Tech Debt
 
-The backend uses several database optimization techniques:
-1. Connection pooling for efficient resource utilization
-2. Prepared statements for safe query execution
-3. Connection retry logic with exponential backoff
-4. Resource cleanup via withConnection pattern
+- **No real authentication**: `X-User-Id` header is trusted without verification. Default user is cashier, not admin.
+- **Backend default vs frontend default**: Backend defaults to `cashier-1` when no header provided; frontend sends admin UUID. This mismatch is harmless in dev but worth noting.
+- **Capability enforcement incomplete**: Only inventory write endpoints check capabilities. Transaction, register, and other endpoints do not enforce role-based access.
+- **Ledger and compliance are stubs**: Endpoints exist and types are defined, but no database tables or real logic back them.
+- **`PaymentMethod.Other` text dropped on DB write**: `showPaymentMethod (Other text) = "OTHER"` — the custom text payload is lost in the database.
+- **`DiscountType` round-trip lossy**: `parseDiscountType` reconstructs from a `(Text, Maybe Int)` tuple, but `PercentOff` stores the percent as `Scientific` in Haskell while the DB stores it as a nullable `NUMERIC` on the discount row.
+- **Generated code not wired in**: The codegen system produces modules to `Generated/` but the application uses the hand-written equivalents. Migration is pending.
+- **No inventory reservation expiry**: Reservations with status `"Reserved"` persist indefinitely if a transaction is abandoned without being cleared or finalized.
+- **`error` calls in DB layer**: Several functions (e.g., `finalizeTransaction`, `refundTransaction`) use `error` for "impossible" states (record not found after insert/update), which would crash the server thread rather than returning an HTTP error.
