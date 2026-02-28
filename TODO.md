@@ -221,16 +221,6 @@ CreateItem and EditItem each have 20+ `useState` calls and duplicate almost all 
 - API functions take a token string, not a ref — the caller extracts the token from the poll at the call site
 - This eliminates the ref threading and makes components testable in isolation
 
-### Phase 4: Unify form handling
-
-**Goal:** CreateItem and EditItem share a single form component.
-
-- Create `UI.Inventory.ItemForm` that takes a `Maybe MenuItem` — Nothing for create, Just for edit
-- The form module owns all 20+ `useState` calls internally, initialized from the Maybe
-- Export the form as a single `Nut`-returning function
-- CreateItem and EditItem become thin wrappers that fetch data (if editing) and call the shared form
-- Consider grouping related fields into records to reduce the number of individual state variables — e.g., a `StrainLineageState` record instead of 10 separate fields
-
 ### Phase 5: Adopt the `run` + parallel loading pattern
 
 **Goal:** Clean async data loading.
@@ -246,7 +236,6 @@ Use `parSequence_` for routes that need multiple resources (CreateTransaction ne
 
 ## Suggested Priority Order
 
-3. **Phase 4** (unify forms) — big LOC reduction, CreateItem+EditItem are your largest files
 5. **Phase 2** (auth polls) — most invasive change, touches every API call
 6. **Phase 5** (parallel loading) — polish, do last
 

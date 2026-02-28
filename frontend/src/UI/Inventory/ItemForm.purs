@@ -34,6 +34,29 @@ import Web.HTML.HTMLInputElement (fromEventTarget, value) as Input
 import Web.HTML.HTMLSelectElement (fromEventTarget, value) as Select
 import Web.HTML.HTMLTextAreaElement (fromEventTarget, value) as TextArea
 
+renderError :: String -> Nut
+renderError message =
+  D.div
+    [ DA.klass_ "error-container max-w-2xl mx-auto p-6" ]
+    [ D.div
+        [ DA.klass_ "bg-red-100 border-l-4 border-red-500 text-red-700 p-4" ]
+        [ D.h2
+            [ DA.klass_ "text-lg font-medium mb-2" ]
+            [ text_ "Error Loading Item" ]
+        , D.p_
+            [ text_ message ]
+        , D.div
+            [ DA.klass_ "mt-4" ]
+            [ D.a
+                [ DA.href_ "/#/"
+                , DA.klass_ "text-blue-600 hover:underline"
+                ]
+                [ text_ "Return to Inventory" ]
+            ]
+        ]
+    ]
+
+
 data FormMode = CreateMode String | EditMode MenuItem
 
 type FormInit =

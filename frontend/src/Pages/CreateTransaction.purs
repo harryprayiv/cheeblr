@@ -24,7 +24,7 @@ import Services.AuthService (AuthContext)
 import Services.RegisterService as RegisterService
 import Services.TransactionService (startTransaction)
 import Types.Inventory (InventoryResponse(..))
-import UI.Inventory.EditItem (renderError)
+import UI.Inventory.ItemForm (renderError)
 import UI.Transaction.CreateTransaction as TransactionUI
 
 data PageStatus = Loading | Ready Nut | Error String
