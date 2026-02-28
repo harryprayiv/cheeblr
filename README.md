@@ -1,78 +1,80 @@
 # Cheeblr: Cannabis Dispensary Management System
 
-A comprehensive full-stack web application for cannabis dispensary inventory, point-of-sale, and transaction management, utilizing PureScript for frontend development with Haskell backend services, all underpinned by a PostgreSQL database infrastructure.
+A full-stack cannabis dispensary point-of-sale and inventory management system built with PureScript (frontend) and Haskell (backend) on PostgreSQL — emphasizing type safety, functional programming, and reproducible builds via Nix.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
 ## 📚 Documentation
 
-Detailed documentation for each component of the system:
-
-- [Nix Development Environment](./Docs/NixDevEnvironment.md) - Setup and configuration of the Nix-based development environment
-- [Backend Documentation](./Docs/BackEnd.md) - Haskell backend API and database implementation
-- [Frontend Documentation](./Docs/FrontEnd.md) - PureScript frontend application
-- [Dependencies](./Docs/Dependencies.md) - List of dependencies
-- [To Do list](./Docs/TODO.md) - List of future features and optimizations
-- [Security Recommendations](./Docs/SecurityStrategies.md) - Detailed upgrades planned for security and authentication
+- [Frontend Documentation](./Docs/FrontEnd.md) — PureScript/Deku SPA architecture, async loading pattern, page modules, services
+- [Backend Documentation](./Docs/BackEnd.md) — Haskell/Servant API, database layer, transaction processing, inventory reservations
+- [Nix Development Environment](./Docs/NixDevEnvironment.md) — Setup and configuration of the Nix-based development environment
+- [Dependencies](./Docs/Dependencies.md) — Project dependency listing
+- [To Do list](./Docs/TODO.md) — Planned features and optimizations
+- [Security Recommendations](./Docs/SecurityStrategies.md) — Planned security and authentication upgrades
 
 ## 🌟 Features
 
 ### Inventory Management
-- **Comprehensive Schema Codegen**: I am currently doing work on a schema interpreted front end. So, this library can work with any domain.
-- **Comprehensive Product Tracking**: Maintain detailed cannabis product information including strain data, THC/CBD content, terpenes, and lineage
-- **Real-time Inventory Reservations**: Automatic inventory reservation system prevents overselling during concurrent transactions
-- **Visual Categorization**: Products are visually distinguished by category and species
-- **Flexible Sorting & Filtering**: Organize inventory by various criteria including name, category, quantity, and strain type
-- **Complete CRUD Operations**: Support for creating, reading, updating, and deleting inventory items
+- **Schema-Driven Code Generation**: Backend includes a codegen system (`Codegen/`) that generates Haskell types, database operations, API definitions, and server handlers from a domain schema — designed to support arbitrary domains beyond cannabis
+- **Comprehensive Product Tracking**: Detailed cannabis product data including strain lineage, THC/CBD content, terpene profiles, species classification, and Leafly integration
+- **Real-Time Inventory Reservations**: Items are reserved when added to a transaction cart, preventing overselling during concurrent sessions. Reservations are released on item removal or transaction cancellation, and committed on finalization
+- **Role-Based Access Control**: Dev-mode auth system with four roles (Customer, Cashier, Manager, Admin) and 15 granular capabilities governing inventory CRUD, transaction processing, register management, and reporting access
+- **Flexible Sorting & Filtering**: Multi-field priority sorting (quantity, category, species) with configurable sort order and optional out-of-stock hiding
+- **Complete CRUD Operations**: Create, read, update, and delete inventory items with full strain lineage data
 
 ### Point-of-Sale System
-- **Transaction Processing**: Complete POS workflow for creating and finalizing sales transactions with inventory tracking
-- **Multiple Payment Methods**: Support for cash, credit, debit, ACH, gift card, and mixed payment options
-- **Tax Management**: Automatic calculation of sales and cannabis-specific excise taxes
-- **Discount Application**: Apply percentage-based, fixed amount, BOGO, or custom discounts
-- **Receipt Generation**: Create formatted transaction receipts with itemized details
+- **Full Transaction Lifecycle**: Create → add items (with reservation) → add payments → finalize (commits inventory) or clear (releases reservations)
+- **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a transaction concurrently using the frontend's `parallel`/`sequential` pattern
+- **Multiple Payment Methods**: Cash, credit, debit, ACH, gift card, stored value, mixed, and custom payment types with change calculation
+- **Tax Management**: Per-item tax records with category tracking (regular sales, excise, cannabis, local, medical)
+- **Discount Support**: Percentage-based, fixed amount, BOGO, and custom discount types with approval tracking
+- **Automatic Total Recalculation**: Server-side recalculation of subtotals, taxes, discounts, and totals on item/payment changes
 
 ### Financial Operations
-- **Cash Register Management**: Open/close registers with starting cash and variance tracking
-- **Drawer Reconciliation**: End-of-shift reconciliation with automatic variance calculation
-- **Transaction Modifications**: Support for void and refund operations with audit trails
-- **Payment Processing**: Real-time payment tracking with change calculation for cash transactions
-- **Financial Reporting**: Generate daily sales and transaction reports
+- **Cash Register Management**: Open registers with starting cash, close with counted cash and automatic variance calculation
+- **Register Persistence**: Register IDs stored in localStorage, auto-recovered on page load via get-or-create pattern
+- **Transaction Modifications**: Void (marks existing transaction) and refund (creates inverse transaction with negated amounts) operations with reason tracking
+- **Payment Status Tracking**: Transaction status auto-updates based on payment coverage (payments ≥ total → Completed)
 
-### Compliance Features
-- **Customer Verification**: Age and medical card verification tracking infrastructure
-- **Purchase Limit Enforcement**: Monitor and enforce regulatory purchase limits
-- **State Reporting**: Generate compliance reports for regulatory requirements
-- **Product Labeling**: Generate compliant product labels with required information
-- **Audit Trail**: Complete transaction history with modification tracking
+### Compliance Infrastructure
+- **Customer Verification Types**: Age verification, medical card, ID scan, visual inspection, patient registration, purchase limit check
+- **Compliance Records**: Per-transaction compliance tracking with verification status, state reporting status, and reference IDs
+- **Reporting Stubs**: Compliance and daily financial report endpoints defined with types — implementation pending
 
 ## 🔧 Technology Stack
 
 ### Frontend
-- **PureScript**: Strongly-typed functional programming language that compiles to JavaScript
-- **Deku**: Declarative UI library for PureScript with hooks-like functionality
-- **FRP**: Functional Reactive Programming for state management through Poll mechanism
-- **Type-safe API Client**: Fully typed communication with backend using shared domain types
-- **Discrete Money Handling**: Precise currency operations with proper decimal handling
+| Concern | Technology |
+|---|---|
+| Language | **PureScript** — strongly-typed FP compiling to JavaScript |
+| UI | **Deku** — declarative, hooks-based rendering with `Nut` as the renderable type |
+| State | **FRP.Poll** — reactive streams with `create`/`push` for mutable cells |
+| Routing | **Routing.Duplex** + **Routing.Hash** — hash-based client-side routing |
+| HTTP | **purescript-fetch** with **Yoga.JSON** for serialization |
+| Money | **Data.Finance.Money** — `Discrete USD` (integer cents) with formatting |
+| Async | **Effect.Aff** with `run` helper, `parSequence_`, `killFiber` for route-driven loading |
+| Parallelism | **Control.Parallel** — concurrent data fetching within a single route |
 
 ### Backend
-- **Haskell**: Pure functional programming language for robust backend services
-- **Servant**: Type-level web API library for defining type-safe REST endpoints
-- **PostgreSQL Integration**: Direct database interaction with connection pooling
-- **Transaction Support**: ACID-compliant transaction processing with rollback capabilities
-- **Resource Pooling**: Efficient database connection management
+| Concern | Technology |
+|---|---|
+| Language | **Haskell** |
+| API | **Servant** — type-level REST API definitions |
+| Database | **postgresql-simple** with `sql` quasiquoter, **resource-pool** for connection management |
+| Server | **Warp** |
+| JSON | **Aeson** (derived + manual instances) |
+| Auth | Dev-mode `X-User-Id` header lookup with role-based capabilities |
+| Codegen | Schema-driven generator for types, DB, API, and server modules |
 
-### Database
-- **PostgreSQL**: Advanced open-source relational database with transaction support
-- **Inventory Reservations**: Dedicated reservation system to prevent double-booking
-- **Transaction Tables**: Comprehensive schema for transactions, items, payments, and taxes
-- **Register Management**: Persistent register state with opening/closing history
-
-### Development Environment
-- **Nix**: Reproducible development environment with all dependencies
-- **Cabal**: Haskell build system
-- **Spago**: PureScript package manager and build tool
-- **PostgreSQL Service**: Integrated database service through NixOS
+### Infrastructure
+| Concern | Technology |
+|---|---|
+| Database | **PostgreSQL** with reservation-based inventory, cascading deletes, parameterized queries |
+| Dev Environment | **Nix** flakes for reproducible builds |
+| Build (Haskell) | **Cabal** |
+| Build (PureScript) | **Spago** |
+| Database Service | NixOS systemd integration |
 
 ## 🚀 Getting Started
 
@@ -82,134 +84,162 @@ Detailed documentation for each component of the system:
 
 ### Development Setup
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/harryprayiv/cheeblr.git
-   cd cheeblr
-   nix develop
-   deploy
-   ```   
+```bash
+git clone https://github.com/harryprayiv/cheeblr.git
+cd cheeblr
+nix develop
+deploy
+```
 
-This will launch the entire setup (PostgreSQL NixOS systemd service and all).
+This launches the full development stack: PostgreSQL service, backend API server (port 8080), and frontend dev server (port 5174).
 
-### API Endpoints
+### API Overview
 
-The system exposes comprehensive API endpoints for different functional areas:
+#### Inventory
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/inventory` | All items with available quantities and user capabilities |
+| POST | `/inventory` | Create item (Manager+) |
+| PUT | `/inventory` | Update item (Cashier+) |
+| DELETE | `/inventory/:sku` | Delete item (Manager+) |
+| GET | `/inventory/available/:sku` | Real-time availability (total, reserved, actual) |
+| POST | `/inventory/reserve` | Reserve inventory for a transaction |
+| DELETE | `/inventory/release/:id` | Release a reservation |
 
-#### Inventory Endpoints
-- `GET /inventory` - Retrieve all inventory items with real-time availability
-- `POST /inventory` - Add a new inventory item
-- `PUT /inventory` - Update an existing inventory item
-- `DELETE /inventory/:sku` - Delete an inventory item
-- `GET /inventory/available/:sku` - Check real-time availability
-- `POST /inventory/reserve` - Reserve inventory for a transaction
-- `DELETE /inventory/release/:id` - Release inventory reservation
+#### Transactions
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/transaction` | List all transactions |
+| GET | `/transaction/:id` | Get transaction with items and payments |
+| POST | `/transaction` | Create transaction |
+| PUT | `/transaction/:id` | Update transaction |
+| POST | `/transaction/void/:id` | Void with reason |
+| POST | `/transaction/refund/:id` | Create inverse refund transaction |
+| POST | `/transaction/item` | Add item (checks availability, creates reservation) |
+| DELETE | `/transaction/item/:id` | Remove item (releases reservation) |
+| POST | `/transaction/payment` | Add payment |
+| DELETE | `/transaction/payment/:id` | Remove payment |
+| POST | `/transaction/finalize/:id` | Finalize (commits inventory, completes reservations) |
+| POST | `/transaction/clear/:id` | Clear all items/payments, release reservations |
 
-#### Transaction Endpoints
-- `GET /transaction` - Get all transactions
-- `GET /transaction/:id` - Get specific transaction details
-- `POST /transaction` - Create a new transaction
-- `PUT /transaction/:id` - Update transaction
-- `POST /transaction/void/:id` - Void a transaction
-- `POST /transaction/refund/:id` - Process a refund
-- `POST /transaction/item` - Add item to transaction with reservation
-- `DELETE /transaction/item/:id` - Remove item and release reservation
-- `POST /transaction/payment` - Add payment to transaction
-- `DELETE /transaction/payment/:id` - Remove payment
-- `POST /transaction/finalize/:id` - Finalize transaction and commit inventory
+#### Registers
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/register` | List registers |
+| GET | `/register/:id` | Get register |
+| POST | `/register` | Create register |
+| POST | `/register/open/:id` | Open with starting cash |
+| POST | `/register/close/:id` | Close with counted cash, returns variance |
 
-#### Register Management
-- `GET /register` - Get all registers
-- `GET /register/:id` - Get specific register
-- `POST /register` - Create new register
-- `POST /register/open/:id` - Open a cash register
-- `POST /register/close/:id` - Close register with reconciliation
+## 🏗 Architecture
 
-## 🔄 Recent Architecture Updates
+### Frontend Architecture
 
-### Enhanced Type Safety
-- **Explicit Field Naming**: Transaction and TransactionItem types now use prefixed field names for improved clarity:
-- All TransactionItem fields prefixed with `transactionItem` (e.g., `transactionItemId`, `transactionItemQuantity`)
-- Prevents naming conflicts and improves code maintainability
-- Full type safety maintained across frontend-backend communication
+The frontend follows a centralized async loading pattern inspired by [purescript-deku-realworld](https://github.com/mfp22/purescript-deku-realworld):
 
-### Inventory Reservation System
-- **Real-time Availability**: Inventory checks account for both stock and pending reservations
-- **Automatic Reservation**: Items are reserved when added to cart, preventing overselling
-- **Reservation Release**: Automatic release when items are removed or transactions are cancelled
-- **Finalization Process**: Reservations are committed to actual inventory deductions upon transaction completion
+- **`Main.purs`** owns all async data fetching, route matching, and fiber lifecycle management
+- **Pages** are pure renderers: `Poll Status → Nut` — no side effects, no `launchAff_`, no `Poll.create`
+- **Route changes** cancel in-flight loading via `killFiber` on the previous fiber
+- **`parSequence_`** runs multiple loaders in parallel per route
+- **Status ADTs** per page (`Loading | Ready data | Error msg`) provide type-safe loading states
+- **`pure Loading <|> poll`** ensures pages always start with a loading state
 
-## 🔍 Architecture
+```
+Main.purs (orchestration)
+  ├── Route matcher → killFiber prev → parSequence_ loaders → build page Nut
+  ├── Loading functions: loadInventoryStatus, loadEditItem, loadDeleteItem, loadTxPageData
+  └── Callback-to-Aff wrappers (makeAff) for RegisterService integration
 
-The application follows a layered architecture with clear separation of concerns:
+Pages/ (pure renderers)
+  ├── LiveView:           Poll InventoryLoadStatus → Nut
+  ├── EditItem:           Poll EditItemStatus → Nut
+  ├── DeleteItem:         Poll DeleteItemStatus → Nut
+  ├── CreateTransaction:  Poll TxPageStatus → Nut (parallel: inventory + register + tx)
+  ├── CreateItem:         UserId → String → Nut (no async needed)
+  └── TransactionHistory: Nut (placeholder)
+```
 
-### Frontend Layers
-1. **UI Components**: Deku-based reactive components
-- LiveCart for item selection with real-time inventory
-- CreateTransaction for complete POS workflow
-- Register management interfaces
-2. **State Management**: FRP Poll-based reactive state
-3. **Service Layer**: Business logic for transactions, inventory, and registers
-4. **API Integration**: Type-safe HTTP clients with automatic serialization
+### Backend Architecture
 
-### Backend Layers
-1. **API Layer**: Servant-based REST API with type-level routing
-2. **Server Layer**: Request handlers with business logic
-3. **Database Layer**: PostgreSQL integration with connection pooling
-4. **Domain Model**: Shared types ensuring frontend-backend consistency
+```
+App.hs (bootstrap, CORS, middleware)
+  ├── Server.hs (inventory handlers with capability checks)
+  ├── Server/Transaction.hs (POS: transactions, registers, ledger, compliance)
+  ├── Auth/Simple.hs (dev auth: X-User-Id → role → capabilities)
+  ├── DB/Database.hs (inventory CRUD, connection pooling)
+  ├── DB/Transaction.hs (transactions, reservations, registers, payments)
+  ├── Types/ (domain models with Aeson + postgresql-simple instances)
+  ├── Codegen/ (schema-driven code generation framework)
+  └── Schemas/Dispensary.hs (inventory domain schema definition)
+```
+
+### Data Flow
+
+1. **Item Selection**: User adds item → backend checks `quantity - reserved` → creates reservation → returns item
+2. **Cart Management**: Items tracked via transaction items table → server recalculates totals on each change
+3. **Payment Processing**: Payments added → server checks if payments ≥ total → auto-updates status
+4. **Finalization**: `menu_items.quantity` decremented → reservations marked `Completed` → transaction `COMPLETED`
+5. **Cancellation**: `POST /transaction/clear/:id` → reservations `Released` → items/payments deleted → totals zeroed
 
 ### Database Schema
-- **menu_items**: Product catalog with quantities
-- **strain_lineage**: Cannabis-specific product attributes
-- **transaction**: Transaction records with status tracking
-- **transaction_item**: Line items with tax and discount support
-- **payment_transaction**: Payment records with multiple methods
-- **inventory_reservation**: Real-time inventory locking
-- **register**: Cash register state and history
 
-## 📊 Data Flow
+| Table | Purpose |
+|---|---|
+| `menu_items` | Product catalog with stock quantities |
+| `strain_lineage` | Cannabis-specific attributes (THC, terpenes, lineage) — FK to `menu_items` |
+| `transaction` | Transaction records with status, totals, void/refund tracking |
+| `transaction_item` | Line items — FK to `transaction` with CASCADE |
+| `transaction_tax` | Per-item tax records — FK to `transaction_item` with CASCADE |
+| `discount` | Discounts on items or transactions — FK with CASCADE |
+| `payment_transaction` | Payment records — FK to `transaction` with CASCADE |
+| `inventory_reservation` | Reservation tracking (Reserved → Completed/Released) |
+| `register` | Cash register state and history |
 
-1. **Item Selection**: User selects items → Creates reservation → Updates available inventory
-2. **Cart Management**: Items added to transaction → Reservations tracked → Real-time totals calculated
-3. **Payment Processing**: Payments added → Balance calculated → Transaction status updated
-4. **Finalization**: Transaction completed → Inventory committed → Reservations cleared → Receipt generated
+## 🔐 Security
 
-## 🔐 Security Considerations
+- **Parameterized queries** throughout — no string interpolation in SQL
+- **Type safety** across the full stack — shared domain types between PureScript and Haskell
+- **Role-based capabilities** — 15 granular permissions mapped to 4 roles, enforced on inventory writes
+- **Input validation** — frontend (ValidationRule combinators) and backend (type-level constraints via Servant)
+- **Audit trail** — transactions track void/refund reasons, reference transactions, and modification timestamps
 
-- **Input Validation**: All user inputs validated on both frontend and backend
-- **SQL Injection Prevention**: Parameterized queries throughout
-- **Type Safety**: Strong typing prevents many common vulnerabilities
-- **Audit Trail**: Complete transaction history with modification tracking
-- **Access Control**: Foundation for role-based permissions (see Security Strategies doc)
-
-## 📜 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+**Current limitation**: Authentication is dev-mode only (`X-User-Id` header with fixed users). See [Security Recommendations](./Docs/SecurityStrategies.md) for the planned upgrade path.
 
 ## 🚧 Development Status
 
-### Completed Features
-- ✅ Full inventory management system
-- ✅ Complete transaction processing workflow
-- ✅ Real-time inventory reservation system
-- ✅ Multiple payment method support
-- ✅ Register opening/closing with reconciliation
-- ✅ Tax calculation (sales and cannabis excise)
-- ✅ Void and refund operations
-- ✅ Receipt generation
+### Implemented
+- ✅ Full inventory CRUD with strain lineage
+- ✅ Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
+- ✅ Complete transaction lifecycle (create → items → payments → finalize/void/refund/clear)
+- ✅ Multiple payment methods with change calculation
+- ✅ Cash register open/close with variance tracking
+- ✅ Tax and discount record management
+- ✅ Role-based capability system (4 roles, 15 capabilities)
+- ✅ Dev auth with `X-User-Id` header and user switcher widget
+- ✅ Centralized async loading with fiber cancellation on route change
+- ✅ Parallel data loading for POS page (inventory + register + transaction)
+- ✅ Schema-driven code generation framework (types, DB, API, server)
+- ✅ `InventoryResponse` includes user capabilities for frontend UI gating
 
 ### In Progress
-- 🔄 Daily financial reporting
-- 🔄 Compliance reporting integration
-- 🔄 Customer verification system
+- 🔄 Wiring generated code into the main application (replacing hand-written equivalents)
+- 🔄 Daily financial reporting (endpoints exist, implementation pending)
+- 🔄 Compliance verification system (types and stubs defined)
 
 ### Planned
-- 📋 User authentication and authorization
+- 📋 Real authentication (JWT or session-based, replacing dev `X-User-Id` header)
+- 📋 Capability enforcement on transaction/register endpoints
+- 📋 Inventory reservation expiry (cleanup of abandoned reservations)
+- 📋 Transaction history page (currently a placeholder)
 - 📋 Advanced reporting and analytics
-- 📋 Inventory forecasting
 - 📋 Multi-location support
-- 📋 Third-party integrations (Metrc, Leafly, etc.)
+- 📋 Third-party integrations (Metrc, Leafly)
+- 📋 Auto-refresh/polling for live inventory view
+
+## 📜 License
+
+This project is licensed under the MIT License — see the LICENSE file for details.
+
+## 🤝 Contributing
+
+Contributions are welcome. Please feel free to submit a Pull Request.
