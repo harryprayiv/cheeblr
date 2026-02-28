@@ -6,11 +6,10 @@ import Data.Either (Either(..))
 import Effect.Aff (Aff, attempt, error, throwError)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Ref (Ref)
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import Config.Network (currentConfig)
-import Services.AuthService (AuthContext, getCurrentUserId)
+import Services.AuthService (UserId)
 import Yoga.JSON (class ReadForeign, class WriteForeign, writeJSON)
 import Foreign (Foreign)
 
@@ -40,12 +39,6 @@ type URL = String
 apiBaseUrl :: String
 apiBaseUrl = currentConfig.apiBaseUrl
 
--- | Get the current user's ID as a string for the X-User-Id header.
-getUserIdHeader :: Ref AuthContext -> Aff String
-getUserIdHeader authRef = liftEffect $ show <$> getCurrentUserId authRef
-
--- | Wraps an Aff action with error handling. All request helpers use this
--- | so error handling is consistent across the app.
 runRequest :: forall a. String -> Aff a -> Aff (Either String a)
 runRequest label action = do
   result <- attempt action
@@ -57,16 +50,13 @@ runRequest label action = do
     Right value ->
       pure $ Right value
 
--- | GET with parsed JSON response.
--- | Used by: readInventory, getRegister, getTransaction, fetchInventoryFromHttp
 authGet
   :: forall a
    . ReadForeign a
-  => Ref AuthContext
+  => UserId
   -> URL
   -> Aff (Either String a)
-authGet authRef url = do
-  userId <- getUserIdHeader authRef
+authGet userId url =
   runRequest ("GET " <> url) do
     response <- fetch (apiBaseUrl <> url)
       { method: GET
@@ -79,16 +69,13 @@ authGet authRef url = do
       }
     fromJSON response.json
 
--- | GET to a full URL (not prefixed with apiBaseUrl).
--- | Used by: fetchInventoryFromHttp when endpoint differs from apiBaseUrl.
 authGetFullUrl
   :: forall a
    . ReadForeign a
-  => Ref AuthContext
+  => UserId
   -> String
   -> Aff (Either String a)
-authGetFullUrl authRef fullUrl = do
-  userId <- getUserIdHeader authRef
+authGetFullUrl userId fullUrl =
   runRequest ("GET " <> fullUrl) do
     response <- fetch fullUrl
       { method: GET
@@ -101,19 +88,15 @@ authGetFullUrl authRef fullUrl = do
       }
     fromJSON response.json
 
--- | POST with JSON body and parsed JSON response.
--- | Used by: writeInventory, createRegister, openRegister, closeRegister,
--- |          addPaymentTransaction, voidTransaction
 authPost
   :: forall req res
    . WriteForeign req
   => ReadForeign res
-  => Ref AuthContext
+  => UserId
   -> URL
   -> req
   -> Aff (Either String res)
-authPost authRef url body = do
-  userId <- getUserIdHeader authRef
+authPost userId url body =
   runRequest ("POST " <> url) do
     response <- fetch (apiBaseUrl <> url)
       { method: POST
@@ -127,18 +110,15 @@ authPost authRef url body = do
       }
     fromJSON response.json
 
--- | PUT with JSON body and parsed JSON response.
--- | Used by: updateInventory
 authPut
   :: forall req res
    . WriteForeign req
   => ReadForeign res
-  => Ref AuthContext
+  => UserId
   -> URL
   -> req
   -> Aff (Either String res)
-authPut authRef url body = do
-  userId <- getUserIdHeader authRef
+authPut userId url body =
   runRequest ("PUT " <> url) do
     response <- fetch (apiBaseUrl <> url)
       { method: PUT
@@ -152,16 +132,13 @@ authPut authRef url body = do
       }
     fromJSON response.json
 
--- | DELETE with parsed JSON response.
--- | Used by: deleteInventory
 authDelete
   :: forall a
    . ReadForeign a
-  => Ref AuthContext
+  => UserId
   -> URL
   -> Aff (Either String a)
-authDelete authRef url = do
-  userId <- getUserIdHeader authRef
+authDelete userId url =
   runRequest ("DELETE " <> url) do
     response <- fetch (apiBaseUrl <> url)
       { method: DELETE
@@ -174,14 +151,11 @@ authDelete authRef url = do
       }
     fromJSON response.json
 
--- | DELETE that discards the response body.
--- | Used by: removeTransactionItem, removePaymentTransaction
 authDeleteUnit
-  :: Ref AuthContext
+  :: UserId
   -> URL
   -> Aff (Either String Unit)
-authDeleteUnit authRef url = do
-  userId <- getUserIdHeader authRef
+authDeleteUnit userId url =
   runRequest ("DELETE " <> url) do
     _ <- fetch (apiBaseUrl <> url)
       { method: DELETE
@@ -194,14 +168,11 @@ authDeleteUnit authRef url = do
       }
     pure unit
 
--- | POST with no body, discards response. 
--- | Used by: clearTransaction
 authPostUnit
-  :: Ref AuthContext
+  :: UserId
   -> URL
   -> Aff (Either String Unit)
-authPostUnit authRef url = do
-  userId <- getUserIdHeader authRef
+authPostUnit userId url =
   runRequest ("POST " <> url) do
     _ <- fetch (apiBaseUrl <> url)
       { method: POST
@@ -214,16 +185,13 @@ authPostUnit authRef url = do
       }
     pure unit
 
--- | POST with no body, parsed JSON response.
--- | Used by: finalizeTransaction
 authPostEmpty
   :: forall a
    . ReadForeign a
-  => Ref AuthContext
+  => UserId
   -> URL
   -> Aff (Either String a)
-authPostEmpty authRef url = do
-  userId <- getUserIdHeader authRef
+authPostEmpty userId url =
   runRequest ("POST " <> url) do
     response <- fetch (apiBaseUrl <> url)
       { method: POST
@@ -236,20 +204,15 @@ authPostEmpty authRef url = do
       }
     fromJSON response.json
 
--- | POST with JSON body that checks HTTP status before parsing.
--- | On non-2xx responses, reads the error body as text and returns it as
--- | a Left. This gives callers the raw server error message.
--- | Used by: createTransaction, addTransactionItem
 authPostChecked
   :: forall req res
    . WriteForeign req
   => ReadForeign res
-  => Ref AuthContext
+  => UserId
   -> URL
   -> req
   -> Aff (Either String res)
-authPostChecked authRef url body = do
-  userId <- getUserIdHeader authRef
+authPostChecked userId url body = do
   result <- attempt do
     response <- fetch (apiBaseUrl <> url)
       { method: POST

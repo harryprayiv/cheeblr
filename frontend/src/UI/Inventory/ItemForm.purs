@@ -22,9 +22,8 @@ import Deku.Hooks (useHot)
 import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
-import Effect.Ref (Ref)
 import FRP.Poll (Poll)
-import Services.AuthService (AuthContext)
+import Services.AuthService (UserId)
 import Types.Formatting (ValidationRule)
 import Types.Inventory (MenuItem(..), StrainLineage(..), InventoryResponse(..), validateMenuItem)
 import Utils.Formatting (formatCentsToDecimal)
@@ -55,7 +54,6 @@ renderError message =
             ]
         ]
     ]
-
 
 data FormMode = CreateMode String | EditMode MenuItem
 
@@ -307,8 +305,8 @@ speciesOptions =
 splitCommas :: String -> Array String
 splitCommas s = filter (_ /= "") $ map trim $ String.split (Pattern ",") s
 
-itemForm :: Ref AuthContext -> FormMode -> Nut
-itemForm authRef mode =
+itemForm :: UserId -> FormMode -> Nut
+itemForm userId mode =
   let
     init = initValues mode
     isEdit = case mode of
@@ -351,7 +349,6 @@ itemForm authRef mode =
       setTags /\ tagsV <- useHot init.tags
       setEffects /\ effectsV <- useHot init.effects
 
-
       setStrain /\ strainV <- useHot init.strain
       setValidStrain /\ validStrainV <- useHot v0
 
@@ -379,7 +376,6 @@ itemForm authRef mode =
 
       setImg /\ imgV <- useHot init.img
       setValidImg /\ validImgV <- useHot v0
-
 
       setStatusMessage /\ statusMessageV <- useHot ""
       setSubmitting /\ submittingV <- useHot false
@@ -455,10 +451,8 @@ itemForm authRef mode =
           setImg ""
           setValidImg (Just false)
 
-
       D.div [ DA.klass_ "space-y-4 max-w-2xl mx-auto p-6" ]
         [ D.h2 [ DA.klass_ "text-2xl font-bold mb-6" ] [ text_ formTitle ]
-
 
         , D.div [ DA.klass_ "mb-6" ]
             [ sectionHeading "Basic Info"
@@ -507,7 +501,6 @@ itemForm authRef mode =
                 setEffects effectsV
             ]
 
-
         , D.div [ DA.klass_ "mb-6" ]
             [ sectionHeading "Strain & Lineage"
             , vTextField "Strain" "Strain name"
@@ -525,7 +518,6 @@ itemForm authRef mode =
             , plainTextField "Lineage" "Parent strain 1, Parent strain 2"
                 setLineage lineageV
             ]
-
 
         , D.div [ DA.klass_ "mb-6" ]
             [ sectionHeading "Compliance"
@@ -545,7 +537,6 @@ itemForm authRef mode =
                 setTerpenes terpenesV
             ]
 
-
         , D.div [ DA.klass_ "mb-6" ]
             [ sectionHeading "Media & Links"
             , vTextField "Leafly URL" "https://leafly.com/..."
@@ -557,7 +548,6 @@ itemForm authRef mode =
                 validUrl "Valid URL required"
                 setValidImg validImgV
             ]
-
 
         , D.div [ DA.klass_ "mt-6 flex items-center gap-4" ]
             [ D.button
@@ -632,8 +622,8 @@ itemForm authRef mode =
                         Right menuItem ->
                           launchAff_ do
                             result <- case mode of
-                              CreateMode _ -> writeInventory authRef menuItem
-                              EditMode _   -> updateInventory authRef menuItem
+                              CreateMode _ -> writeInventory userId menuItem
+                              EditMode _   -> updateInventory userId menuItem
 
                             liftEffect $ case result of
                               Right (Message msg) -> do
@@ -660,7 +650,6 @@ itemForm authRef mode =
                       else submitLabel <> " (fix errors)"
                 ]
             ]
-
 
         , D.div [ DA.klass_ "mt-4 text-center" ] [ text statusMessageV ]
         ]

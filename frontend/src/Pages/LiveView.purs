@@ -11,14 +11,14 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Ref (Ref)
+import FRP.Poll (Poll)
 import FRP.Poll as Poll
-import Services.AuthService (AuthContext)
+import Services.AuthService (AuthState, UserId)
 import Types.Inventory (InventoryResponse(..))
 import UI.Inventory.MenuLiveView (createMenuLiveView)
 
-page :: Ref AuthContext -> Effect Nut
-page authRef = do
+page :: Poll AuthState -> UserId -> Effect Nut
+page _authPoll userId = do
   inventoryState <- liftST Poll.create
   loadingState <- liftST Poll.create
   errorState <- liftST Poll.create
@@ -28,7 +28,7 @@ page authRef = do
 
   launchAff_ do
     liftEffect $ Console.log "LiveView: Loading inventory..."
-    result <- fetchInventory authRef
+    result <- fetchInventory userId
       defaultViewConfig.fetchConfig
       defaultViewConfig.mode
 

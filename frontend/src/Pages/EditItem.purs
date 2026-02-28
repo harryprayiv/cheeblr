@@ -17,9 +17,9 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Ref (Ref)
+import FRP.Poll (Poll)
 import FRP.Poll as Poll
-import Services.AuthService (AuthContext)
+import Services.AuthService (AuthState, UserId)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
 import UI.Inventory.ItemForm (FormMode(..), itemForm)
 
@@ -28,22 +28,22 @@ testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
 
 data PageStatus = Loading | Ready Nut | Error String
 
-page :: Ref AuthContext -> String -> Effect Nut
-page authRef rawUuid = do
+page :: Poll AuthState -> UserId -> String -> Effect Nut
+page _authPoll userId rawUuid = do
   let uuid = if rawUuid == "test" then testItemUUID else rawUuid
   status <- liftST Poll.create
 
   Console.log $ "EditItem: Loading item " <> uuid
 
   launchAff_ do
-    result <- readInventory authRef
+    result <- readInventory userId
     liftEffect $ case result of
       Right (InventoryData (Inventory items)) -> do
         Console.log $ "Found " <> show (length items) <> " items"
         case find (\(MenuItem item) -> show item.sku == uuid) items of
           Just menuItem -> do
             Console.log $ "Found item: " <> uuid
-            status.push (Ready (itemForm authRef (EditMode menuItem)))
+            status.push (Ready (itemForm userId (EditMode menuItem)))
           Nothing -> do
             Console.error $ "Item not found: " <> uuid
             status.push (Error $ "Item with UUID " <> uuid <> " not found")

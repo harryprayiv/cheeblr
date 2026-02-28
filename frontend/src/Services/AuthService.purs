@@ -3,134 +3,120 @@ module Services.AuthService where
 import Prelude
 
 import Config.Auth (DevUser, allDevUsers, defaultDevUser, devUserCapabilities, toAuthenticatedUser, findDevUserById)
+import Data.Filterable (filterMap)
 import Data.Maybe (Maybe(..))
-import Effect (Effect)
-import Effect.Ref (Ref)
-import Effect.Ref as Ref
+import FRP.Poll (Poll)
 import Types.Auth (AuthenticatedUser, UserCapabilities, UserRole)
 import Types.UUID (UUID)
 
--- | Auth context containing current user state
-type AuthContext =
-  { currentUser :: DevUser
-  , capabilities :: UserCapabilities
-  }
+-- | Core auth state ADT — mirrors the realworld pattern.
+-- | Components receive `Poll AuthState` and react to changes.
+data AuthState = SignedIn DevUser | SignedOut
 
--- | Create initial auth context with default dev user
-mkInitialAuthContext :: AuthContext
-mkInitialAuthContext =
-  { currentUser: defaultDevUser
-  , capabilities: devUserCapabilities defaultDevUser
-  }
+derive instance eqAuthState :: Eq AuthState
 
--- | Create a new auth state ref
-newAuthRef :: Effect (Ref AuthContext)
-newAuthRef = Ref.new mkInitialAuthContext
+-- | UserId type alias for API layer
+type UserId = String
 
--- | Get current auth context
-getAuthContext :: Ref AuthContext -> Effect AuthContext
-getAuthContext = Ref.read
+-- | Extract the current user from a poll (drops SignedOut events)
+mostRecentUser :: Poll AuthState -> Poll DevUser
+mostRecentUser = filterMap case _ of
+  SignedIn user -> Just user
+  SignedOut -> Nothing
 
--- | Get current user
-getCurrentUser :: Ref AuthContext -> Effect DevUser
-getCurrentUser ref = do
-  ctx <- Ref.read ref
-  pure ctx.currentUser
+-- | Extract userId string from AuthState (for API calls)
+getUserId :: AuthState -> Maybe String
+getUserId (SignedIn user) = Just (show user.userId)
+getUserId SignedOut = Nothing
 
--- | Get current user ID (for X-User-Id header)
-getCurrentUserId :: Ref AuthContext -> Effect UUID
-getCurrentUserId ref = do
-  user <- getCurrentUser ref
-  pure user.userId
+-- | Extract userId string, with fallback — used in Main for initial loads
+userIdFromAuth :: AuthState -> String
+userIdFromAuth (SignedIn user) = show user.userId
+userIdFromAuth SignedOut = ""
 
--- | Get current capabilities
-getCurrentCapabilities :: Ref AuthContext -> Effect UserCapabilities
-getCurrentCapabilities ref = do
-  ctx <- Ref.read ref
-  pure ctx.capabilities
+-- | Get capabilities from auth state
+getCapabilities :: AuthState -> Maybe UserCapabilities
+getCapabilities (SignedIn user) = Just (devUserCapabilities user)
+getCapabilities SignedOut = Nothing
 
--- | Set current user by DevUser
-setCurrentUser :: Ref AuthContext -> DevUser -> Effect Unit
-setCurrentUser ref user = do
-  Ref.write
-    { currentUser: user
-    , capabilities: devUserCapabilities user
-    }
-    ref
+-- | Get role from auth state
+getRole :: AuthState -> Maybe UserRole
+getRole (SignedIn user) = Just user.role
+getRole SignedOut = Nothing
 
--- | Set current user by UUID (looks up from dev users)
-setCurrentUserById :: Ref AuthContext -> UUID -> Effect Boolean
-setCurrentUserById ref userId =
-  case findDevUserById userId of
-    Just user -> do
-      setCurrentUser ref user
-      pure true
-    Nothing -> pure false
+-- | Check a capability against auth state
+checkCapability :: (UserCapabilities -> Boolean) -> AuthState -> Boolean
+checkCapability capFn (SignedIn user) = capFn (devUserCapabilities user)
+checkCapability _ SignedOut = false
 
--- | Get authenticated user record (for display purposes)
-getAuthenticatedUser :: Ref AuthContext -> Effect AuthenticatedUser
-getAuthenticatedUser ref = do
-  user <- getCurrentUser ref
-  pure (toAuthenticatedUser user)
+-- | For use in components: run an action only when signed in
+whenSignedIn :: forall m. Applicative m => AuthState -> (DevUser -> m Unit) -> m Unit
+whenSignedIn (SignedIn user) f = f user
+whenSignedIn SignedOut _ = pure unit
 
--- | Get current user's role
-getCurrentRole :: Ref AuthContext -> Effect UserRole
-getCurrentRole ref = do
-  user <- getCurrentUser ref
-  pure user.role
+isSignedIn :: AuthState -> Boolean
+isSignedIn (SignedIn _) = true
+isSignedIn SignedOut = false
 
--- | Get all available dev users (for user selector UI)
+-- | Initial auth state for dev mode
+defaultAuthState :: AuthState
+defaultAuthState = SignedIn defaultDevUser
+
+-- | Set user by ID (for dev user selector)
+authStateForUserId :: UUID -> Maybe AuthState
+authStateForUserId userId = SignedIn <$> findDevUserById userId
+
+-- | All available dev users (for user selector UI)
 getAvailableUsers :: Array DevUser
 getAvailableUsers = allDevUsers
 
--- | Check if current user has a specific capability
-checkCapability :: Ref AuthContext -> (UserCapabilities -> Boolean) -> Effect Boolean
-checkCapability ref capFn = do
-  caps <- getCurrentCapabilities ref
-  pure (capFn caps)
+-- | Get AuthenticatedUser from state
+getAuthenticatedUser :: AuthState -> Maybe AuthenticatedUser
+getAuthenticatedUser (SignedIn user) = Just (toAuthenticatedUser user)
+getAuthenticatedUser SignedOut = Nothing
 
--- | Capability check helpers
-canViewInventory :: Ref AuthContext -> Effect Boolean
-canViewInventory ref = checkCapability ref _.capCanViewInventory
+-- Capability checks as predicates on AuthState
+canViewInventory :: AuthState -> Boolean
+canViewInventory = checkCapability _.capCanViewInventory
 
-canCreateItem :: Ref AuthContext -> Effect Boolean
-canCreateItem ref = checkCapability ref _.capCanCreateItem
+canCreateItem :: AuthState -> Boolean
+canCreateItem = checkCapability _.capCanCreateItem
 
-canEditItem :: Ref AuthContext -> Effect Boolean
-canEditItem ref = checkCapability ref _.capCanEditItem
+canEditItem :: AuthState -> Boolean
+canEditItem = checkCapability _.capCanEditItem
 
-canDeleteItem :: Ref AuthContext -> Effect Boolean
-canDeleteItem ref = checkCapability ref _.capCanDeleteItem
+canDeleteItem :: AuthState -> Boolean
+canDeleteItem = checkCapability _.capCanDeleteItem
 
-canProcessTransaction :: Ref AuthContext -> Effect Boolean
-canProcessTransaction ref = checkCapability ref _.capCanProcessTransaction
+canProcessTransaction :: AuthState -> Boolean
+canProcessTransaction = checkCapability _.capCanProcessTransaction
 
-canVoidTransaction :: Ref AuthContext -> Effect Boolean
-canVoidTransaction ref = checkCapability ref _.capCanVoidTransaction
+canVoidTransaction :: AuthState -> Boolean
+canVoidTransaction = checkCapability _.capCanVoidTransaction
 
-canRefundTransaction :: Ref AuthContext -> Effect Boolean
-canRefundTransaction ref = checkCapability ref _.capCanRefundTransaction
+canRefundTransaction :: AuthState -> Boolean
+canRefundTransaction = checkCapability _.capCanRefundTransaction
 
-canApplyDiscount :: Ref AuthContext -> Effect Boolean
-canApplyDiscount ref = checkCapability ref _.capCanApplyDiscount
+canApplyDiscount :: AuthState -> Boolean
+canApplyDiscount = checkCapability _.capCanApplyDiscount
 
-canManageRegisters :: Ref AuthContext -> Effect Boolean
-canManageRegisters ref = checkCapability ref _.capCanManageRegisters
+canManageRegisters :: AuthState -> Boolean
+canManageRegisters = checkCapability _.capCanManageRegisters
 
-canOpenRegister :: Ref AuthContext -> Effect Boolean
-canOpenRegister ref = checkCapability ref _.capCanOpenRegister
+canOpenRegister :: AuthState -> Boolean
+canOpenRegister = checkCapability _.capCanOpenRegister
 
-canCloseRegister :: Ref AuthContext -> Effect Boolean
-canCloseRegister ref = checkCapability ref _.capCanCloseRegister
+canCloseRegister :: AuthState -> Boolean
+canCloseRegister = checkCapability _.capCanCloseRegister
 
-canViewReports :: Ref AuthContext -> Effect Boolean
-canViewReports ref = checkCapability ref _.capCanViewReports
+canViewReports :: AuthState -> Boolean
+canViewReports = checkCapability _.capCanViewReports
 
-canViewAllLocations :: Ref AuthContext -> Effect Boolean
-canViewAllLocations ref = checkCapability ref _.capCanViewAllLocations
+canViewAllLocations :: AuthState -> Boolean
+canViewAllLocations = checkCapability _.capCanViewAllLocations
 
-canManageUsers :: Ref AuthContext -> Effect Boolean
-canManageUsers ref = checkCapability ref _.capCanManageUsers
+canManageUsers :: AuthState -> Boolean
+canManageUsers = checkCapability _.capCanManageUsers
 
-canViewCompliance :: Ref AuthContext -> Effect Boolean
-canViewCompliance ref = checkCapability ref _.capCanViewCompliance
+canViewCompliance :: AuthState -> Boolean
+canViewCompliance = checkCapability _.capCanViewCompliance

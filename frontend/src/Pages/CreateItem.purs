@@ -4,10 +4,9 @@ import Prelude
 
 import Deku.Core (Nut)
 import Effect (Effect)
-import Effect.Ref (Ref)
-import Services.AuthService (AuthContext)
+import FRP.Poll (Poll)
+import Services.AuthService (AuthState, UserId)
 import UI.Inventory.ItemForm (FormMode(..), itemForm)
 
--- | UUID is generated in Main's matcher, passed here.
-page :: Ref AuthContext -> String -> Effect Nut
-page authRef uuid = pure (itemForm authRef (CreateMode uuid))
+page :: Poll AuthState -> UserId -> String -> Effect Nut
+page _authPoll userId uuid = pure (itemForm userId (CreateMode uuid))

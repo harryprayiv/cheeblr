@@ -13,17 +13,15 @@ import Deku.DOM.Listeners as DL
 import Effect (Effect)
 import Effect.Ref (Ref)
 import FRP.Poll (Poll)
-import Services.AuthService (AuthContext)
+import Services.AuthService (AuthState)
 import Types.Auth (UserRole(..))
 
--- | User selector component props
 type UserSelectorProps =
-  { authRef :: Ref AuthContext
+  { authRef :: Ref AuthState
   , onUserChange :: DevUser -> Effect Unit
   , currentUser :: Poll DevUser
   }
 
--- | Color badge for each role
 roleBadgeColor :: UserRole -> String
 roleBadgeColor = case _ of
   Customer -> "bg-blue-100 text-blue-800"
@@ -31,7 +29,6 @@ roleBadgeColor = case _ of
   Manager -> "bg-yellow-100 text-yellow-800"
   Admin -> "bg-red-100 text-red-800"
 
--- | Human-readable role label
 roleLabel :: UserRole -> String
 roleLabel = case _ of
   Customer -> "Customer"
@@ -39,7 +36,6 @@ roleLabel = case _ of
   Manager -> "Manager"
   Admin -> "Admin"
 
--- | Role icon (emoji for simplicity)
 roleIcon :: UserRole -> String
 roleIcon = case _ of
   Customer -> "👤"
@@ -47,13 +43,12 @@ roleIcon = case _ of
   Manager -> "👔"
   Admin -> "🔑"
 
--- | Single user option button with reactive selection state
 userOptionReactive :: DevUser -> Poll Boolean -> (DevUser -> Effect Unit) -> Nut
 userOptionReactive user isSelectedPoll onClick =
   D.button
     [ DA.klass $ isSelectedPoll <#> \isSelected ->
         "flex items-center gap-2 px-3 py-2 rounded-lg border transition-all "
-          <> if isSelected 
+          <> if isSelected
              then "border-blue-500 bg-blue-50 shadow-md"
              else "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
     , DL.click_ \_ -> onClick user
@@ -61,15 +56,14 @@ userOptionReactive user isSelectedPoll onClick =
     [ D.span [ DA.klass_ "text-lg" ] [ text_ (roleIcon user.role) ]
     , D.div [ DA.klass_ "text-left" ]
         [ D.div [ DA.klass_ "font-medium text-sm" ] [ text_ user.userName ]
-        , D.span 
-            [ DA.klass_ $ "inline-block px-2 py-0.5 rounded text-xs font-medium " 
+        , D.span
+            [ DA.klass_ $ "inline-block px-2 py-0.5 rounded text-xs font-medium "
                 <> roleBadgeColor user.role
-            ] 
+            ]
             [ text_ (roleLabel user.role) ]
         ]
     ]
 
--- | Main user selector component
 userSelector :: UserSelectorProps -> Nut
 userSelector props =
   D.div [ DA.klass_ "bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4" ]
@@ -78,15 +72,15 @@ userSelector props =
         , D.span [ DA.klass_ "font-medium text-amber-800" ] [ text_ "Dev Mode: User Selector" ]
         ]
     , D.div [ DA.klass_ "flex flex-wrap gap-2" ] $
-        map (\user -> 
-          userOptionReactive 
-            user 
+        map (\user ->
+          userOptionReactive
+            user
             (props.currentUser <#> \cu -> cu.userId == user.userId)
             props.onUserChange
         ) allDevUsers
     , D.div [ DA.klass_ "mt-3 text-xs text-amber-700" ]
         [ text_ "Current user: "
-        , D.span [ DA.klass_ "font-mono" ] 
+        , D.span [ DA.klass_ "font-mono" ]
             [ text $ props.currentUser <#> _.userName ]
         , text_ " ("
         , text $ props.currentUser <#> (_.role >>> roleLabel)
@@ -94,7 +88,6 @@ userSelector props =
         ]
     ]
 
--- | Compact user selector for header/navbar
 compactUserSelector :: UserSelectorProps -> Nut
 compactUserSelector _props =
   D.div [ DA.klass_ "relative" ]
@@ -103,20 +96,18 @@ compactUserSelector _props =
         , D.select
             [ DA.klass_ "border border-gray-300 rounded px-2 py-1 text-sm bg-white"
             , DL.change_ \_ -> do
-                -- Get selected index and look up user
-                -- For simplicity, using role as value
-                pure unit -- TODO: implement select handler
+
+
+                pure unit
             ]
-            (mapWithIndex (\_ user -> 
-              D.option 
+            (mapWithIndex (\_ user ->
+              D.option
                 [ DA.value_ (show user.userId) ]
                 [ text_ $ user.userName <> " (" <> roleLabel user.role <> ")" ]
             ) allDevUsers)
         ]
     ]
 
--- | Capability indicator (shows current user's permissions)
--- Shows a comma-separated list of capabilities for current user
 capabilityIndicator :: UserSelectorProps -> Nut
 capabilityIndicator props =
   D.div [ DA.klass_ "bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs" ]
@@ -125,7 +116,6 @@ capabilityIndicator props =
         [ text $ props.currentUser <#> (_.role >>> capabilitiesForRoleUI >>> joinWith ", ") ]
     ]
 
--- | Get human-readable capability list for a role (for UI display)
 capabilitiesForRoleUI :: UserRole -> Array String
 capabilitiesForRoleUI = case _ of
   Customer -> ["View Inventory"]

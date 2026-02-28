@@ -26,9 +26,8 @@ import Deku.Hooks (useHot, useState, (<#~>))
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Ref (Ref)
 import FRP.Poll (Poll)
-import Services.AuthService (AuthContext)
+import Services.AuthService (UserId)
 import Services.Cart (addItemToCart, removeItemFromCart)
 import Services.TransactionService (emptyCartTotals, getRemainingBalance, paymentsCoversTotal)
 import Services.TransactionService as TransactionService
@@ -43,8 +42,8 @@ import Web.Event.Event as Event
 import Web.HTML.HTMLInputElement as Input
 import Web.PointerEvent.PointerEvent as PointerEvent
 
-createTransaction :: Ref AuthContext -> Poll Inventory -> Poll Transaction -> Register -> Nut
-createTransaction authRef inventoryPoll transactionPoll register = Deku.do
+createTransaction :: UserId -> Poll Inventory -> Poll Transaction -> Register -> Nut
+createTransaction userId inventoryPoll transactionPoll register = Deku.do
 
   setCartItems /\ cartItemsValue <- useHot []
   setCartTotals /\ cartTotalsValue <- useHot emptyCartTotals
@@ -62,7 +61,6 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
   setTransactionStatus /\ transactionStatusValue <- useState "CREATED"
   setInventoryErrors /\ inventoryErrorsValue <- useState []
   setCheckingInventory /\ checkingInventoryValue <- useState false
-
 
   let
     _ = transactionPoll <#> \(Transaction txData) -> do
@@ -194,9 +192,8 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
                               in
                                 D.div_
                                   [
-
                                     D.div
-                                      [ DA.style_ "background: var(--bg-medium); color: var(--fg-dark); padding: 5px; margin-bottom: 5px; border-radius: 5px;" ]
+                                      [ DA.style_ "background: #eee; padding: 5px; font-size: 12px;" ]
                                       [ text_ $ "Category filter: " <> show (Array.length categoryFiltered) <>
                                                 " items | Final filtered: " <> show (Array.length filteredItems) <> " items" ]
 
@@ -357,7 +354,7 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
                                                                                       transaction
                                                                                   ).transactionId
                                                                               addItemToCart
-                                                                                authRef
+                                                                                userId
                                                                                 menuItem
                                                                                 qtyVal
                                                                                 cartItems
@@ -440,7 +437,7 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
                                                 [ DA.klass_ "remove-btn"
                                                 , DL.click_ \_ -> do
                                                     removeItemFromCart
-                                                      authRef
+                                                      userId
                                                       itemData.transactionItemId
                                                       cartItems
                                                       setCartItems
@@ -639,7 +636,7 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
 
                                   void $ launchAff_ do
                                     result <- TransactionService.addPayment
-                                      authRef
+                                      userId
                                       (unwrap txn).transactionId
                                       method
                                       amountInCents
@@ -705,7 +702,7 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
                                                     void $ launchAff_ do
                                                       result <-
                                                         TransactionService.removePaymentTransaction
-                                                          authRef
+                                                          userId
                                                           p.paymentId
                                                       liftEffect $ case result of
                                                         Right _ -> do
@@ -751,7 +748,7 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
 
                         void $ launchAff_ do
                           result <- TransactionService.clearTransaction
-                            authRef
+                            userId
                             (unwrap transaction).transactionId
 
                           liftEffect $ case result of
@@ -860,7 +857,7 @@ createTransaction authRef inventoryPoll transactionPoll register = Deku.do
 
                           void $ launchAff_ do
                             result <- TransactionService.finalizeTransaction
-                              authRef
+                              userId
                               (unwrap transaction).transactionId
                             liftEffect $ case result of
                               Right _ -> do

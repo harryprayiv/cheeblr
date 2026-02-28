@@ -6,79 +6,70 @@ import API.Request as Request
 import Data.Either (Either(..))
 import Data.Maybe (Maybe, maybe)
 import Effect.Aff (Aff)
-import Effect.Ref (Ref)
-import Services.AuthService (AuthContext)
+import Services.AuthService (UserId)
 import Types.Register (CloseRegisterRequest, CloseRegisterResult, OpenRegisterRequest, Register)
 import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
 import Types.UUID (UUID)
 import Yoga.JSON (readJSON_)
 
--- Register operations
-getRegister :: Ref AuthContext -> UUID -> Aff (Either String Register)
-getRegister authRef registerId =
-  Request.authGet authRef ("/register/" <> show registerId)
+getRegister :: UserId -> UUID -> Aff (Either String Register)
+getRegister userId registerId =
+  Request.authGet userId ("/register/" <> show registerId)
 
-createRegister :: Ref AuthContext -> Register -> Aff (Either String Register)
-createRegister authRef register =
-  Request.authPost authRef "/register" register
+createRegister :: UserId -> Register -> Aff (Either String Register)
+createRegister userId register =
+  Request.authPost userId "/register" register
 
-openRegister :: Ref AuthContext -> OpenRegisterRequest -> UUID -> Aff (Either String Register)
-openRegister authRef request registerId =
-  Request.authPost authRef ("/register/open/" <> show registerId) request
+openRegister :: UserId -> OpenRegisterRequest -> UUID -> Aff (Either String Register)
+openRegister userId request registerId =
+  Request.authPost userId ("/register/open/" <> show registerId) request
 
-closeRegister :: Ref AuthContext -> CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
-closeRegister authRef request registerId =
-  Request.authPost authRef ("/register/close/" <> show registerId) request
+closeRegister :: UserId -> CloseRegisterRequest -> UUID -> Aff (Either String CloseRegisterResult)
+closeRegister userId request registerId =
+  Request.authPost userId ("/register/close/" <> show registerId) request
 
--- Transaction lifecycle
-createTransaction :: Ref AuthContext -> Transaction -> Aff (Either String Transaction)
-createTransaction authRef transaction =
-  Request.authPostChecked authRef "/transaction" transaction
+createTransaction :: UserId -> Transaction -> Aff (Either String Transaction)
+createTransaction userId transaction =
+  Request.authPostChecked userId "/transaction" transaction
 
-getTransaction :: Ref AuthContext -> UUID -> Aff (Either String Transaction)
-getTransaction authRef transactionId =
-  Request.authGet authRef ("/transaction/" <> show transactionId)
+getTransaction :: UserId -> UUID -> Aff (Either String Transaction)
+getTransaction userId transactionId =
+  Request.authGet userId ("/transaction/" <> show transactionId)
 
-finalizeTransaction :: Ref AuthContext -> UUID -> Aff (Either String Transaction)
-finalizeTransaction authRef transactionId =
-  Request.authPostEmpty authRef ("/transaction/finalize/" <> show transactionId)
+finalizeTransaction :: UserId -> UUID -> Aff (Either String Transaction)
+finalizeTransaction userId transactionId =
+  Request.authPostEmpty userId ("/transaction/finalize/" <> show transactionId)
 
-voidTransaction :: Ref AuthContext -> UUID -> String -> Aff (Either String Transaction)
-voidTransaction authRef transactionId reason =
-  Request.authPost authRef ("/transaction/void/" <> show transactionId) reason
+voidTransaction :: UserId -> UUID -> String -> Aff (Either String Transaction)
+voidTransaction userId transactionId reason =
+  Request.authPost userId ("/transaction/void/" <> show transactionId) reason
 
--- Transaction items
-addTransactionItem :: Ref AuthContext -> TransactionItem -> Aff (Either String TransactionItem)
-addTransactionItem authRef item = do
-  result <- Request.authPostChecked authRef "/transaction/item" item
-  -- Parse server error JSON if available for cleaner error messages
+addTransactionItem :: UserId -> TransactionItem -> Aff (Either String TransactionItem)
+addTransactionItem userId item = do
+  result <- Request.authPostChecked userId "/transaction/item" item
+
   pure $ case result of
     Left err -> Left (parseErrorResponse err)
     Right parsed -> Right parsed
 
-removeTransactionItem :: Ref AuthContext -> UUID -> Aff (Either String Unit)
-removeTransactionItem authRef itemId =
-  Request.authDeleteUnit authRef ("/transaction/item/" <> show itemId)
+removeTransactionItem :: UserId -> UUID -> Aff (Either String Unit)
+removeTransactionItem userId itemId =
+  Request.authDeleteUnit userId ("/transaction/item/" <> show itemId)
 
-clearTransaction :: Ref AuthContext -> UUID -> Aff (Either String Unit)
-clearTransaction authRef transactionId =
-  Request.authPostUnit authRef ("/transaction/clear/" <> show transactionId)
+clearTransaction :: UserId -> UUID -> Aff (Either String Unit)
+clearTransaction userId transactionId =
+  Request.authPostUnit userId ("/transaction/clear/" <> show transactionId)
 
--- Payments
-addPaymentTransaction :: Ref AuthContext -> PaymentTransaction -> Aff (Either String PaymentTransaction)
-addPaymentTransaction authRef payment =
-  Request.authPost authRef "/transaction/payment" payment
+addPaymentTransaction :: UserId -> PaymentTransaction -> Aff (Either String PaymentTransaction)
+addPaymentTransaction userId payment =
+  Request.authPost userId "/transaction/payment" payment
 
-removePaymentTransaction :: Ref AuthContext -> UUID -> Aff (Either String Unit)
-removePaymentTransaction authRef paymentId =
-  Request.authDeleteUnit authRef ("/transaction/payment/" <> show paymentId)
+removePaymentTransaction :: UserId -> UUID -> Aff (Either String Unit)
+removePaymentTransaction userId paymentId =
+  Request.authDeleteUnit userId ("/transaction/payment/" <> show paymentId)
 
--- Error parsing helper
 type ErrorResponse = { error :: String }
 
--- | Attempts to extract the "error" field from a JSON error response string.
--- | If the string contains JSON like {"error": "some message"}, returns "some message".
--- | Otherwise returns the original string unchanged.
 parseErrorResponse :: String -> String
 parseErrorResponse str =
   maybe str _.error (readJSON_ str :: Maybe ErrorResponse)

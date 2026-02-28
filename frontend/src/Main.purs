@@ -3,6 +3,7 @@ module Main where
 import Prelude
 
 import Config.Entity (dummyEmployeeId, dummyLocationId)
+import Control.Alt ((<|>))
 import Control.Monad.ST.Class (liftST)
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..), fst, snd)
@@ -22,17 +23,24 @@ import Pages.TransactionHistory as Pages.TransactionHistory
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
-import Services.AuthService (newAuthRef)
+import Services.AuthService (AuthState, defaultAuthState, userIdFromAuth)
 import Services.RegisterService as RegisterService
 import Types.UUID (genUUID)
 
 main :: Effect Unit
 main = do
-  authRef <- newAuthRef
+  -- Create top-level Poll AuthState (replaces Ref AuthContext)
+  authState <- liftST Poll.create
+  authState.push defaultAuthState
+  let authPoll = pure defaultAuthState <|> authState.poll
+
   currentRoute <- liftST Poll.create
 
+  -- Extract userId for initial loads (synchronous, like realworld's localStorage read)
+  let userId = userIdFromAuth defaultAuthState
+
   RegisterService.initLocalRegister
-    authRef
+    userId
     dummyLocationId
     dummyEmployeeId
     (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
@@ -44,21 +52,21 @@ main = do
 
       nut <- case r of
         LiveView ->
-          Pages.LiveView.page authRef
+          Pages.LiveView.page authPoll userId
 
         Create -> do
           uuid <- genUUID
           Console.log $ "Generated UUID for new item: " <> show uuid
-          Pages.CreateItem.page authRef (show uuid)
+          Pages.CreateItem.page authPoll userId (show uuid)
 
         Edit uuid ->
-          Pages.EditItem.page authRef uuid
+          Pages.EditItem.page authPoll userId uuid
 
         Delete uuid ->
-          Pages.DeleteItem.page authRef uuid
+          Pages.DeleteItem.page authPoll userId uuid
 
         CreateTransaction ->
-          Pages.CreateTransaction.page authRef
+          Pages.CreateTransaction.page authPoll userId
 
         TransactionHistory ->
           Pages.TransactionHistory.page

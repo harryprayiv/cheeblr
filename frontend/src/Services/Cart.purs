@@ -13,8 +13,7 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Ref (Ref)
-import Services.AuthService (AuthContext)
+import Services.AuthService (UserId)
 import Services.TransactionService (calculateCartTotals)
 import Services.TransactionService as TransactionService
 import Types.Inventory (MenuItem(..), Inventory(..))
@@ -45,16 +44,16 @@ getAvailableQuantity (MenuItem item) cartItems =
 
 findUnavailableItems :: Array TransactionItem -> Inventory -> Array { id :: UUID, name :: String }
 findUnavailableItems cartItems (Inventory inventory) =
-  cartItems 
-    # filter (\(TransactionItem item) -> 
+  cartItems
+    # filter (\(TransactionItem item) ->
         case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
-          Just (MenuItem menuItem) -> 
+          Just (MenuItem menuItem) ->
             menuItem.quantity < item.transactionItemQuantity
-          Nothing -> 
+          Nothing ->
             true
       )
-    # map (\(TransactionItem item) -> 
-        let 
+    # map (\(TransactionItem item) ->
+        let
           name = case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
             Just (MenuItem menuItem) -> menuItem.name
             Nothing -> "Unknown Item"
@@ -175,7 +174,7 @@ addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
           updateItems (newItem : currentItems)
 
 addItemToCart
-  :: Ref AuthContext
+  :: UserId
   -> MenuItem
   -> Int
   -> Array TransactionItem
@@ -186,7 +185,7 @@ addItemToCart
   -> (Boolean -> Effect Unit)
   -> Effect Unit
 addItemToCart
-  authRef
+  userId
   menuItem@(MenuItem record)
   qty
   currentItems
@@ -195,77 +194,76 @@ addItemToCart
   setTotals
   setStatusMessage
   setCheckingInventory = do
-  
-  if qty <= 0 then  
+
+  if qty <= 0 then
     setStatusMessage "Quantity must be greater than 0"
   else do
     setCheckingInventory true
     setStatusMessage "Checking inventory..."
-    
-    -- Check for existing item in cart
-    let existingItem = find 
-          (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku) 
+
+
+    let existingItem = find
+          (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
           currentItems
-    
+
     let currentQtyInCart = case existingItem of
           Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0 
-    
+          Nothing -> 0
+
     let totalRequestedQty = currentQtyInCart + qty
-    
-    -- Create the transaction item through the API
+
+
     void $ launchAff_ do
       result <- TransactionService.createTransactionItem
-        authRef
+        userId
         transactionId
         record.sku
         qty
         (unwrap record.price)
-      
+
       liftEffect $ case result of
         Right newItem -> do
-          -- Update local state with the new item
+
           let updatedItems = case existingItem of
                 Just (TransactionItem existing) ->
-                  -- Update existing item quantity
-                  map (\(TransactionItem i) -> 
-                    if i.transactionItemId == existing.transactionItemId 
+
+                  map (\(TransactionItem i) ->
+                    if i.transactionItemId == existing.transactionItemId
                     then TransactionItem (i { transactionItemQuantity = totalRequestedQty })
                     else TransactionItem i
                   ) currentItems
                 Nothing ->
                   newItem : currentItems
-          
+
           let newTotals = TransactionService.calculateCartTotals updatedItems
           setItems updatedItems
           setTotals newTotals
           setCheckingInventory false
           setStatusMessage $ "Added " <> record.name <> " to cart"
-          
+
         Left err -> do
           setCheckingInventory false
           setStatusMessage $ "Failed to add item: " <> err
 
-
 removeItemFromCart
-  :: Ref AuthContext
+  :: UserId
   -> UUID
   -> Array TransactionItem
   -> (Array TransactionItem -> Effect Unit)
   -> (CartTotals -> Effect Unit)
   -> (Boolean -> Effect Unit)
   -> Effect Unit
-removeItemFromCart authRef itemId currentItems setItems setTotals setIsProcessing = do
+removeItemFromCart userId itemId currentItems setItems setTotals setIsProcessing = do
   setIsProcessing true
-  
+
   let itemInfo = case find (\(TransactionItem item) -> item.transactionItemId == itemId) currentItems of
                    Just (TransactionItem item) -> ", SKU: " <> show item.transactionItemMenuItemSku
                    Nothing -> ""
-                   
+
   Console.log $ "Removing item ID: " <> show itemId <> itemInfo
 
   void $ launchAff_ do
-    result <- TransactionService.removeTransactionItem authRef itemId
+    result <- TransactionService.removeTransactionItem userId itemId
 
     liftEffect $ case result of
       Right _ -> do

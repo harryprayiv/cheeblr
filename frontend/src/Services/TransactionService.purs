@@ -15,8 +15,7 @@ import Effect.Aff (Aff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Now (nowDateTime)
-import Effect.Ref (Ref)
-import Services.AuthService (AuthContext)
+import Services.AuthService (UserId)
 import Types.Register (CartTotals)
 import Types.Transaction (PaymentMethod, PaymentTransaction(..), TaxCategory(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
 import Types.UUID (UUID, genUUID)
@@ -30,13 +29,13 @@ emptyCartTotals =
   }
 
 startTransaction
-  :: Ref AuthContext
+  :: UserId
   -> { employeeId :: UUID
      , registerId :: UUID
      , locationId :: UUID
      }
   -> Aff (Either String Transaction)
-startTransaction authRef params = do
+startTransaction userId params = do
   transactionId <- liftEffect genUUID
   timestamp <- liftEffect nowDateTime
 
@@ -76,7 +75,7 @@ startTransaction authRef params = do
       }
 
   liftEffect $ Console.log "About to call API.createTransaction"
-  result <- API.createTransaction authRef transaction
+  result <- API.createTransaction userId transaction
 
   liftEffect $ case result of
     Right tx -> Console.log $ "Transaction created successfully with ID: " <>
@@ -85,19 +84,19 @@ startTransaction authRef params = do
 
   pure result
 
-getTransaction :: Ref AuthContext -> UUID -> Aff (Either String Transaction)
-getTransaction authRef transactionId = do
+getTransaction :: UserId -> UUID -> Aff (Either String Transaction)
+getTransaction userId transactionId = do
   liftEffect $ Console.log $ "Getting transaction: " <> show transactionId
-  API.getTransaction authRef transactionId
+  API.getTransaction userId transactionId
 
 createTransactionItem
-  :: Ref AuthContext
+  :: UserId
   -> UUID
   -> UUID
   -> Int
   -> Int
   -> Aff (Either String TransactionItem)
-createTransactionItem authRef transactionId menuItemSku quantity pricePerUnit = do
+createTransactionItem userId transactionId menuItemSku quantity pricePerUnit = do
   itemId <- liftEffect genUUID
 
   let salesTaxRate = 0.08
@@ -124,36 +123,36 @@ createTransactionItem authRef transactionId menuItemSku quantity pricePerUnit = 
         , transactionItemTotal: fromDiscrete' (Discrete totalCents)
         }
 
-  API.addTransactionItem authRef transactionItem
+  API.addTransactionItem userId transactionItem
 
-addTransactionItem :: Ref AuthContext -> TransactionItem -> Aff (Either String TransactionItem)
-addTransactionItem authRef item = do
+addTransactionItem :: UserId -> TransactionItem -> Aff (Either String TransactionItem)
+addTransactionItem userId item = do
   liftEffect $ Console.log $ "Adding transaction item: " <> show
     (unwrap item).transactionItemId
-  API.addTransactionItem authRef item
+  API.addTransactionItem userId item
 
-removeTransactionItem :: Ref AuthContext -> UUID -> Aff (Either String Unit)
-removeTransactionItem authRef itemId = do
+removeTransactionItem :: UserId -> UUID -> Aff (Either String Unit)
+removeTransactionItem userId itemId = do
   liftEffect $ Console.log $ "Removing transaction item: " <> show itemId
-  API.removeTransactionItem authRef itemId
+  API.removeTransactionItem userId itemId
 
-clearTransaction :: Ref AuthContext -> UUID -> Aff (Either String Unit)
-clearTransaction authRef = API.clearTransaction authRef
+clearTransaction :: UserId -> UUID -> Aff (Either String Unit)
+clearTransaction userId = API.clearTransaction userId
 
-voidTransaction :: Ref AuthContext -> UUID -> String -> Aff (Either String Transaction)
-voidTransaction authRef transactionId reason = do
+voidTransaction :: UserId -> UUID -> String -> Aff (Either String Transaction)
+voidTransaction userId transactionId reason = do
   liftEffect $ Console.log $ "Voiding transaction: " <> show transactionId
-  API.voidTransaction authRef transactionId reason
+  API.voidTransaction userId transactionId reason
 
 addPayment
-  :: Ref AuthContext
+  :: UserId
   -> UUID
   -> PaymentMethod
   -> Int
   -> Int
   -> Maybe String
   -> Aff (Either String PaymentTransaction)
-addPayment authRef transactionId method amount tendered reference = do
+addPayment userId transactionId method amount tendered reference = do
   paymentId <- liftEffect genUUID
 
   liftEffect $ Console.log $ "Adding payment: "
@@ -181,17 +180,17 @@ addPayment authRef transactionId method amount tendered reference = do
       , paymentAuthorizationCode: Nothing
       }
 
-  API.addPaymentTransaction authRef payment
+  API.addPaymentTransaction userId payment
 
-removePaymentTransaction :: Ref AuthContext -> UUID -> Aff (Either String Unit)
-removePaymentTransaction authRef paymentId = do
+removePaymentTransaction :: UserId -> UUID -> Aff (Either String Unit)
+removePaymentTransaction userId paymentId = do
   liftEffect $ Console.log $ "Removing payment transaction: " <> show paymentId
-  API.removePaymentTransaction authRef paymentId
+  API.removePaymentTransaction userId paymentId
 
-finalizeTransaction :: Ref AuthContext -> UUID -> Aff (Either String Transaction)
-finalizeTransaction authRef transactionId = do
+finalizeTransaction :: UserId -> UUID -> Aff (Either String Transaction)
+finalizeTransaction userId transactionId = do
   liftEffect $ Console.log $ "Finalizing transaction: " <> show transactionId
-  API.finalizeTransaction authRef transactionId
+  API.finalizeTransaction userId transactionId
 
 calculateCartTotals :: Array TransactionItem -> CartTotals
 calculateCartTotals items =

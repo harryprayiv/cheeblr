@@ -18,9 +18,9 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Effect.Ref (Ref)
+import FRP.Poll (Poll)
 import FRP.Poll as Poll
-import Services.AuthService (AuthContext)
+import Services.AuthService (AuthState, UserId)
 import Services.RegisterService as RegisterService
 import Services.TransactionService (startTransaction)
 import Types.Inventory (InventoryResponse(..))
@@ -29,32 +29,32 @@ import UI.Transaction.CreateTransaction as TransactionUI
 
 data PageStatus = Loading | Ready Nut | Error String
 
-page :: Ref AuthContext -> Effect Nut
-page authRef = do
+page :: Poll AuthState -> UserId -> Effect Nut
+page authPoll userId = do
   Console.log "CreateTransaction: Initializing..."
 
   pageStatus <- liftST Poll.create
   inventoryState <- liftST Poll.create
   transactionState <- liftST Poll.create
 
-  -- Initialize register, then wire up transaction UI
+
   RegisterService.getOrInitLocalRegister
-    authRef
+    userId
     dummyLocationId
     dummyEmployeeId
     ( \register -> do
         Console.log $ "Register ready: " <> register.registerName
 
-        -- Push the fully-wired transaction UI
+
         pageStatus.push $ Ready $ TransactionUI.createTransaction
-          authRef
+          userId
           inventoryState.poll
           transactionState.poll
           register
 
-        -- Start a new transaction
+
         launchAff_ do
-          txResult <- startTransaction authRef
+          txResult <- startTransaction userId
             { employeeId: fromMaybe register.registerId
                 register.registerOpenedBy
             , registerId: register.registerId
@@ -74,9 +74,9 @@ page authRef = do
           "Failed to initialize register: " <> err
     )
 
-  -- Fetch inventory in parallel
+
   launchAff_ do
-    result <- fetchInventory authRef
+    result <- fetchInventory userId
       defaultViewConfig.fetchConfig
       defaultViewConfig.mode
 
