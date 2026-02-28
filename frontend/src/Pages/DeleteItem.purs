@@ -2,61 +2,30 @@ module Pages.DeleteItem where
 
 import Prelude
 
-import API.Inventory (readInventory)
-import Control.Alt ((<|>))
-import Control.Monad.ST.Class (liftST)
-import Data.Array (find, length)
-import Data.Either (Either(..))
-import Data.Maybe (Maybe(..))
 import Deku.Control (text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
 import Deku.Hooks ((<#~>))
-import Effect (Effect)
-import Effect.Aff (launchAff_)
-import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
 import FRP.Poll (Poll)
-import FRP.Poll as Poll
 import Services.AuthService (AuthState, UserId)
-import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
 import UI.Inventory.DeleteItem (renderDeleteConfirmation)
 import UI.Inventory.ItemForm (renderError)
 
-testItemUUID :: String
-testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
+data DeleteItemStatus
+  = DeleteLoading
+  | DeleteReady String String  -- itemId, itemName
+  | DeleteNotFound String
+  | DeleteError String
 
-data PageStatus = Loading | Loaded String String | Error String
-
-page :: Poll AuthState -> UserId -> String -> Effect Nut
-page _authPoll userId rawUuid = do
-  let uuid = if rawUuid == "test" then testItemUUID else rawUuid
-  status <- liftST Poll.create
-
-  Console.log $ "DeleteItem: Loading item " <> uuid
-
-  launchAff_ do
-    result <- readInventory userId
-    liftEffect $ case result of
-      Right (InventoryData (Inventory items)) -> do
-        Console.log $ "Found " <> show (length items) <> " items"
-        case find (\(MenuItem item) -> show item.sku == uuid) items of
-          Just (MenuItem item) -> do
-            Console.log $ "Found item for deletion: " <> uuid
-            status.push (Loaded uuid item.name)
-          Nothing -> do
-            Console.error $ "Item not found: " <> uuid
-            status.push (Error $ "Item with UUID " <> uuid <> " not found")
-      Right (Message msg) ->
-        status.push (Error $ "API error: " <> msg)
-      Left err ->
-        status.push (Error $ "Failed to fetch inventory: " <> err)
-
-  pure $ (pure Loading <|> status.poll) <#~> case _ of
-    Loading ->
+page :: Poll AuthState -> UserId -> Poll DeleteItemStatus -> Nut
+page _authPoll userId deleteStatus =
+  deleteStatus <#~> case _ of
+    DeleteLoading ->
       D.div [ DA.klass_ "loading-indicator" ] [ text_ "Loading item..." ]
-    Loaded itemId itemName ->
+    DeleteReady itemId itemName ->
       renderDeleteConfirmation userId itemId itemName
-    Error msg ->
+    DeleteNotFound uuid ->
+      renderError $ "Item with UUID " <> uuid <> " not found"
+    DeleteError msg ->
       renderError msg
