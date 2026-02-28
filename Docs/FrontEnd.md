@@ -4,218 +4,280 @@
 - [Overview](#overview)
 - [Technologies](#technologies)
 - [Architecture](#architecture)
-- [Components](#components)
+- [Module Map](#module-map)
 - [Routing](#routing)
 - [State Management](#state-management)
-- [API Integration](#api-integration)
-- [Data Models](#data-models)
-- [Form Handling](#form-handling)
-- [Validation](#validation)
-- [Transaction Processing](#transaction-processing)
+- [Authentication & Authorization](#authentication--authorization)
+- [API Layer](#api-layer)
+- [Domain Types](#domain-types)
+- [Pages](#pages)
+- [UI Components](#ui-components)
 - [Services](#services)
+- [Configuration](#configuration)
+- [Validation](#validation)
 - [Utilities](#utilities)
-- [Development Guidelines](#development-guidelines)
+- [Development Notes](#development-notes)
+
+---
 
 ## Overview
 
-Cheeblr is a comprehensive dispensary management system built with PureScript. The frontend provides a user-friendly interface for inventory management, point-of-sale operations, transaction processing, and compliance tracking. The application connects to a backend API to perform CRUD operations and business logic processing.
+Cheeblr is a cannabis dispensary point-of-sale system. The frontend is a PureScript single-page application that provides inventory management (CRUD), a live menu view, and a full transaction/checkout workflow backed by a Haskell REST API. All monetary values are represented as `Discrete USD` (integer cents) to avoid floating-point rounding issues.
+
+---
 
 ## Technologies
 
-The frontend utilizes modern PureScript libraries and technologies:
+| Concern | Library / Approach |
+|---|---|
+| UI rendering | **Deku** — declarative, hooks-based UI with `Nut` as the renderable type |
+| Reactivity / state | **FRP.Poll** — `Poll a` streams plus `create`/`push` for mutable cells |
+| Routing | **Routing.Duplex** + **Routing.Hash** — hash-based (`/#/…`) client-side routing |
+| HTTP | **Fetch** (purescript-fetch) with **Yoga.JSON** for (de)serialization |
+| Money | **Data.Finance.Money** — `Discrete USD` (cents), `Dense USD`, formatting via `Data.Finance.Money.Format` |
+| Validation | Custom `ValidationRule` newtype + **Data.Validation.Semigroup** for accumulating errors |
+| Async effects | **Effect.Aff** for all API calls; `launchAff_` to fire-and-forget from `Effect` |
+| Storage | **Web.Storage.Storage** (localStorage) for persisting the register ID across sessions |
 
-- **Deku**: A declarative UI library for PureScript with hooks-like functionality for component development
-- **FRP**: Functional Reactive Programming principles for state management through the Poll mechanism
-- **Routing**: Client-side routing using hash-based navigation with Routing.Duplex and Routing.Hash
-- **Fetch**: HTTP client for making requests to the backend API
-- **Yoga.JSON**: Data serialization and deserialization for API communication
-- **Data.Validation.Semigroup**: Form validation with semigroup-based validation
-- **Data.Finance.Money**: Precise handling of monetary values with Discrete USD types for financial calculations
-- **Effect.Aff**: Asynchronous effect handling for API calls and side effects
+---
 
 ## Architecture
 
-The application follows a component-based architecture pattern with clear separation of concerns:
-
-1. **Main Module**: Entry point that sets up routing, initializes global state, and renders the application
-2. **Components**: Reusable UI components for different views and functionality
-3. **API Modules**: Separate modules for Inventory and Transaction API communication
-4. **Types**: Shared domain models and type definitions with proper newtypes and type classes
-5. **Services**: Business logic services for Cash Register, Ledger, Compliance, and Inventory management
-6. **Validation**: Form validation logic with composable validation rules
-7. **Utilities**: Helper functions for formatting, UUID generation, money handling, and validation
-
-## Components
-
-### Inventory Management
-
-#### MenuLiveView
-Displays inventory items in a grid layout with:
-- Real-time updates and refresh capabilities
-- Status indicators for loading and errors
-- Customizable appearance based on product categories and species
-- Links to edit and delete items
-
-```purescript
-createMenuLiveView :: Poll Inventory -> Poll Boolean -> Poll String -> Nut
-createMenuLiveView inventoryPoll loadingPoll errorPoll = ...
+```
+Main.purs                        -- entry point, routing, global state
+│
+├── Pages/                       -- one module per route, wires services → UI
+│   ├── LiveView                 -- inventory grid (read-only)
+│   ├── CreateItem               -- new MenuItem form
+│   ├── EditItem                 -- edit existing MenuItem
+│   ├── DeleteItem               -- delete confirmation
+│   ├── CreateTransaction        -- POS checkout page
+│   └── TransactionHistory       -- placeholder
+│
+├── UI/                          -- presentational components
+│   ├── Components/
+│   │   ├── Form                 -- reusable form field builders
+│   │   ├── AuthGuard            -- capability-gated rendering
+│   │   └── UserSelector         -- dev-mode user switcher
+│   ├── Inventory/
+│   │   ├── MenuLiveView         -- inventory grid renderer
+│   │   ├── ItemForm             -- shared create/edit form
+│   │   └── DeleteItem           -- delete confirmation UI
+│   └── Transaction/
+│       └── CreateTransaction    -- full POS interface
+│
+├── Services/                    -- business logic (effectful)
+│   ├── AuthService              -- dev auth state, role checks
+│   ├── RegisterService          -- register lifecycle (create/open/close)
+│   ├── TransactionService       -- transaction CRUD, totals, payments
+│   └── Cart                     -- cart add/remove with inventory checks
+│
+├── API/                         -- HTTP request layer
+│   ├── Request                  -- generic auth'd request helpers
+│   ├── Inventory                -- inventory endpoints
+│   └── Transaction              -- transaction/register/payment endpoints
+│
+├── Types/                       -- domain models + serialization instances
+│   ├── Auth                     -- UserRole, UserCapabilities, AuthenticatedUser
+│   ├── Inventory                -- MenuItem, Inventory, StrainLineage, Species, ItemCategory
+│   ├── Transaction              -- Transaction, TransactionItem, PaymentTransaction, enums
+│   ├── Register                 -- Register, CartTotals, open/close request types
+│   ├── Formatting               -- FieldConfig, ValidationRule, FormValue class
+│   └── UUID                     -- UUID newtype, generation, parsing
+│
+├── Config/                      -- compile-time constants
+│   ├── Network                  -- API base URL, app origin
+│   ├── LiveView                 -- sort config, query mode, refresh rate
+│   ├── Auth                     -- dev user fixtures
+│   ├── Entity                   -- dummy entity UUIDs for dev
+│   └── InventoryFields          -- per-field FieldConfig/DropdownConfig builders
+│
+└── Utils/                       -- pure helpers
+    ├── Formatting               -- cents→dollars, comma lists, enum values
+    ├── Validation               -- ValidationRule combinators
+    ├── Money                    -- formatPrice, fromDollars, toDollars, parseMoneyString
+    └── Storage                  -- localStorage wrappers
 ```
 
-#### CreateItem
-Form component for adding new inventory items with:
-- Comprehensive validation for all fields
-- Status messages and error handling
-- Reset functionality
-- Debug information panel
+---
 
-```purescript
-createItem :: String -> Nut
-createItem initialUUID = Deku.do
-  -- State hooks for form fields
-  setSku /\ skuValue <- useState initialUUID
-  setName /\ nameValue <- useState ""
-  -- Additional form fields...
-```
+## Module Map
 
-#### EditItem
-Component for modifying existing inventory items:
-- Pre-populated form fields from existing item data
-- Real-time validation
-- Status messages for submission results
-- Error handling for failed API calls
+| Module | Purpose |
+|---|---|
+| `Main` | Bootstraps the app: creates auth & route polls, pre-inits the register, sets up `matchesWith` routing, renders `nav` + routed page |
+| `Route` | Defines the `Route` ADT and the `RouteDuplex'` codec; also exports the `nav` bar component |
+| `Config.Network` | `localConfig` / `networkConfig` environment records (`apiBaseUrl`, `appOrigin`); `currentConfig` selects which is active |
+| `Config.LiveView` | `LiveViewConfig` record, `QueryMode` (JsonMode / HttpMode), `SortField` / `SortOrder`, default configs |
+| `Config.Auth` | `DevUser` fixtures for Customer / Cashier / Manager / Admin with hard-coded UUIDs |
+| `Config.Entity` | Hard-coded dummy UUIDs for account, payment, transaction, employee, register, location |
+| `Config.InventoryFields` | Builder functions returning `FieldConfig` or `DropdownConfig` for every inventory form field |
 
-```purescript
-editItem :: MenuItem -> Nut
-editItem (MenuItem item) = Deku.do
-  let (StrainLineage lineage) = item.strain_lineage
-  -- Form state management...
-```
-
-#### DeleteItem
-Confirmation component for removing inventory items:
-- Warning about irreversible action
-- Cancellation option
-- Success and error state handling
-
-```purescript
-deleteItem :: String -> String -> Nut
-deleteItem itemId itemName = Deku.do
-  setStatusMessage /\ statusMessageEvent <- useState ""
-  setSubmitting /\ submittingEvent <- useState false
-  -- Delete confirmation UI...
-```
-
-### Transaction Processing
-
-#### CreateTransaction
-A comprehensive POS interface that allows:
-- Adding items from inventory to the transaction
-- Specifying quantities and calculating subtotals
-- Computing taxes automatically
-- Processing various payment methods (Cash, Credit, Debit, etc.)
-- Finalizing sales transactions
-- Handling change calculation for cash payments
-
-```purescript
-createTransaction :: Nut
-createTransaction = Deku.do
-  -- Transaction state
-  setItems /\ itemsValue <- useState []
-  setPayments /\ paymentsValue <- useState []
-  -- Additional transaction management...
-```
-
-#### TransactionHistory
-Displays historical transactions with:
-- Sortable and filterable transaction list
-- Detailed view of transaction line items
-- Transaction status indicators
-- Payment details
-- Summary calculations
-- Search functionality
-
-```purescript
-transactionHistory :: Nut
-transactionHistory = Deku.do
-  setTransactions /\ transactionsValue <- useState []
-  setSelectedTransaction /\ selectedTransactionValue <- useState Nothing
-  -- Transaction history view...
-```
+---
 
 ## Routing
 
-The application uses hash-based routing with routes defined in the `Route` module:
+Defined in `Route.purs`:
 
 ```purescript
-data Route = LiveView | Create | Edit String | Delete String
-
-route :: RouteDuplex' Route
-route = root $ G.sum
-  { "LiveView": G.noArgs
-  , "Create": "create" / G.noArgs
-  , "Edit": "edit" / (string segment)
-  , "Delete": "delete" / (string segment)
-  }
+data Route
+  = LiveView
+  | Create
+  | Delete String
+  | CreateTransaction
+  | TransactionHistory
+  | Edit String
 ```
 
-The routing system:
-- Handles navigation between views
-- Parses URL parameters
-- Updates the current route in the application state
-- Loads appropriate data based on route changes
-- Renders the corresponding component
+| Route | Hash URL | Page module |
+|---|---|---|
+| `LiveView` | `/#/` | `Pages.LiveView` |
+| `Create` | `/#/create` | `Pages.CreateItem` |
+| `Edit uuid` | `/#/edit/:uuid` | `Pages.EditItem` |
+| `Delete uuid` | `/#/delete/:uuid` | `Pages.DeleteItem` |
+| `CreateTransaction` | `/#/transaction/create` | `Pages.CreateTransaction` |
+| `TransactionHistory` | `/#/transaction/history` | `Pages.TransactionHistory` |
+
+Navigation is defined in `Route.nav`, which renders a `<nav>` bar with links and highlights the active route by comparing against the `Poll Route`.
+
+`Main.purs` calls `matchesWith (parse route) matcher` where `matcher` pattern-matches on the route, instantiates the page's `Nut`, and pushes it into a `Poll (Tuple Route Nut)` that Deku renders.
+
+---
 
 ## State Management
 
-The application employs Functional Reactive Programming (FRP) principles for state management:
-
-- **Global State**: Managed through Poll mechanisms in the Main module for application-wide concerns
-- **Component State**: Local state using Deku's useState hooks for component-specific data
-- **Derived State**: Computed values from base state using FRP operators
-- **Shared State**: Important state like inventory data is shared across relevant components
-- **Async State**: Loading and error states for async operations like API calls
+The app uses **FRP.Poll** for all reactive state. The pattern is:
 
 ```purescript
--- Example of state hooks in Main.purs
-currentRoute <- liftST Poll.create
-inventoryState <- liftST Poll.create
-loadingState <- liftST Poll.create
-errorState <- liftST Poll.create
+-- create a mutable cell
+cell <- liftST Poll.create
+-- push a value
+cell.push someValue
+-- read reactively
+cell.poll :: Poll a
 ```
 
-## API Integration
+### Global state (Main.purs)
 
-The application includes separate API modules for different domains:
+| State | Type | Description |
+|---|---|---|
+| `authState` | `Poll AuthState` | Seeded with `defaultAuthState` (`SignedIn devAdmin`) |
+| `currentRoute` | `Poll (Tuple Route Nut)` | Updated on every hash change |
 
-### Inventory API (`API.Inventory`)
-- `readInventory`: Fetches all inventory items
-- `writeInventory`: Creates a new inventory item
-- `updateInventory`: Updates an existing inventory item
-- `deleteInventory`: Removes an inventory item
-- `fetchInventory`: Flexible inventory fetching with configuration options
-- `fetchInventoryFromJson`: Retrieves inventory from JSON files
-- `fetchInventoryFromHttp`: Fetches inventory from the HTTP backend
+### Component-level state
 
-### Transaction API (`API.Transaction`)
-- `createTransaction`: Creates a new transaction
-- `addTransactionItem`: Adds an item to a transaction
-- `removeTransactionItem`: Removes an item from a transaction
-- `addPaymentTransaction`: Records a payment for a transaction
-- `removePaymentTransaction`: Removes a payment from a transaction
-- `finalizeTransaction`: Completes a transaction
-- `getTransaction`: Retrieves transaction details
-- `getAllTransactions`: Gets transaction history
-- `voidTransaction`: Voids a transaction
-- `refundTransaction`: Processes a refund
+Pages and UI components use Deku hooks:
 
-All API functions use the Effect.Aff monad for asynchronous operations and return Either types for error handling.
+- `useState` — creates a `(a -> Effect Unit) /\ Poll a` pair
+- `useHot` — like `useState` but the Poll replays the most recent value to new subscribers (used heavily in forms)
 
-## Data Models
+Derived/computed state is built with `<$>`, `<*>`, and `ado` notation over polls:
 
-### Inventory Models
+```purescript
+let isFormValid = ado
+      vN <- validNameV
+      vB <- validBrandV
+      -- ...
+      in all (fromMaybe false) [vN, vB, ...]
+```
 
-#### MenuItem
-The core product data structure with comprehensive properties:
+---
+
+## Authentication & Authorization
+
+### Current implementation (dev mode)
+
+There is no real auth flow yet. `Services.AuthService` defines:
+
+```purescript
+data AuthState = SignedIn DevUser | SignedOut
+```
+
+`defaultAuthState` is `SignedIn devAdmin`. The admin `DevUser` from `Config.Auth` is used by default everywhere. A `UserId` (type alias for `String`) is extracted via `userIdFromAuth` and threaded to all API calls as the `X-User-Id` header.
+
+### Roles & capabilities
+
+```purescript
+data UserRole = Customer | Cashier | Manager | Admin
+```
+
+Each role maps to a `UserCapabilities` record (15 boolean fields like `capCanViewInventory`, `capCanProcessTransaction`, etc.) via `capabilitiesForRole`.
+
+### Auth guards
+
+`UI.Components.AuthGuard` provides combinators that conditionally render UI based on capabilities:
+
+```purescript
+whenCapable :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut
+whenCanEditItem :: Poll UserCapabilities -> Nut -> Nut
+whenManagerOrAbove :: Poll UserRole -> Nut -> Nut
+withFallback :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut -> Nut
+```
+
+### Dev user selector
+
+`UI.Components.UserSelector` renders a widget to switch between the four dev users at runtime. It is not currently wired into Main but is available for use.
+
+---
+
+## API Layer
+
+### `API.Request` — Generic helpers
+
+All requests go through helpers that attach standard headers (`Content-Type`, `Accept`, `Origin`, `X-User-Id`) and wrap the result in `Either String a`:
+
+| Function | Signature (simplified) | Notes |
+|---|---|---|
+| `authGet` | `UserId -> URL -> Aff (Either String a)` | `GET` with relative URL appended to `apiBaseUrl` |
+| `authGetFullUrl` | `UserId -> String -> Aff (Either String a)` | `GET` with absolute URL |
+| `authPost` | `UserId -> URL -> req -> Aff (Either String res)` | `POST` with JSON body |
+| `authPut` | `UserId -> URL -> req -> Aff (Either String res)` | `PUT` with JSON body |
+| `authDelete` | `UserId -> URL -> Aff (Either String a)` | `DELETE`, expects JSON response |
+| `authDeleteUnit` | `UserId -> URL -> Aff (Either String Unit)` | `DELETE`, ignores response body |
+| `authPostUnit` | `UserId -> URL -> Aff (Either String Unit)` | `POST` with no body, ignores response |
+| `authPostEmpty` | `UserId -> URL -> Aff (Either String a)` | `POST` with no body, parses response |
+| `authPostChecked` | `UserId -> URL -> req -> Aff (Either String res)` | `POST` with status-code checking (non-2xx → error) |
+
+`runRequest` is the internal wrapper that uses `attempt` and logs errors.
+
+### `API.Inventory`
+
+| Function | Endpoint | Method |
+|---|---|---|
+| `readInventory userId` | `GET /inventory` | `authGet` |
+| `writeInventory userId menuItem` | `POST /inventory` | `authPost` |
+| `updateInventory userId menuItem` | `PUT /inventory` | `authPut` |
+| `deleteInventory userId itemId` | `DELETE /inventory/:id` | `authDelete` |
+| `fetchInventory userId config mode` | dispatches to JSON or HTTP | — |
+| `fetchInventoryFromJson config` | fetches `config.jsonPath` directly | raw `fetch` |
+| `fetchInventoryFromHttp userId config` | `GET config.apiEndpoint` | `authGetFullUrl` |
+
+### `API.Transaction`
+
+| Function | Endpoint | Method |
+|---|---|---|
+| `getRegister userId registerId` | `GET /register/:id` | `authGet` |
+| `createRegister userId register` | `POST /register` | `authPost` |
+| `openRegister userId request registerId` | `POST /register/open/:id` | `authPost` |
+| `closeRegister userId request registerId` | `POST /register/close/:id` | `authPost` |
+| `createTransaction userId transaction` | `POST /transaction` | `authPostChecked` |
+| `getTransaction userId transactionId` | `GET /transaction/:id` | `authGet` |
+| `finalizeTransaction userId transactionId` | `POST /transaction/finalize/:id` | `authPostEmpty` |
+| `voidTransaction userId transactionId reason` | `POST /transaction/void/:id` | `authPost` |
+| `addTransactionItem userId item` | `POST /transaction/item` | `authPostChecked` |
+| `removeTransactionItem userId itemId` | `DELETE /transaction/item/:id` | `authDeleteUnit` |
+| `clearTransaction userId transactionId` | `POST /transaction/clear/:id` | `authPostUnit` |
+| `addPaymentTransaction userId payment` | `POST /transaction/payment` | `authPost` |
+| `removePaymentTransaction userId paymentId` | `DELETE /transaction/payment/:id` | `authDeleteUnit` |
+
+---
+
+## Domain Types
+
+### `Types.Inventory`
+
+#### `MenuItem` / `MenuItemRecord`
+
 ```purescript
 newtype MenuItem = MenuItem MenuItemRecord
 
@@ -224,7 +286,7 @@ type MenuItemRecord =
   , sku :: UUID
   , brand :: String
   , name :: String
-  , price :: Discrete USD
+  , price :: Discrete USD        -- stored as cents
   , measure_unit :: String
   , per_package :: String
   , quantity :: Int
@@ -237,380 +299,560 @@ type MenuItemRecord =
   }
 ```
 
-#### ItemCategory
-Product category enumeration:
-```purescript
-data ItemCategory
-  = Flower
-  | PreRolls
-  | Vaporizers
-  | Edibles
-  | Drinks
-  | Concentrates
-  | Topicals
-  | Tinctures
-  | Accessories
+**Serialization note:** `price` is serialized as a raw `Int` (cents). The `ReadForeign` instance reads an `Int` and wraps it in `Discrete`. The `WriteForeign` instance `unwrap`s to emit the raw `Int`.
+
+#### `ItemCategory`
+
+```
+Flower | PreRolls | Vaporizers | Edibles | Drinks | Concentrates | Topicals | Tinctures | Accessories
 ```
 
-#### StrainLineage
-Cannabis strain information:
+Implements `BoundedEnum` (cardinality 9), `Show`, `ReadForeign`/`WriteForeign` (string-based).
+
+#### `Species`
+
+```
+Indica | IndicaDominantHybrid | Hybrid | SativaDominantHybrid | Sativa
+```
+
+Implements `BoundedEnum` (cardinality 5), serialized as strings.
+
+#### `StrainLineage`
+
 ```purescript
 data StrainLineage = StrainLineage
-  { thc :: String
-  , cbg :: String
-  , strain :: String
-  , creator :: String
-  , species :: Species
-  , dominant_terpene :: String
-  , terpenes :: Array String
-  , lineage :: Array String
-  , leafly_url :: String
-  , img :: String
+  { thc :: String, cbg :: String, strain :: String, creator :: String
+  , species :: Species, dominant_terpene :: String, terpenes :: Array String
+  , lineage :: Array String, leafly_url :: String, img :: String
   }
 ```
 
-#### Species
-Cannabis species classification:
+#### `Inventory` / `InventoryResponse`
+
 ```purescript
-data Species
-  = Indica
-  | IndicaDominantHybrid
-  | Hybrid
-  | SativaDominantHybrid
-  | Sativa
+newtype Inventory = Inventory (Array MenuItem)
+
+data InventoryResponse
+  = InventoryData Inventory
+  | Message String
 ```
 
-### Transaction Models
+The `ReadForeign InventoryResponse` instance handles two shapes: a raw JSON array (→ `InventoryData`) or an object with `{ type, value }` fields.
 
-#### Transaction
-Core transaction data:
+#### Sorting
+
+`compareMenuItems :: LiveViewConfig -> MenuItem -> MenuItem -> Ordering` applies the config's `sortFields` array in priority order. Each `Tuple SortField SortOrder` is tried; `EQ` falls through to the next field.
+
+#### Validation
+
+`validateMenuItem :: MenuItemFormInput -> Either String MenuItem` validates all fields using `Data.Validation.Semigroup`, accumulating errors, then constructs a `MenuItem`. Delegates strain fields to `validateStrainLineage`.
+
+### `Types.Transaction`
+
+#### `Transaction`
+
 ```purescript
 newtype Transaction = Transaction
-  { id :: UUID
-  , status :: TransactionStatus
-  , created :: DateTime
-  , completed :: Maybe DateTime
-  , customer :: Maybe UUID
-  , employee :: UUID
-  , register :: UUID
-  , location :: UUID
-  , items :: Array TransactionItem
-  , payments :: Array PaymentTransaction
-  , subtotal :: DiscreteMoney USD
-  , discountTotal :: DiscreteMoney USD
-  , taxTotal :: DiscreteMoney USD
-  , total :: DiscreteMoney USD
+  { transactionId :: UUID
+  , transactionStatus :: TransactionStatus
+  , transactionCreated :: DateTime
+  , transactionCompleted :: Maybe DateTime
+  , transactionCustomerId :: Maybe UUID
+  , transactionEmployeeId :: UUID
+  , transactionRegisterId :: UUID
+  , transactionLocationId :: UUID
+  , transactionItems :: Array TransactionItem
+  , transactionPayments :: Array PaymentTransaction
+  , transactionSubtotal :: DiscreteMoney USD
+  , transactionDiscountTotal :: DiscreteMoney USD
+  , transactionTaxTotal :: DiscreteMoney USD
+  , transactionTotal :: DiscreteMoney USD
   , transactionType :: TransactionType
-  , isVoided :: Boolean
-  , voidReason :: Maybe String
-  , isRefunded :: Boolean
-  , refundReason :: Maybe String
-  , referenceTransactionId :: Maybe UUID
-  , notes :: Maybe String
+  , transactionIsVoided :: Boolean
+  , transactionVoidReason :: Maybe String
+  , transactionIsRefunded :: Boolean
+  , transactionRefundReason :: Maybe String
+  , transactionReferenceTransactionId :: Maybe UUID
+  , transactionNotes :: Maybe String
   }
 ```
 
-#### TransactionItem
-Line items within a transaction:
+`Maybe` fields are serialized as `Nullable` via `toNullable` for JSON compatibility with the Haskell backend.
+
+#### `TransactionItem`
+
 ```purescript
 newtype TransactionItem = TransactionItem
-  { id :: UUID
-  , transactionId :: UUID
-  , menuItemSku :: UUID
-  , quantity :: Number
-  , pricePerUnit :: DiscreteMoney USD
-  , discounts :: Array DiscountRecord
-  , taxes :: Array TaxRecord
-  , subtotal :: DiscreteMoney USD
-  , total :: DiscreteMoney USD
+  { transactionItemId :: UUID
+  , transactionItemTransactionId :: UUID
+  , transactionItemMenuItemSku :: UUID
+  , transactionItemQuantity :: Int
+  , transactionItemPricePerUnit :: DiscreteMoney USD
+  , transactionItemDiscounts :: Array DiscountRecord
+  , transactionItemTaxes :: Array TaxRecord
+  , transactionItemSubtotal :: DiscreteMoney USD
+  , transactionItemTotal :: DiscreteMoney USD
   }
 ```
 
-#### PaymentTransaction
-Payment details:
+#### `PaymentTransaction`
+
 ```purescript
 newtype PaymentTransaction = PaymentTransaction
-  { id :: UUID
-  , transactionId :: UUID
-  , method :: PaymentMethod
-  , amount :: DiscreteMoney USD
-  , tendered :: DiscreteMoney USD
-  , change :: DiscreteMoney USD
-  , reference :: Maybe String
-  , approved :: Boolean
-  , authorizationCode :: Maybe String
+  { paymentId :: UUID
+  , paymentTransactionId :: UUID
+  , paymentMethod :: PaymentMethod
+  , paymentAmount :: DiscreteMoney USD
+  , paymentTendered :: DiscreteMoney USD
+  , paymentChange :: DiscreteMoney USD
+  , paymentReference :: Maybe String
+  , paymentApproved :: Boolean
+  , paymentAuthorizationCode :: Maybe String
   }
 ```
 
-#### TransactionStatus
-Status enumeration:
-```purescript
-data TransactionStatus
-  = Created
-  | InProgress
-  | Completed
-  | Voided
-  | Refunded
-```
+#### Enums
 
-#### PaymentMethod
-Payment type enumeration:
-```purescript
-data PaymentMethod
-  = Cash
-  | Debit
-  | Credit
-  | ACH
-  | GiftCard
-  | StoredValue
-  | Mixed
-  | Other String
-```
+| Type | Values | Serialization |
+|---|---|---|
+| `TransactionStatus` | `Created \| InProgress \| Completed \| Voided \| Refunded` | Accepts both PascalCase and SCREAMING_SNAKE |
+| `TransactionType` | `Sale \| Return \| Exchange \| InventoryAdjustment \| ManagerComp \| Administrative` | Same |
+| `PaymentMethod` | `Cash \| Debit \| Credit \| ACH \| GiftCard \| StoredValue \| Mixed \| Other String` | Writes PascalCase; reads both forms; `Other` prefixed with `"OTHER:"` |
+| `TaxCategory` | `RegularSalesTax \| ExciseTax \| CannabisTax \| LocalTax \| MedicalTax \| NoTax` | Same |
+| `DiscountType` | `PercentOff Number \| AmountOff (Discrete USD) \| BuyOneGetOne \| Custom String (Discrete USD)` | Object with `discountType` discriminator |
 
-#### Financial Records
-Tax and discount management:
+#### Supporting records
+
 ```purescript
 type TaxRecord =
-  { category :: TaxCategory
-  , rate :: Number
-  , amount :: DiscreteMoney USD
-  , description :: String
-  }
+  { taxCategory :: TaxCategory, taxRate :: Number
+  , taxAmount :: DiscreteMoney USD, taxDescription :: String }
 
 type DiscountRecord =
-  { type :: DiscountType
-  , amount :: DiscreteMoney USD
-  , reason :: String
-  , approvedBy :: Maybe UUID
-  }
+  { discountType :: DiscountType, discountAmount :: DiscreteMoney USD
+  , discountReason :: String, discountApprovedBy :: Maybe UUID }
 ```
 
-## Form Handling
+#### Ledger types (defined but backend-only)
 
-The application implements a robust form handling system:
+`Account`, `LedgerEntry`, `LedgerEntryType`, `AccountType`, and `LedgerError` are defined in `Types.Transaction` with full `Show`/`ReadForeign`/`WriteForeign` instances but are not currently used by any frontend service or UI.
 
-### Form Field Components
-Reusable field components in the `UI.Common.Form` module:
+### `Types.Register`
+
 ```purescript
-makeTextField :: FieldConfig -> (String -> Effect Unit) -> (Maybe Boolean -> Effect Unit) -> Poll (Maybe Boolean) -> Boolean -> Nut
-makeDropdown :: DropdownConfig -> (String -> Effect Unit) -> (Maybe Boolean -> Effect Unit) -> Poll (Maybe Boolean) -> Nut
-makeDescriptionField :: String -> (String -> Effect Unit) -> (Maybe Boolean -> Effect Unit) -> Poll (Maybe Boolean) -> Nut
+type Register =
+  { registerId :: UUID, registerName :: String, registerLocationId :: UUID
+  , registerIsOpen :: Boolean, registerCurrentDrawerAmount :: Int
+  , registerExpectedDrawerAmount :: Int, registerOpenedAt :: Maybe DateTime
+  , registerOpenedBy :: Maybe UUID, registerLastTransactionTime :: Maybe DateTime }
+
+type OpenRegisterRequest =
+  { openRegisterEmployeeId :: UUID, openRegisterStartingCash :: Int }
+
+type CloseRegisterRequest =
+  { closeRegisterEmployeeId :: UUID, closeRegisterCountedCash :: Int }
+
+type CloseRegisterResult =
+  { closeRegisterResultRegister :: Register, closeRegisterResultVariance :: Int }
+
+type CartTotals =
+  { subtotal :: Discrete USD, taxTotal :: Discrete USD
+  , total :: Discrete USD, discountTotal :: Discrete USD }
 ```
 
-### Field Configuration
-Consistent configuration objects in the `Config.InventoryFields` module:
+### `Types.UUID`
+
 ```purescript
-nameConfig :: String -> FieldConfig
-nameConfig defaultValue =
-  { label: "Name"
-  , placeholder: "Enter product name"
-  , defaultValue
-  , validation: allOf [ nonEmpty, extendedAlphanumeric, maxLength 50 ]
-  , errorMessage: "Name is required and must be less than 50 characters"
-  , formatInput: trim
-  }
+newtype UUID = UUID String
 ```
 
-### Form State Management
-Each form manages:
-- Field values with useState hooks
-- Validation state with separate state hooks
-- Form-level validity computation
-- Submission status and error handling
-- Reset functionality
+- `genUUID :: Effect UUID` — generates a v4 UUID client-side using `Effect.Random`
+- `parseUUID :: String -> Maybe UUID` — validates against the standard regex
+- `emptyUUID :: UUID` — all zeros
+- Has `ReadForeign`/`WriteForeign` (string round-trip), `Eq`, `Ord`, `Show` (unwraps)
 
-### Form Submission Process
-1. Collect form values from state
-2. Validate the complete form
-3. Handle validation errors
-4. Format values for API submission
-5. Make API call using Effect.Aff
-6. Handle success and error responses
-7. Update UI with appropriate feedback
+### `Types.Formatting`
 
-## Validation
+Defines the form system's core types:
 
-The application includes a comprehensive validation system:
+- `ValidationRule` — newtype wrapping `String -> Boolean`
+- `FieldConfig` — `{ label, placeholder, defaultValue, validation, errorMessage, formatInput }`
+- `DropdownConfig` — `{ label, options, defaultValue, emptyOption }`
+- `TextAreaConfig` — `{ label, placeholder, defaultValue, rows, cols, errorMessage }`
+- `FormValue` class — `fromFormValue :: String -> ValidationResult a` for `String`, `Number`, `Int`, `UUID`
+- `FieldValidator` class — `validateField :: String -> Either String a` with error messages
 
-### Validation Rules
-Basic validation rules in the `Utils.Validation` module:
+---
+
+## Pages
+
+### `Pages.LiveView`
+
+Fetches inventory via `fetchInventory` using `defaultViewConfig`, pushes result into `inventoryState.poll`, and renders via `UI.Inventory.MenuLiveView.createMenuLiveView`. Manages loading and error polls separately.
+
+### `Pages.CreateItem`
+
+Generates a fresh UUID via `genUUID`, passes it to `UI.Inventory.ItemForm.itemForm userId (CreateMode uuid)`.
+
+### `Pages.EditItem`
+
+Fetches full inventory, finds the `MenuItem` matching the UUID from the URL, then renders `itemForm userId (EditMode menuItem)`. Falls back to error UI if not found.
+
+### `Pages.DeleteItem`
+
+Same fetch-and-find pattern, then renders `UI.Inventory.DeleteItem.renderDeleteConfirmation userId itemId itemName`.
+
+### `Pages.CreateTransaction`
+
+The most complex page. Orchestrates:
+1. Register initialization via `RegisterService.getOrInitLocalRegister`
+2. Inventory fetch for item selection
+3. Transaction creation via `TransactionService.startTransaction`
+4. Renders `UI.Transaction.CreateTransaction.createTransaction` with all reactive state
+
+### `Pages.TransactionHistory`
+
+Placeholder: renders `"Transaction History - Coming Soon"`.
+
+---
+
+## UI Components
+
+### `UI.Inventory.ItemForm`
+
+Shared form for create and edit, parameterized by `FormMode`:
+
 ```purescript
-nonEmpty :: ValidationRule
-alphanumeric :: ValidationRule
-extendedAlphanumeric :: ValidationRule
-percentage :: ValidationRule
-dollarAmount :: ValidationRule
-validMeasurementUnit :: ValidationRule
-validUrl :: ValidationRule
-positiveInteger :: ValidationRule
-nonNegativeInteger :: ValidationRule
-fraction :: ValidationRule
-commaList :: ValidationRule
-validUUID :: ValidationRule
-maxLength :: Int -> ValidationRule
+data FormMode = CreateMode String | EditMode MenuItem
+
+itemForm :: UserId -> FormMode -> Nut
 ```
 
-### Rule Composition
-Composable validation with combinators:
+- ~20 `useHot` hooks for field values + validation state
+- `initValues :: FormMode -> FormInit` pre-populates from the `MenuItem` in edit mode (converting cents to decimal for price, joining arrays to comma strings, etc.)
+- Validation state for edit mode starts as `Just true`; for create mode starts as `Just false`
+- `isFormValid` is a derived `Poll Boolean` using `ado` across all validation polls
+- On submit: collects all field values, runs `validateMenuItem`, then calls `writeInventory` (create) or `updateInventory` (edit)
+- Uses helper functions: `vTextField`, `readOnlyField`, `textAreaField`, `selectField`, `plainTextField`, `sectionHeading`
+
+### `UI.Inventory.MenuLiveView`
+
 ```purescript
-allOf :: Array ValidationRule -> ValidationRule
-anyOf :: Array ValidationRule -> ValidationRule
+createMenuLiveView :: Poll Inventory -> Poll Boolean -> Poll String -> Nut
 ```
 
-### Validation Architecture
-- `ValidationRule` newtype for encapsulating validation functions
-- Semigroup-based error collection
-- Either-based validation results
-- Real-time validation with immediate feedback
-- Comprehensive field-level and form-level validation
+Renders a grid of `renderItem` cards. Applies `compareMenuItems` sorting and optional out-of-stock filtering from `defaultViewConfig`. Each card shows brand, name, image, category, species, strain, price, description (truncated), quantity, and edit/delete action links.
 
-### Complex Form Validation
-Complete form validation for MenuItem creation/updates:
+### `UI.Inventory.DeleteItem`
+
 ```purescript
-validateMenuItem :: MenuItemFormInput -> Either String MenuItem
-validateStrainLineage :: StrainLineageFormInput -> V (Array String) StrainLineage
+renderDeleteConfirmation :: UserId -> String -> String -> Nut
 ```
 
-## Transaction Processing
+Warning panel with confirm/cancel buttons. Calls `deleteInventory` on confirm, shows success with link back to inventory.
 
-The frontend implements the complete transaction lifecycle:
+### `UI.Transaction.CreateTransaction`
 
-### Transaction Creation
-1. Initialize a new transaction with employee, register, and location IDs
-2. Add items from inventory with quantities
-3. Apply taxes automatically based on product categories
-4. Calculate subtotals, tax totals, and grand totals
+```purescript
+createTransaction :: UserId -> Poll Inventory -> Poll Transaction -> Register -> Nut
+```
 
-### Payment Processing
-1. Record payments with different payment methods
-2. Handle cash payments with tendered amount and change calculation
-3. Support multiple payments for a single transaction
-4. Track payment totals and remaining balance
+Full POS interface with three panels:
 
-### Transaction Finalization
-1. Validate transaction completeness
-2. Ensure sufficient payment
-3. Create a complete transaction record
-4. Submit to the backend API
-5. Handle success and error cases
+**Left panel — Item selection:**
+- Category tab filter (dynamically built from inventory)
+- Text search filter
+- Quantity input
+- Inventory table with Add buttons
+- Shows current cart quantity per item
+- Disables items when out of stock or during processing
 
-### Receipt Generation
-Support for receipt creation with formatTransactionItem and generateReceipt functions.
+**Right panel — Cart:**
+- Line items with name, qty, unit price, line total, remove button
+- Subtotal / tax / total summary
+- Payment section: method selector (Cash, Credit, Debit, ACH, GiftCard, StoredValue, Mixed, Other), amount/tendered/auth-code inputs
+- Add Payment button that calls `TransactionService.addPayment`
+- List of applied payments with remove buttons
+
+**Bottom bar:**
+- Clear Items button (calls `TransactionService.clearTransaction`)
+- Remaining balance display
+- Process Payment button (calls `TransactionService.finalizeTransaction`)
+- Status message display
+- Register info and transaction status indicator
+
+### `UI.Components.Form`
+
+Reusable form field builders:
+
+| Function | Description |
+|---|---|
+| `makeTextField` | Text input with validation, error display, optional password mode |
+| `makePasswordField` | Password-specific variant |
+| `makeTextArea` | Multi-line textarea with validation |
+| `makeNormalField` | `makeTextField` with `isPw = false` |
+| `makeDescriptionField` | Pre-configured textarea for descriptions |
+| `makeDropdown` | Select dropdown with optional empty option, validation |
+| `makeEnumDropdown` | Builds a `DropdownConfig` from any `BoundedEnum` |
+
+All fields follow the pattern: config → setValue callback → setValid callback → validPoll → Nut.
+
+### `UI.Components.AuthGuard`
+
+Capability-gated rendering using `Deku.Hooks.guard`:
+
+```purescript
+whenCapable :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut
+withFallback :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut -> Nut
+```
+
+Convenience wrappers for each capability (`whenCanViewInventory`, `whenCanEditItem`, etc.) and role thresholds (`whenCashierOrAbove`, `whenManagerOrAbove`, `whenAdmin`).
+
+### `UI.Components.UserSelector`
+
+Dev-mode widget showing all four dev users as clickable buttons with role badges and icons. Tracks selected user reactively. Also provides `compactUserSelector` (dropdown variant) and `capabilityIndicator` (shows current user's permissions).
+
+---
 
 ## Services
 
-### CashRegister Service
-Handles cash drawer operations and transaction processing:
+### `Services.AuthService`
+
+Manages the dev auth state. Key exports:
+
+| Function | Signature | Description |
+|---|---|---|
+| `defaultAuthState` | `AuthState` | `SignedIn devAdmin` |
+| `userIdFromAuth` | `AuthState -> String` | Extracts UUID string, or `""` if signed out |
+| `getCapabilities` | `AuthState -> Maybe UserCapabilities` | Role-based capability lookup |
+| `checkCapability` | `(UserCapabilities -> Boolean) -> AuthState -> Boolean` | Predicate check |
+| `canViewInventory`, `canProcessTransaction`, etc. | `AuthState -> Boolean` | Convenience wrappers |
+| `getAvailableUsers` | `Array DevUser` | All dev user fixtures |
+| `authStateForUserId` | `UUID -> Maybe AuthState` | Look up dev user by UUID |
+
+### `Services.RegisterService`
+
+Manages the register lifecycle. Uses `localStorage` to persist a register UUID across sessions.
+
+| Function | Description |
+|---|---|
+| `getOrCreateRegisterId` | Reads from localStorage or generates + stores a new UUID |
+| `createAndOpenRegister` | Creates register via API, then immediately opens it |
+| `openExistingRegister` | Opens an already-created register |
+| `getOrInitLocalRegister` | Tries `GET /register/:id`; if not found, creates + opens. **Used by `Pages.CreateTransaction`** |
+| `initLocalRegister` | Tries GET; if found, re-opens; if not found, creates + opens. **Used by `Main` for pre-init** |
+| `createLocalRegister` | Creates a named register at a location |
+| `closeLocalRegister` | Closes a register, reports variance |
+
+All functions take callbacks `(Register -> Effect Unit)` and `(String -> Effect Unit)` for success/error.
+
+### `Services.TransactionService`
+
+Core transaction operations:
+
+| Function | Description |
+|---|---|
+| `startTransaction` | Creates a new `Transaction` with zero totals, `Created` status, sends to API |
+| `getTransaction` | Fetches transaction by UUID |
+| `createTransactionItem` | Builds a `TransactionItem` with computed tax (8% sales tax), sends to API |
+| `addTransactionItem` | Sends a pre-built `TransactionItem` to API |
+| `removeTransactionItem` | Removes item by UUID |
+| `clearTransaction` | Clears all items from a transaction |
+| `voidTransaction` | Voids a transaction with reason |
+| `addPayment` | Creates a `PaymentTransaction` with change calculation, sends to API |
+| `removePaymentTransaction` | Removes a payment |
+| `finalizeTransaction` | Completes the transaction |
+
+Pure calculation helpers:
+
+| Function | Description |
+|---|---|
+| `emptyCartTotals` | Zero-valued `CartTotals` |
+| `calculateCartTotals` | Folds over `Array TransactionItem` to sum subtotal, tax, total |
+| `calculateTotalPayments` | Sums payment amounts |
+| `paymentsCoversTotal` | Checks if total payments ≥ transaction total |
+| `getRemainingBalance` | `max 0 (total - payments)` |
+
+### `Services.Cart`
+
+Higher-level cart operations used by the transaction UI:
+
+| Function | Description |
+|---|---|
+| `addItemToCart` | Validates quantity, calls `TransactionService.createTransactionItem`, updates cart items + totals via callbacks |
+| `removeItemFromCart` | Calls `TransactionService.removeTransactionItem`, updates state |
+| `addItemToTransaction` | Client-side only version (no API call) — computes tax at 15%, handles quantity merging |
+| `removeItemFromTransaction` | Client-side filter |
+| `isItemAvailable` | Checks if requested qty + cart qty ≤ stock |
+| `getAvailableQuantity` | Stock minus current cart quantity |
+| `findUnavailableItems` | Returns items in cart that exceed inventory stock |
+| `getCartQuantityForSku` | Looks up current cart quantity for a SKU |
+
+**Note:** `addItemToCart` uses 8% tax (via `TransactionService.createTransactionItem`), while `addItemToTransaction` uses 15% tax. This is a known inconsistency — the server-side flow (`addItemToCart`) should be preferred.
+
+---
+
+## Configuration
+
+### `Config.Network`
 
 ```purescript
-type RegisterState =
-  { isOpen :: Boolean
-  , currentDrawerAmount :: Discrete USD
-  , currentTransaction :: Maybe Transaction
-  , openedAt :: Maybe DateTime
-  , openedBy :: Maybe UUID
-  , lastTransactionTime :: Maybe DateTime
-  , expectedDrawerAmount :: Discrete USD
+currentConfig :: EnvironmentConfig  -- currently set to localConfig
+
+localConfig   = { apiBaseUrl: "http://localhost:8080",       appOrigin: "http://localhost:5174" }
+networkConfig = { apiBaseUrl: "http://192.168.8.248:8080",   appOrigin: "http://192.168.8.248:5174" }
+```
+
+### `Config.LiveView`
+
+```purescript
+defaultViewConfig :: LiveViewConfig
+defaultViewConfig =
+  { sortFields: [SortByQuantity /\ Descending, SortByCategory /\ Ascending, SortBySpecies /\ Descending]
+  , hideOutOfStock: false
+  , mode: HttpMode
+  , refreshRate: 5000
+  , screens: 1
+  , fetchConfig: { apiEndpoint: "http://localhost:8080/inventory", jsonPath: "./inventory.json", corsHeaders: true }
   }
-
-openRegister :: UUID -> UUID -> Discrete USD -> Aff (Either RegisterError RegisterState)
-closeRegister :: RegisterState -> UUID -> Discrete USD -> Aff (Either RegisterError { closingState :: RegisterState, variance :: Discrete USD })
 ```
 
-### Ledger Service
-Manages financial accounting operations:
+### `Config.Auth`
+
+Four `DevUser` fixtures with hard-coded UUIDs, used for development auth:
+
+| User | Role | UUID |
+|---|---|---|
+| `devCustomer` | Customer | `8244082f-...` |
+| `devCashier` | Cashier | `0a6f2deb-...` |
+| `devManager` | Manager | `8b75ea4a-...` |
+| `devAdmin` | Admin | `d3a1f4f0-...` |
+
+`defaultDevUser = devAdmin`
+
+### `Config.Entity`
+
+Dummy UUIDs for dev: `dummyAccountId`, `dummyPaymentId`, `dummyTransactionId`, `dummyEmployeeId`, `dummyRegisterId`, `dummyLocationId`.
+
+### `Config.InventoryFields`
+
+Builder functions like `nameConfig :: String -> FieldConfig`, `priceConfig :: String -> FieldConfig`, etc. Each encodes the label, placeholder, validation rule, error message, and input formatter for a specific inventory field. The `priceConfig` notably calls `formatCentsToDisplayDollars` on its default value.
+
+---
+
+## Validation
+
+### `ValidationRule`
 
 ```purescript
-createSaleEntries :: Transaction -> UUID -> UUID -> UUID -> Aff (Either LedgerError (Array LedgerEntry))
-createRefundEntries :: Transaction -> UUID -> UUID -> UUID -> Aff (Either LedgerError (Array LedgerEntry))
-getAccountBalance :: Array LedgerEntry -> UUID -> Maybe DateTime -> Discrete USD
-calculateDailySales :: Array LedgerEntry -> DateTime -> DateTime -> Aff { cash :: Discrete USD, card :: Discrete USD, other :: Discrete USD, total :: Discrete USD }
+newtype ValidationRule = ValidationRule (String -> Boolean)
 ```
 
-### Compliance Service
-Handles regulatory compliance requirements:
+### Built-in rules (`Utils.Validation`)
+
+| Rule | Description |
+|---|---|
+| `nonEmpty` | Trimmed string is not `""` |
+| `alphanumeric` | Matches `^[A-Za-z0-9-\s]+$` |
+| `extendedAlphanumeric` | Allows `-_&+',.()`  |
+| `percentage` | Matches `^\d{1,3}(\.\d{1,2})?%$` |
+| `dollarAmount` | Parses as non-negative `Number` |
+| `validMeasurementUnit` | One of: g, mg, kg, oz, lb, ml, l, ea, unit(s), pack(s), eighth, quarter, half, 1/8, 1/4, 1/2 |
+| `validUrl` | HTTP(S) URL regex |
+| `positiveInteger` | Parses as `Int > 0` |
+| `nonNegativeInteger` | Parses as `Int >= 0` |
+| `fraction` | Matches `^\d+/\d+$` |
+| `commaList` | Matches `^[^,]*(,[^,]*)*$` |
+| `validUUID` | Delegates to `parseUUID` |
+| `maxLength n` | String length ≤ n |
+
+### Combinators
 
 ```purescript
-checkCustomerEligibility :: UUID -> Maybe String -> Maybe Boolean -> UUID -> Aff (Either ComplianceError (Array CustomerVerification))
-checkPurchaseLimits :: UUID -> Array TransactionItem -> Array Transaction -> Aff (Either ComplianceError Boolean)
-createComplianceRecord :: Transaction -> Array CustomerVerification -> Aff (Either ComplianceError ComplianceRecord)
-submitToStateTracking :: Transaction -> ComplianceRecord -> Aff (Either ComplianceError { updatedRecord :: ComplianceRecord, referenceId :: String })
+allOf :: Array ValidationRule -> ValidationRule  -- all must pass
+anyOf :: Array ValidationRule -> ValidationRule  -- at least one must pass
 ```
 
-### Inventory Integration Service
-Manages inventory operations:
+### Semigroup validation (`Data.Validation.Semigroup`)
 
-```purescript
-updateInventoryForTransaction :: Transaction -> Aff (Either InventoryError (Array InventoryUpdate))
-checkInventoryAvailability :: Array TransactionItem -> Aff (Either InventoryError Boolean)
-recordInventoryAdjustment :: UUID -> Number -> String -> UUID -> Aff (Either InventoryError InventoryAdjustment)
-reconcileInventory :: UUID -> Array { inventoryItemId :: UUID, countedQuantity :: Number } -> UUID -> Aff (Either InventoryError InventoryReconciliation)
-```
+Used in `validateMenuItem` and `validateStrainLineage` — chains field validations with `andThen`, accumulates errors as `Array String`, and converts via `toEither` / `joinWith`.
+
+### Preset bundles
+
+`requiredText`, `requiredTextWithLimit`, `percentageField`, `moneyField`, `urlField`, `quantityField`, `commaListField`, `multilineText` — pre-built `{ validation, errorMessage, formatInput }` records.
+
+---
 
 ## Utilities
 
-### Formatting Utilities
-Helper functions for formatting and display:
+### `Utils.Formatting`
+
+| Function | Description |
+|---|---|
+| `formatCentsToDollars :: Int -> String` | `1299` → `"12.99"` (integer division) |
+| `formatCentsToDecimal :: Int -> String` | `1299` → `"12.99"` (via `Number` division) |
+| `formatCentsToDisplayDollars :: String -> String` | Parses string cents, divides by 100 |
+| `formatDollarAmount :: String -> String` | Ensures two decimal places |
+| `parseCommaList :: String -> Array String` | Splits on `,`, trims, removes empties |
+| `getAllEnumValues :: BoundedEnum a => Array a` | Enumerates all values of a bounded enum |
+| `invertOrdering :: Ordering -> Ordering` | Flips `LT`↔`GT` |
+| `summarizeLongText :: String -> String` | Strips newlines, collapses whitespace, truncates at 100 chars |
+| `ensureNumber :: String -> String` | Parses or defaults to `"0.0"` |
+| `ensureInt :: String -> String` | Parses or defaults to `"0"` |
+
+### `Utils.Money`
+
+| Function | Description |
+|---|---|
+| `fromDollars :: Number -> Discrete USD` | Multiplies by 100, floors |
+| `toDollars :: Discrete USD -> Number` | Divides by 100 |
+| `formatMoney :: DiscreteMoney USD -> String` | `numericC` format (with currency symbol) |
+| `formatMoney' :: DiscreteMoney USD -> String` | `numeric` format (no symbol) |
+| `formatPrice :: DiscreteMoney USD -> String` | Alias for `formatMoney'` |
+| `formatDiscretePrice :: Discrete USD -> String` | Converts to `DiscreteMoney` then formats |
+| `formatDiscreteUSD :: Discrete USD -> String` | `numericC` format |
+| `formatDiscreteUSD' :: Discrete USD -> String` | `numeric` format |
+| `parseMoneyString :: String -> Maybe (Discrete USD)` | Parses string as dollars, converts to cents |
+
+### `Utils.Storage`
+
+Thin wrappers around `Web.Storage.Storage`:
+
 ```purescript
-uuidToString :: UUID -> String
-generateClassName :: { category :: ItemCategory, subcategory :: String, species :: Species } -> String
-toClassName :: String -> String
-randomInt :: Int -> Int -> Effect Int
-ensureNumber :: String -> String
-ensureInt :: String -> String
-summarizeLongText :: String -> String
+storeItem    :: String -> String -> Effect Unit
+retrieveItem :: String -> Effect (Maybe String)
+removeItem   :: String -> Effect Unit
+clearStorage :: Effect Unit
 ```
 
-### Money Utilities
-Precise money handling functions:
-```purescript
-fromDollars :: Number -> Discrete USD
-toDollars :: Discrete USD -> Number
-formatMoney :: DiscreteMoney USD -> String
-formatMoney' :: DiscreteMoney USD -> String
-parseMoneyString :: String -> Maybe (Discrete USD)
-```
+---
 
-### UUID Generation
-UUID creation and handling:
-```purescript
-genUUID :: Effect UUID
-parseUUID :: String -> Maybe UUID
-```
+## Development Notes
 
-## Development Guidelines
+### Project structure convention
+- `API/` — HTTP communication only, no business logic
+- `Services/` — effectful business logic, orchestrates API calls
+- `Types/` — pure domain models with serialization instances
+- `Config/` — compile-time constants, no effects
+- `UI/` — presentational components organized by domain
+- `Pages/` — route handlers that wire services into UI
+- `Utils/` — pure helper functions
 
-### Project Structure
-The codebase is organized into logical modules:
-- `/src/API/` - API communication modules
-- `/src/Config/` - Configuration constants and settings
-- `/src/Services/` - Business logic services
-- `/src/Types/` - Data models and type definitions
-- `/src/UI/` - UI components organized by domain
-- `/src/Utils/` - Utility functions and helpers
+### Known issues / tech debt
+- **Tax rate inconsistency:** `Services.Cart.addItemToTransaction` uses 15% hardcoded tax; `Services.TransactionService.createTransactionItem` uses 8%. The API-backed flow should be canonical.
+- **No real auth:** The system uses hard-coded dev users. The `X-User-Id` header is the only auth mechanism.
+- **Ledger types unused:** `Account`, `LedgerEntry`, `LedgerEntryType`, `AccountType`, `LedgerError` are defined but not consumed by any frontend module.
+- **`TransactionHistory` is a stub.**
+- **Register ID in localStorage:** `getOrCreateRegisterId` persists across sessions but there's no UI to reset it.
+- **`refreshRate` in `LiveViewConfig` is defined but no polling/auto-refresh is implemented.**
 
-### Error Handling
-The application implements comprehensive error handling:
-- API errors with meaningful messages
-- Form validation errors with specific field feedback
-- Business logic errors with appropriate user messages
-- Network and system error handling
-- Error state management in the UI
+### Error handling pattern
+All API calls return `Either String a`. Pages and services pattern match on the result and push errors into a status message poll or error poll for display. `attempt` from `Effect.Aff` is used to catch exceptions from `fetch` / `fromJSON`.
 
-### Performance Considerations
-- Efficient state updates with minimized re-renders
-- Lazy loading of components
-- Proper cleanup of resources
-
-### Type Safety
-- Strong typing throughout with newtypes and sum types
-- Instance implementations for serialization
-- Validation of all user inputs
-
-### Future Development
-Areas for potential enhancement:
-- Integration with hardware peripherals (receipt printers, barcode scanners)
-- Advanced reporting and analytics
-- Customer loyalty and rewards programs
-- Inventory forecasting and automated ordering
-- Enhanced compliance tracking for regulatory requirements
+### Serialization conventions
+- PureScript `Maybe a` → JSON `Nullable a` (via `toNullable`) for writes
+- Backend sends `null` or absent fields → `ReadForeign` instances handle both
+- Enum types accept both PascalCase (`"Created"`) and SCREAMING_SNAKE (`"CREATED"`) on read, emit PascalCase on write
+- `UUID` round-trips as plain strings
+- `Discrete USD` (cents) round-trips as `Int`
+- `DiscreteMoney USD` uses Yoga.JSON's default `ReadForeign`/`WriteForeign` for the `Data.Finance.Money.Extended` wrapper
