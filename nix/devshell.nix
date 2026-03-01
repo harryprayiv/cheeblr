@@ -53,6 +53,10 @@ let
     inherit pkgs name;
   };
 
+  testSuiteModule = import ./test-suite.nix {
+    inherit pkgs name;
+  };
+
   manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
     config = {
@@ -292,6 +296,11 @@ let
 
     deployModule.launch-dev # launch them all  granularly
 
+    # Testing Environment
+    testSuiteModule.test-unit
+    testSuiteModule.test-integration
+    testSuiteModule.test-suite
+    testSuiteModule.test-smoke
 
     # Additional tools specifically for the scripts
     coreutils
@@ -405,6 +414,12 @@ let
       echo "    backend-stop           - Stop Haskell Back End"          
       echo "    frontend-start         - Start Purescript Front End"
       echo "    frontend-stop          - Stop Purescript Front End" 
+      echo "  Testing:"
+      echo "    test-unit              - Run all unit tests (no services needed)"
+      echo "    test-integration       - Spin up DB+backend, run HTTP integration tests"
+      echo "    test-suite             - Full test suite (unit + integration)"
+      echo "    test-smoke             - Quick smoke test against running backend"
+      echo ""      
       echo ""
       echo ""
       toilet ${lib.toSentenceCase name} -t --metal
