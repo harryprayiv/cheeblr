@@ -55,20 +55,6 @@ library
                    , Auth.Simple
                    , API.Inventory
                    , API.Transaction
-                   -- Codegen modules
-                   , Codegen.Schema
-                   , Codegen.Run
-                   , Codegen.Generate.Common
-                   , Codegen.Generate.Types
-                   , Codegen.Generate.Database
-                   , Codegen.Generate.API
-                   , Codegen.Generate.Server
-                   , Schemas.Dispensary
-                --    -- Generated modules (created by domain-codegen)
-                --    , Generated.Types.Inventory
-                --    , Generated.DB.Inventory
-                --    , Generated.API.Inventory
-                --    , Generated.Server.Inventory
     build-depends: refined
                  , string-conversions
                  , filepath
@@ -84,14 +70,6 @@ executable cheeblr-backend
     build-depends: cheeblr-backend
     pkgconfig-depends: libpq
 
-executable domain-codegen
-    import: shared-properties
-    ghc-options: -rtsopts
-    main-is: Main.hs
-    hs-source-dirs: codegen
-    build-depends: cheeblr-backend
-                 , filepath
-                 , directory
 test-suite cheeblr-test
   import:           shared-properties
   type:             exitcode-stdio-1.0
