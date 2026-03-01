@@ -4,7 +4,7 @@ module Test.Auth.SimpleSpec (spec) where
 
 import Test.Hspec
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isJust)
 import Types.Auth
 import Auth.Simple
 
