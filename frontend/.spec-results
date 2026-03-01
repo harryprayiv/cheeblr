@@ -2,2625 +2,2625 @@
   [
     "Cheeblr Frontend Auth AuthState helpers defaultAuthState is signed in",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers getRole returns Nothing when signed out",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers getRole returns correct role for each user",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers getUserId returns Just for signed in",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers getUserId returns Nothing for signed out",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers isSignedIn returns false for signed out",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers isSignedIn returns true for signed in",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers userIdFromAuth returns empty for signed out",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth AuthState helpers userIdFromAuth returns non-empty for signed in",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Dev user lookup allDevUsers has 4 users",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Dev user lookup finds admin by id",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Dev user lookup finds cashier by role",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Dev user lookup finds customer by id",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Dev user lookup finds manager by role",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can apply discounts",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can close register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can create items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can delete items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can edit items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can manage registers",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can manage users",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can open register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can process transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can refund transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can view all locations",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can view compliance",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can view inventory",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can view reports",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Admin can void transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier can close register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier can edit items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier can open register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier can process transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier can view compliance",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier can view inventory",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot apply discounts",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot create items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot delete items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot manage registers",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot manage users",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot refund transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot view all locations",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot view reports",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Cashier cannot void transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer can view inventory",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot apply discounts",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot close register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot create items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot delete items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot edit items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot manage registers",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot manage users",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot open register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot process transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot refund transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot view all locations",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot view compliance",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot view reports",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Customer cannot void transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can apply discounts",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can close register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can create items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can delete items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can edit items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can manage registers",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can open register",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can process transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can refund transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can view compliance",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can view inventory",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can view reports",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager can void transactions",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager cannot manage users",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth Raw capabilities for Manager cannot view all locations",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth UserRole ordering Admin is top",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth UserRole ordering Cashier < Manager",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth UserRole ordering Customer < Cashier",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth UserRole ordering Manager < Admin",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth UserRole ordering roles are equal to themselves",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canApplyDiscount wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canApplyDiscount wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canApplyDiscount wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canApplyDiscount wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canApplyDiscount wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCloseRegister wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCloseRegister wiring cashier can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCloseRegister wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCloseRegister wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCloseRegister wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCreateItem wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCreateItem wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCreateItem wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCreateItem wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canCreateItem wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canDeleteItem wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canDeleteItem wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canDeleteItem wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canDeleteItem wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canDeleteItem wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canEditItem wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canEditItem wiring cashier can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canEditItem wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canEditItem wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canEditItem wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageRegisters wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageRegisters wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageRegisters wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageRegisters wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageRegisters wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageUsers wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageUsers wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageUsers wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageUsers wiring manager cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canManageUsers wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canOpenRegister wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canOpenRegister wiring cashier can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canOpenRegister wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canOpenRegister wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canOpenRegister wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canProcessTransaction wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canProcessTransaction wiring cashier can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canProcessTransaction wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canProcessTransaction wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canProcessTransaction wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canRefundTransaction wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canRefundTransaction wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canRefundTransaction wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canRefundTransaction wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canRefundTransaction wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewAllLocations wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewAllLocations wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewAllLocations wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewAllLocations wiring manager cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewAllLocations wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewCompliance wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewCompliance wiring cashier can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewCompliance wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewCompliance wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewCompliance wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewInventory wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewInventory wiring cashier can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewInventory wiring customer can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewInventory wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewInventory wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewReports wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewReports wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewReports wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewReports wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canViewReports wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canVoidTransaction wiring admin can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canVoidTransaction wiring cashier cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canVoidTransaction wiring customer cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canVoidTransaction wiring manager can",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth canVoidTransaction wiring signed out cannot",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth toAuthenticatedUser preserves email",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth toAuthenticatedUser preserves role for each dev user",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth toAuthenticatedUser preserves userId",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Auth toAuthenticatedUser preserves userName",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic calculateCartTotals accumulates tax totals",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic calculateCartTotals calculates totals for multiple items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic calculateCartTotals calculates totals for single item",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic calculateCartTotals returns empty totals for empty cart",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic calculateTotalPayments returns zero for no payments",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic calculateTotalPayments sums multiple payments",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic emptyCartTotals has zero discounts",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic emptyCartTotals has zero subtotal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic emptyCartTotals has zero tax",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic emptyCartTotals has zero total",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic findExistingItem finds matching item",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic findExistingItem returns Nothing when no match",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic findUnavailableItems finds items exceeding stock",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic findUnavailableItems finds items with unknown sku",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic findUnavailableItems returns empty for available items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getAvailableQuantity returns 0 when fully allocated",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getAvailableQuantity returns full stock when nothing in cart",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getAvailableQuantity returns remaining when items in cart",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getCartQuantityForSku returns 0 for empty cart",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getCartQuantityForSku returns 0 for non-matching sku",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getCartQuantityForSku returns quantity for matching sku",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getRemainingBalance returns full amount when no payments",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getRemainingBalance returns remaining after partial payment",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getRemainingBalance returns zero when fully paid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic getRemainingBalance returns zero when overpaid (clamped)",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic isItemAvailable available at exact boundary",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic isItemAvailable available when cart + request <= stock",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic isItemAvailable available when no items in cart",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic isItemAvailable unavailable when exceeds stock",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic paymentsCoversTotal returns false for no payments",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic paymentsCoversTotal returns false when payment is less than total",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic paymentsCoversTotal returns true when payment equals total",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Cart & Transaction Logic paymentsCoversTotal returns true when payment exceeds total",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory Inventory JSON serializes as array",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory InventoryResponse JSON serialization serializes Message variant",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory ItemCategory has correct ordering",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory ItemCategory shows Flower",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory ItemCategory shows PreRolls",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory MenuItem JSON serialization preserves price through serialization",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory MenuItem JSON serialization preserves sku through serialization",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory MenuItem JSON serialization serializes and can be read back",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory Species has correct ordering",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory Species shows Hybrid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory Species shows Indica",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory Species shows IndicaDominantHybrid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory compareMenuItems compares by default config sort fields",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory compareMenuItems equal items compare as EQ",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory findItemBySku finds existing item",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory findItemBySku returns Nothing for unknown sku",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory findItemNameBySku returns Unknown Item for missing sku",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory findItemNameBySku returns name for existing item",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory generateClassName generates correct class for Indica Flower",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory generateClassName handles spaces in subcategory",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory getItemName extracts name from MenuItem",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateCategory accepts Flower",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateCategory accepts all valid categories",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem accepts valid form input",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem parses tags from comma list",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem produces correct price in cents",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects empty brand",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects empty name",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects invalid SKU",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects invalid category",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects invalid leafly URL",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects invalid price",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects invalid species",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateMenuItem rejects negative quantity",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateSpecies accepts Indica",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.Inventory validateSpecies accepts all valid species",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID UUID Eq different UUIDs are not equal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID UUID Eq equal UUIDs are equal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID UUID JSON serialization deserializes UUID from string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID UUID JSON serialization roundtrips through JSON",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID UUID JSON serialization serializes UUID to string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID UUID Show instance shows the raw string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID emptyUUID is all zeros",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID emptyUUID parses back to itself",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID genUUID generates a valid UUID",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID genUUID generates unique UUIDs",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID genUUID generates v4 UUID (version nibble = 4)",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID parses all-zero UUID",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID parses valid v4 UUID",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID rejects UUID with extra characters",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID rejects UUID with uppercase (lowercase only)",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID rejects UUID with wrong length",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID rejects UUID without dashes",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID rejects empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID parseUUID rejects malformed UUID",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID uuidToString extracts the string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID validateUUID rejects invalid UUID with field name in error",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Types.UUID validateUUID validates correct UUID",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting ensureInt parses valid int",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting ensureInt returns 0 for invalid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting ensureNumber handles empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting ensureNumber parses valid number",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting ensureNumber returns 0.0 for invalid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDecimal formats typical price",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDecimal formats whole dollar amount",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDecimal formats zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDisplayDollars converts cents string to dollars",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDisplayDollars handles zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDisplayDollars returns original for non-numeric",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDollars formats cents",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDollars formats large amount",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDollars formats single cent",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDollars formats small cents",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDollars formats whole dollar",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatCentsToDollars formats zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatDollarAmount adds decimals to whole number",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatDollarAmount formats number with two decimals",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatDollarAmount returns empty for empty",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatDollarAmount returns original for non-numeric",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting formatDollarAmount truncates to two decimals",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting invertOrdering inverts GT to LT",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting invertOrdering inverts LT to GT",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting invertOrdering keeps EQ as EQ",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting parseCommaList filters out empty segments",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting parseCommaList handles single item",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting parseCommaList parses comma-separated values",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting parseCommaList returns empty array for empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting parseCommaList trims whitespace",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting summarizeLongText condenses multiple spaces",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting summarizeLongText replaces newlines with spaces",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting summarizeLongText returns short text unchanged",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Formatting summarizeLongText truncates long text with ellipsis",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money formatDiscretePrice formats typical price",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money formatDiscretePrice formats whole dollar",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money formatDiscretePrice formats zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars converts fractional dollars",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars converts small amount",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars converts whole dollars to cents",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars converts zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars/toDollars roundtrip roundtrips 0.0",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars/toDollars roundtrip roundtrips 100.0",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money fromDollars/toDollars roundtrip roundtrips 29.99",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money parseMoneyString parses valid dollar amount",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money parseMoneyString parses whole dollar",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money parseMoneyString parses zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money parseMoneyString returns Nothing for invalid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money parseMoneyString trims whitespace",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money toDollars converts 100 cents to 1 dollar",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money toDollars converts cents to dollars",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Money toDollars converts zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation allOf fails when any rule fails",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation allOf fails when later rule fails",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation allOf passes when all rules pass",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation alphanumeric accepts hyphens",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation alphanumeric accepts letters",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation alphanumeric accepts letters numbers and spaces",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation alphanumeric accepts numbers",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation alphanumeric rejects empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation alphanumeric rejects special characters",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation anyOf fails when no rules pass",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation anyOf passes when first rule passes",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation anyOf passes when second rule passes",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation commaList accepts comma-separated items",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation commaList accepts empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation commaList accepts single item",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount accepts decimal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount accepts whole number",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount accepts zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount accepts zero decimal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount rejects empty",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount rejects negative",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation dollarAmount rejects non-numeric",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation extendedAlphanumeric accepts ampersand",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation extendedAlphanumeric accepts apostrophe",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation extendedAlphanumeric accepts basic alphanumeric",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation extendedAlphanumeric accepts parentheses",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation extendedAlphanumeric accepts periods",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation extendedAlphanumeric accepts plus sign",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation fraction accepts larger fraction",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation fraction accepts simple fraction",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation fraction rejects decimal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation fraction rejects whole number",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation maxLength accepts string at limit",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation maxLength accepts string within limit",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation maxLength rejects string over limit",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonEmpty accepts non-empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonEmpty accepts string with spaces",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonEmpty rejects empty string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonEmpty rejects whitespace-only string",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonNegativeInteger accepts positive",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonNegativeInteger accepts zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonNegativeInteger rejects decimal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonNegativeInteger rejects negative",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation nonNegativeInteger rejects text",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage accepts 100%",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage accepts decimal with percent",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage accepts single digit",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage accepts whole number with percent",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage rejects empty",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage rejects negative",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage rejects too many decimals",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation percentage rejects without percent sign",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation positiveInteger accepts large number",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation positiveInteger accepts positive number",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation positiveInteger rejects decimal",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation positiveInteger rejects negative",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation positiveInteger rejects zero",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts ea",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts eighth",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts fraction form",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts grams",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts milligrams",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts ml",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit accepts ounces",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit is case insensitive",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validMeasurementUnit rejects invalid unit",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUUID accepts valid uuid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUUID rejects empty",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUUID rejects invalid uuid",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUrl accepts http url",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUrl accepts https url",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUrl accepts url with path",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUrl accepts www prefix",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ],
   [
     "Cheeblr Frontend Utils.Validation validUrl rejects plain text",
     {
-      "timestamp": "1772323466535.0",
+      "timestamp": "1772381141482.0",
       "success": true
     }
   ]

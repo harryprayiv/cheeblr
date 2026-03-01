@@ -7,30 +7,20 @@ import Test.Hspec
 import Data.Aeson
 import Data.Aeson.KeyMap (member)
 import qualified Data.Aeson.KeyMap as KM
-import qualified Data.ByteString.Lazy as LBS
-import qualified Data.ByteString.Lazy.Char8 as LBS8
-import Data.Maybe (isJust, isNothing)
 import Data.Scientific (fromFloatDigits)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
-import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Types.Auth
 import Types.Inventory
 import Types.Transaction
 import API.Transaction
-  ( AvailableInventory(..)
-  , ReservationRequest(..)
-  , OpenRegisterRequest(..)
-  , CloseRegisterRequest(..)
-  , CloseRegisterResult(..)
-  , Register(..)
-  , DailyReportRequest(..)
-  , DailyReportResult(..)
+  ( Register(..)
+  
+  
   )
-import Auth.Simple (devUsers, lookupUser)
-import qualified Data.Map.Strict as Map
+import Auth.Simple (lookupUser)
 
 -- ──────────────────────────────────────────────
 -- Fixtures matching what PureScript frontend sends
@@ -317,7 +307,7 @@ spec = describe "Integration: JSON Contract Tests" $ do
 
     describe "Register JSON structure" $ do
       it "has field names matching PureScript Register type alias" $ do
-        let reg = Register
+        let reg = API.Transaction.Register
               { registerId = testUUID
               , registerName = "Register 1"
               , registerLocationId = testUUID2
@@ -515,7 +505,7 @@ spec = describe "Integration: JSON Contract Tests" $ do
               , "registerOpenedBy" .= Null
               , "registerLastTransactionTime" .= Null
               ]
-        let result = fromJSON json :: Result Register
+        let result = fromJSON json :: Result API.Transaction.Register
         case result of
           Success r -> do
             registerName r `shouldBe` "Register 1"

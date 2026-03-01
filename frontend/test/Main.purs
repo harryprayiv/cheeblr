@@ -13,6 +13,7 @@ import Test.Spec.Reporter.Console (consoleReporter)
 import Test.Spec.Runner.Node (runSpecAndExitProcess)
 import Test.UUID as UUID
 import Test.Validation as Validation
+import Test.JsonContract as JsonContract
 
 main :: Effect Unit
 main = runSpecAndExitProcess [consoleReporter] $ describe "Cheeblr Frontend" do
@@ -23,3 +24,4 @@ main = runSpecAndExitProcess [consoleReporter] $ describe "Cheeblr Frontend" do
   Cart.spec
   Inventory.spec
   UUID.spec
+  describe "JSON Contract" JsonContract.spec

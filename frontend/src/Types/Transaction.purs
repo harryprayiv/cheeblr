@@ -477,7 +477,7 @@ instance readForeignPaymentMethod :: ReadForeign PaymentMethod where
       "STORED_VALUE" -> pure StoredValue
       "MIXED" -> pure Mixed
       other ->
-        if take 6 other == "OTHER:" then pure $ Other (drop 6 other)
+        if take 6 other == "OTHER:" || take 6 other == "Other:" then pure $ Other (drop 6 other)
         else pure $ Other other
 
 instance readForeignDiscountType :: ReadForeign DiscountType where
