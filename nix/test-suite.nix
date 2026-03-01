@@ -11,9 +11,15 @@ let
   frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head config.purescript.codeDirs));
   dataDir = config.dataDir;
 
-  # ─────────────────────────────────────────────
-  # Phase 1: Unit tests only (no services needed)
-  # ─────────────────────────────────────────────
+  # ── Test-specific ports (must not collide with dev/production) ──
+  testBackendPort = "18080";
+  testDbPort = "5432";
+
+
+  # ════════════════════════════════════════════════
+  # test-unit — no services needed
+  # ════════════════════════════════════════════════
+
   test-unit = pkgs.writeShellScriptBin "test-unit" ''
     set -euo pipefail
 
@@ -24,7 +30,7 @@ let
 
     FAILURES=0
 
-    # Backend unit tests
+    # ── Backend ──
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend (Haskell) unit tests             │"
     echo "└──────────────────────────────────────────┘"
@@ -37,7 +43,7 @@ let
 
     echo ""
 
-    # Frontend unit tests
+    # ── Frontend ──
     echo "┌──────────────────────────────────────────┐"
     echo "│  Frontend (PureScript) unit tests          │"
     echo "└──────────────────────────────────────────┘"
@@ -60,9 +66,11 @@ let
     exit $FAILURES
   '';
 
-  # ─────────────────────────────────────────────
-  # Phase 2: Integration tests (needs running backend + DB)
-  # ─────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════
+  # test-integration — ephemeral DB + backend
+  # ════════════════════════════════════════════════
+
   test-integration = pkgs.writeShellScriptBin "test-integration" ''
     set -euo pipefail
 
@@ -71,14 +79,22 @@ let
     echo "════════════════════════════════════════════"
     echo ""
 
-    # Use a separate PGDATA for test isolation
+    # ── Isolated test environment ──
+    # Use unique ports that do NOT collide with the dev/production services.
     export TEST_PGDATA="''${TMPDIR:-/tmp}/${name}-test-$$"
     export PGDATA="$TEST_PGDATA"
-    export PGPORT="${dbPort}"
+    export PGPORT="${testDbPort}"
     export PGUSER="$(whoami)"
     export PGPASSWORD="postgres"
     export PGDATABASE="${name}"
     export PGHOST="$PGDATA"
+
+    # Backend port — must match what we poll below
+    export PORT="${testBackendPort}"
+
+    # Explicit DATABASE_URL so the backend connects to the TEST database
+    # via the unix socket, not to a production instance on localhost.
+    export DATABASE_URL="postgresql://$PGUSER:$PGPASSWORD@/$PGDATABASE?host=$PGDATA&port=$PGPORT"
 
     BACKEND_PID=""
 
@@ -91,7 +107,7 @@ let
       if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" 2>/dev/null; then
         echo "Stopping backend (PID: $BACKEND_PID)..."
         kill -TERM "$BACKEND_PID" 2>/dev/null || true
-        # Give it a moment to shut down gracefully
+
         for i in $(seq 1 5); do
           kill -0 "$BACKEND_PID" 2>/dev/null || break
           sleep 1
@@ -99,7 +115,10 @@ let
         kill -9 "$BACKEND_PID" 2>/dev/null || true
       fi
 
-      # Stop test postgres
+      # Also kill anything on the test backend port (safety net)
+      ${pkgs.lsof}/bin/lsof -ti :${testBackendPort} 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+
+      # Stop test PostgreSQL
       if [ -d "$TEST_PGDATA" ]; then
         echo "Stopping test PostgreSQL..."
         ${pkgs.postgresql}/bin/pg_ctl -D "$TEST_PGDATA" stop -m immediate 2>/dev/null || true
@@ -111,8 +130,8 @@ let
     }
     trap cleanup EXIT INT TERM
 
-    # ── Start ephemeral PostgreSQL ──
-    echo "Starting ephemeral PostgreSQL for testing..."
+    # ── Ephemeral PostgreSQL ──
+    echo "Starting ephemeral PostgreSQL for testing (port ${testDbPort})..."
     mkdir -p "$TEST_PGDATA"
 
     ${pkgs.postgresql}/bin/initdb -D "$TEST_PGDATA" \
@@ -121,7 +140,7 @@ let
 
     cat > "$TEST_PGDATA/postgresql.conf" << EOF
     listen_addresses = '''
-    port = ${dbPort}
+    port = ${testDbPort}
     unix_socket_directories = '$TEST_PGDATA'
     max_connections = 20
     shared_buffers = '32MB'
@@ -136,7 +155,6 @@ let
     ${pkgs.postgresql}/bin/pg_ctl -D "$TEST_PGDATA" \
       -l "$TEST_PGDATA/postgresql.log" start > /dev/null 2>&1
 
-    # Wait for postgres
     echo "Waiting for PostgreSQL..."
     RETRIES=0
     while ! ${pkgs.postgresql}/bin/pg_isready -h "$PGHOST" -p "$PGPORT" -q 2>/dev/null; do
@@ -148,7 +166,7 @@ let
       fi
       sleep 1
     done
-    echo "✓ PostgreSQL ready"
+    echo "✓ PostgreSQL ready on port ${testDbPort} (unix socket only)"
 
     # Create test database
     ${pkgs.postgresql}/bin/psql -h "$PGHOST" -p "$PGPORT" postgres << EOF
@@ -165,18 +183,18 @@ let
     EOF
     echo "✓ Test database created"
 
-    # ── Start backend server ──
-    echo "Starting backend server..."
+    # ── Start backend on the TEST port ──
+    echo "Starting backend server on port ${testBackendPort}..."
     (cd ${backendPath} && cabal run ${name}-backend 2>&1 | sed 's/^/  [backend] /') &
     BACKEND_PID=$!
 
-    echo "Waiting for backend on port ${backendPort}..."
+    echo "Waiting for backend on port ${testBackendPort}..."
     RETRIES=0
-    while ! ${pkgs.curl}/bin/curl -s "http://${host}:${backendPort}/api/inventory" > /dev/null 2>&1; do
+    while ! ${pkgs.curl}/bin/curl -s "http://${host}:${testBackendPort}/api/inventory" > /dev/null 2>&1; do
       RETRIES=$((RETRIES + 1))
       if [ $RETRIES -ge 30 ]; then
         echo "Backend failed to start within 30 seconds"
-        # Check if process is still alive
+
         if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
           echo "Backend process died. Check build output above."
         fi
@@ -184,16 +202,16 @@ let
       fi
       sleep 1
     done
-    echo "✓ Backend ready at http://${host}:${backendPort}"
+    echo "✓ Backend ready at http://${host}:${testBackendPort}"
 
     echo ""
     FAILURES=0
 
-    # ── Run HTTP integration tests from Node.js (PureScript) ──
+    # ── Frontend integration tests (PS → Backend) ──
     echo "┌──────────────────────────────────────────┐"
     echo "│  HTTP Integration Tests (PS → Backend)    │"
     echo "└──────────────────────────────────────────┘"
-    if (cd ${frontendPath} && spago test --main Test.IntegrationMain 2>&1); then
+    if (cd ${frontendPath} && spago test 2>&1); then
       echo "✓ HTTP integration tests passed"
     else
       echo "✗ HTTP integration tests FAILED"
@@ -202,7 +220,7 @@ let
 
     echo ""
 
-    # ── Run backend integration tests against live DB ──
+    # ── Backend integration tests ──
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend Integration Tests (DB + API)     │"
     echo "└──────────────────────────────────────────┘"
@@ -210,7 +228,7 @@ let
       echo "✓ Backend integration tests passed"
     else
       echo "✗ Backend integration tests FAILED (or suite not found, which is OK)"
-      # Don't count as failure if the test suite doesn't exist yet
+      # Don't count as failure if suite doesn't exist yet
     fi
 
     echo ""
@@ -225,9 +243,11 @@ let
     exit $FAILURES
   '';
 
-  # ─────────────────────────────────────────────
-  # Full test suite: unit + integration
-  # ─────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════
+  # test-suite — unit + integration
+  # ════════════════════════════════════════════════
+
   test-suite = pkgs.writeShellScriptBin "test-suite" ''
     set -euo pipefail
 
@@ -239,7 +259,7 @@ let
 
     TOTAL_FAILURES=0
 
-    # Phase 1: Unit tests (no services)
+    # Phase 1
     echo "━━━ Phase 1: Unit Tests ━━━"
     echo ""
     if test-unit; then
@@ -254,7 +274,7 @@ let
 
     echo ""
 
-    # Phase 2: Integration tests (services spun up/down automatically)
+    # Phase 2
     echo "━━━ Phase 2: Integration Tests ━━━"
     echo ""
     if test-integration; then
@@ -279,10 +299,13 @@ let
     exit $TOTAL_FAILURES
   '';
 
-  # ─────────────────────────────────────────────
-  # Quick smoke test: just hit a running backend
-  # (useful during development)
-  # ─────────────────────────────────────────────
+
+  # ════════════════════════════════════════════════
+  # test-smoke — quick check against running backend
+  # Uses the PRODUCTION port (8080) since it tests
+  # an already-running deployment.
+  # ════════════════════════════════════════════════
+
   test-smoke = pkgs.writeShellScriptBin "test-smoke" ''
     set -euo pipefail
 
@@ -324,7 +347,7 @@ let
       fi
     }
 
-    # Auth: dev user UUIDs
+    # Dev user UUIDs (must match Auth.Simple & Config.Auth)
     ADMIN_UUID="d3a1f4f0-c518-4db3-aa43-e80b428d6304"
     CASHIER_UUID="0a6f2deb-892b-4411-8025-08c1a4d61229"
     CUSTOMER_UUID="8244082f-a6bc-4d6c-9427-64a0ecdc10db"
@@ -341,7 +364,7 @@ let
     echo ""
     echo "── JSON contract spot checks ──"
 
-    # Fetch inventory and verify JSON shape
+    # Verify inventory response structure
     INVENTORY_JSON=$(${pkgs.curl}/bin/curl -s -H "Authorization: $ADMIN_UUID" "$BASE_URL/api/inventory")
     if echo "$INVENTORY_JSON" | ${pkgs.jq}/bin/jq -e '.type' > /dev/null 2>&1; then
       TYPE=$(echo "$INVENTORY_JSON" | ${pkgs.jq}/bin/jq -r '.type')
@@ -353,7 +376,7 @@ let
         FAIL=$((FAIL + 1))
       fi
 
-      # If it's data, check for capabilities
+      # Check capabilities in data response
       if [ "$TYPE" = "data" ]; then
         if echo "$INVENTORY_JSON" | ${pkgs.jq}/bin/jq -e '.capabilities.capCanViewInventory' > /dev/null 2>&1; then
           echo "  ✓ Inventory response includes capabilities"

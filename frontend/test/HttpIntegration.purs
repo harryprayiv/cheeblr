@@ -2,9 +2,11 @@ module Test.HttpIntegration where
 
 import Prelude
 
-import Data.Maybe (Maybe(..), isJust)
+import Data.Maybe (Maybe(..), fromMaybe, isJust)
 import Effect.Aff (Aff)
+import Effect.Class (liftEffect)
 import Fetch (Method(..), fetch)
+import Node.Process as Process
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
 import Types.Inventory (InventoryResponse(..))
@@ -39,30 +41,36 @@ type FetchResult =
   , body :: String
   }
 
+getBaseUrl :: Aff String  
+getBaseUrl = do
+  mPort <- liftEffect $ Process.lookupEnv "TEST_BACKEND_PORT"
+  pure $ "http://localhost:" <> fromMaybe "8080" mPort
+
 -- | GET with optional auth header
 httpGet :: String -> Maybe String -> Aff FetchResult
 httpGet path authId = do
-  let url = baseUrl <> path
+  bUrl <- getBaseUrl
+  let url = bUrl <> path
   let authValue = case authId of
         Just uuid -> uuid
         Nothing -> ""
   response <- fetch url
     { method: GET
-    , headers: { "Authorization": authValue, "Content-Type": "application/json" }
+    , headers: { "X-User-Id": authValue, "Content-Type": "application/json" }
     }
   body <- response.text
   pure { status: response.status, body }
 
--- | POST with JSON body and optional auth
 httpPost :: String -> String -> Maybe String -> Aff FetchResult
 httpPost path jsonBody authId = do
-  let url = baseUrl <> path
+  bUrl <- getBaseUrl
+  let url = bUrl <> path
   let authValue = case authId of
         Just uuid -> uuid
         Nothing -> ""
   response <- fetch url
     { method: POST
-    , headers: { "Authorization": authValue, "Content-Type": "application/json" }
+    , headers: { "X-User-Id": authValue, "Content-Type": "application/json" }
     , body: jsonBody
     }
   body <- response.text
@@ -82,11 +90,11 @@ spec = describe "Live HTTP Integration" do
   describe "Backend connectivity" do
 
     it "GET /api/inventory returns 200" do
-      result <- httpGet "/api/inventory" (Just adminUUID)
+      result <- httpGet "/inventory" (Just adminUUID)
       result.status `shouldEqual` 200
 
     it "response body is valid JSON" do
-      result <- httpGet "/api/inventory" (Just adminUUID)
+      result <- httpGet "/inventory" (Just adminUUID)
       let parsed = readJSON_ result.body :: Maybe InventoryResponse
       parsed `shouldSatisfy` isJust
 
@@ -99,21 +107,21 @@ spec = describe "Live HTTP Integration" do
   describe "InventoryResponse contract" do
 
     it "admin gets InventoryData with full capabilities" do
-      result <- httpGet "/api/inventory" (Just adminUUID)
+      result <- httpGet "/inventory" (Just adminUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
         Just (InventoryData _ ) -> pure unit
         Just (Message _) -> pure unit -- empty DB is fine
         Nothing -> fail "Could not parse InventoryResponse from backend"
 
     it "customer gets InventoryData (read-only)" do
-      result <- httpGet "/api/inventory" (Just customerUUID)
+      result <- httpGet "/inventory" (Just customerUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
         Just (InventoryData _) -> pure unit
         Just (Message _) -> pure unit
         Nothing -> fail "Could not parse InventoryResponse for customer"
 
     it "unauthenticated request returns parseable response" do
-      result <- httpGet "/api/inventory" Nothing
+      result <- httpGet "/inventory" Nothing
       result.status `shouldEqual` 200
 
   -- ═══════════════════════════════════════════════
@@ -125,7 +133,7 @@ spec = describe "Live HTTP Integration" do
   describe "Capabilities parity over HTTP" do
 
     it "admin capabilities: all true" do
-      result <- httpGet "/api/inventory" (Just adminUUID)
+      result <- httpGet "/inventory" (Just adminUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
         Just (InventoryData _) ->
           -- If we got InventoryData, the capabilities were parsed.
@@ -136,7 +144,7 @@ spec = describe "Live HTTP Integration" do
         Nothing -> fail "Failed to parse admin InventoryResponse"
 
     it "cashier capabilities: can edit, cannot delete" do
-      result <- httpGet "/api/inventory" (Just cashierUUID)
+      result <- httpGet "/inventory" (Just cashierUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
         Just (InventoryData _) -> pure unit
         Just (Message _) -> pure unit
@@ -149,7 +157,7 @@ spec = describe "Live HTTP Integration" do
   describe "Register endpoints" do
 
     it "GET /api/registers returns 200 for cashier" do
-      result <- httpGet "/api/registers" (Just cashierUUID)
+      result <- httpGet "/registers" (Just cashierUUID)
       -- Even if no registers exist, should get valid response
       (result.status == 200 || result.status == 401) `shouldEqual` true
 
@@ -184,14 +192,14 @@ spec = describe "Live HTTP Integration" do
   describe "JSON field name verification" do
 
     it "inventory items use snake_case field names (strain_lineage, measure_unit)" do
-      result <- httpGet "/api/inventory" (Just adminUUID)
+      result <- httpGet "/inventory" (Just adminUUID)
       -- If this parses, the field names match
       let parsed = readJSON_ result.body :: Maybe InventoryResponse
       -- Even for empty inventory, the structure should parse
       parsed `shouldSatisfy` isJust
 
     it "backend response includes 'type' discriminator field" do
-      result <- httpGet "/api/inventory" (Just adminUUID)
+      result <- httpGet "/inventory" (Just adminUUID)
       -- The InventoryResponse parser relies on "type": "data" | "message"
       -- If it parses, the discriminator is present and correct
       let parsed = readJSON_ result.body :: Maybe InventoryResponse
@@ -206,7 +214,7 @@ spec = describe "Live HTTP Integration" do
   describe "Error response handling" do
 
     it "404 for unknown endpoint" do
-      result <- httpGet "/api/nonexistent" (Just adminUUID)
+      result <- httpGet "/nonexistent" (Just adminUUID)
       result.status `shouldEqual` 404
 
     it "invalid JSON body doesn't crash backend" do

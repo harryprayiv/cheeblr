@@ -15,6 +15,8 @@ import qualified Data.ByteString.Char8 as B8
 import qualified Data.CaseInsensitive as CI
 import Network.HTTP.Types.Status (status200)
 import qualified Data.ByteString.Builder as B
+import System.Environment (lookupEnv)
+import Data.Maybe (fromMaybe)
 
 data AppConfig = AppConfig
   { dbConfig :: DBConfig
@@ -24,18 +26,27 @@ data AppConfig = AppConfig
 run :: IO ()
 run = do
   currentUser <- getLoginName
+  
+  -- Read DB config from environment (for test isolation) with defaults
+  envHost     <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
+  envDbPort   <- maybe 5432 read <$> lookupEnv "PGPORT"
+  envPort     <- maybe 8080 read <$> lookupEnv "PORT"  
+  envDb       <- fromMaybe "cheeblr"   <$> lookupEnv "PGDATABASE"
+  envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
+  envPassword <- fromMaybe "postgres"   <$> lookupEnv "PGPASSWORD"
+
+
   let config =
         AppConfig
-          { dbConfig =
-              DBConfig
-                { dbHost = "localhost"
-                , dbPort = 5432
-                , dbName = "cheeblr"
-                , dbUser = currentUser
-                , dbPassword = "postgres"
-                , poolSize = 10
-                }
-          , serverPort = 8080
+          { dbConfig = DBConfig
+            { dbHost = envHost
+            , dbPort = envDbPort
+            , dbName = envDb
+            , dbUser = envUser
+            , dbPassword = envPassword
+            , poolSize = 10
+            }
+          , serverPort = envPort 
           }
 
   pool <- initializeDB (dbConfig config)
