@@ -29,24 +29,24 @@ run = do
   
   -- Read DB config from environment (for test isolation) with defaults
   envHost     <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
-  envDbPort   <- maybe 5432 read <$> lookupEnv "PGPORT"
-  envPort     <- maybe 8080 read <$> lookupEnv "PORT"  
+  envDbPort   <- maybe 5432 read <$> lookupEnv "PGPORT"    -- DB port
+  envPort     <- maybe 8080 read <$> lookupEnv "PORT"       -- HTTP server port
   envDb       <- fromMaybe "cheeblr"   <$> lookupEnv "PGDATABASE"
   envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
   envPassword <- fromMaybe "postgres"   <$> lookupEnv "PGPASSWORD"
 
-
   let config =
         AppConfig
-          { dbConfig = DBConfig
-            { dbHost = envHost
-            , dbPort = envDbPort
-            , dbName = envDb
-            , dbUser = envUser
-            , dbPassword = envPassword
-            , poolSize = 10
-            }
-          , serverPort = envPort 
+          { dbConfig =
+              DBConfig
+                { dbHost = envHost
+                , dbPort = envDbPort    -- ← PGPORT (5432)
+                , dbName = envDb
+                , dbUser = envUser
+                , dbPassword = envPassword
+                , poolSize = 10
+                }
+          , serverPort = envPort        -- ← PORT (8080 / 18080 for tests)
           }
 
   pool <- initializeDB (dbConfig config)
