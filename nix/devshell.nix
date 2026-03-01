@@ -414,6 +414,7 @@ let
       echo "    backend-stop           - Stop Haskell Back End"          
       echo "    frontend-start         - Start Purescript Front End"
       echo "    frontend-stop          - Stop Purescript Front End" 
+      echo ""      
       echo "  Testing:"
       echo "    test-unit              - Run all unit tests (no services needed)"
       echo "    test-integration       - Spin up DB+backend, run HTTP integration tests"
