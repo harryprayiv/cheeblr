@@ -596,7 +596,7 @@ spec = describe "Integration: JSON Contract Tests" $ do
     -- If these ever drift, the frontend shows UI for actions the backend rejects
     -- (or hides UI for actions the backend allows)
 
-    let backendCaps role = capabilitiesForRole role
+    let backendCaps = capabilitiesForRole
 
     describe "Customer capabilities" $ do
       let caps = backendCaps Customer
