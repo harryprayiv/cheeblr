@@ -92,3 +92,18 @@ executable domain-codegen
     build-depends: cheeblr-backend
                  , filepath
                  , directory
+test-suite cheeblr-test
+  import:           shared-properties
+  type:             exitcode-stdio-1.0
+  main-is:          Spec.hs
+  hs-source-dirs:   test
+  other-modules:
+    Test.Types.AuthSpec
+    Test.Types.TransactionSpec
+    Test.Types.InventorySpec
+    Test.Auth.SimpleSpec
+    Test.API.TransactionSpec
+    Test.DB.PureFunctionsSpec
+  build-depends:
+    cheeblr-backend
+    , hspec

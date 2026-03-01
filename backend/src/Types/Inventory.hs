@@ -51,7 +51,7 @@ data StrainLineage = StrainLineage
   , leafly_url :: Text
   , img :: Text
   }
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 instance ToJSON StrainLineage
 instance FromJSON StrainLineage
@@ -72,7 +72,7 @@ data MenuItem = MenuItem
   , effects :: V.Vector Text
   , strain_lineage :: StrainLineage
   }
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 instance ToJSON MenuItem
 instance FromJSON MenuItem
@@ -126,7 +126,7 @@ instance FromRow MenuItem where
 newtype Inventory = Inventory
   { items :: V.Vector MenuItem
   }
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 instance ToJSON Inventory where
   toJSON (Inventory {items = items}) = toJSON items
@@ -141,7 +141,7 @@ data InventoryResponse
       , inventoryCapabilities :: UserCapabilities
       }
   | Message Text
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 instance ToJSON InventoryResponse where
   toJSON (InventoryData inv caps) =

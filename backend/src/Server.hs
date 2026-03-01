@@ -12,7 +12,6 @@ import qualified Data.ByteString.Lazy.Char8 as LBS
 import Database.PostgreSQL.Simple
 import Data.Pool (Pool)
 import Data.Text (Text, pack)
-import qualified Data.Text as T
 import Servant
 import DB.Database (getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
 import Types.Inventory
