@@ -328,6 +328,24 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
       , strain_lineage
       }
 
+instance writeForeignItemCategory :: WriteForeign ItemCategory where
+  writeImpl = writeImpl <<< show
+
+instance readForeignItemCategory :: ReadForeign ItemCategory where
+  readImpl json = do
+    str <- readImpl json
+    case str of
+      "Flower" -> pure Flower
+      "PreRolls" -> pure PreRolls
+      "Vaporizers" -> pure Vaporizers
+      "Edibles" -> pure Edibles
+      "Drinks" -> pure Drinks
+      "Concentrates" -> pure Concentrates
+      "Topicals" -> pure Topicals
+      "Tinctures" -> pure Tinctures
+      "Accessories" -> pure Accessories
+      _ -> fail (ForeignError $ "Invalid ItemCategory: " <> str)
+
 -- Helper function to check if a number has no decimal component
 isWholeNumber :: Number -> Boolean
 isWholeNumber n = n == Int.toNumber (Int.floor n)

@@ -246,6 +246,20 @@ instance showAccountType :: Show AccountType where
   show Revenue = "REVENUE"
   show Expense = "EXPENSE"
 
+instance showTaxCategory :: Show TaxCategory where
+  show RegularSalesTax = "RegularSalesTax"
+  show ExciseTax = "ExciseTax"
+  show CannabisTax = "CannabisTax"
+  show LocalTax = "LocalTax"
+  show MedicalTax = "MedicalTax"
+  show NoTax = "NoTax"
+
+instance showDiscountType :: Show DiscountType where
+  show (PercentOff pct) = "PercentOff " <> show pct
+  show (AmountOff amt) = "AmountOff " <> show amt
+  show BuyOneGetOne = "BuyOneGetOne"
+  show (Custom name amt) = "Custom " <> show name <> " " <> show amt
+
 instance showLedgerEntryType :: Show LedgerEntryType where
   show SaleEntry = "SALE"
   show Tax = "TAX"

@@ -32,7 +32,7 @@ import Pages.TransactionHistory as Pages.TransactionHistory
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
-import Services.AuthService (AuthState, defaultAuthState, userIdFromAuth)
+import Services.AuthService (defaultAuthState, userIdFromAuth)
 import Services.RegisterService as RegisterService
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
