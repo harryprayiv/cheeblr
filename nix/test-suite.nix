@@ -34,7 +34,7 @@ let
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend (Haskell) unit tests             │"
     echo "└──────────────────────────────────────────┘"
-    if (cd ${backendPath} && cabal test --test-show-details=streaming 2>&1); then
+    if (cd ${backendPath} && cabal test cheeblr-unit-tests --test-show-details=streaming 2>&1); then
       echo "✓ Backend tests passed"
     else
       echo "✗ Backend tests FAILED"
@@ -224,7 +224,7 @@ let
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend Integration Tests (DB + API)     │"
     echo "└──────────────────────────────────────────┘"
-    if (cd ${backendPath} && cabal test integration-tests --test-show-details=streaming 2>&1); then
+    if (cd ${backendPath} && cabal test cheeblr-integration-tests --test-show-details=streaming 2>&1); then
       echo "✓ Backend integration tests passed"
     else
       echo "✗ Backend integration tests FAILED (or suite not found, which is OK)"

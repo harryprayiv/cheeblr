@@ -70,7 +70,7 @@ executable cheeblr-backend
     build-depends: cheeblr-backend
     pkgconfig-depends: libpq
 
-test-suite cheeblr-test
+test-suite cheeblr-unit-tests
   import:           shared-properties
   type:             exitcode-stdio-1.0
   main-is:          Spec.hs
@@ -82,6 +82,16 @@ test-suite cheeblr-test
     Test.Auth.SimpleSpec
     Test.API.TransactionSpec
     Test.DB.PureFunctionsSpec
+  build-depends:
+    cheeblr-backend
+    , hspec
+
+test-suite cheeblr-integration-tests
+  import:           shared-properties
+  type:             exitcode-stdio-1.0
+  main-is:          SpecIntegration.hs
+  hs-source-dirs:   test
+  other-modules:
     Test.Integration.JsonContractSpec
   build-depends:
     cheeblr-backend

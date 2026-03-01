@@ -8,7 +8,6 @@ import qualified Test.Types.InventorySpec
 import qualified Test.Auth.SimpleSpec
 import qualified Test.API.TransactionSpec
 import qualified Test.DB.PureFunctionsSpec
-import qualified Test.Integration.JsonContractSpec
 
 main :: IO ()
 main = hspec $ do
@@ -19,4 +18,3 @@ main = hspec $ do
     Test.Auth.SimpleSpec.spec
     Test.API.TransactionSpec.spec
     Test.DB.PureFunctionsSpec.spec
-  describe "Integration" Test.Integration.JsonContractSpec.spec
