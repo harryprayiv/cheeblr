@@ -10,6 +10,7 @@ import Control.Monad.ST.Class (liftST)
 import Control.Parallel (parSequence_, parallel, sequential)
 import Data.Array (find)
 import Data.Either (Either(..))
+import Data.Foldable (for_)
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Tuple (Tuple(..), fst, snd)
 import Deku.Core (fixed)
@@ -35,6 +36,7 @@ import Routing.Hash (matchesWith)
 import Services.AuthService (defaultAuthState, userIdFromAuth)
 import Services.RegisterService as RegisterService
 import Services.TransactionService as TransactionService
+import Types.Auth (UserCapabilities)
 import Types.Inventory (Inventory(..), InventoryResponse(..), MenuItem(..))
 import Types.Register (Register)
 import Types.Transaction (Transaction)
@@ -59,22 +61,38 @@ getOrInitRegisterAff userId locationId employeeId =
 testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
 
-loadInventoryStatus :: String -> Aff Pages.LiveView.InventoryLoadStatus
+loadInventoryStatus :: String -> Aff 
+  { status :: Pages.LiveView.InventoryLoadStatus
+  , capabilities :: Maybe UserCapabilities 
+  }
 loadInventoryStatus userId = do
   result <- fetchInventory userId
     defaultViewConfig.fetchConfig
     defaultViewConfig.mode
   pure $ case result of
-    Right (InventoryData inv) -> Pages.LiveView.InventoryLoaded inv
-    Right (Message msg) -> Pages.LiveView.InventoryError msg
-    Left err -> Pages.LiveView.InventoryError err
+    Right (InventoryData inv caps) -> 
+      { status: Pages.LiveView.InventoryLoaded inv, capabilities: caps }
+    Right (Message msg) -> 
+      { status: Pages.LiveView.InventoryError msg, capabilities: Nothing }
+    Left err -> 
+      { status: Pages.LiveView.InventoryError err, capabilities: Nothing }
+
+-- loadInventoryStatus :: String -> Aff Pages.LiveView.InventoryLoadStatus
+-- loadInventoryStatus userId = do
+--   result <- fetchInventory userId
+--     defaultViewConfig.fetchConfig
+--     defaultViewConfig.mode
+--   pure $ case result of
+--     Right (InventoryData inv) -> Pages.LiveView.InventoryLoaded inv
+--     Right (Message msg) -> Pages.LiveView.InventoryError msg
+--     Left err -> Pages.LiveView.InventoryError err
 
 loadEditItem :: String -> String -> Aff Pages.EditItem.EditItemStatus
 loadEditItem userId rawUuid = do
   let uuid = if rawUuid == "test" then testItemUUID else rawUuid
   result <- readInventory userId
   pure $ case result of
-    Right (InventoryData (Inventory items)) ->
+    Right (InventoryData (Inventory items) _) ->
       case find (\(MenuItem item) -> show item.sku == uuid) items of
         Just menuItem -> Pages.EditItem.EditReady menuItem
         Nothing -> Pages.EditItem.EditNotFound uuid
@@ -88,7 +106,7 @@ loadDeleteItem userId rawUuid = do
   let uuid = if rawUuid == "test" then testItemUUID else rawUuid
   result <- readInventory userId
   pure $ case result of
-    Right (InventoryData (Inventory items)) ->
+    Right (InventoryData (Inventory items) _) ->
       case find (\(MenuItem item) -> show item.sku == uuid) items of
         Just (MenuItem item) -> Pages.DeleteItem.DeleteReady uuid item.name
         Nothing -> Pages.DeleteItem.DeleteNotFound uuid
@@ -118,7 +136,7 @@ loadTxPageData userId = do
       defaultViewConfig.fetchConfig
       defaultViewConfig.mode
     pure $ case result of
-      Right (InventoryData inv) -> Right inv
+      Right (InventoryData inv _) -> Right inv
       Right (Message msg) -> Left msg
       Left err -> Left err
 
@@ -148,7 +166,8 @@ main = do
   let authPoll = pure defaultAuthState <|> authState.poll
 
   currentRoute <- liftST Poll.create
-
+  backendCaps <- liftST Poll.create
+  
   let userId = userIdFromAuth defaultAuthState
 
   -- Shared state polls — one per route that needs async data
@@ -178,7 +197,14 @@ main = do
       newAction <- launchAff $ killFiber (error "route changed") pa *>
         parSequence_ case r of
           LiveView ->
-            [ run (loadInventoryStatus userId) inventory ]
+            [ do
+                result <- loadInventoryStatus userId
+                liftEffect do
+                  for_ result.capabilities backendCaps.push
+                  inventory.push result.status
+            ]
+          -- LiveView ->
+          --   [ run (loadInventoryStatus userId) inventory ]
           Edit uuid ->
             [ run (loadEditItem userId uuid) editItem ]
           Delete uuid ->

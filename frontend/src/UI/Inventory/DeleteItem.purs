@@ -56,7 +56,7 @@ deleteItem userId itemId itemName = Deku.do
                       setStatusMessage msg
                       setSuccess true
                       setSubmitting false
-                    Right (InventoryData _) -> do
+                    Right (InventoryData _ _) -> do
                       Console.log "Item deleted successfully"
                       setStatusMessage "Item successfully deleted!"
                       setSuccess true

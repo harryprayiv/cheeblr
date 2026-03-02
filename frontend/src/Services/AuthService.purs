@@ -6,7 +6,7 @@ import Config.Auth (DevUser, allDevUsers, defaultDevUser, devUserCapabilities, t
 import Data.Filterable (filterMap)
 import Data.Maybe (Maybe(..))
 import FRP.Poll (Poll)
-import Types.Auth (AuthenticatedUser, UserCapabilities, UserRole)
+import Types.Auth (AuthenticatedUser, UserCapabilities, UserRole, emptyCapabilities)
 import Types.UUID (UUID)
 
 -- | Core auth state ADT — mirrors the realworld pattern.
@@ -120,3 +120,8 @@ canManageUsers = checkCapability _.capCanManageUsers
 
 canViewCompliance :: AuthState -> Boolean
 canViewCompliance = checkCapability _.capCanViewCompliance
+
+resolveCapabilities :: Maybe UserCapabilities -> AuthState -> UserCapabilities
+resolveCapabilities (Just backendCaps) _ = backendCaps
+resolveCapabilities Nothing (SignedIn user) = devUserCapabilities user
+resolveCapabilities Nothing SignedOut = emptyCapabilities

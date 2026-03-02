@@ -226,7 +226,7 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
 
       it "parses InventoryData variant (ignoring capabilities)" do
         case (readJSON_ backendInvResponseJson :: Maybe InventoryResponse) of
-          Just (InventoryData (Inventory items)) ->
+          Just (InventoryData (Inventory items) _) ->
             (items /= []) `shouldEqual` true
           Just (Message _) -> (false) `shouldEqual` true -- wrong variant
           Nothing -> (false) `shouldEqual` true

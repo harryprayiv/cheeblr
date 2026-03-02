@@ -3,6 +3,7 @@ module Types.Inventory where
 import Prelude
 
 import Config.LiveView (LiveViewConfig, SortField(..), SortOrder(..))
+import Control.Alt ((<|>))
 import Data.Array (find)
 import Data.Array as Array
 import Data.Either (Either(..))
@@ -19,8 +20,9 @@ import Data.String.Pattern (Replacement(..))
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
 import Data.Validation.Semigroup (V, invalid, toEither, andThen)
-import Foreign (Foreign, F, ForeignError(..), fail, typeOf)
+import Foreign (F, ForeignError(..), fail)
 import Foreign.Index (readProp)
+import Types.Auth (UserCapabilities)
 import Types.UUID (UUID, parseUUID, validateUUID)
 import Utils.Formatting (invertOrdering, parseCommaList)
 import Utils.Validation (validateInt, validateNumber, validatePercentage, validateString, validateUrl)
@@ -28,7 +30,7 @@ import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
 
 
 data InventoryResponse
-  = InventoryData Inventory
+  = InventoryData Inventory (Maybe UserCapabilities)
   | Message String
 
 derive instance genericInventory :: Generic Inventory _
@@ -274,8 +276,8 @@ instance writeForeignSpecies :: WriteForeign Species where
   writeImpl = writeImpl <<< show
 
 instance writeForeignInventoryResponse :: WriteForeign InventoryResponse where
-  writeImpl (InventoryData inventory) = writeImpl
-    { type: "data", value: inventory }
+  writeImpl (InventoryData inventory caps) = writeImpl
+    { type: "data", value: inventory, capabilities: caps }
   writeImpl (Message msg) = writeImpl { type: "message", value: msg }
 
 instance readForeignMenuItem :: ReadForeign MenuItem where
@@ -396,27 +398,23 @@ instance readForeignStrainLineage :: ReadForeign StrainLineage where
       }
 
 instance readForeignInventoryResponse :: ReadForeign InventoryResponse where
-  readImpl f = do
-    obj <- readImpl f
-    case obj of
-
-      array | isArray array -> do
-        inventory <- readImpl array :: F Inventory
-        pure $ InventoryData inventory
-
-      _ -> do
-        typeField <- readProp "type" obj >>= readImpl :: F String
-        case typeField of
-          "data" -> do
-            value <- readProp "value" obj >>= readImpl :: F Inventory
-            pure $ InventoryData value
-          "message" -> do
-            value <- readProp "value" obj >>= readImpl :: F String
-            pure $ Message value
-          _ -> fail $ ForeignError "Invalid response type"
+  readImpl f = parseAsArray <|> parseAsObject
     where
-    isArray :: Foreign -> Boolean
-    isArray value = typeOf value == "array"
+    parseAsArray = do
+      inventory <- readImpl f :: F Inventory
+      pure $ InventoryData inventory Nothing
+    parseAsObject = do
+      typeField <- readProp "type" f >>= readImpl :: F String
+      case typeField of
+        "data" -> do
+          value <- readProp "value" f >>= readImpl :: F Inventory
+          caps <- (Just <$> (readProp "capabilities" f >>= readImpl))
+                    <|> pure Nothing
+          pure $ InventoryData value caps
+        "message" -> do
+          value <- readProp "value" f >>= readImpl :: F String
+          pure $ Message value
+        _ -> fail $ ForeignError "Invalid response type"
 
 derive instance Generic MenuItem _
 

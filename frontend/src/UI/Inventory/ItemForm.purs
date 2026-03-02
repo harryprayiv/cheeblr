@@ -633,7 +633,7 @@ itemForm userId mode =
                                   CreateMode _ -> resetForm
                                   EditMode _   -> pure unit
 
-                              Right (InventoryData _) -> do
+                              Right (InventoryData _ _) -> do
                                 setStatusMessage "Success"
                                 setSubmitting false
 

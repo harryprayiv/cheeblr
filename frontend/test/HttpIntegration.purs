@@ -109,14 +109,14 @@ spec = describe "Live HTTP Integration" do
     it "admin gets InventoryData with full capabilities" do
       result <- httpGet "/inventory" (Just adminUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _ ) -> pure unit
+        Just (InventoryData _ _) -> pure unit
         Just (Message _) -> pure unit -- empty DB is fine
         Nothing -> fail "Could not parse InventoryResponse from backend"
 
     it "customer gets InventoryData (read-only)" do
       result <- httpGet "/inventory" (Just customerUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _) -> pure unit
+        Just (InventoryData _ _) -> pure unit
         Just (Message _) -> pure unit
         Nothing -> fail "Could not parse InventoryResponse for customer"
 
@@ -135,7 +135,7 @@ spec = describe "Live HTTP Integration" do
     it "admin capabilities: all true" do
       result <- httpGet "/inventory" (Just adminUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _) ->
+        Just (InventoryData _ _) ->
           -- If we got InventoryData, the capabilities were parsed.
           -- The JSON contract tests already verify field-level parity;
           -- this confirms the backend actually sends them over HTTP.
@@ -146,7 +146,7 @@ spec = describe "Live HTTP Integration" do
     it "cashier capabilities: can edit, cannot delete" do
       result <- httpGet "/inventory" (Just cashierUUID)
       case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _) -> pure unit
+        Just (InventoryData _ _) -> pure unit
         Just (Message _) -> pure unit
         Nothing -> fail "Failed to parse cashier InventoryResponse"
 

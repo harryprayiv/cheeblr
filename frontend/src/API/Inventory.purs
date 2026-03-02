@@ -3,7 +3,9 @@ module API.Inventory where
 import Prelude
 
 import API.Request as Request
+import Config.LiveView (QueryMode(..), FetchConfig)
 import Data.Either (Either(..))
+import Data.Maybe (Maybe(..))
 import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
@@ -12,7 +14,6 @@ import Fetch (fetch)
 import Fetch.Yoga.Json (fromJSON)
 import Services.AuthService (UserId)
 import Types.Inventory (Inventory, InventoryResponse(..), MenuItem)
-import Config.LiveView (QueryMode(..), FetchConfig)
 
 writeInventory :: UserId -> MenuItem -> Aff (Either String InventoryResponse)
 writeInventory userId menuItem =
@@ -41,7 +42,7 @@ fetchInventoryFromJson config = do
     pure inventory
   pure case result of
     Left err -> Left $ "JSON fetch error: " <> show err
-    Right inventory -> Right $ InventoryData inventory
+    Right inventory -> Right $ InventoryData inventory Nothing
 
 fetchInventoryFromHttp :: UserId -> FetchConfig -> Aff (Either String InventoryResponse)
 fetchInventoryFromHttp userId config =
