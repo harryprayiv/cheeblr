@@ -1018,7 +1018,8 @@ showPaymentMethod ACH = "ACH"
 showPaymentMethod GiftCard = "GIFT_CARD"
 showPaymentMethod StoredValue = "STORED_VALUE"
 showPaymentMethod Mixed = "MIXED"
-showPaymentMethod (Other text) = "OTHER"
+showPaymentMethod (Other text) = "OTHER:" <> text
+
 
 showTaxCategory :: TaxCategory -> Text
 showTaxCategory RegularSalesTax = "REGULAR_SALES_TAX"

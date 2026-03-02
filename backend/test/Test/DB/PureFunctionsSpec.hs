@@ -120,7 +120,7 @@ spec = describe "DB.Transaction pure functions" $ do
     it "shows GiftCard"    $ showPaymentMethod GiftCard `shouldBe` "GIFT_CARD"
     it "shows StoredValue" $ showPaymentMethod StoredValue `shouldBe` "STORED_VALUE"
     it "shows Mixed"       $ showPaymentMethod Mixed `shouldBe` "MIXED"
-    it "shows Other"       $ showPaymentMethod (Other "Crypto") `shouldBe` "OTHER"
+    it "shows Other"       $ showPaymentMethod (Other "Crypto") `shouldBe` "OTHER:Crypto"
 
   -- ──────────────────────────────────────────────
   -- showTaxCategory
@@ -187,14 +187,16 @@ spec = describe "DB.Transaction pure functions" $ do
       transactionItemTotal negated `shouldBe` negate (transactionItemTotal mkItem)
 
     it "negates nested discounts" $ do
-      let origDiscount = head (transactionItemDiscounts mkItem)
-      let negDiscount = head (transactionItemDiscounts negated)
-      discountAmount negDiscount `shouldBe` negate (discountAmount origDiscount)
+      case (transactionItemDiscounts mkItem, transactionItemDiscounts negated) of
+        (origDiscount:_, negDiscount:_) ->
+          discountAmount negDiscount `shouldBe` negate (discountAmount origDiscount)
+        _ -> expectationFailure "Expected at least one discount"
 
     it "negates nested taxes" $ do
-      let origTax = head (transactionItemTaxes mkItem)
-      let negTax = head (transactionItemTaxes negated)
-      taxAmount negTax `shouldBe` negate (taxAmount origTax)
+      case (transactionItemTaxes mkItem, transactionItemTaxes negated) of
+        (origTax:_, negTax:_) ->
+          taxAmount negTax `shouldBe` negate (taxAmount origTax)
+        _ -> expectationFailure "Expected at least one tax"
 
   -- ──────────────────────────────────────────────
   -- negateDiscountRecord

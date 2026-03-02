@@ -77,8 +77,33 @@ data DiscountType
   | Custom Text Int
   deriving (Show, Eq, Ord, Generic)
 
-instance ToJSON DiscountType
-instance FromJSON DiscountType
+instance ToJSON DiscountType where
+  toJSON (PercentOff pct) = object
+    [ "discountType" .= ("PERCENT_OFF" :: Text)
+    , "percent" .= pct
+    ]
+  toJSON (AmountOff amt) = object
+    [ "discountType" .= ("AMOUNT_OFF" :: Text)
+    , "amount" .= amt
+    ]
+  toJSON BuyOneGetOne = object
+    [ "discountType" .= ("BUY_ONE_GET_ONE" :: Text)
+    ]
+  toJSON (Custom name amt) = object
+    [ "discountType" .= ("CUSTOM" :: Text)
+    , "name" .= name
+    , "amount" .= amt
+    ]
+
+instance FromJSON DiscountType where
+  parseJSON = withObject "DiscountType" $ \v -> do
+    typ <- v .: "discountType"
+    case (typ :: Text) of
+      "PERCENT_OFF"    -> PercentOff <$> v .: "percent"
+      "AMOUNT_OFF"     -> AmountOff <$> v .: "amount"
+      "BUY_ONE_GET_ONE" -> pure BuyOneGetOne
+      "CUSTOM"         -> Custom <$> v .: "name" <*> v .: "amount"
+      other            -> fail $ "Unknown DiscountType: " ++ T.unpack other
 
 data TaxRecord = TaxRecord
   { taxCategory :: TaxCategory
@@ -415,8 +440,7 @@ parseDiscountType typ _
 -- FromRow instance for TaxRecord
 instance FromRow TaxRecord where
   fromRow =
-    TaxRecord
-      <$> (parseTaxCategory <$> field)
+    (TaxRecord . parseTaxCategory <$> field)
       <*> field
       <*> field
       <*> field
@@ -467,8 +491,8 @@ parsePaymentMethod "StoredValue" = StoredValue
 parsePaymentMethod "MIXED" = Mixed
 parsePaymentMethod "Mixed" = Mixed
 parsePaymentMethod s
-  | "OTHER:" `isPrefixOf` s = Other (T.pack $ drop 6 s)
-  | "Other:" `isPrefixOf` s = Other (T.pack $ drop 6 s)
+  | "OTHER:" `Data.List.isPrefixOf` s = Other (T.pack $ drop 6 s)
+  | "Other:" `Data.List.isPrefixOf` s = Other (T.pack $ drop 6 s)
   | otherwise = Other (T.pack s)
 
 parseTaxCategory :: String -> TaxCategory

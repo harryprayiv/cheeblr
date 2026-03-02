@@ -6,10 +6,8 @@ import Data.DateTime (DateTime)
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
 import Data.Finance.Money.Extended (DiscreteMoney)
-import Data.Int as Int
-import Data.Maybe (Maybe(..))
+import Data.Maybe (Maybe)
 import Data.Newtype (class Newtype, unwrap)
-import Data.Number as Number
 import Data.String (drop, take)
 import Data.Nullable (Nullable, toNullable)
 import Foreign (ForeignError(..), fail)
@@ -344,20 +342,13 @@ instance writeForeignPaymentMethod :: WriteForeign PaymentMethod where
 
 instance writeForeignDiscountType :: WriteForeign DiscountType where
   writeImpl (PercentOff pct) = writeImpl
-    { discountType: "PERCENT_OFF", percent: pct, amount: 0.0 }
+    { discountType: "PERCENT_OFF", percent: pct }
   writeImpl (AmountOff amount) = writeImpl
-    { discountType: "AMOUNT_OFF"
-    , percent: 0.0
-    , amount: show ((Int.toNumber (unwrap amount)) / 100.0)
-    }
+    { discountType: "AMOUNT_OFF", amount: unwrap amount }
   writeImpl BuyOneGetOne = writeImpl
-    { discountType: "BUY_ONE_GET_ONE", percent: 0.0, amount: 0.0 }
+    { discountType: "BUY_ONE_GET_ONE" }
   writeImpl (Custom name amount) = writeImpl
-    { discountType: "CUSTOM"
-    , name
-    , percent: 0.0
-    , amount: show ((Int.toNumber (unwrap amount)) / 100.0)
-    }
+    { discountType: "CUSTOM", name, amount: unwrap amount }
 
 instance writeForeignTaxCategory :: WriteForeign TaxCategory where
   writeImpl RegularSalesTax = writeImpl "RegularSalesTax"
@@ -487,17 +478,13 @@ instance readForeignDiscountType :: ReadForeign DiscountType where
     case discType of
       "PERCENT_OFF" -> PercentOff <$> (readProp "percent" obj >>= readImpl)
       "AMOUNT_OFF" -> do
-        amountStr <- readProp "amount" obj >>= readImpl
-        case Number.fromString amountStr of
-          Just n -> pure $ AmountOff (Discrete (Int.floor (n * 100.0)))
-          Nothing -> fail (ForeignError $ "Invalid amount: " <> amountStr)
+        amt <- readProp "amount" obj >>= readImpl
+        pure $ AmountOff (Discrete amt)
       "BUY_ONE_GET_ONE" -> pure BuyOneGetOne
       "CUSTOM" -> do
         name <- readProp "name" obj >>= readImpl
-        amountStr <- readProp "amount" obj >>= readImpl
-        case Number.fromString amountStr of
-          Just n -> pure $ Custom name (Discrete (Int.floor (n * 100.0)))
-          Nothing -> fail (ForeignError $ "Invalid amount: " <> amountStr)
+        amt <- readProp "amount" obj >>= readImpl
+        pure $ Custom name (Discrete amt)
       _ -> fail (ForeignError $ "Invalid DiscountType: " <> discType)
 
 instance readForeignTaxCategory :: ReadForeign TaxCategory where

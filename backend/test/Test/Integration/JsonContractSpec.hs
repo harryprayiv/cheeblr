@@ -21,6 +21,8 @@ import API.Transaction
   
   )
 import Auth.Simple (lookupUser)
+import qualified Data.Text as T
+import DB.Transaction (showPaymentMethod)
 
 -- ──────────────────────────────────────────────
 -- Fixtures matching what PureScript frontend sends
@@ -513,58 +515,37 @@ spec = describe "Integration: JSON Contract Tests" $ do
             registerOpenedAt r `shouldBe` Nothing
           Error err -> expectationFailure $ "Failed to parse: " ++ err
 
-  -- ═══════════════════════════════════════════════
-  -- SECTION 4: Known mismatch documentation
-  -- These tests document the DiscountType mismatch
-  -- ═══════════════════════════════════════════════
+  describe "DiscountType serialization (aligned)" $ do
+      it "backend serializes PercentOff as flat discriminated object" $ do
+        let dt = PercentOff (fromFloatDigits (10.0 :: Double))
+        case toJSON dt of
+          Object obj -> do
+            KM.lookup "discountType" obj `shouldBe` Just (String "PERCENT_OFF")
+            member "percent" obj `shouldBe` True
+          _ -> expectationFailure "Expected object"
 
-  describe "KNOWN MISMATCH: DiscountType serialization" $ do
-    -- Backend uses Generic-derived tagged union format
-    -- Frontend uses flat discriminated object format
-    -- These tests document the incompatibility
+      it "backend serializes AmountOff with cents" $ do
+        let dt = AmountOff 500
+        case toJSON dt of
+          Object obj -> do
+            KM.lookup "discountType" obj `shouldBe` Just (String "AMOUNT_OFF")
+            KM.lookup "amount" obj `shouldBe` Just (Number 500)
+          _ -> expectationFailure "Expected object"
 
-    it "backend serializes PercentOff as tagged union" $ do
-      let dt = PercentOff (fromFloatDigits (10.0 :: Double))
-      -- Generic produces: {"tag":"PercentOff","contents":10.0}
-      case toJSON dt of
-        Object obj -> do
-          -- This is what the backend sends
-          member "tag" obj `shouldBe` True
-          -- But PureScript expects: {discountType: "PERCENT_OFF", percent: 10.0}
-          member "discountType" obj `shouldBe` False  -- MISMATCH!
-        _ -> expectationFailure "Expected object"
+      it "roundtrips DiscountType through JSON" $ do
+        let types = [ PercentOff (fromFloatDigits (10.0 :: Double))
+                    , AmountOff 500
+                    , BuyOneGetOne
+                    , Custom "Employee" 250
+                    ]
+        mapM_ (\dt -> fromJSON (toJSON dt) `shouldBe` Success dt) types
 
-    it "backend serializes AmountOff as tagged union" $ do
-      let dt = AmountOff 500
-      case toJSON dt of
-        Object obj -> do
-          member "tag" obj `shouldBe` True
-          member "discountType" obj `shouldBe` False  -- MISMATCH!
-        _ -> expectationFailure "Expected object"
-
-    it "backend cannot parse PureScript DiscountType format" $ do
-      -- This is what PureScript WriteForeign produces:
-      let frontendJson = object
-            [ "discountType" .= String "PERCENT_OFF"
-            , "percent" .= (10.0 :: Double)
-            , "amount" .= (0.0 :: Double)
-            ]
-      let result = fromJSON frontendJson :: Result DiscountType
-      case result of
-        Error _ -> pure ()  -- Expected: backend can't parse frontend format
-        Success _ -> expectationFailure
-          "Backend unexpectedly parsed frontend DiscountType format - mismatch may be resolved"
-
-    it "frontend cannot parse backend DiscountType format" $ do
-      -- This is what Haskell Generic ToJSON produces:
-      let backendJson = toJSON (PercentOff (fromFloatDigits (10.0 :: Double)))
-      -- PureScript readImpl looks for "discountType" key which won't exist
-      -- We document this by verifying the JSON structure
-      case backendJson of
-        Object obj -> do
-          member "tag" obj `shouldBe` True       -- backend sends this
-          member "discountType" obj `shouldBe` False  -- frontend looks for this
-        _ -> expectationFailure "Expected object"
+      it "parses PureScript-produced DiscountType format" $ do
+        let frontendJson = object
+              [ "discountType" .= String "PERCENT_OFF"
+              , "percent" .= (10.0 :: Double)
+              ]
+        fromJSON frontendJson `shouldBe` (Success (PercentOff (fromFloatDigits (10.0 :: Double))) :: Result DiscountType)
 
   -- ═══════════════════════════════════════════════
   -- SECTION 5: Auth contract — devUser UUIDs match
@@ -675,10 +656,10 @@ spec = describe "Integration: JSON Contract Tests" $ do
   -- SECTION 7: showPaymentMethod loses Other payload
   -- ═══════════════════════════════════════════════
 
-  describe "KNOWN ISSUE: showPaymentMethod drops Other payload" $ do
-    it "JSON roundtrip preserves Other text" $ do
-      fromJSON (toJSON (Other "Crypto")) `shouldBe` (Success (Other "Crypto") :: Result PaymentMethod)
+  describe "showPaymentMethod preserves Other payload" $ do
+      it "JSON roundtrip preserves Other text" $
+        fromJSON (toJSON (Other "Crypto")) `shouldBe` (Success (Other "Crypto") :: Result PaymentMethod)
 
-    -- Note: DB.Transaction.showPaymentMethod (Other "Crypto") == "OTHER"
-    -- This means after a DB roundtrip, Other "Crypto" becomes Other ""
-    -- This is tested in Test.DB.PureFunctionsSpec; documented here for context.
+      it "DB roundtrip preserves Other text" $ do
+        let method = Other "Crypto"
+        parsePaymentMethod (T.unpack $ showPaymentMethod method) `shouldBe` method
