@@ -1091,8 +1091,19 @@ getRegisterById pool registerId = withConnection pool $ \conn -> do
 
 -- | Create a register
 createRegister :: ConnectionPool -> Register -> IO Register
-createRegister pool register = withConnection pool $ \conn ->
-  head <$> Database.PostgreSQL.Simple.query conn [sql|
+createRegister pool register = withConnection pool $ \conn -> do
+  let params = (
+        registerId register,
+        registerName register,
+        registerLocationId register,
+        registerIsOpen register,
+        registerCurrentDrawerAmount register,
+        registerExpectedDrawerAmount register,
+        registerOpenedAt register,
+        registerOpenedBy register,
+        registerLastTransactionTime register
+        )
+  rows <- Database.PostgreSQL.Simple.query conn [sql|
     INSERT INTO register (
       id, 
       name, 
@@ -1114,17 +1125,10 @@ createRegister pool register = withConnection pool $ \conn ->
       opened_at, 
       opened_by, 
       last_transaction_time
-  |] (
-    registerId register,
-    registerName register,
-    registerLocationId register,
-    registerIsOpen register,
-    registerCurrentDrawerAmount register,
-    registerExpectedDrawerAmount register,
-    registerOpenedAt register,
-    registerOpenedBy register,
-    registerLastTransactionTime register
-  )
+  |] params
+  case rows of
+    (r:_) -> pure r
+    []    -> error "INSERT RETURNING produced no rows"
 
 updateRegister :: ConnectionPool -> UUID -> Register -> IO Register
 updateRegister pool registerId register = withConnection pool $ \conn -> do
