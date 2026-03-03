@@ -23,8 +23,10 @@ common shared-properties
                 , transformers
                 , aeson
                 , containers
+                , directory
                 , wai
                 , warp 
+                , warp-tls
                 , opaleye
                 , postgresql-simple 
                 , postgresql-libpq

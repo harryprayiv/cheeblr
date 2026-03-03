@@ -1,9 +1,11 @@
+{-# LANGUAGE OverloadedStrings #-}
 module App where
 
 import API.Inventory (api)
 import DB.Database (initializeDB, createTables, DBConfig(..))
 import DB.Transaction (createTransactionTables)
 import qualified Network.Wai.Handler.Warp as Warp
+import Network.Wai.Handler.WarpTLS (runTLS, tlsSettings)
 import Servant
 import Server (combinedServer)
 import System.Posix.User (getLoginName)
@@ -17,78 +19,100 @@ import Network.HTTP.Types.Status (status200)
 import qualified Data.ByteString.Builder as B
 import System.Environment (lookupEnv)
 import Data.Maybe (fromMaybe)
+import System.Directory (doesFileExist)
 
 data AppConfig = AppConfig
   { dbConfig :: DBConfig
   , serverPort :: Int
+  , tlsCertFile :: Maybe FilePath
+  , tlsKeyFile :: Maybe FilePath
   }
 
 run :: IO ()
 run = do
   currentUser <- getLoginName
   
-  -- Read DB config from environment (for test isolation) with defaults
   envHost     <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
-  envDbPort   <- maybe 5432 read <$> lookupEnv "PGPORT"    -- DB port
-  envPort     <- maybe 8080 read <$> lookupEnv "PORT"       -- HTTP server port
+  envDbPort   <- maybe 5432 read <$> lookupEnv "PGPORT"
+  envPort     <- maybe 8080 read <$> lookupEnv "PORT"
   envDb       <- fromMaybe "cheeblr"   <$> lookupEnv "PGDATABASE"
   envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
   envPassword <- fromMaybe "postgres"   <$> lookupEnv "PGPASSWORD"
+  
+  -- TLS config from environment
+  useTLS      <- lookupEnv "USE_TLS"
+  certFile    <- lookupEnv "TLS_CERT_FILE"
+  keyFile     <- lookupEnv "TLS_KEY_FILE"
 
   let config =
         AppConfig
           { dbConfig =
               DBConfig
                 { dbHost = envHost
-                , dbPort = envDbPort    -- ← PGPORT (5432)
+                , dbPort = envDbPort
                 , dbName = envDb
                 , dbUser = envUser
                 , dbPassword = envPassword
                 , poolSize = 10
                 }
-          , serverPort = envPort        -- ← PORT (8080 / 18080 for tests)
+          , serverPort = envPort
+          , tlsCertFile = certFile
+          , tlsKeyFile = keyFile
           }
 
   pool <- initializeDB (dbConfig config)
-
   createTables pool
   createTransactionTables pool
 
-  putStrLn $ "Starting server on all interfaces, port " ++ show (serverPort config)
-  putStrLn "=================================="
-  putStrLn $ "Server running on port " ++ show (serverPort config)
-  putStrLn "You can access this application from other devices on your network using:"
-  putStrLn $ "http://YOUR_MACHINE_IP:" ++ show (serverPort config)
-  putStrLn "=================================="
-
   let
-    -- Define custom header names with correct type
-    hXRequestedWith :: CI.CI B8.ByteString
     hXRequestedWith = CI.mk (B8.pack "x-requested-with")
-    
-    hXUserId :: CI.CI B8.ByteString
     hXUserId = CI.mk (B8.pack "x-user-id")
     
-    -- Very permissive CORS policy for development
     corsPolicy = simpleCorsResourcePolicy
-        { corsOrigins = Nothing -- Allow all origins
+        { corsOrigins = Nothing
         , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith, hXUserId]
         , corsMethods = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
-        , corsMaxAge = Just 86400 -- 24 hours
+        , corsMaxAge = Just 86400
         , corsVaryOrigin = False
         , corsExposedHeaders = Just [hContentType]
         , corsRequireOrigin = False
-        , corsIgnoreFailures = True -- ignore CORS failures in development
+        , corsIgnoreFailures = True
         }
 
     app = cors (const $ Just corsPolicy) $ serve api (combinedServer pool)
-    
-    -- Add middleware for OPTIONS requests
     appWithOptions = handleOptionsMiddleware app
+    
+    warpSettings = Warp.setPort (serverPort config)
+                 $ Warp.setHost "*"  -- bind all interfaces
+                 $ Warp.defaultSettings
 
-  Warp.run (serverPort config) appWithOptions
+  case (useTLS, tlsCertFile config, tlsKeyFile config) of
+    (Just "true", Just cert, Just key) -> do
+      certExists <- doesFileExist cert
+      keyExists  <- doesFileExist key
+      if certExists && keyExists
+        then do
+          let tls = tlsSettings cert key
+          putStrLn $ "Starting HTTPS server on port " ++ show (serverPort config)
+          putStrLn $ "  Cert: " ++ cert
+          putStrLn $ "  Key:  " ++ key
+          putStrLn "=================================="
+          putStrLn $ "https://YOUR_MACHINE_IP:" ++ show (serverPort config)
+          putStrLn "=================================="
+          runTLS tls warpSettings appWithOptions
+        else do
+          putStrLn "WARNING: USE_TLS=true but cert/key files not found, falling back to HTTP"
+          putStrLn $ "  Cert exists: " ++ show certExists ++ " (" ++ cert ++ ")"
+          putStrLn $ "  Key exists:  " ++ show keyExists ++ " (" ++ key ++ ")"
+          Warp.runSettings warpSettings appWithOptions
+    _ -> do
+      let scheme = "http"
+      putStrLn $ "Starting " ++ scheme ++ " server on port " ++ show (serverPort config)
+      putStrLn "=================================="
+      putStrLn $ scheme ++ "://YOUR_MACHINE_IP:" ++ show (serverPort config)
+      putStrLn "=================================="
+      Warp.runSettings warpSettings appWithOptions
 
--- Middleware to handle OPTIONS requests for CORS preflight
 handleOptionsMiddleware :: Application -> Application
 handleOptionsMiddleware app req responder =
   if requestMethod req == methodOptions
