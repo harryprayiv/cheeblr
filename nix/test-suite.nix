@@ -314,6 +314,16 @@ let
     echo "Smoke testing backend at $BASE_URL ..."
     echo ""
 
+    # ── Pre-flight: verify backend is reachable ──
+    echo "Checking backend connectivity..."
+    if ! ${pkgs.curl}/bin/curl -s --connect-timeout 5 --max-time 10 "$BASE_URL/api/inventory" > /dev/null 2>&1; then
+      echo "✗ Backend is not reachable at $BASE_URL"
+      echo "  Make sure the backend is running (e.g. 'backend-start' or 'deploy')"
+      exit 1
+    fi
+    echo "✓ Backend is reachable"
+    echo ""
+
     PASS=0
     FAIL=0
 
@@ -325,7 +335,7 @@ let
       local body="''${5:-}"
       local auth_header="''${6:-}"
 
-      local curl_args=(-s -o /dev/null -w "%{http_code}" -X "$method")
+      local curl_args=(-s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 15 -X "$method")
 
       if [ -n "$body" ]; then
         curl_args+=(-H "Content-Type: application/json" -d "$body")
@@ -336,11 +346,14 @@ let
       fi
 
       local status
-      status=$(${pkgs.curl}/bin/curl "''${curl_args[@]}" "$url")
+      status=$(${pkgs.curl}/bin/curl "''${curl_args[@]}" "$url" 2>/dev/null || echo "000")
 
       if [ "$status" = "$expected_status" ]; then
         echo "  ✓ $description (HTTP $status)"
         PASS=$((PASS + 1))
+      elif [ "$status" = "000" ]; then
+        echo "  ✗ $description (connection failed/timed out)"
+        FAIL=$((FAIL + 1))
       else
         echo "  ✗ $description (expected $expected_status, got $status)"
         FAIL=$((FAIL + 1))
