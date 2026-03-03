@@ -16,6 +16,11 @@
   };
 
   config = lib.mkIf config.services.${name}.enable {
+    networking.firewall.allowedTCPPorts = [
+      config.services.${name}.backendPort
+      config.services.${name}.frontendPort
+    ];
+    
     # Backend service
     systemd.services."${name}-backend" = {
       description = "${name} Haskell Backend";

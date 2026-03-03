@@ -7,6 +7,14 @@ let
   host = config.network.host;
   bindAddress = config.network.bindAddress;
   
+  # TLS
+  tlsModule = import ./tls.nix { inherit pkgs name; };
+  tlsConfig = config.tls;
+  certDir = tlsConfig.certDir;
+
+  # protocol/URL helpers:
+  protocol = if tlsConfig.enable then "https" else "http";
+
   # Ports
   frontendPort = toString config.vite.port;
   backendPort = toString config.haskell.port;
@@ -39,7 +47,28 @@ let
       echo "Restoring from backup..."
       pg-restore "$LATEST_BACKUP"
     fi
-    
+
+    ${if tlsConfig.enable then ''
+      # Ensure TLS certs exist
+      echo "Setting up TLS certificates..."
+      tls-setup
+      
+      CERT_DIR="$(echo "${certDir}" | envsubst)"
+      export USE_TLS="true"
+      export TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}"
+      export TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
+    '' else ''
+      export USE_TLS="false"
+    ''}
+
+    # Open firewall for dev ports (idempotent, persists until reboot)
+    echo "Ensuring firewall ports are open..."
+    sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport ${backendPort} -j ACCEPT
+    sudo iptables -C INPUT -p tcp --dport ${frontendPort} -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport ${frontendPort} -j ACCEPT
+    echo "  Ports ${backendPort} and ${frontendPort} open"
+
     # Display tmux instructions
     echo "TMux Commands:"
     echo "-------------"
@@ -74,10 +103,26 @@ let
     tmux resize-pane -t ${name}:Services.2 -y 12
     
     # Send commands to each pane
-    tmux send-keys -t ${name}:Services.0 'cd ${backendDir} && cabal run ${name}-backend' C-m
-    tmux send-keys -t ${name}:Services.1 'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
+
+    # Backend pane — pass TLS env vars through
+    tmux send-keys -t ${name}:Services.0 \
+      '${if tlsConfig.enable then ''
+        CERT_DIR="$(echo "${certDir}" | envsubst)" \
+        USE_TLS=true \
+        TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}" \
+        TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}" \
+      '' else ""}cd ${backendDir} && cabal run ${name}-backend' C-m
+
+    # Frontend pane — vite with HTTPS
+    tmux send-keys -t ${name}:Services.1 \
+      'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open${if tlsConfig.enable then '' \
+        --https --cert "$TLS_CERT_FILE" --key "$TLS_KEY_FILE"'' else ""}' C-m
+        
     tmux send-keys -t ${name}:Services.2 'watch -n 5 pg-stats' C-m
-    tmux send-keys -t ${name}:Services.3 'echo "Backend: http://${host}:${backendPort}"; echo "Frontend: http://${host}:${frontendPort}"; echo "Postgres: ${host}:${dbPort}"; echo' C-m
+
+    # Info pane — show correct protocol
+    tmux send-keys -t ${name}:Services.3 \
+      'echo "Backend: ${protocol}://${host}:${backendPort}"; echo "Frontend: ${protocol}://${host}:${frontendPort}"' C-m
     
     # Make sure the layout is maintained when resizing
     tmux set-hook -t ${name} client-resized 'resize-pane -t ${name}:Services.0 -y 12; resize-pane -t ${name}:Services.1 -y 12; resize-pane -t ${name}:Services.2 -y 12'
@@ -175,6 +220,14 @@ let
     set -euo pipefail
 
     PROJECT_DIR="$(pwd)"
+
+    # Open firewall for dev ports
+    echo "Ensuring firewall ports are open..."
+    sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport ${backendPort} -j ACCEPT
+    sudo iptables -C INPUT -p tcp --dport ${frontendPort} -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport ${frontendPort} -j ACCEPT
+    echo "  Ports ${backendPort} and ${frontendPort} open"
 
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"

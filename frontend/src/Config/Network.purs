@@ -8,17 +8,17 @@ type EnvironmentConfig =
 
 -- Local development configuration (localhost)
 localConfig :: EnvironmentConfig
-localConfig =
+localConfig = 
   { apiBaseUrl: "http://localhost:8080"
-  , appOrigin: "http://localhost:5174"
+  , appOrigin: "http://localhost:5173" 
   }
 
 -- Network configuration for LAN testing
 -- Replace 192.168.1.X with your actual machine's IP address
 networkConfig :: EnvironmentConfig
-networkConfig =
-  { apiBaseUrl: "http://192.168.8.248:8080"
-  , appOrigin: "http://192.168.8.248:5174"
+networkConfig = 
+  { apiBaseUrl: "https://192.168.8.248:8080"
+  , appOrigin: "https://192.168.8.248:5174" 
   }
 
 -- Toggle between configurations

@@ -9,6 +9,19 @@
     bindAddress = "0.0.0.0";  
   };
 
+  # Add to the config attrset:
+  tls = {
+    enable = true;  # set false to stay on HTTP for quick local dev
+    certDir = "$HOME/.local/share/${name}/certs";
+    # mkcert generates these
+    certFile = "cert.pem";
+    keyFile = "key.pem";
+    # SANs for cert generation
+    domains = [ "localhost" "127.0.0.1" "::1" ];
+    # Add your LAN IP here
+    extraDomains = [ "192.168.8.248" ];
+  };
+
   database = {
     name = name;
     user = "$(whoami)";

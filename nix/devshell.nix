@@ -19,14 +19,10 @@ let
   psDirs = psConfig.codeDirs;
   hsDirs = hsConfig.codeDirs;
 
-  # Get frontend and backend directories
   frontendDir = builtins.match "(.*)/.*" (builtins.elemAt psConfig.codeDirs 0);
-  # frontendPath = if frontendDir == null then "./frontend" else builtins.elemAt frontendDir 0;
   frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head psConfig.codeDirs));
 
-
   backendDir = builtins.match "(.*)/.*" (builtins.elemAt hsConfig.codeDirs 0);
-  # backendPath = if backendDir == null then "./backend" else builtins.elemAt backendDir 0;
   backendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head hsConfig.codeDirs));
 
   # Import modules
@@ -51,6 +47,10 @@ let
 
   deployModule = import ./deploy.nix {
     inherit pkgs name;
+  };
+
+  tlsModule = import ./tls.nix { 
+    inherit pkgs name; 
   };
 
   testSuiteModule = import ./test-suite.nix {
@@ -78,6 +78,16 @@ let
     psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
     hsConfig = hsConfig;
   };
+
+  open-firewall = pkgs.writeShellScriptBin "open-firewall" ''
+    set -euo pipefail
+    echo "Opening firewall for dev ports..."
+    sudo iptables -C INPUT -p tcp --dport 8080 -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
+    sudo iptables -C INPUT -p tcp --dport 5173 -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport 5173 -j ACCEPT
+    echo "Ports 8080 and 5173 open (until reboot)"
+  '';
 
   # VSCode extensions list
   extensions = (with pkgs.vscode-extensions; [
@@ -248,6 +258,13 @@ let
     # VSCode/VSCodium
     vscodiumWithExtensions
     
+    # TLS stuff
+    tlsModule.tls-setup
+    tlsModule.tls-info
+    tlsModule.tls-clean
+    pkgs.mkcert
+    open-firewall
+
     # PostgreSQL utilities
     postgresModule.pg-start
     postgresModule.pg-connect
@@ -404,6 +421,11 @@ let
       echo "    backup-project         - Backup project files"
       echo "    compile-manifest       - Compile and concatenate project files (formerly cwm)"
       echo "    compile-archive        - Compile and archive project files"
+      echo ""
+      echo "  TLS:"
+      echo "    tls-setup              - Generate/refresh TLS certificates"
+      echo "    tls-info               - Show certificate details"
+      echo "    tls-clean              - Remove certificates"      
       echo ""
       echo "  Deployment:"
       echo "    deploy                 - Deploy to server"
