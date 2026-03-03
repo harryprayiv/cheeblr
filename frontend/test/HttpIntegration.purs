@@ -17,7 +17,7 @@ import Yoga.JSON (readJSON_, writeJSON)
 -- ──────────────────────────────────────────────
 
 baseUrl :: String
-baseUrl = "http://localhost:8080"
+baseUrl = "https://localhost:8080"
 
 -- Dev user UUIDs (must match Auth.Simple on backend)
 adminUUID :: String
@@ -44,7 +44,7 @@ type FetchResult =
 getBaseUrl :: Aff String  
 getBaseUrl = do
   mPort <- liftEffect $ Process.lookupEnv "TEST_BACKEND_PORT"
-  pure $ "http://localhost:" <> fromMaybe "8080" mPort
+  pure $ "https://localhost:" <> fromMaybe "8080" mPort
 
 -- | GET with optional auth header
 httpGet :: String -> Maybe String -> Aff FetchResult

@@ -190,7 +190,7 @@ let
 
     echo "Waiting for backend on port ${testBackendPort}..."
     RETRIES=0
-    while ! ${pkgs.curl}/bin/curl -s "http://${host}:${testBackendPort}/inventory" > /dev/null 2>&1; do
+    while ! ${pkgs.curl}/bin/curl -s "https://${host}:${testBackendPort}/inventory" > /dev/null 2>&1; do
       RETRIES=$((RETRIES + 1))
       if [ $RETRIES -ge 30 ]; then
         echo "Backend failed to start within 30 seconds"
@@ -202,7 +202,7 @@ let
       fi
       sleep 1
     done
-    echo "✓ Backend ready at http://${host}:${testBackendPort}"
+    echo "✓ Backend ready at https://${host}:${testBackendPort}"
 
     echo ""
     FAILURES=0
@@ -309,7 +309,7 @@ let
   test-smoke = pkgs.writeShellScriptBin "test-smoke" ''
     set -euo pipefail
 
-    BASE_URL="http://${host}:${backendPort}"
+    BASE_URL="https://${host}:${backendPort}"
 
     echo "Smoke testing backend at $BASE_URL ..."
     echo ""

@@ -224,6 +224,19 @@ let
 
     PROJECT_DIR="$(pwd)"
 
+    ${if tlsConfig.enable then ''
+      # Ensure TLS certs exist
+      echo "Setting up TLS certificates..."
+      tls-setup
+      
+      CERT_DIR="$(echo "${certDir}" | envsubst)"
+      export USE_TLS="true"
+      export TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}"
+      export TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
+    '' else ''
+      export USE_TLS="false"
+    ''}
+
     # Open firewall for dev ports
     echo "Ensuring firewall ports are open..."
     sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
@@ -239,7 +252,7 @@ let
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Database" \
       --working-directory "$PROJECT_DIR" \
-      -e ${pkgs.direnv}/bin/direnv exec "$PROJECT_DIR" db-start &
+      -e ${pkgs.bash}/bin/bash -c '${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" db-start' &
 
     # Give DB time to initialize
     echo "Waiting for database to start..."
@@ -249,7 +262,13 @@ let
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Backend" \
       --working-directory "$PROJECT_DIR" \
-      -e ${pkgs.direnv}/bin/direnv exec "$PROJECT_DIR" backend-start &
+      -e ${pkgs.bash}/bin/bash -c '${if tlsConfig.enable then ''
+        export USE_TLS="true" \
+        export TLS_CERT_FILE="'"$TLS_CERT_FILE"'" \
+        export TLS_KEY_FILE="'"$TLS_KEY_FILE"'" \
+      '' else ''
+        export USE_TLS="false" \
+      ''}${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" backend-start' &
 
     sleep 3
 
@@ -257,12 +276,18 @@ let
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Frontend" \
       --working-directory "$PROJECT_DIR" \
-      -e ${pkgs.direnv}/bin/direnv exec "$PROJECT_DIR" frontend-start &
+      -e ${pkgs.bash}/bin/bash -c '${if tlsConfig.enable then ''
+        export USE_TLS="true" \
+        export TLS_CERT_FILE="'"$TLS_CERT_FILE"'" \
+        export TLS_KEY_FILE="'"$TLS_KEY_FILE"'" \
+      '' else ''
+        export USE_TLS="false" \
+      ''}${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" frontend-start' &
 
     echo "All windows launched."
     echo "  Database:  window 1"
-    echo "  Backend:   window 2 (http://${host}:${backendPort})"
-    echo "  Frontend:  window 3 (http://${host}:${frontendPort})"
+    echo "  Backend:   window 2 (${protocol}://${host}:${backendPort})"
+    echo "  Frontend:  window 3 (${protocol}://${host}:${frontendPort})"
   '';
 
   # Database start script
