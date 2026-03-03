@@ -190,7 +190,7 @@ let
 
     echo "Waiting for backend on port ${testBackendPort}..."
     RETRIES=0
-    while ! ${pkgs.curl}/bin/curl -s "http://${host}:${testBackendPort}/api/inventory" > /dev/null 2>&1; do
+    while ! ${pkgs.curl}/bin/curl -s "http://${host}:${testBackendPort}/inventory" > /dev/null 2>&1; do
       RETRIES=$((RETRIES + 1))
       if [ $RETRIES -ge 30 ]; then
         echo "Backend failed to start within 30 seconds"
@@ -316,7 +316,7 @@ let
 
     # ── Pre-flight: verify backend is reachable ──
     echo "Checking backend connectivity..."
-    if ! ${pkgs.curl}/bin/curl -s --connect-timeout 5 --max-time 10 "$BASE_URL/api/inventory" > /dev/null 2>&1; then
+    if ! ${pkgs.curl}/bin/curl -s --connect-timeout 5 --max-time 10 "$BASE_URL/inventory" > /dev/null 2>&1; then
       echo "✗ Backend is not reachable at $BASE_URL"
       echo "  Make sure the backend is running (e.g. 'backend-start' or 'deploy')"
       exit 1
@@ -342,7 +342,7 @@ let
       fi
 
       if [ -n "$auth_header" ]; then
-        curl_args+=(-H "Authorization: $auth_header")
+        curl_args+=(-H "X-User-Id: $auth_header")
       fi
 
       local status
@@ -366,19 +366,19 @@ let
     CUSTOMER_UUID="8244082f-a6bc-4d6c-9427-64a0ecdc10db"
 
     echo "── GET endpoints ──"
-    check "GET /api/inventory (admin)"         GET "$BASE_URL/api/inventory" 200 "" "$ADMIN_UUID"
-    check "GET /api/inventory (customer)"      GET "$BASE_URL/api/inventory" 200 "" "$CUSTOMER_UUID"
-    check "GET /api/inventory (no auth)"       GET "$BASE_URL/api/inventory" 200 "" ""
+    check "GET /inventory (admin)"         GET "$BASE_URL/inventory" 200 "" "$ADMIN_UUID"
+    check "GET /inventory (customer)"      GET "$BASE_URL/inventory" 200 "" "$CUSTOMER_UUID"
+    check "GET /inventory (no auth)"       GET "$BASE_URL/inventory" 200 "" ""
 
     echo ""
     echo "── Auth-gated endpoints ──"
-    check "GET /api/registers (cashier)"       GET "$BASE_URL/api/registers" 200 "" "$CASHIER_UUID"
+    check "GET /register (cashier)"       GET "$BASE_URL/register" 200 "" "$CASHIER_UUID"
 
     echo ""
     echo "── JSON contract spot checks ──"
 
     # Verify inventory response structure
-    INVENTORY_JSON=$(${pkgs.curl}/bin/curl -s -H "Authorization: $ADMIN_UUID" "$BASE_URL/api/inventory")
+    INVENTORY_JSON=$(${pkgs.curl}/bin/curl -s -H "Authorization: $ADMIN_UUID" "$BASE_URL/inventory")
     if echo "$INVENTORY_JSON" | ${pkgs.jq}/bin/jq -e '.type' > /dev/null 2>&1; then
       TYPE=$(echo "$INVENTORY_JSON" | ${pkgs.jq}/bin/jq -r '.type')
       if [ "$TYPE" = "data" ] || [ "$TYPE" = "message" ]; then
