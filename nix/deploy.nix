@@ -225,19 +225,16 @@ let
     PROJECT_DIR="$(pwd)"
 
     ${if tlsConfig.enable then ''
-      # Ensure TLS certs exist
       echo "Setting up TLS certificates..."
       tls-setup
-      
+
       CERT_DIR="$(echo "${certDir}" | envsubst)"
-      export USE_TLS="true"
-      export TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}"
-      export TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
+      TLS_CERT="$CERT_DIR/${tlsConfig.certFile}"
+      TLS_KEY="$CERT_DIR/${tlsConfig.keyFile}"
     '' else ''
-      export USE_TLS="false"
+      true
     ''}
 
-    # Open firewall for dev ports
     echo "Ensuring firewall ports are open..."
     sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
       sudo iptables -I INPUT -p tcp --dport ${backendPort} -j ACCEPT
@@ -248,44 +245,68 @@ let
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"
 
-    # Database
+    # ── Database ──
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Database" \
       --working-directory "$PROJECT_DIR" \
-      -e ${pkgs.bash}/bin/bash -c '${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" db-start' &
+      -e ${pkgs.bash}/bin/bash -c \
+        '${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" db-start' &
 
-    # Give DB time to initialize
+    # Wait for postgres to actually be ready, not just a fixed sleep
     echo "Waiting for database to start..."
-    sleep 8
+    RETRIES=0
+    while ! ${pkgs.postgresql}/bin/pg_isready -h "$PGDATA" -p "${dbPort}" -q 2>/dev/null; do
+      RETRIES=$((RETRIES + 1))
+      if [ $RETRIES -ge 30 ]; then
+        echo "Database failed to start within 30 seconds"
+        exit 1
+      fi
+      sleep 1
+    done
+    echo "  Database ready"
 
-    # Backend
+    # ── Backend ──
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Backend" \
       --working-directory "$PROJECT_DIR" \
-      -e ${pkgs.bash}/bin/bash -c '${if tlsConfig.enable then ''
-        export USE_TLS="true" \
-        export TLS_CERT_FILE="'"$TLS_CERT_FILE"'" \
-        export TLS_KEY_FILE="'"$TLS_KEY_FILE"'" \
-      '' else ''
-        export USE_TLS="false" \
-      ''}${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" backend-start' &
+      -e ${pkgs.bash}/bin/bash -c \
+        '${if tlsConfig.enable then ''
+          export USE_TLS="true"; \
+          export TLS_CERT_FILE="'"$TLS_CERT"'"; \
+          export TLS_KEY_FILE="'"$TLS_KEY"'"; \
+        '' else ''
+          export USE_TLS="false"; \
+        ''}cd '"$PROJECT_DIR"'/${backendDir} && cabal run ${name}-backend' &
 
-    sleep 3
+    # Wait for the backend to respond
+    echo "Waiting for backend..."
+    RETRIES=0
+    while ! ${pkgs.curl}/bin/curl -sk "https://${host}:${backendPort}/inventory" > /dev/null 2>&1; do
+      RETRIES=$((RETRIES + 1))
+      if [ $RETRIES -ge 60 ]; then
+        echo "Backend failed to start within 60 seconds"
+        exit 1
+      fi
+      sleep 1
+    done
+    echo "  Backend ready"
 
-    # Frontend
+    # ── Frontend ──
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Frontend" \
       --working-directory "$PROJECT_DIR" \
-      -e ${pkgs.bash}/bin/bash -c '${if tlsConfig.enable then ''
-        export USE_TLS="true" \
-        export TLS_CERT_FILE="'"$TLS_CERT_FILE"'" \
-        export TLS_KEY_FILE="'"$TLS_KEY_FILE"'" \
-      '' else ''
-        export USE_TLS="false" \
-      ''}${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" frontend-start' &
+      -e ${pkgs.bash}/bin/bash -c \
+        '${if tlsConfig.enable then ''
+          export USE_TLS="true"; \
+          export TLS_CERT_FILE="'"$TLS_CERT"'"; \
+          export TLS_KEY_FILE="'"$TLS_KEY"'"; \
+        '' else ''
+          export USE_TLS="false"; \
+        ''}cd '"$PROJECT_DIR"'/${frontendDir} && npx vite --host ${bindAddress} --port ${frontendPort} --open' &
 
+    echo ""
     echo "All windows launched."
-    echo "  Database:  window 1"
+    echo "  Database:  window 1 (port ${dbPort})"
     echo "  Backend:   window 2 (${protocol}://${host}:${backendPort})"
     echo "  Frontend:  window 3 (${protocol}://${host}:${frontendPort})"
   '';
