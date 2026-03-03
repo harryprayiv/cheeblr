@@ -316,6 +316,7 @@ let
     # Testing Environment
     testSuiteModule.test-unit
     testSuiteModule.test-integration
+    testSuiteModule.test-integration-tls
     testSuiteModule.test-suite
     testSuiteModule.test-smoke
 
@@ -439,8 +440,9 @@ let
       echo ""      
       echo "  Testing:"
       echo "    test-unit              - Run all unit tests (no services needed)"
-      echo "    test-integration       - Spin up DB+backend, run HTTP integration tests"
-      echo "    test-suite             - Full test suite (unit + integration)"
+      echo "    test-integration       - Spin up DB+backend (HTTP), run integration tests"
+      echo "    test-integration-tls   - Same but with TLS enabled"
+      echo "    test-suite             - Full test suite (unit + HTTP + TLS)"
       echo "    test-smoke             - Quick smoke test against running backend"
       echo ""      
       echo ""
