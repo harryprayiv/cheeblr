@@ -162,42 +162,57 @@ body {
 /*
  * The itemForm emits Tailwind-style utility classes from PureScript.
  * Since there's no Tailwind compiler, we define them here to match
- * the Gruvbox dark theme with a polished card-based layout.
+ * the Gruvbox dark theme. Layout: 2-column grid so the form fits
+ * in a single viewport without scrolling.
+ *
+ * HTML structure (from PureScript):
+ *   div.space-y-4          <- grid container
+ *     h2.text-2xl          <- title      (grid-column: 1/-1)
+ *     div.mb-6             <- Basic Info  (left column, tall)
+ *     div.mb-6             <- Strain      (right column, stacked)
+ *     div.mb-6             <- Compliance  (right column, stacked)
+ *     div.mb-6             <- Media       (right column, stacked)
+ *     div.mt-6             <- submit btn  (grid-column: 1/-1)
+ *     div.mt-4             <- status msg  (grid-column: 1/-1)
  */
 
-/* ---- Main form wrapper ---- */
+/* ---- Main form wrapper — 2-col grid ---- */
 .space-y-4.max-w-2xl.mx-auto.p-6,
 .space-y-4 {
-  max-width: 740px;
+  max-width: 1100px;
   margin-left: auto;
   margin-right: auto;
-  padding: 2rem 2.25rem;
+  padding: 1.25rem 1.5rem;
   background: var(--bg-medium);
   border-radius: var(--border-radius-lg);
   border: 1px solid rgba(87, 86, 86, 0.6);
   box-shadow: var(--shadow-lg);
+
+  /* Grid: left column (Basic Info) + right column (the rest) */
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem 1.25rem;
+  align-content: start;
 }
 
-/* ---- Form title ---- */
+/* Title spans both columns */
 .text-2xl.font-bold.mb-6 {
-  font-size: 1.6rem;
+  grid-column: 1 / -1;
+  font-size: 1.35rem;
   font-weight: 700;
-  margin-bottom: 1.75rem;
+  margin: 0;
+  padding-bottom: 0.6rem;
   color: var(--fg-light);
   letter-spacing: -0.01em;
-  padding-bottom: 1rem;
   border-bottom: 2px solid var(--green-dark);
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
 }
 
 /* ---- Section card containers ---- */
 .mb-6 {
-  margin-bottom: 1.5rem;
+  margin: 0;
   background: var(--bg-elevated);
   border-radius: var(--border-radius);
-  padding: 1.25rem 1.5rem;
+  padding: 0.6rem 0.85rem;
   border: 1px solid rgba(87, 86, 86, 0.4);
   transition: border-color var(--transition-normal);
 }
@@ -206,12 +221,27 @@ body {
   border-color: rgba(87, 86, 86, 0.7);
 }
 
+/* Basic Info = first .mb-6 → left column, spans all right-side rows */
+.space-y-4 > .mb-6:nth-of-type(1) {
+  grid-column: 1;
+  grid-row: 2 / 5;          /* span rows 2-4 alongside the 3 right sections */
+}
+
+/* Strain, Compliance, Media = right column */
+.space-y-4 > .mb-6:nth-of-type(2) { grid-column: 2; grid-row: 2; }
+.space-y-4 > .mb-6:nth-of-type(3) { grid-column: 2; grid-row: 3; }
+.space-y-4 > .mb-6:nth-of-type(4) { grid-column: 2; grid-row: 4; }
+
+/* Submit + status span both columns */
+.mt-6.flex.items-center.gap-4 { grid-column: 1 / -1; }
+.mt-4.text-center { grid-column: 1 / -1; }
+
 /* ---- Section headings ---- */
 .text-lg.font-semibold.mb-3.border-b.pb-1 {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   font-weight: 600;
-  margin-bottom: 1.1rem;
-  padding-bottom: 0.65rem;
+  margin-bottom: 0.5rem;
+  padding-bottom: 0.35rem;
   border-bottom: 1px solid rgba(87, 86, 86, 0.5);
   color: var(--brown-light);
   letter-spacing: 0.08em;
@@ -220,14 +250,14 @@ body {
 
 /* ---- Field rows ---- */
 .mb-3 {
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.3rem;
 }
 
 .mb-3 > .flex.items-center.gap-2,
 .mb-3 > .flex.items-start.gap-2 {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.4rem;
 }
 
 .mb-3 > .flex.items-start.gap-2 {
@@ -236,35 +266,36 @@ body {
 
 /* ---- Field labels ---- */
 .w-36.text-sm.font-medium {
-  width: 10rem;
-  min-width: 10rem;
-  font-size: 0.82rem;
+  width: 7.5rem;
+  min-width: 7.5rem;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--fg-muted);
   text-align: right;
-  padding-right: 0.5rem;
-  line-height: 1.4;
+  padding-right: 0.35rem;
+  line-height: 1.3;
 }
 
 .flex.items-start.gap-2 .w-36.text-sm.font-medium {
-  padding-top: 0.65rem;
+  padding-top: 0.4rem;
 }
 
-/* ---- Text inputs (the inputKls class string) ---- */
+/* ---- Text inputs ---- */
 .rounded-md.border-gray-300.shadow-sm.border-2.mr-2.border-solid,
 input.rounded-md,
 input[class*="rounded-md"][class*="border-gray-300"] {
   flex: 1;
-  padding: 0.55rem 0.75rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid rgba(87, 86, 86, 0.6);
   border-radius: var(--border-radius);
   background-color: var(--bg-input);
   color: var(--fg-light);
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   font-family: inherit;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
   margin-right: 0;
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+  height: 1.7rem;
 }
 
 .rounded-md.border-gray-300.shadow-sm.border-2.mr-2.border-solid:focus,
@@ -278,7 +309,8 @@ input[class*="rounded-md"][class*="border-gray-300"]:focus {
 
 .rounded-md.border-gray-300.shadow-sm.border-2.mr-2.border-solid::placeholder,
 input.rounded-md::placeholder {
-  color: rgba(168, 153, 132, 0.45);
+  color: rgba(168, 153, 132, 0.4);
+  font-size: 0.75rem;
 }
 
 /* ---- Disabled / read-only inputs ---- */
@@ -298,15 +330,16 @@ input[disabled] {
 textarea.rounded-md,
 textarea[class*="rounded-md"] {
   flex: 1;
-  padding: 0.55rem 0.75rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid rgba(87, 86, 86, 0.6);
   border-radius: var(--border-radius);
   background-color: var(--bg-input);
   color: var(--fg-light);
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   font-family: inherit;
   resize: vertical;
-  min-height: 5rem;
+  min-height: 3rem;
+  max-height: 5rem;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
 }
@@ -322,20 +355,21 @@ textarea.rounded-md:focus {
 /* ---- Select dropdowns ---- */
 .space-y-4 select {
   flex: 1;
-  padding: 0.55rem 0.75rem;
+  padding: 0.3rem 0.5rem;
   border: 1px solid rgba(87, 86, 86, 0.6);
   border-radius: var(--border-radius);
   background-color: var(--bg-input);
   color: var(--fg-light);
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   font-family: inherit;
   cursor: pointer;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
   appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23ebdbb2' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  padding-right: 2rem;
+  background-position: right 0.5rem center;
+  padding-right: 1.5rem;
+  height: 1.7rem;
 }
 
 .space-y-4 select:focus {
@@ -347,13 +381,12 @@ textarea.rounded-md:focus {
 .space-y-4 select option {
   background-color: var(--bg-medium);
   color: var(--fg-dark);
-  padding: 0.5rem;
 }
 
 /* ---- Validation error text ---- */
 .text-red-500.text-xs {
   color: var(--red);
-  font-size: 0.72rem;
+  font-size: 0.65rem;
   min-width: 0;
   white-space: nowrap;
   font-weight: 500;
@@ -361,21 +394,21 @@ textarea.rounded-md:focus {
 
 /* ---- Submit button area ---- */
 .mt-6.flex.items-center.gap-4 {
-  margin-top: 1.75rem;
+  margin: 0;
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding-top: 1.5rem;
+  padding-top: 0.6rem;
   border-top: 1px solid rgba(87, 86, 86, 0.5);
 }
 
 /* ---- Submit button base ---- */
 .px-6.py-2.rounded-md.text-white.font-medium {
-  padding: 0.7rem 2.25rem;
+  padding: 0.5rem 2rem;
   border-radius: var(--border-radius);
   color: var(--fg-light);
   font-weight: 600;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   border: none;
   cursor: pointer;
   transition: all var(--transition-normal);
@@ -421,13 +454,39 @@ button[class*="bg-gray-400"]:hover {
 
 /* ---- Status message ---- */
 .mt-4.text-center {
-  margin-top: 1.25rem;
+  margin: 0;
   text-align: center;
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   color: var(--green-light);
-  min-height: 1.5em;
-  padding: 0.5rem;
-  border-radius: var(--border-radius);
+  min-height: 1.2em;
+}
+
+/* ---- Responsive: collapse to single column on narrow screens ---- */
+@media (max-width: 900px) {
+  .space-y-4.max-w-2xl.mx-auto.p-6,
+  .space-y-4 {
+    grid-template-columns: 1fr;
+    max-width: 600px;
+    overflow-y: auto;
+    max-height: calc(100vh - 100px);
+  }
+
+  .space-y-4 > .mb-6:nth-of-type(1) {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .space-y-4 > .mb-6:nth-of-type(2),
+  .space-y-4 > .mb-6:nth-of-type(3),
+  .space-y-4 > .mb-6:nth-of-type(4) {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .mt-6.flex.items-center.gap-4,
+  .mt-4.text-center {
+    grid-column: 1;
+  }
 }
 
 
@@ -1246,30 +1305,7 @@ a.text-blue-600:hover,
   .action-bar { flex-direction: column; gap: 16px; }
   .cancel-btn, .checkout-btn { width: 100%; }
 
-  /* Form responsive: stack label above input */
-  .space-y-4.max-w-2xl.mx-auto.p-6,
-  .space-y-4 {
-    padding: 1rem;
-    margin: 0 0.5rem;
-  }
-
-  .mb-6 {
-    padding: 1rem;
-  }
-
-  .mb-3 > .flex.items-center.gap-2,
-  .mb-3 > .flex.items-start.gap-2 {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .w-36.text-sm.font-medium {
-    width: auto;
-    min-width: auto;
-    text-align: left;
-    padding-right: 0;
-    margin-bottom: 0.2rem;
-  }
+  /* Form responsive handled by 900px breakpoint in form section */
 }
 
 @media (max-width: 576px) {
