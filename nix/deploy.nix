@@ -115,8 +115,11 @@ let
 
     # Frontend pane — vite with HTTPS
     tmux send-keys -t ${name}:Services.1 \
-      'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open${if tlsConfig.enable then '' \
-        --https --cert "$TLS_CERT_FILE" --key "$TLS_KEY_FILE"'' else ""}' C-m
+      '${if tlsConfig.enable then ''
+        CERT_DIR="$(echo "${certDir}" | envsubst)" \
+        TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}" \
+        TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}" \
+      '' else ""}cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
         
     tmux send-keys -t ${name}:Services.2 'watch -n 5 pg-stats' C-m
 
