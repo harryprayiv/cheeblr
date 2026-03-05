@@ -398,41 +398,41 @@ let
 
       echo ""
 
-    echo "┌──────────────────────────────────────────┐"
-    echo "│  TLS-specific checks                      │"
-    echo "└──────────────────────────────────────────┘"
+      echo "┌──────────────────────────────────────────┐"
+      echo "│  TLS-specific checks                      │"
+      echo "└──────────────────────────────────────────┘"
 
-    # Verify the cert covers localhost via SAN (mkcert puts domains in SAN, not subject)
-    CERT_SANS=$(${pkgs.openssl}/bin/openssl s_client -connect ${host}:${testBackendPort} </dev/null 2>/dev/null \
-      | ${pkgs.openssl}/bin/openssl x509 -noout -ext subjectAltName 2>/dev/null || echo "FAIL")
-    if echo "$CERT_SANS" | grep -qi "DNS:localhost"; then
-      echo "  ✓ TLS certificate SAN includes localhost"
-    else
-      echo "  ✗ TLS certificate SAN missing localhost: $CERT_SANS"
-      FAILURES=$((FAILURES + 1))
-    fi
-
-    # Verify plain HTTP is rejected (426 Upgrade Required or connection refused are both correct)
-    HTTP_STATUS=$(${pkgs.curl}/bin/curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
-      "http://${host}:${testBackendPort}/inventory" 2>/dev/null || echo "000")
-    if [ "$HTTP_STATUS" = "000" ] || [ "$HTTP_STATUS" = "426" ]; then
-      echo "  ✓ Plain HTTP correctly rejected (status: $HTTP_STATUS)"
-    else
-      echo "  ✗ Plain HTTP returned status $HTTP_STATUS (expected 000 or 426)"
-      FAILURES=$((FAILURES + 1))
-    fi
-
-      echo ""
-      echo "════════════════════════════════════════════"
-      if [ $FAILURES -eq 0 ]; then
-        echo "  ✓ All integration tests passed (TLS)"
+      # Verify the cert covers localhost via SAN (mkcert puts domains in SAN, not subject)
+      CERT_SANS=$(${pkgs.openssl}/bin/openssl s_client -connect ${host}:${testBackendPort} </dev/null 2>/dev/null \
+        | ${pkgs.openssl}/bin/openssl x509 -noout -ext subjectAltName 2>/dev/null || echo "FAIL")
+      if echo "$CERT_SANS" | grep -qi "DNS:localhost"; then
+        echo "  ✓ TLS certificate SAN includes localhost"
       else
-        echo "  ✗ $FAILURES integration suite(s) failed"
+        echo "  ✗ TLS certificate SAN missing localhost: $CERT_SANS"
+        FAILURES=$((FAILURES + 1))
       fi
-      echo "════════════════════════════════════════════"
 
-      exit $FAILURES
-    '';
+      # Verify plain HTTP is rejected (426 Upgrade Required or connection refused are both correct)
+      HTTP_STATUS=$(${pkgs.curl}/bin/curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+        "http://${host}:${testBackendPort}/inventory" 2>/dev/null || echo "000")
+      if [ "$HTTP_STATUS" = "000" ] || [ "$HTTP_STATUS" = "426" ]; then
+        echo "  ✓ Plain HTTP correctly rejected (status: $HTTP_STATUS)"
+      else
+        echo "  ✗ Plain HTTP returned status $HTTP_STATUS (expected 000 or 426)"
+        FAILURES=$((FAILURES + 1))
+      fi
+
+        echo ""
+        echo "════════════════════════════════════════════"
+        if [ $FAILURES -eq 0 ]; then
+          echo "  ✓ All integration tests passed (TLS)"
+        else
+          echo "  ✗ $FAILURES integration suite(s) failed"
+        fi
+        echo "════════════════════════════════════════════"
+
+        exit $FAILURES
+      '';
 
   # ════════════════════════════════════════════════
   # test-suite — unit + integration
