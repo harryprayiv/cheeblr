@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
--- {-# LANGUAGE OverloadedStrings #-}
--- {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 module Types.Auth where
 
@@ -10,7 +10,6 @@ import Data.UUID (UUID)
 import Data.Time (UTCTime)
 import GHC.Generics (Generic)
 
--- | User roles in the dispensary system
 data UserRole
   = Customer
   | Cashier
@@ -21,13 +20,12 @@ data UserRole
 instance ToJSON UserRole
 instance FromJSON UserRole
 
--- | An authenticated user with their identity and role
 data AuthenticatedUser = AuthenticatedUser
   { auUserId     :: UUID
   , auUserName   :: Text
   , auEmail      :: Maybe Text
   , auRole       :: UserRole
-  , auLocationId :: Maybe UUID  -- Which location they're assigned to (Nothing = all locations for Admin)
+  , auLocationId :: Maybe UUID
   , auCreatedAt  :: UTCTime
   } deriving (Show, Eq, Generic)
 
@@ -55,9 +53,21 @@ data UserCapabilities = UserCapabilities
 instance ToJSON UserCapabilities
 instance FromJSON UserCapabilities
 
+-- | Returned by GET /session.  Capabilities travel here rather than
+--   bundled into every inventory response.
+data SessionResponse = SessionResponse
+  { sessionUserId       :: UUID
+  , sessionUserName     :: Text
+  , sessionRole         :: UserRole
+  , sessionCapabilities :: UserCapabilities
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON SessionResponse
+instance FromJSON SessionResponse
+
 capabilitiesForRole :: UserRole -> UserCapabilities
 capabilitiesForRole Customer = UserCapabilities
-  { capCanViewInventory      = True   -- Can browse menu
+  { capCanViewInventory      = True
   , capCanCreateItem         = False
   , capCanEditItem           = False
   , capCanDeleteItem         = False
@@ -77,19 +87,19 @@ capabilitiesForRole Customer = UserCapabilities
 capabilitiesForRole Cashier = UserCapabilities
   { capCanViewInventory      = True
   , capCanCreateItem         = False
-  , capCanEditItem           = True   -- Can update quantities, etc.
+  , capCanEditItem           = True
   , capCanDeleteItem         = False
   , capCanProcessTransaction = True
   , capCanVoidTransaction    = False
   , capCanRefundTransaction  = False
-  , capCanApplyDiscount      = False  -- Needs manager approval
+  , capCanApplyDiscount      = False
   , capCanManageRegisters    = False
-  , capCanOpenRegister       = True   -- Can open their assigned register
-  , capCanCloseRegister      = True   -- Can close their register
+  , capCanOpenRegister       = True
+  , capCanCloseRegister      = True
   , capCanViewReports        = False
   , capCanViewAllLocations   = False
   , capCanManageUsers        = False
-  , capCanViewCompliance     = True   -- Must verify IDs
+  , capCanViewCompliance     = True
   }
 
 capabilitiesForRole Manager = UserCapabilities
@@ -105,7 +115,7 @@ capabilitiesForRole Manager = UserCapabilities
   , capCanOpenRegister       = True
   , capCanCloseRegister      = True
   , capCanViewReports        = True
-  , capCanViewAllLocations   = False  -- Only their location
+  , capCanViewAllLocations   = False
   , capCanManageUsers        = False
   , capCanViewCompliance     = True
   }

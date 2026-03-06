@@ -4,7 +4,6 @@ module Test.Types.AuthSpec (spec) where
 
 import Test.Hspec
 import Data.Aeson (encode, decode, toJSON, fromJSON, Result(..))
-import qualified Data.ByteString.Lazy as LBS
 import Types.Auth
 
 -- Fixtures
@@ -17,6 +16,16 @@ mkTestUser role = AuthenticatedUser
   , auLocationId = Nothing
   , auCreatedAt  = read "2024-01-01 00:00:00 UTC"
   }
+
+mkTestSession :: UserRole -> SessionResponse
+mkTestSession role =
+  let user = mkTestUser role
+  in SessionResponse
+    { sessionUserId       = auUserId user
+    , sessionUserName     = auUserName user
+    , sessionRole         = role
+    , sessionCapabilities = capabilitiesForRole role
+    }
 
 spec :: Spec
 spec = describe "Types.Auth" $ do
@@ -43,22 +52,22 @@ spec = describe "Types.Auth" $ do
   -- UserRole Show/Read roundtrip
   -- ──────────────────────────────────────────────
   describe "UserRole Show/Read" $ do
-    it "roundtrips Customer" $
-      read (show Customer) `shouldBe` Customer
-    it "roundtrips Cashier" $
-      read (show Cashier) `shouldBe` Cashier
-    it "roundtrips Manager" $
-      read (show Manager) `shouldBe` Manager
-    it "roundtrips Admin" $
-      read (show Admin) `shouldBe` Admin
+    it "roundtrips Customer" $ read (show Customer) `shouldBe` Customer
+    it "roundtrips Cashier"  $ read (show Cashier) `shouldBe` Cashier
+    it "roundtrips Manager"  $ read (show Manager) `shouldBe` Manager
+    it "roundtrips Admin"    $ read (show Admin) `shouldBe` Admin
 
   -- ──────────────────────────────────────────────
-  -- UserRole JSON
+  -- UserRole JSON — wire format matters for frontend
   -- ──────────────────────────────────────────────
   describe "UserRole JSON" $ do
-    it "serializes Customer" $
+    it "serializes Customer as bare string" $
       toJSON Customer `shouldBe` toJSON ("Customer" :: String)
-    it "serializes Admin" $
+    it "serializes Cashier as bare string" $
+      toJSON Cashier `shouldBe` toJSON ("Cashier" :: String)
+    it "serializes Manager as bare string" $
+      toJSON Manager `shouldBe` toJSON ("Manager" :: String)
+    it "serializes Admin as bare string" $
       toJSON Admin `shouldBe` toJSON ("Admin" :: String)
     it "roundtrips all roles through JSON" $ do
       let roles = [Customer, Cashier, Manager, Admin]
@@ -159,6 +168,18 @@ spec = describe "Types.Auth" $ do
       let caps = capabilitiesForRole Admin
       decode (encode caps) `shouldBe` Just caps
 
+  describe "UserCapabilities JSON field names" $ do
+      it "all 15 capability fields survive a roundtrip" $ do
+        let caps = capabilitiesForRole Admin
+        decode (encode caps) `shouldBe` Just caps
+      it "capability fields are booleans accessible after decode" $ do
+        let caps = capabilitiesForRole Cashier
+        case decode (encode caps) of
+          Just c  -> do
+            capCanViewInventory c `shouldBe` True
+            capCanCreateItem c `shouldBe` False
+          Nothing -> expectationFailure "Failed to decode UserCapabilities"
+
   -- ──────────────────────────────────────────────
   -- hasCapability
   -- ──────────────────────────────────────────────
@@ -175,7 +196,7 @@ spec = describe "Types.Auth" $ do
       hasCapability capCanDeleteItem (mkTestUser Manager) `shouldBe` True
     it "manager lacks manage users" $
       hasCapability capCanManageUsers (mkTestUser Manager) `shouldBe` False
-    it "admin has everything" $ do
+    it "admin has all capabilities" $ do
       let user = mkTestUser Admin
       hasCapability capCanViewInventory user `shouldBe` True
       hasCapability capCanManageUsers user `shouldBe` True
@@ -194,7 +215,6 @@ spec = describe "Types.Auth" $ do
     it "returns Right for admin on any capability" $
       requireCapability capCanManageUsers "No manage" (mkTestUser Admin)
         `shouldBe` Right ()
-    -- Wiring check: make sure the error message is preserved
     it "preserves error message" $
       requireCapability capCanCreateItem "Custom error msg" (mkTestUser Cashier)
         `shouldBe` Left "Custom error msg"
@@ -226,4 +246,77 @@ spec = describe "Types.Auth" $ do
             { auLocationId = Just (read "b2bd4b3a-d50f-4c04-90b1-01266735876b") }
       case decode (encode user) of
         Just u  -> auLocationId u `shouldBe` Just (read "b2bd4b3a-d50f-4c04-90b1-01266735876b")
+        Nothing -> expectationFailure "Failed to decode"
+
+  -- ──────────────────────────────────────────────
+  -- SessionResponse JSON  (NEW — was entirely untested)
+  -- This is what GET /session returns; PureScript frontend reads it
+  -- to initialise capabilities after login.
+  -- ──────────────────────────────────────────────
+  describe "SessionResponse JSON" $ do
+    it "roundtrips Customer session" $
+      decode (encode (mkTestSession Customer)) `shouldBe` Just (mkTestSession Customer)
+
+    it "roundtrips Cashier session" $
+      decode (encode (mkTestSession Cashier)) `shouldBe` Just (mkTestSession Cashier)
+
+    it "roundtrips Manager session" $
+      decode (encode (mkTestSession Manager)) `shouldBe` Just (mkTestSession Manager)
+
+    it "roundtrips Admin session" $
+      decode (encode (mkTestSession Admin)) `shouldBe` Just (mkTestSession Admin)
+
+    it "preserves userId" $ do
+      let sess = mkTestSession Admin
+      case decode (encode sess) of
+        Just s  -> sessionUserId s `shouldBe` sessionUserId sess
+        Nothing -> expectationFailure "Failed to decode"
+
+    it "preserves role" $ do
+      let sess = mkTestSession Manager
+      case decode (encode sess) of
+        Just s  -> sessionRole s `shouldBe` Manager
+        Nothing -> expectationFailure "Failed to decode"
+
+    it "preserves capabilities" $ do
+      let sess = mkTestSession Cashier
+      case decode (encode sess) of
+        Just s  -> sessionCapabilities s `shouldBe` capabilitiesForRole Cashier
+        Nothing -> expectationFailure "Failed to decode"
+
+    it "capabilities in session match capabilitiesForRole" $ do
+      let roles = [Customer, Cashier, Manager, Admin]
+      mapM_ (\r ->
+        let sess = mkTestSession r
+        in sessionCapabilities sess `shouldBe` capabilitiesForRole r
+        ) roles
+
+  describe "SessionResponse JSON wire format" $ do
+    -- PureScript reads these exact field names from /session response.
+    -- A rename here breaks the frontend silently (optional fields default to Nothing).
+    it "has sessionUserId field" $ do
+      case toJSON (mkTestSession Admin) of
+        obj -> decode (encode obj) `shouldSatisfy`
+                 (\r -> case (r :: Maybe SessionResponse) of
+                    Just s -> sessionUserName s == "Test User"
+                    Nothing -> False)
+
+    it "capabilities object is present in response" $ do
+      let sess = mkTestSession Admin
+      case decode (encode sess) of
+        Just s -> do
+          let caps = sessionCapabilities s
+          capCanManageUsers caps `shouldBe` True
+        Nothing -> expectationFailure "Failed to decode"
+
+    it "Cashier session capabilities have correct values for UI rendering" $ do
+      let sess = mkTestSession Cashier
+      case decode (encode sess) of
+        Just s -> do
+          let caps = sessionCapabilities s
+          -- Cashier-specific: can process but not void/refund
+          capCanProcessTransaction caps `shouldBe` True
+          capCanVoidTransaction caps `shouldBe` False
+          capCanRefundTransaction caps `shouldBe` False
+          capCanApplyDiscount caps `shouldBe` False
         Nothing -> expectationFailure "Failed to decode"

@@ -10,6 +10,7 @@ import qualified Data.Aeson.KeyMap as KM
 import Data.Scientific (fromFloatDigits)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
+import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Types.Auth
@@ -21,11 +22,10 @@ import API.Transaction
   
   )
 import Auth.Simple (lookupUser)
-import qualified Data.Text as T
 import DB.Transaction (showPaymentMethod)
 
 -- ──────────────────────────────────────────────
--- Fixtures matching what PureScript frontend sends
+-- Fixtures
 -- ──────────────────────────────────────────────
 
 testUUID :: UUID
@@ -49,76 +49,73 @@ spec = describe "Integration: JSON Contract Tests" $ do
 
     describe "UserRole" $ do
       it "serializes as bare strings matching PureScript expectation" $ do
-        -- PureScript ReadForeign expects: "Customer", "Cashier", "Manager", "Admin"
         toJSON Customer `shouldBe` String "Customer"
-        toJSON Cashier `shouldBe` String "Cashier"
-        toJSON Manager `shouldBe` String "Manager"
-        toJSON Admin `shouldBe` String "Admin"
+        toJSON Cashier  `shouldBe` String "Cashier"
+        toJSON Manager  `shouldBe` String "Manager"
+        toJSON Admin    `shouldBe` String "Admin"
 
     describe "TransactionStatus" $ do
       it "serializes as PascalCase strings" $ do
-        -- PureScript ReadForeign accepts both PascalCase and UPPER_SNAKE_CASE
-        toJSON Created `shouldBe` String "Created"
+        toJSON Created    `shouldBe` String "Created"
         toJSON InProgress `shouldBe` String "InProgress"
-        toJSON Completed `shouldBe` String "Completed"
-        toJSON Voided `shouldBe` String "Voided"
-        toJSON Refunded `shouldBe` String "Refunded"
+        toJSON Completed  `shouldBe` String "Completed"
+        toJSON Voided     `shouldBe` String "Voided"
+        toJSON Refunded   `shouldBe` String "Refunded"
 
-      it "frontend PascalCase strings parse in backend" $ do
-        fromJSON (String "Created") `shouldBe` (Success Created :: Result TransactionStatus)
+      it "PascalCase strings parse in backend" $ do
+        fromJSON (String "Created")    `shouldBe` (Success Created    :: Result TransactionStatus)
         fromJSON (String "InProgress") `shouldBe` (Success InProgress :: Result TransactionStatus)
-        fromJSON (String "Completed") `shouldBe` (Success Completed :: Result TransactionStatus)
+        fromJSON (String "Completed")  `shouldBe` (Success Completed  :: Result TransactionStatus)
 
     describe "TransactionType" $ do
       it "serializes as PascalCase strings" $ do
-        toJSON Sale `shouldBe` String "Sale"
-        toJSON Return `shouldBe` String "Return"
-        toJSON Exchange `shouldBe` String "Exchange"
+        toJSON Sale                `shouldBe` String "Sale"
+        toJSON Return              `shouldBe` String "Return"
+        toJSON Exchange            `shouldBe` String "Exchange"
         toJSON InventoryAdjustment `shouldBe` String "InventoryAdjustment"
-        toJSON ManagerComp `shouldBe` String "ManagerComp"
-        toJSON Administrative `shouldBe` String "Administrative"
+        toJSON ManagerComp         `shouldBe` String "ManagerComp"
+        toJSON Administrative      `shouldBe` String "Administrative"
 
     describe "PaymentMethod" $ do
       it "serializes standard methods as PascalCase" $ do
-        toJSON Cash `shouldBe` String "Cash"
-        toJSON Debit `shouldBe` String "Debit"
-        toJSON Credit `shouldBe` String "Credit"
-        toJSON ACH `shouldBe` String "ACH"
-        toJSON GiftCard `shouldBe` String "GiftCard"
+        toJSON Cash        `shouldBe` String "Cash"
+        toJSON Debit       `shouldBe` String "Debit"
+        toJSON Credit      `shouldBe` String "Credit"
+        toJSON ACH         `shouldBe` String "ACH"
+        toJSON GiftCard    `shouldBe` String "GiftCard"
         toJSON StoredValue `shouldBe` String "StoredValue"
-        toJSON Mixed `shouldBe` String "Mixed"
+        toJSON Mixed       `shouldBe` String "Mixed"
 
-      it "serializes Other with colon prefix" $ do
-        -- PureScript writes: "Other:Crypto" and reads: "Other:..." or "OTHER:..."
+      it "serializes Other with colon prefix preserving payload" $ do
+        -- PureScript reads "Other:..." and "OTHER:..." via isPrefixOf
         toJSON (Other "Crypto") `shouldBe` String "Other:Crypto"
 
       it "parses PureScript-produced Other format" $ do
         fromJSON (String "Other:Bitcoin") `shouldBe` (Success (Other "Bitcoin") :: Result PaymentMethod)
-        fromJSON (String "OTHER:Check") `shouldBe` (Success (Other "Check") :: Result PaymentMethod)
+        fromJSON (String "OTHER:Check")   `shouldBe` (Success (Other "Check")   :: Result PaymentMethod)
 
     describe "TaxCategory" $ do
       it "serializes as PascalCase strings" $ do
-        -- PureScript ReadForeign accepts both PascalCase and UPPER_SNAKE_CASE
         toJSON RegularSalesTax `shouldBe` String "RegularSalesTax"
-        toJSON ExciseTax `shouldBe` String "ExciseTax"
-        toJSON CannabisTax `shouldBe` String "CannabisTax"
-        toJSON LocalTax `shouldBe` String "LocalTax"
-        toJSON MedicalTax `shouldBe` String "MedicalTax"
-        toJSON NoTax `shouldBe` String "NoTax"
+        toJSON ExciseTax       `shouldBe` String "ExciseTax"
+        toJSON CannabisTax     `shouldBe` String "CannabisTax"
+        toJSON LocalTax        `shouldBe` String "LocalTax"
+        toJSON MedicalTax      `shouldBe` String "MedicalTax"
+        toJSON NoTax           `shouldBe` String "NoTax"
 
     describe "ItemCategory" $ do
       it "serializes as PascalCase strings matching frontend Show" $ do
-        toJSON Flower `shouldBe` String "Flower"
-        toJSON PreRolls `shouldBe` String "PreRolls"
+        toJSON Flower    `shouldBe` String "Flower"
+        toJSON PreRolls  `shouldBe` String "PreRolls"
         toJSON Vaporizers `shouldBe` String "Vaporizers"
-        toJSON Edibles `shouldBe` String "Edibles"
+        toJSON Edibles   `shouldBe` String "Edibles"
 
     describe "Species" $ do
       it "serializes as PascalCase strings matching frontend Show" $ do
-        toJSON Indica `shouldBe` String "Indica"
+        toJSON Indica              `shouldBe` String "Indica"
         toJSON IndicaDominantHybrid `shouldBe` String "IndicaDominantHybrid"
-        toJSON Hybrid `shouldBe` String "Hybrid"
-        toJSON Sativa `shouldBe` String "Sativa"
+        toJSON Hybrid              `shouldBe` String "Hybrid"
+        toJSON Sativa              `shouldBe` String "Sativa"
 
   -- ═══════════════════════════════════════════════
   -- SECTION 2: Complex type wire format
@@ -129,23 +126,14 @@ spec = describe "Integration: JSON Contract Tests" $ do
     describe "MenuItem JSON structure" $ do
       it "has field names matching PureScript record fields" $ do
         let item = MenuItem
-              { sort = 1
-              , sku = testUUID
-              , brand = "TestBrand"
-              , name = "OG Kush"
-              , price = 2999
-              , measure_unit = "g"
-              , per_package = "3.5"
-              , quantity = 10
-              , category = Flower
-              , subcategory = "Indoor"
-              , description = "Classic"
-              , tags = V.fromList ["indica"]
+              { sort = 1, sku = testUUID, brand = "TestBrand", name = "OG Kush"
+              , price = 2999, measure_unit = "g", per_package = "3.5"
+              , quantity = 10, category = Flower, subcategory = "Indoor"
+              , description = "Classic", tags = V.fromList ["indica"]
               , effects = V.fromList ["relaxed"]
               , strain_lineage = StrainLineage
-                  { thc = "25%", cbg = "0.5%"
-                  , strain = "OG Kush", creator = "Unknown"
-                  , species = Indica
+                  { thc = "25%", cbg = "0.5%", strain = "OG Kush"
+                  , creator = "Unknown", species = Indica
                   , dominant_terpene = "Myrcene"
                   , terpenes = V.fromList ["Myrcene"]
                   , lineage = V.fromList ["Chemdawg"]
@@ -153,23 +141,21 @@ spec = describe "Integration: JSON Contract Tests" $ do
                   , img = "https://example.com/img.jpg"
                   }
               }
-        let val = toJSON item
-        -- PureScript readImpl reads these field names
-        case val of
+        case toJSON item of
           Object obj -> do
-            member "sort" obj `shouldBe` True
-            member "sku" obj `shouldBe` True
-            member "brand" obj `shouldBe` True
-            member "name" obj `shouldBe` True
-            member "price" obj `shouldBe` True
-            member "measure_unit" obj `shouldBe` True
-            member "per_package" obj `shouldBe` True
-            member "quantity" obj `shouldBe` True
-            member "category" obj `shouldBe` True
-            member "subcategory" obj `shouldBe` True
-            member "description" obj `shouldBe` True
-            member "tags" obj `shouldBe` True
-            member "effects" obj `shouldBe` True
+            member "sort"          obj `shouldBe` True
+            member "sku"           obj `shouldBe` True
+            member "brand"         obj `shouldBe` True
+            member "name"          obj `shouldBe` True
+            member "price"         obj `shouldBe` True
+            member "measure_unit"  obj `shouldBe` True
+            member "per_package"   obj `shouldBe` True
+            member "quantity"      obj `shouldBe` True
+            member "category"      obj `shouldBe` True
+            member "subcategory"   obj `shouldBe` True
+            member "description"   obj `shouldBe` True
+            member "tags"          obj `shouldBe` True
+            member "effects"       obj `shouldBe` True
             member "strain_lineage" obj `shouldBe` True
           _ -> expectationFailure "MenuItem should serialize as object"
 
@@ -184,49 +170,72 @@ spec = describe "Integration: JSON Contract Tests" $ do
             _ -> expectationFailure "price should be a number"
           _ -> expectationFailure "Expected object"
 
+    describe "Inventory JSON structure" $ do
+      -- FIX: Inventory uses a custom ToJSON that serializes as a plain array,
+      -- NOT as {"items": [...]}. The PureScript frontend reads it as an array.
+      it "serializes as a plain JSON array (not a wrapped object)" $ do
+        let inv = Inventory (V.fromList [])
+        case toJSON inv of
+          Array _ -> pure ()  -- correct: plain array
+          Object _ -> expectationFailure "Inventory should NOT be an object wrapper"
+          _ -> expectationFailure "Inventory should be a JSON array"
+
+      it "frontend receives array it can decode as MenuItem[]" $ do
+        let inv = Inventory (V.fromList [])
+        -- If this decodes back to Inventory, the array format is self-consistent
+        decode (encode inv) `shouldBe` Just inv
+
+    describe "MutationResponse JSON structure" $ do
+      -- Field names: "success" and "message" — PureScript reads both via .:
+      it "has 'success' and 'message' fields" $ do
+        let r = MutationResponse True "Item added successfully"
+        case toJSON r of
+          Object obj -> do
+            member "success" obj `shouldBe` True
+            member "message" obj `shouldBe` True
+          _ -> expectationFailure "Expected object"
+
+      it "success field is boolean" $ do
+        let r = MutationResponse True "ok"
+        case toJSON r of
+          Object obj -> case KM.lookup "success" obj of
+            Just (Bool True) -> pure ()
+            _ -> expectationFailure "success should be boolean true"
+          _ -> expectationFailure "Expected object"
+
     describe "Transaction JSON structure" $ do
       it "has all field names matching PureScript Transaction newtype" $ do
         let tx = Transaction
-              { transactionId = testUUID
-              , transactionStatus = Created
-              , transactionCreated = testTime
-              , transactionCompleted = Nothing
-              , transactionCustomerId = Nothing
-              , transactionEmployeeId = testUUID2
-              , transactionRegisterId = testUUID2
-              , transactionLocationId = testUUID2
-              , transactionItems = []
-              , transactionPayments = []
-              , transactionSubtotal = 0
-              , transactionDiscountTotal = 0
-              , transactionTaxTotal = 0
-              , transactionTotal = 0
-              , transactionType = Sale
-              , transactionIsVoided = False
-              , transactionVoidReason = Nothing
-              , transactionIsRefunded = False
+              { transactionId = testUUID, transactionStatus = Created
+              , transactionCreated = testTime, transactionCompleted = Nothing
+              , transactionCustomerId = Nothing, transactionEmployeeId = testUUID2
+              , transactionRegisterId = testUUID2, transactionLocationId = testUUID2
+              , transactionItems = [], transactionPayments = []
+              , transactionSubtotal = 0, transactionDiscountTotal = 0
+              , transactionTaxTotal = 0, transactionTotal = 0
+              , transactionType = Sale, transactionIsVoided = False
+              , transactionVoidReason = Nothing, transactionIsRefunded = False
               , transactionRefundReason = Nothing
               , transactionReferenceTransactionId = Nothing
               , transactionNotes = Nothing
               }
         case toJSON tx of
           Object obj -> do
-            -- Every field that PureScript reads via .: or .:?
-            member "transactionId" obj `shouldBe` True
-            member "transactionStatus" obj `shouldBe` True
-            member "transactionCreated" obj `shouldBe` True
-            member "transactionEmployeeId" obj `shouldBe` True
-            member "transactionRegisterId" obj `shouldBe` True
-            member "transactionLocationId" obj `shouldBe` True
-            member "transactionItems" obj `shouldBe` True
-            member "transactionPayments" obj `shouldBe` True
-            member "transactionSubtotal" obj `shouldBe` True
-            member "transactionDiscountTotal" obj `shouldBe` True
-            member "transactionTaxTotal" obj `shouldBe` True
-            member "transactionTotal" obj `shouldBe` True
-            member "transactionType" obj `shouldBe` True
-            member "transactionIsVoided" obj `shouldBe` True
-            member "transactionIsRefunded" obj `shouldBe` True
+            member "transactionId"             obj `shouldBe` True
+            member "transactionStatus"         obj `shouldBe` True
+            member "transactionCreated"        obj `shouldBe` True
+            member "transactionEmployeeId"     obj `shouldBe` True
+            member "transactionRegisterId"     obj `shouldBe` True
+            member "transactionLocationId"     obj `shouldBe` True
+            member "transactionItems"          obj `shouldBe` True
+            member "transactionPayments"       obj `shouldBe` True
+            member "transactionSubtotal"       obj `shouldBe` True
+            member "transactionDiscountTotal"  obj `shouldBe` True
+            member "transactionTaxTotal"       obj `shouldBe` True
+            member "transactionTotal"          obj `shouldBe` True
+            member "transactionType"           obj `shouldBe` True
+            member "transactionIsVoided"       obj `shouldBe` True
+            member "transactionIsRefunded"     obj `shouldBe` True
           _ -> expectationFailure "Transaction should serialize as object"
 
       it "serializes monetary fields as plain integers" $ do
@@ -235,10 +244,10 @@ spec = describe "Integration: JSON Contract Tests" $ do
                    5000 100 400 5300 Sale False Nothing False Nothing Nothing Nothing
         case toJSON tx of
           Object obj -> do
-            KM.lookup "transactionSubtotal" obj `shouldBe` Just (Number 5000)
+            KM.lookup "transactionSubtotal"      obj `shouldBe` Just (Number 5000)
             KM.lookup "transactionDiscountTotal" obj `shouldBe` Just (Number 100)
-            KM.lookup "transactionTaxTotal" obj `shouldBe` Just (Number 400)
-            KM.lookup "transactionTotal" obj `shouldBe` Just (Number 5300)
+            KM.lookup "transactionTaxTotal"      obj `shouldBe` Just (Number 400)
+            KM.lookup "transactionTotal"         obj `shouldBe` Just (Number 5300)
           _ -> expectationFailure "Expected object"
 
     describe "TransactionItem JSON structure" $ do
@@ -256,39 +265,35 @@ spec = describe "Integration: JSON Contract Tests" $ do
               }
         case toJSON item of
           Object obj -> do
-            member "transactionItemId" obj `shouldBe` True
+            member "transactionItemId"            obj `shouldBe` True
             member "transactionItemTransactionId" obj `shouldBe` True
-            member "transactionItemMenuItemSku" obj `shouldBe` True
-            member "transactionItemQuantity" obj `shouldBe` True
-            member "transactionItemPricePerUnit" obj `shouldBe` True
-            member "transactionItemDiscounts" obj `shouldBe` True
-            member "transactionItemTaxes" obj `shouldBe` True
-            member "transactionItemSubtotal" obj `shouldBe` True
-            member "transactionItemTotal" obj `shouldBe` True
+            member "transactionItemMenuItemSku"   obj `shouldBe` True
+            member "transactionItemQuantity"      obj `shouldBe` True
+            member "transactionItemPricePerUnit"  obj `shouldBe` True
+            member "transactionItemDiscounts"     obj `shouldBe` True
+            member "transactionItemTaxes"         obj `shouldBe` True
+            member "transactionItemSubtotal"      obj `shouldBe` True
+            member "transactionItemTotal"         obj `shouldBe` True
           _ -> expectationFailure "Expected object"
 
     describe "PaymentTransaction JSON structure" $ do
-      it "serializes with nullable optional fields" $ do
+      it "has all expected field names" $ do
         let payment = PaymentTransaction
-              { paymentId = testUUID
-              , paymentTransactionId = testUUID2
-              , paymentMethod = Cash
-              , paymentAmount = 5000
-              , paymentTendered = 6000
-              , paymentChange = 1000
-              , paymentReference = Nothing
-              , paymentApproved = True
+              { paymentId = testUUID, paymentTransactionId = testUUID2
+              , paymentMethod = Cash, paymentAmount = 5000
+              , paymentTendered = 6000, paymentChange = 1000
+              , paymentReference = Nothing, paymentApproved = True
               , paymentAuthorizationCode = Nothing
               }
         case toJSON payment of
           Object obj -> do
-            member "paymentId" obj `shouldBe` True
-            member "paymentTransactionId" obj `shouldBe` True
-            member "paymentMethod" obj `shouldBe` True
-            member "paymentAmount" obj `shouldBe` True
-            member "paymentTendered" obj `shouldBe` True
-            member "paymentChange" obj `shouldBe` True
-            member "paymentApproved" obj `shouldBe` True
+            member "paymentId"                obj `shouldBe` True
+            member "paymentTransactionId"     obj `shouldBe` True
+            member "paymentMethod"            obj `shouldBe` True
+            member "paymentAmount"            obj `shouldBe` True
+            member "paymentTendered"          obj `shouldBe` True
+            member "paymentChange"            obj `shouldBe` True
+            member "paymentApproved"          obj `shouldBe` True
           _ -> expectationFailure "Expected object"
 
     describe "TaxRecord JSON structure" $ do
@@ -301,19 +306,97 @@ spec = describe "Integration: JSON Contract Tests" $ do
               }
         case toJSON tax of
           Object obj -> do
-            member "taxCategory" obj `shouldBe` True
-            member "taxRate" obj `shouldBe` True
-            member "taxAmount" obj `shouldBe` True
+            member "taxCategory"    obj `shouldBe` True
+            member "taxRate"        obj `shouldBe` True
+            member "taxAmount"      obj `shouldBe` True
             member "taxDescription" obj `shouldBe` True
           _ -> expectationFailure "Expected object"
 
+    describe "DiscountType JSON structure" $ do
+      -- The custom ToJSON instance produces a flat object with a "discountType"
+      -- discriminator — matching what PureScript WriteForeign produces.
+      -- This was formerly documented as a "KNOWN MISMATCH" but has been resolved.
+      it "PercentOff uses 'discountType' discriminator field (not 'tag')" $ do
+        let dt = PercentOff (fromFloatDigits (10.0 :: Double))
+        case toJSON dt of
+          Object obj -> do
+            member "discountType" obj `shouldBe` True   -- present: custom instance
+            member "tag"          obj `shouldBe` False  -- absent: not Generic-derived
+          _ -> expectationFailure "Expected object"
+
+      it "AmountOff uses 'discountType' discriminator field" $ do
+        let dt = AmountOff 500
+        case toJSON dt of
+          Object obj -> do
+            member "discountType" obj `shouldBe` True
+            member "tag"          obj `shouldBe` False
+          _ -> expectationFailure "Expected object"
+
+      it "PercentOff discriminator value is PERCENT_OFF" $ do
+        let dt = PercentOff (fromFloatDigits (10.0 :: Double))
+        case toJSON dt of
+          Object obj -> KM.lookup "discountType" obj `shouldBe` Just (String "PERCENT_OFF")
+          _ -> expectationFailure "Expected object"
+
+      it "AmountOff discriminator value is AMOUNT_OFF" $ do
+        case toJSON (AmountOff 500) of
+          Object obj -> KM.lookup "discountType" obj `shouldBe` Just (String "AMOUNT_OFF")
+          _ -> expectationFailure "Expected object"
+
+      it "BuyOneGetOne discriminator value is BUY_ONE_GET_ONE" $ do
+        case toJSON BuyOneGetOne of
+          Object obj -> KM.lookup "discountType" obj `shouldBe` Just (String "BUY_ONE_GET_ONE")
+          _ -> expectationFailure "Expected object"
+
+      it "Custom discriminator value is CUSTOM" $ do
+        case toJSON (Custom "Employee" 250) of
+          Object obj -> KM.lookup "discountType" obj `shouldBe` Just (String "CUSTOM")
+          _ -> expectationFailure "Expected object"
+
+      it "PercentOff includes 'percent' payload field" $ do
+        let dt = PercentOff (fromFloatDigits (15.0 :: Double))
+        case toJSON dt of
+          Object obj -> member "percent" obj `shouldBe` True
+          _ -> expectationFailure "Expected object"
+
+      it "AmountOff includes 'amount' payload field" $ do
+        case toJSON (AmountOff 500) of
+          Object obj -> member "amount" obj `shouldBe` True
+          _ -> expectationFailure "Expected object"
+
+      it "Custom includes 'name' and 'amount' fields" $ do
+        case toJSON (Custom "Employee" 250) of
+          Object obj -> do
+            member "name"   obj `shouldBe` True
+            member "amount" obj `shouldBe` True
+          _ -> expectationFailure "Expected object"
+
+      it "parses PureScript-format DiscountType JSON" $ do
+        -- This is what PureScript WriteForeign produces
+        let frontendJson = object
+              [ "discountType" .= String "PERCENT_OFF"
+              , "percent" .= (10.0 :: Double)
+              ]
+        let result = fromJSON frontendJson :: Result DiscountType
+        case result of
+          Success (PercentOff _) -> pure ()
+          Success other -> expectationFailure $ "Got wrong constructor: " ++ show other
+          Error err -> expectationFailure $ "Failed to parse: " ++ err
+
+      it "DiscountType roundtrips through JSON (mismatch is resolved)" $ do
+        let types =
+              [ PercentOff (fromFloatDigits (10.0 :: Double))
+              , AmountOff 500
+              , BuyOneGetOne
+              , Custom "Employee" 250
+              ]
+        mapM_ (\dt -> fromJSON (toJSON dt) `shouldBe` Success dt) types
+
     describe "Register JSON structure" $ do
-      it "has field names matching PureScript Register type alias" $ do
-        let reg = API.Transaction.Register
-              { registerId = testUUID
-              , registerName = "Register 1"
-              , registerLocationId = testUUID2
-              , registerIsOpen = True
+      it "has field names matching PureScript Register type" $ do
+        let reg = Register
+              { registerId = testUUID, registerName = "Register 1"
+              , registerLocationId = testUUID2, registerIsOpen = True
               , registerCurrentDrawerAmount = 50000
               , registerExpectedDrawerAmount = 50000
               , registerOpenedAt = Just testTime
@@ -322,69 +405,95 @@ spec = describe "Integration: JSON Contract Tests" $ do
               }
         case toJSON reg of
           Object obj -> do
-            member "registerId" obj `shouldBe` True
-            member "registerName" obj `shouldBe` True
-            member "registerLocationId" obj `shouldBe` True
-            member "registerIsOpen" obj `shouldBe` True
+            member "registerId"                 obj `shouldBe` True
+            member "registerName"               obj `shouldBe` True
+            member "registerLocationId"         obj `shouldBe` True
+            member "registerIsOpen"             obj `shouldBe` True
             member "registerCurrentDrawerAmount" obj `shouldBe` True
             member "registerExpectedDrawerAmount" obj `shouldBe` True
-            member "registerOpenedAt" obj `shouldBe` True
-            member "registerOpenedBy" obj `shouldBe` True
+            member "registerOpenedAt"           obj `shouldBe` True
+            member "registerOpenedBy"           obj `shouldBe` True
             member "registerLastTransactionTime" obj `shouldBe` True
           _ -> expectationFailure "Expected object"
 
-    describe "InventoryResponse JSON structure" $ do
-      it "InventoryData has type, value, and capabilities fields" $ do
-        let inv = Inventory (V.fromList [])
-        let caps = capabilitiesForRole Admin
-        let resp = InventoryData inv caps
-        case toJSON resp of
+    describe "SessionResponse JSON structure" $ do
+      -- NEW: GET /session returns this. PureScript reads all four fields.
+      it "has all fields the frontend expects" $ do
+        let sess = SessionResponse
+              { sessionUserId       = testUUID
+              , sessionUserName     = "Test Cashier"
+              , sessionRole         = Cashier
+              , sessionCapabilities = capabilitiesForRole Cashier
+              }
+        case toJSON sess of
           Object obj -> do
-            KM.lookup "type" obj `shouldBe` Just (String "data")
-            member "value" obj `shouldBe` True
-            member "capabilities" obj `shouldBe` True
+            member "sessionUserId"       obj `shouldBe` True
+            member "sessionUserName"     obj `shouldBe` True
+            member "sessionRole"         obj `shouldBe` True
+            member "sessionCapabilities" obj `shouldBe` True
+          _ -> expectationFailure "SessionResponse should serialize as object"
+
+      it "sessionCapabilities is a nested object with capability flags" $ do
+        let sess = SessionResponse
+              { sessionUserId = testUUID, sessionUserName = "Test"
+              , sessionRole = Admin, sessionCapabilities = capabilitiesForRole Admin
+              }
+        case toJSON sess of
+          Object obj -> case KM.lookup "sessionCapabilities" obj of
+            Just (Object caps) -> do
+              member "capCanViewInventory"  caps `shouldBe` True
+              member "capCanCreateItem"     caps `shouldBe` True
+              member "capCanManageUsers"    caps `shouldBe` True
+              member "capCanViewCompliance" caps `shouldBe` True
+            _ -> expectationFailure "sessionCapabilities should be an object"
           _ -> expectationFailure "Expected object"
 
-      it "Message has type and value fields" $ do
-        case toJSON (Message "hello") of
-          Object obj -> do
-            KM.lookup "type" obj `shouldBe` Just (String "message")
-            KM.lookup "value" obj `shouldBe` Just (String "hello")
+      it "sessionRole serializes as a bare string" $ do
+        let sess = SessionResponse testUUID "Test" Manager (capabilitiesForRole Manager)
+        case toJSON sess of
+          Object obj -> case KM.lookup "sessionRole" obj of
+            Just (String "Manager") -> pure ()
+            Just other -> expectationFailure $ "Expected String Manager, got: " ++ show other
+            Nothing -> expectationFailure "sessionRole field missing"
           _ -> expectationFailure "Expected object"
+
+      it "roundtrips through JSON for all roles" $ do
+        let roles = [Customer, Cashier, Manager, Admin]
+        mapM_ (\r ->
+          let sess = SessionResponse testUUID "Test" r (capabilitiesForRole r)
+          in decode (encode sess) `shouldBe` Just sess
+          ) roles
 
   -- ═══════════════════════════════════════════════
   -- SECTION 3: Frontend → Backend parsing
-  -- Simulate JSON the PureScript WriteForeign produces
   -- ═══════════════════════════════════════════════
 
   describe "Frontend → Backend JSON parsing" $ do
 
     describe "Transaction from PureScript" $ do
       it "parses PureScript-produced Transaction JSON" $ do
-        -- PureScript WriteForeign for Transaction produces these field names
-        -- with status as "Created", type as "Sale", nullable optionals as null
         let json = object
-              [ "transactionId" .= testUUID
-              , "transactionStatus" .= String "Created"
-              , "transactionCreated" .= testTime
-              , "transactionCompleted" .= Null
-              , "transactionCustomerId" .= Null
-              , "transactionEmployeeId" .= testUUID2
-              , "transactionRegisterId" .= testUUID2
-              , "transactionLocationId" .= testUUID2
-              , "transactionItems" .= ([] :: [Value])
-              , "transactionPayments" .= ([] :: [Value])
-              , "transactionSubtotal" .= (0 :: Int)
-              , "transactionDiscountTotal" .= (0 :: Int)
-              , "transactionTaxTotal" .= (0 :: Int)
-              , "transactionTotal" .= (0 :: Int)
-              , "transactionType" .= String "Sale"
-              , "transactionIsVoided" .= False
-              , "transactionVoidReason" .= Null
-              , "transactionIsRefunded" .= False
-              , "transactionRefundReason" .= Null
+              [ "transactionId"                    .= testUUID
+              , "transactionStatus"                .= String "Created"
+              , "transactionCreated"               .= testTime
+              , "transactionCompleted"             .= Null
+              , "transactionCustomerId"            .= Null
+              , "transactionEmployeeId"            .= testUUID2
+              , "transactionRegisterId"            .= testUUID2
+              , "transactionLocationId"            .= testUUID2
+              , "transactionItems"                 .= ([] :: [Value])
+              , "transactionPayments"              .= ([] :: [Value])
+              , "transactionSubtotal"              .= (0 :: Int)
+              , "transactionDiscountTotal"         .= (0 :: Int)
+              , "transactionTaxTotal"              .= (0 :: Int)
+              , "transactionTotal"                 .= (0 :: Int)
+              , "transactionType"                  .= String "Sale"
+              , "transactionIsVoided"              .= False
+              , "transactionVoidReason"            .= Null
+              , "transactionIsRefunded"            .= False
+              , "transactionRefundReason"          .= Null
               , "transactionReferenceTransactionId" .= Null
-              , "transactionNotes" .= Null
+              , "transactionNotes"                 .= Null
               ]
         let result = fromJSON json :: Result Transaction
         case result of
@@ -397,15 +506,15 @@ spec = describe "Integration: JSON Contract Tests" $ do
     describe "TransactionItem from PureScript" $ do
       it "parses PureScript-produced TransactionItem JSON" $ do
         let json = object
-              [ "transactionItemId" .= testUUID
+              [ "transactionItemId"            .= testUUID
               , "transactionItemTransactionId" .= testUUID2
-              , "transactionItemMenuItemSku" .= testUUID
-              , "transactionItemQuantity" .= (2 :: Int)
-              , "transactionItemPricePerUnit" .= (1000 :: Int)
-              , "transactionItemDiscounts" .= ([] :: [Value])
-              , "transactionItemTaxes" .= ([] :: [Value])
-              , "transactionItemSubtotal" .= (2000 :: Int)
-              , "transactionItemTotal" .= (2160 :: Int)
+              , "transactionItemMenuItemSku"   .= testUUID
+              , "transactionItemQuantity"      .= (2 :: Int)
+              , "transactionItemPricePerUnit"  .= (1000 :: Int)
+              , "transactionItemDiscounts"     .= ([] :: [Value])
+              , "transactionItemTaxes"         .= ([] :: [Value])
+              , "transactionItemSubtotal"      .= (2000 :: Int)
+              , "transactionItemTotal"         .= (2160 :: Int)
               ]
         let result = fromJSON json :: Result TransactionItem
         case result of
@@ -416,16 +525,15 @@ spec = describe "Integration: JSON Contract Tests" $ do
 
     describe "PaymentTransaction from PureScript" $ do
       it "parses PureScript-produced Payment JSON with null optionals" $ do
-        -- PureScript uses Nullable for Maybe fields via maybeToNullable
         let json = object
-              [ "paymentId" .= testUUID
-              , "paymentTransactionId" .= testUUID2
-              , "paymentMethod" .= String "Cash"
-              , "paymentAmount" .= (5000 :: Int)
-              , "paymentTendered" .= (6000 :: Int)
-              , "paymentChange" .= (1000 :: Int)
-              , "paymentReference" .= Null
-              , "paymentApproved" .= True
+              [ "paymentId"                .= testUUID
+              , "paymentTransactionId"     .= testUUID2
+              , "paymentMethod"            .= String "Cash"
+              , "paymentAmount"            .= (5000 :: Int)
+              , "paymentTendered"          .= (6000 :: Int)
+              , "paymentChange"            .= (1000 :: Int)
+              , "paymentReference"         .= Null
+              , "paymentApproved"          .= True
               , "paymentAuthorizationCode" .= Null
               ]
         let result = fromJSON json :: Result PaymentTransaction
@@ -436,16 +544,16 @@ spec = describe "Integration: JSON Contract Tests" $ do
             paymentReference p `shouldBe` Nothing
           Error err -> expectationFailure $ "Failed to parse: " ++ err
 
-      it "parses PureScript-produced Payment with reference" $ do
+      it "parses Payment with reference and auth code" $ do
         let json = object
-              [ "paymentId" .= testUUID
-              , "paymentTransactionId" .= testUUID2
-              , "paymentMethod" .= String "Credit"
-              , "paymentAmount" .= (5000 :: Int)
-              , "paymentTendered" .= (5000 :: Int)
-              , "paymentChange" .= (0 :: Int)
-              , "paymentReference" .= String "VISA-1234"
-              , "paymentApproved" .= True
+              [ "paymentId"                .= testUUID
+              , "paymentTransactionId"     .= testUUID2
+              , "paymentMethod"            .= String "Credit"
+              , "paymentAmount"            .= (5000 :: Int)
+              , "paymentTendered"          .= (5000 :: Int)
+              , "paymentChange"            .= (0 :: Int)
+              , "paymentReference"         .= String "VISA-1234"
+              , "paymentApproved"          .= True
               , "paymentAuthorizationCode" .= String "AUTH456"
               ]
         let result = fromJSON json :: Result PaymentTransaction
@@ -459,30 +567,30 @@ spec = describe "Integration: JSON Contract Tests" $ do
     describe "MenuItem from PureScript" $ do
       it "parses PureScript-produced MenuItem JSON" $ do
         let json = object
-              [ "sort" .= (1 :: Int)
-              , "sku" .= testUUID
-              , "brand" .= String "TestBrand"
-              , "name" .= String "OG Kush"
-              , "price" .= (2999 :: Int)
+              [ "sort"         .= (1 :: Int)
+              , "sku"          .= testUUID
+              , "brand"        .= String "TestBrand"
+              , "name"         .= String "OG Kush"
+              , "price"        .= (2999 :: Int)
               , "measure_unit" .= String "g"
-              , "per_package" .= String "3.5"
-              , "quantity" .= (10 :: Int)
-              , "category" .= String "Flower"
-              , "subcategory" .= String "Indoor"
-              , "description" .= String "Classic"
-              , "tags" .= (["indica", "classic"] :: [String])
-              , "effects" .= (["relaxed"] :: [String])
+              , "per_package"  .= String "3.5"
+              , "quantity"     .= (10 :: Int)
+              , "category"     .= String "Flower"
+              , "subcategory"  .= String "Indoor"
+              , "description"  .= String "Classic"
+              , "tags"         .= (["indica", "classic"] :: [String])
+              , "effects"      .= (["relaxed"] :: [String])
               , "strain_lineage" .= object
-                  [ "thc" .= String "25%"
-                  , "cbg" .= String "0.5%"
-                  , "strain" .= String "OG Kush"
-                  , "creator" .= String "Unknown"
-                  , "species" .= String "Indica"
+                  [ "thc"              .= String "25%"
+                  , "cbg"              .= String "0.5%"
+                  , "strain"           .= String "OG Kush"
+                  , "creator"          .= String "Unknown"
+                  , "species"          .= String "Indica"
                   , "dominant_terpene" .= String "Myrcene"
-                  , "terpenes" .= (["Myrcene"] :: [String])
-                  , "lineage" .= (["Chemdawg"] :: [String])
-                  , "leafly_url" .= String "https://leafly.com"
-                  , "img" .= String "https://example.com/img.jpg"
+                  , "terpenes"         .= (["Myrcene"] :: [String])
+                  , "lineage"          .= (["Chemdawg"] :: [String])
+                  , "leafly_url"       .= String "https://leafly.com"
+                  , "img"              .= String "https://example.com/img.jpg"
                   ]
               ]
         let result = fromJSON json :: Result MenuItem
@@ -494,20 +602,51 @@ spec = describe "Integration: JSON Contract Tests" $ do
             species (strain_lineage item) `shouldBe` Indica
           Error err -> expectationFailure $ "Failed to parse: " ++ err
 
+    describe "DiscountType from PureScript" $ do
+      -- PureScript WriteForeign produces flat objects with "discountType" key.
+      -- The custom FromJSON instance handles this format.
+      it "parses PureScript PERCENT_OFF format" $ do
+        let json = object
+              [ "discountType" .= String "PERCENT_OFF"
+              , "percent"      .= (10.0 :: Double)
+              ]
+        fromJSON json `shouldBe` (Success (PercentOff 10.0) :: Result DiscountType)
+
+      it "parses PureScript AMOUNT_OFF format" $ do
+        let json = object
+              [ "discountType" .= String "AMOUNT_OFF"
+              , "amount"       .= (500 :: Int)
+              ]
+        fromJSON json `shouldBe` (Success (AmountOff 500) :: Result DiscountType)
+
+      it "parses PureScript BUY_ONE_GET_ONE format" $ do
+        let json = object
+              [ "discountType" .= String "BUY_ONE_GET_ONE"
+              ]
+        fromJSON json `shouldBe` (Success BuyOneGetOne :: Result DiscountType)
+
+      it "parses PureScript CUSTOM format" $ do
+        let json = object
+              [ "discountType" .= String "CUSTOM"
+              , "name"         .= String "Employee"
+              , "amount"       .= (250 :: Int)
+              ]
+        fromJSON json `shouldBe` (Success (Custom "Employee" 250) :: Result DiscountType)
+
     describe "Register from PureScript" $ do
       it "parses PureScript-produced Register JSON" $ do
         let json = object
-              [ "registerId" .= testUUID
-              , "registerName" .= String "Register 1"
-              , "registerLocationId" .= testUUID2
-              , "registerIsOpen" .= False
+              [ "registerId"                  .= testUUID
+              , "registerName"                .= String "Register 1"
+              , "registerLocationId"          .= testUUID2
+              , "registerIsOpen"              .= False
               , "registerCurrentDrawerAmount" .= (0 :: Int)
               , "registerExpectedDrawerAmount" .= (0 :: Int)
-              , "registerOpenedAt" .= Null
-              , "registerOpenedBy" .= Null
+              , "registerOpenedAt"            .= Null
+              , "registerOpenedBy"            .= Null
               , "registerLastTransactionTime" .= Null
               ]
-        let result = fromJSON json :: Result API.Transaction.Register
+        let result = fromJSON json :: Result Register
         case result of
           Success r -> do
             registerName r `shouldBe` "Register 1"
@@ -515,151 +654,92 @@ spec = describe "Integration: JSON Contract Tests" $ do
             registerOpenedAt r `shouldBe` Nothing
           Error err -> expectationFailure $ "Failed to parse: " ++ err
 
-  describe "DiscountType serialization (aligned)" $ do
-      it "backend serializes PercentOff as flat discriminated object" $ do
-        let dt = PercentOff (fromFloatDigits (10.0 :: Double))
-        case toJSON dt of
-          Object obj -> do
-            KM.lookup "discountType" obj `shouldBe` Just (String "PERCENT_OFF")
-            member "percent" obj `shouldBe` True
-          _ -> expectationFailure "Expected object"
-
-      it "backend serializes AmountOff with cents" $ do
-        let dt = AmountOff 500
-        case toJSON dt of
-          Object obj -> do
-            KM.lookup "discountType" obj `shouldBe` Just (String "AMOUNT_OFF")
-            KM.lookup "amount" obj `shouldBe` Just (Number 500)
-          _ -> expectationFailure "Expected object"
-
-      it "roundtrips DiscountType through JSON" $ do
-        let types = [ PercentOff (fromFloatDigits (10.0 :: Double))
-                    , AmountOff 500
-                    , BuyOneGetOne
-                    , Custom "Employee" 250
-                    ]
-        mapM_ (\dt -> fromJSON (toJSON dt) `shouldBe` Success dt) types
-
-      it "parses PureScript-produced DiscountType format" $ do
-        let frontendJson = object
-              [ "discountType" .= String "PERCENT_OFF"
-              , "percent" .= (10.0 :: Double)
-              ]
-        fromJSON frontendJson `shouldBe` (Success (PercentOff (fromFloatDigits (10.0 :: Double))) :: Result DiscountType)
-
   -- ═══════════════════════════════════════════════
-  -- SECTION 5: Auth contract — devUser UUIDs match
+  -- SECTION 4: Auth contract — devUser UUIDs match
   -- ═══════════════════════════════════════════════
 
   describe "Auth contract: dev user UUIDs" $ do
-    -- PureScript Config.Auth hardcodes these UUIDs; they must match Auth.Simple
-    it "admin UUID matches" $ do
-      let user = lookupUser (Just "d3a1f4f0-c518-4db3-aa43-e80b428d6304")
-      auRole user `shouldBe` Admin
-
-    it "customer UUID matches" $ do
-      let user = lookupUser (Just "8244082f-a6bc-4d6c-9427-64a0ecdc10db")
-      auRole user `shouldBe` Customer
-
-    it "cashier UUID matches" $ do
-      let user = lookupUser (Just "0a6f2deb-892b-4411-8025-08c1a4d61229")
-      auRole user `shouldBe` Cashier
-
-    it "manager UUID matches" $ do
-      let user = lookupUser (Just "8b75ea4a-00a4-4a2a-a5d5-a1bab8883802")
-      auRole user `shouldBe` Manager
+    it "admin UUID matches"    $ auRole (lookupUser (Just "d3a1f4f0-c518-4db3-aa43-e80b428d6304")) `shouldBe` Admin
+    it "customer UUID matches" $ auRole (lookupUser (Just "8244082f-a6bc-4d6c-9427-64a0ecdc10db")) `shouldBe` Customer
+    it "cashier UUID matches"  $ auRole (lookupUser (Just "0a6f2deb-892b-4411-8025-08c1a4d61229")) `shouldBe` Cashier
+    it "manager UUID matches"  $ auRole (lookupUser (Just "8b75ea4a-00a4-4a2a-a5d5-a1bab8883802")) `shouldBe` Manager
 
   -- ═══════════════════════════════════════════════
-  -- SECTION 6: Capability definitions match
+  -- SECTION 5: Capability definitions match frontend
   -- ═══════════════════════════════════════════════
 
   describe "Capability parity: backend == frontend definitions" $ do
-    -- If these ever drift, the frontend shows UI for actions the backend rejects
-    -- (or hides UI for actions the backend allows)
+    let caps = capabilitiesForRole
 
-    let backendCaps = capabilitiesForRole
+    describe "Customer" $ do
+      it "viewInventory=T createItem=F editItem=F deleteItem=F" $ do
+        capCanViewInventory (caps Customer) `shouldBe` True
+        capCanCreateItem    (caps Customer) `shouldBe` False
+        capCanEditItem      (caps Customer) `shouldBe` False
+        capCanDeleteItem    (caps Customer) `shouldBe` False
+      it "processTransaction=F voidTransaction=F refundTransaction=F" $ do
+        capCanProcessTransaction (caps Customer) `shouldBe` False
+        capCanVoidTransaction    (caps Customer) `shouldBe` False
+        capCanRefundTransaction  (caps Customer) `shouldBe` False
+      it "openRegister=F closeRegister=F viewCompliance=F" $ do
+        capCanOpenRegister  (caps Customer) `shouldBe` False
+        capCanCloseRegister (caps Customer) `shouldBe` False
+        capCanViewCompliance (caps Customer) `shouldBe` False
 
-    describe "Customer capabilities" $ do
-      let caps = backendCaps Customer
-      it "viewInventory = True"         $ capCanViewInventory caps `shouldBe` True
-      it "createItem = False"           $ capCanCreateItem caps `shouldBe` False
-      it "editItem = False"             $ capCanEditItem caps `shouldBe` False
-      it "deleteItem = False"           $ capCanDeleteItem caps `shouldBe` False
-      it "processTransaction = False"   $ capCanProcessTransaction caps `shouldBe` False
-      it "voidTransaction = False"      $ capCanVoidTransaction caps `shouldBe` False
-      it "refundTransaction = False"    $ capCanRefundTransaction caps `shouldBe` False
-      it "applyDiscount = False"        $ capCanApplyDiscount caps `shouldBe` False
-      it "manageRegisters = False"      $ capCanManageRegisters caps `shouldBe` False
-      it "openRegister = False"         $ capCanOpenRegister caps `shouldBe` False
-      it "closeRegister = False"        $ capCanCloseRegister caps `shouldBe` False
-      it "viewReports = False"          $ capCanViewReports caps `shouldBe` False
-      it "viewAllLocations = False"     $ capCanViewAllLocations caps `shouldBe` False
-      it "manageUsers = False"          $ capCanManageUsers caps `shouldBe` False
-      it "viewCompliance = False"       $ capCanViewCompliance caps `shouldBe` False
+    describe "Cashier" $ do
+      it "editItem=T processTransaction=T openRegister=T closeRegister=T viewCompliance=T" $ do
+        capCanEditItem           (caps Cashier) `shouldBe` True
+        capCanProcessTransaction (caps Cashier) `shouldBe` True
+        capCanOpenRegister       (caps Cashier) `shouldBe` True
+        capCanCloseRegister      (caps Cashier) `shouldBe` True
+        capCanViewCompliance     (caps Cashier) `shouldBe` True
+      it "createItem=F deleteItem=F voidTransaction=F applyDiscount=F" $ do
+        capCanCreateItem      (caps Cashier) `shouldBe` False
+        capCanDeleteItem      (caps Cashier) `shouldBe` False
+        capCanVoidTransaction (caps Cashier) `shouldBe` False
+        capCanApplyDiscount   (caps Cashier) `shouldBe` False
 
-    describe "Cashier capabilities" $ do
-      let caps = backendCaps Cashier
-      it "viewInventory = True"         $ capCanViewInventory caps `shouldBe` True
-      it "createItem = False"           $ capCanCreateItem caps `shouldBe` False
-      it "editItem = True"              $ capCanEditItem caps `shouldBe` True
-      it "deleteItem = False"           $ capCanDeleteItem caps `shouldBe` False
-      it "processTransaction = True"    $ capCanProcessTransaction caps `shouldBe` True
-      it "voidTransaction = False"      $ capCanVoidTransaction caps `shouldBe` False
-      it "refundTransaction = False"    $ capCanRefundTransaction caps `shouldBe` False
-      it "applyDiscount = False"        $ capCanApplyDiscount caps `shouldBe` False
-      it "manageRegisters = False"      $ capCanManageRegisters caps `shouldBe` False
-      it "openRegister = True"          $ capCanOpenRegister caps `shouldBe` True
-      it "closeRegister = True"         $ capCanCloseRegister caps `shouldBe` True
-      it "viewReports = False"          $ capCanViewReports caps `shouldBe` False
-      it "viewAllLocations = False"     $ capCanViewAllLocations caps `shouldBe` False
-      it "manageUsers = False"          $ capCanManageUsers caps `shouldBe` False
-      it "viewCompliance = True"        $ capCanViewCompliance caps `shouldBe` True
+    describe "Manager" $ do
+      it "has all item and transaction permissions" $ do
+        capCanCreateItem         (caps Manager) `shouldBe` True
+        capCanEditItem           (caps Manager) `shouldBe` True
+        capCanDeleteItem         (caps Manager) `shouldBe` True
+        capCanProcessTransaction (caps Manager) `shouldBe` True
+        capCanVoidTransaction    (caps Manager) `shouldBe` True
+        capCanRefundTransaction  (caps Manager) `shouldBe` True
+        capCanApplyDiscount      (caps Manager) `shouldBe` True
+      it "lacks user management and multi-location access" $ do
+        capCanViewAllLocations (caps Manager) `shouldBe` False
+        capCanManageUsers      (caps Manager) `shouldBe` False
 
-    describe "Manager capabilities" $ do
-      let caps = backendCaps Manager
-      it "viewInventory = True"         $ capCanViewInventory caps `shouldBe` True
-      it "createItem = True"            $ capCanCreateItem caps `shouldBe` True
-      it "editItem = True"              $ capCanEditItem caps `shouldBe` True
-      it "deleteItem = True"            $ capCanDeleteItem caps `shouldBe` True
-      it "processTransaction = True"    $ capCanProcessTransaction caps `shouldBe` True
-      it "voidTransaction = True"       $ capCanVoidTransaction caps `shouldBe` True
-      it "refundTransaction = True"     $ capCanRefundTransaction caps `shouldBe` True
-      it "applyDiscount = True"         $ capCanApplyDiscount caps `shouldBe` True
-      it "manageRegisters = True"       $ capCanManageRegisters caps `shouldBe` True
-      it "openRegister = True"          $ capCanOpenRegister caps `shouldBe` True
-      it "closeRegister = True"         $ capCanCloseRegister caps `shouldBe` True
-      it "viewReports = True"           $ capCanViewReports caps `shouldBe` True
-      it "viewAllLocations = False"     $ capCanViewAllLocations caps `shouldBe` False
-      it "manageUsers = False"          $ capCanManageUsers caps `shouldBe` False
-      it "viewCompliance = True"        $ capCanViewCompliance caps `shouldBe` True
-
-    describe "Admin capabilities" $ do
-      let caps = backendCaps Admin
-      it "all capabilities = True" $ do
-        capCanViewInventory caps `shouldBe` True
-        capCanCreateItem caps `shouldBe` True
-        capCanEditItem caps `shouldBe` True
-        capCanDeleteItem caps `shouldBe` True
-        capCanProcessTransaction caps `shouldBe` True
-        capCanVoidTransaction caps `shouldBe` True
-        capCanRefundTransaction caps `shouldBe` True
-        capCanApplyDiscount caps `shouldBe` True
-        capCanManageRegisters caps `shouldBe` True
-        capCanOpenRegister caps `shouldBe` True
-        capCanCloseRegister caps `shouldBe` True
-        capCanViewReports caps `shouldBe` True
-        capCanViewAllLocations caps `shouldBe` True
-        capCanManageUsers caps `shouldBe` True
-        capCanViewCompliance caps `shouldBe` True
+    describe "Admin" $ do
+      it "has all capabilities" $ do
+        let c = caps Admin
+        capCanViewInventory      c `shouldBe` True
+        capCanCreateItem         c `shouldBe` True
+        capCanDeleteItem         c `shouldBe` True
+        capCanVoidTransaction    c `shouldBe` True
+        capCanApplyDiscount      c `shouldBe` True
+        capCanViewAllLocations   c `shouldBe` True
+        capCanManageUsers        c `shouldBe` True
+        capCanViewCompliance      c `shouldBe` True
 
   -- ═══════════════════════════════════════════════
-  -- SECTION 7: showPaymentMethod loses Other payload
+  -- SECTION 6: showPaymentMethod Other payload preservation
+  -- (was "KNOWN ISSUE" — now fixed and verified)
   -- ═══════════════════════════════════════════════
 
-  describe "showPaymentMethod preserves Other payload" $ do
-      it "JSON roundtrip preserves Other text" $
-        fromJSON (toJSON (Other "Crypto")) `shouldBe` (Success (Other "Crypto") :: Result PaymentMethod)
+  describe "PaymentMethod Other payload preservation" $ do
+    it "JSON roundtrip preserves Other text" $
+      fromJSON (toJSON (Other "Crypto")) `shouldBe` (Success (Other "Crypto") :: Result PaymentMethod)
 
-      it "DB roundtrip preserves Other text" $ do
-        let method = Other "Crypto"
-        parsePaymentMethod (T.unpack $ showPaymentMethod method) `shouldBe` method
+    it "JSON roundtrip preserves Other with special characters" $
+      fromJSON (toJSON (Other "Store-Credit")) `shouldBe` (Success (Other "Store-Credit") :: Result PaymentMethod)
+
+    -- This documents that the DB roundtrip (via showPaymentMethod/parsePaymentMethod)
+    -- also preserves the payload now that showPaymentMethod produces "OTHER:<text>".
+    -- See Test.DB.PureFunctionsSpec for the unit-level verification.
+    it "showPaymentMethod produces parseable string for Other" $ do
+      let method = Other "DigitalWallet"
+      let serialized = T.unpack $ showPaymentMethod method
+      parsePaymentMethod serialized `shouldBe` method

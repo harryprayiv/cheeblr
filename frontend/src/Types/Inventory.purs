@@ -22,23 +22,19 @@ import Data.Tuple.Nested ((/\))
 import Data.Validation.Semigroup (V, invalid, toEither, andThen)
 import Foreign (F, ForeignError(..), fail)
 import Foreign.Index (readProp)
-import Types.Auth (UserCapabilities)
 import Types.UUID (UUID, parseUUID, validateUUID)
 import Utils.Formatting (invertOrdering, parseCommaList)
 import Utils.Validation (validateInt, validateNumber, validatePercentage, validateString, validateUrl)
 import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
 
-
-data InventoryResponse
-  = InventoryData Inventory (Maybe UserCapabilities)
-  | Message String
+-- | Returned by POST / PUT / DELETE /inventory
+type MutationResponse =
+  { success :: Boolean
+  , message :: String
+  }
 
 derive instance genericInventory :: Generic Inventory _
 instance showInventory :: Show Inventory where
-  show = genericShow
-
-derive instance genericInventoryResponse :: Generic InventoryResponse _
-instance showInventoryResponse :: Show InventoryResponse where
   show = genericShow
 
 newtype Inventory = Inventory (Array MenuItem)
@@ -275,10 +271,8 @@ instance writeForeignInventory :: WriteForeign Inventory where
 instance writeForeignSpecies :: WriteForeign Species where
   writeImpl = writeImpl <<< show
 
-instance writeForeignInventoryResponse :: WriteForeign InventoryResponse where
-  writeImpl (InventoryData inventory caps) = writeImpl
-    { type: "data", value: inventory, capabilities: caps }
-  writeImpl (Message msg) = writeImpl { type: "message", value: msg }
+instance writeForeignItemCategory :: WriteForeign ItemCategory where
+  writeImpl = writeImpl <<< show
 
 instance readForeignMenuItem :: ReadForeign MenuItem where
   readImpl json = do
@@ -290,7 +284,7 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
     brand <- readProp "brand" json >>= readImpl
     name <- readProp "name" json >>= readImpl
     priceValue <-
-      readProp "price" json >>= readImpl :: F Int -- Expect Int from backend
+      readProp "price" json >>= readImpl :: F Int
     measure_unit <- readProp "measure_unit" json >>= readImpl
     per_package <- readProp "per_package" json >>= readImpl
     quantity <- readProp "quantity" json >>= readImpl
@@ -311,14 +305,12 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
     tags <- readProp "tags" json >>= readImpl
     effects <- readProp "effects" json >>= readImpl
     strain_lineage <- readProp "strain_lineage" json >>= readImpl
-
-    -- The backend is sending price as Int (cents), create Discrete USD directly
     pure $ MenuItem
       { sort
       , sku
       , brand
       , name
-      , price: Discrete priceValue -- Create Discrete USD directly from the Int value
+      , price: Discrete priceValue
       , measure_unit
       , per_package
       , quantity
@@ -329,9 +321,6 @@ instance readForeignMenuItem :: ReadForeign MenuItem where
       , effects
       , strain_lineage
       }
-
-instance writeForeignItemCategory :: WriteForeign ItemCategory where
-  writeImpl = writeImpl <<< show
 
 instance readForeignItemCategory :: ReadForeign ItemCategory where
   readImpl json = do
@@ -348,11 +337,9 @@ instance readForeignItemCategory :: ReadForeign ItemCategory where
       "Accessories" -> pure Accessories
       _ -> fail (ForeignError $ "Invalid ItemCategory: " <> str)
 
--- Helper function to check if a number has no decimal component
 isWholeNumber :: Number -> Boolean
 isWholeNumber n = n == Int.toNumber (Int.floor n)
 
--- Helper function to determine if a value is an integer
 isInt :: Number -> Boolean
 isInt n = n == Int.toNumber (Int.floor n)
 
@@ -397,25 +384,6 @@ instance readForeignStrainLineage :: ReadForeign StrainLineage where
       , img
       }
 
-instance readForeignInventoryResponse :: ReadForeign InventoryResponse where
-  readImpl f = parseAsArray <|> parseAsObject
-    where
-    parseAsArray = do
-      inventory <- readImpl f :: F Inventory
-      pure $ InventoryData inventory Nothing
-    parseAsObject = do
-      typeField <- readProp "type" f >>= readImpl :: F String
-      case typeField of
-        "data" -> do
-          value <- readProp "value" f >>= readImpl :: F Inventory
-          caps <- (Just <$> (readProp "capabilities" f >>= readImpl))
-                    <|> pure Nothing
-          pure $ InventoryData value caps
-        "message" -> do
-          value <- readProp "value" f >>= readImpl :: F String
-          pure $ Message value
-        _ -> fail $ ForeignError "Invalid response type"
-
 derive instance Generic MenuItem _
 
 instance showMenuItem :: Show MenuItem where
@@ -459,7 +427,6 @@ generateClassName item =
 
 toClassName :: String -> String
 toClassName str = toLower (replace (Pattern " ") (Replacement "-") str)
-
 
 validateCategory :: String -> String -> V (Array String) ItemCategory
 validateCategory fieldName str = case str of
@@ -513,7 +480,6 @@ validateMenuItem input =
                                 `andThen` \strain_lineage ->
                                   validateInt "Sort" input.sort `andThen`
                                     \sort ->
-                                      -- Convert dollars to cents and create Discrete value
                                       let
                                         priceCents = Int.floor
                                           (priceValue * 100.0)

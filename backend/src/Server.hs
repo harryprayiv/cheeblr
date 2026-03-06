@@ -1,4 +1,3 @@
--- FILE: ./backend/src/Server.hs
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -7,19 +6,19 @@ module Server where
 import API.Inventory
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (encode)
-import qualified Data.ByteString.Lazy.Char8 as LBS
 import Database.PostgreSQL.Simple
 import Data.Pool (Pool)
 import Data.Text (Text, pack)
 import Servant
 import DB.Database (getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
 import Types.Inventory
-import Types.Auth (capabilitiesForRole, auRole, UserCapabilities(..))
+import Types.Auth
+    ( capabilitiesForRole, auRole, auUserId, auUserName
+    , UserCapabilities(..), SessionResponse(..)
+    )
 import Auth.Simple (lookupUser)
 import Data.UUID (UUID)
 
-import API.Transaction ()
 import qualified Data.Pool as Pool
 import Server.Transaction (posServerImpl)
 
@@ -29,85 +28,69 @@ inventoryServer pool =
     :<|> addMenuItem
     :<|> updateMenuItem
     :<|> deleteInventoryItem
+    :<|> getSession
   where
-    -- | GET /inventory - anyone can view, capabilities tell frontend what else they can do
-    getInventory :: Maybe Text -> Handler InventoryResponse
+    -- GET /inventory — plain JSON array, no capabilities bundled in
+    getInventory :: Maybe Text -> Handler Inventory
     getInventory mUserId = do
       let user = lookupUser mUserId
-      let caps = capabilitiesForRole (auRole user)
-      
       liftIO $ putStrLn $ "GET /inventory - User: " ++ show (auRole user)
-      
-      inventory <- liftIO $ getAllMenuItems pool
-      liftIO $ putStrLn "Sending inventory response with capabilities"
-      liftIO $ LBS.putStrLn $ encode $ InventoryData inventory caps
-      return $ InventoryData inventory caps
+      liftIO $ getAllMenuItems pool
 
-    -- | POST /inventory - requires create permission
-    addMenuItem :: Maybe Text -> MenuItem -> Handler InventoryResponse
+    -- POST /inventory
+    addMenuItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     addMenuItem mUserId item = do
       let user = lookupUser mUserId
-      let caps = capabilitiesForRole (auRole user)
-      
+          caps = capabilitiesForRole (auRole user)
       liftIO $ putStrLn $ "POST /inventory - User: " ++ show (auRole user)
-      
-      -- Check permission
       if not (capCanCreateItem caps)
-        then do
-          liftIO $ putStrLn "Permission denied: cannot create items"
-          throwError err403 { errBody = "You don't have permission to create items" }
+        then throwError err403 { errBody = "You don't have permission to create items" }
         else do
           liftIO $ putStrLn "Received request to add menu item"
-          liftIO $ print item
-          result <- liftIO $ try $ do
-            insertMenuItem pool item
-            return $ Message (pack "Item added successfully")
-          case result of
-            Right msg -> return msg
-            Left (e :: SomeException) -> do
-              let errMsg = pack $ "Error inserting item: " <> show e
-              liftIO $ putStrLn $ "Error: " ++ show e
-              return $ Message errMsg
+          result <- liftIO $ try $ insertMenuItem pool item
+          pure $ case result of
+            Right _             -> MutationResponse True "Item added successfully"
+            Left (e :: SomeException) ->
+              MutationResponse False (pack $ "Error inserting item: " <> show e)
 
-    -- | PUT /inventory - requires edit permission
-    updateMenuItem :: Maybe Text -> MenuItem -> Handler InventoryResponse
+    -- PUT /inventory
+    updateMenuItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     updateMenuItem mUserId item = do
       let user = lookupUser mUserId
-      let caps = capabilitiesForRole (auRole user)
-      
+          caps = capabilitiesForRole (auRole user)
       liftIO $ putStrLn $ "PUT /inventory - User: " ++ show (auRole user)
-      
-      -- Check permission
       if not (capCanEditItem caps)
-        then do
-          liftIO $ putStrLn "Permission denied: cannot edit items"
-          throwError err403 { errBody = "You don't have permission to edit items" }
+        then throwError err403 { errBody = "You don't have permission to edit items" }
         else do
           liftIO $ putStrLn "Received request to update menu item"
-          liftIO $ print item
-          result <- liftIO $ try $ do
-            updateExistingMenuItem pool item
-            return $ Message (pack "Item updated successfully")
-          case result of
-            Right msg -> return msg
-            Left (e :: SomeException) -> do
-              let errMsg = pack $ "Error updating item: " <> show e
-              return $ Message errMsg
+          result <- liftIO $ try $ updateExistingMenuItem pool item
+          pure $ case result of
+            Right _             -> MutationResponse True "Item updated successfully"
+            Left (e :: SomeException) ->
+              MutationResponse False (pack $ "Error updating item: " <> show e)
 
-    -- | DELETE /inventory/:sku - requires delete permission
-    deleteInventoryItem :: Maybe Text -> UUID -> Handler InventoryResponse
+    -- DELETE /inventory/:sku
+    deleteInventoryItem :: Maybe Text -> UUID -> Handler MutationResponse
     deleteInventoryItem mUserId uuid = do
       let user = lookupUser mUserId
-      let caps = capabilitiesForRole (auRole user)
-      
-      liftIO $ putStrLn $ "DELETE /inventory/" ++ show uuid ++ " - User: " ++ show (auRole user)
-      
-      -- Check permission
+          caps = capabilitiesForRole (auRole user)
+      liftIO $ putStrLn $
+        "DELETE /inventory/" ++ show uuid ++ " - User: " ++ show (auRole user)
       if not (capCanDeleteItem caps)
-        then do
-          liftIO $ putStrLn "Permission denied: cannot delete items"
-          throwError err403 { errBody = "You don't have permission to delete items" }
+        then throwError err403 { errBody = "You don't have permission to delete items" }
         else deleteMenuItem pool uuid
+
+    -- GET /session — capabilities for the identified user
+    getSession :: Maybe Text -> Handler SessionResponse
+    getSession mUserId = do
+      let user = lookupUser mUserId
+      liftIO $ putStrLn $ "GET /session - User: " ++ show (auRole user)
+      pure SessionResponse
+        { sessionUserId       = auUserId user
+        , sessionUserName     = auUserName user
+        , sessionRole         = auRole user
+        , sessionCapabilities = capabilitiesForRole (auRole user)
+        }
 
 combinedServer :: Pool Connection -> Server API
 combinedServer pool =

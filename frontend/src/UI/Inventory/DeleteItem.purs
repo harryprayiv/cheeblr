@@ -16,7 +16,6 @@ import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Services.AuthService (UserId)
-import Types.Inventory (InventoryResponse(..))
 
 deleteItem :: UserId -> String -> String -> Nut
 deleteItem userId itemId itemName = Deku.do
@@ -51,15 +50,14 @@ deleteItem userId itemId itemName = Deku.do
                 void $ setFiber =<< launchAff do
                   result <- deleteInventory userId itemId
                   liftEffect $ case result of
-                    Right (Message msg) -> do
+                    Right { success: true, message: msg } -> do
                       Console.log $ "Deletion successful: " <> msg
                       setStatusMessage msg
                       setSuccess true
                       setSubmitting false
-                    Right (InventoryData _ _) -> do
-                      Console.log "Item deleted successfully"
-                      setStatusMessage "Item successfully deleted!"
-                      setSuccess true
+                    Right { success: false, message: msg } -> do
+                      Console.error $ "Deletion reported failure: " <> msg
+                      setStatusMessage $ "Error: " <> msg
                       setSubmitting false
                     Left err -> do
                       Console.error $ "Failed to delete item: " <> err

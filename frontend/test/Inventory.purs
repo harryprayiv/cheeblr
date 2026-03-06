@@ -16,7 +16,7 @@ import Types.Inventory
   , MenuItemFormInput
   , StrainLineage(..)
   , Inventory(..)
-  , InventoryResponse(..)
+  , MutationResponse
   , generateClassName
   , findItemBySku
   , findItemNameBySku
@@ -279,10 +279,15 @@ spec = describe "Types.Inventory" do
         Just (MenuItem item) -> item.price `shouldEqual` Discrete 2999
         Nothing -> (false) `shouldEqual` true
 
-  describe "InventoryResponse JSON serialization" do
-    it "serializes Message variant" do
-      let json = writeJSON (Message "hello")
-      let parsed = readJSON_ json :: Maybe InventoryResponse
+  describe "MutationResponse JSON serialization" do
+    it "parses success response" do
+      let json = """{"success":true,"message":"Item added successfully"}"""
+      let parsed = readJSON_ json :: Maybe MutationResponse
+      parsed `shouldSatisfy` isJust
+
+    it "parses failure response" do
+      let json = """{"success":false,"message":"Item not found"}"""
+      let parsed = readJSON_ json :: Maybe MutationResponse
       parsed `shouldSatisfy` isJust
 
   describe "Inventory JSON" do

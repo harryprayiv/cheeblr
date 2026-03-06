@@ -8,8 +8,8 @@ import Effect.Class (liftEffect)
 import Fetch (Method(..), fetch)
 import Node.Process as Process
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (shouldEqual, shouldSatisfy, fail)
-import Types.Inventory (InventoryResponse(..))
+import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
+import Types.Inventory (Inventory)
 import Yoga.JSON (readJSON_, writeJSON)
 
 -- ──────────────────────────────────────────────
@@ -95,7 +95,7 @@ spec = describe "Live HTTP Integration" do
 
     it "response body is valid JSON" do
       result <- httpGet "/inventory" (Just adminUUID)
-      let parsed = readJSON_ result.body :: Maybe InventoryResponse
+      let parsed = readJSON_ result.body :: Maybe Inventory
       parsed `shouldSatisfy` isJust
 
   -- ═══════════════════════════════════════════════
@@ -104,21 +104,16 @@ spec = describe "Live HTTP Integration" do
   -- Frontend parses into InventoryData | Message
   -- ═══════════════════════════════════════════════
 
-  describe "InventoryResponse contract" do
-
-    it "admin gets InventoryData with full capabilities" do
+  describe "Inventory contract" do
+    it "admin gets Inventory array" do
       result <- httpGet "/inventory" (Just adminUUID)
-      case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _ _) -> pure unit
-        Just (Message _) -> pure unit -- empty DB is fine
-        Nothing -> fail "Could not parse InventoryResponse from backend"
+      let parsed = readJSON_ result.body :: Maybe Inventory
+      parsed `shouldSatisfy` isJust
 
-    it "customer gets InventoryData (read-only)" do
+    it "customer gets Inventory array" do
       result <- httpGet "/inventory" (Just customerUUID)
-      case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _ _) -> pure unit
-        Just (Message _) -> pure unit
-        Nothing -> fail "Could not parse InventoryResponse for customer"
+      let parsed = readJSON_ result.body :: Maybe Inventory
+      parsed `shouldSatisfy` isJust
 
     it "unauthenticated request returns parseable response" do
       result <- httpGet "/inventory" Nothing
@@ -131,24 +126,13 @@ spec = describe "Live HTTP Integration" do
   -- ═══════════════════════════════════════════════
 
   describe "Capabilities parity over HTTP" do
+    it "GET /session returns 200 for admin" do
+      result <- httpGet "/session" (Just adminUUID)
+      result.status `shouldEqual` 200
 
-    it "admin capabilities: all true" do
-      result <- httpGet "/inventory" (Just adminUUID)
-      case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _ _) ->
-          -- If we got InventoryData, the capabilities were parsed.
-          -- The JSON contract tests already verify field-level parity;
-          -- this confirms the backend actually sends them over HTTP.
-          pure unit
-        Just (Message _) -> pure unit
-        Nothing -> fail "Failed to parse admin InventoryResponse"
-
-    it "cashier capabilities: can edit, cannot delete" do
-      result <- httpGet "/inventory" (Just cashierUUID)
-      case readJSON_ result.body :: Maybe InventoryResponse of
-        Just (InventoryData _ _) -> pure unit
-        Just (Message _) -> pure unit
-        Nothing -> fail "Failed to parse cashier InventoryResponse"
+    it "GET /session returns 200 for cashier" do
+      result <- httpGet "/session" (Just cashierUUID)
+      result.status `shouldEqual` 200
 
   -- ═══════════════════════════════════════════════
   -- SECTION 4: Register endpoints
@@ -194,7 +178,7 @@ spec = describe "Live HTTP Integration" do
     it "inventory items use snake_case field names (strain_lineage, measure_unit)" do
       result <- httpGet "/inventory" (Just adminUUID)
       -- If this parses, the field names match
-      let parsed = readJSON_ result.body :: Maybe InventoryResponse
+      let parsed = readJSON_ result.body :: Maybe Inventory
       -- Even for empty inventory, the structure should parse
       parsed `shouldSatisfy` isJust
 
@@ -202,7 +186,7 @@ spec = describe "Live HTTP Integration" do
       result <- httpGet "/inventory" (Just adminUUID)
       -- The InventoryResponse parser relies on "type": "data" | "message"
       -- If it parses, the discriminator is present and correct
-      let parsed = readJSON_ result.body :: Maybe InventoryResponse
+      let parsed = readJSON_ result.body :: Maybe Inventory
       parsed `shouldSatisfy` isJust
 
   -- ═══════════════════════════════════════════════

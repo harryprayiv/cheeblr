@@ -7,7 +7,7 @@ import Data.Maybe (Maybe(..), isJust)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 import Types.Auth (UserRole(..), capabilitiesForRole)
-import Types.Inventory (ItemCategory(..), Species(..), MenuItem(..), Inventory(..), InventoryResponse(..), StrainLineage(..))
+import Types.Inventory (Inventory, ItemCategory(..), MenuItem(..), Species(..), StrainLineage(..))
 import Types.Transaction
   ( TransactionStatus(..)
   , TransactionType(..)
@@ -218,24 +218,14 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
             p.paymentAuthorizationCode `shouldEqual` Nothing
           Nothing -> (false) `shouldEqual` true
 
-    describe "InventoryResponse from backend" do
-      -- Backend sends: {type: "data", value: [...], capabilities: {...}}
-      -- Frontend should parse the value and ignore capabilities
+    describe "Inventory from backend" do
+      let backendInvJson = """[{"sort":1,"sku":"33333333-3333-3333-3333-333333333333","brand":"TestBrand","name":"OG Kush","price":2999,"measure_unit":"g","per_package":"3.5","quantity":10,"category":"Flower","subcategory":"Indoor","description":"Classic","tags":[],"effects":[],"strain_lineage":{"thc":"25%","cbg":"0.5%","strain":"OG Kush","creator":"Unknown","species":"Indica","dominant_terpene":"Myrcene","terpenes":[],"lineage":[],"leafly_url":"https://leafly.com","img":"https://example.com/img.jpg"}}]"""
 
-      let backendInvResponseJson = """{"type":"data","value":[{"sort":1,"sku":"33333333-3333-3333-3333-333333333333","brand":"TestBrand","name":"OG Kush","price":2999,"measure_unit":"g","per_package":"3.5","quantity":10,"category":"Flower","subcategory":"Indoor","description":"Classic","tags":[],"effects":[],"strain_lineage":{"thc":"25%","cbg":"0.5%","strain":"OG Kush","creator":"Unknown","species":"Indica","dominant_terpene":"Myrcene","terpenes":[],"lineage":[],"leafly_url":"https://leafly.com","img":"https://example.com/img.jpg"}}],"capabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":true,"capCanManageUsers":true,"capCanViewCompliance":true}}"""
+      it "parses Inventory array" do
+        (readJSON_ backendInvJson :: Maybe Inventory) `shouldSatisfy` isJust
 
-      it "parses InventoryData variant (ignoring capabilities)" do
-        case (readJSON_ backendInvResponseJson :: Maybe InventoryResponse) of
-          Just (InventoryData (Inventory items) _) ->
-            (items /= []) `shouldEqual` true
-          Just (Message _) -> (false) `shouldEqual` true -- wrong variant
-          Nothing -> (false) `shouldEqual` true
-
-      it "parses Message variant" do
-        let msgJson = """{"type":"message","value":"Item added successfully"}"""
-        case (readJSON_ msgJson :: Maybe InventoryResponse) of
-          Just (Message msg) -> msg `shouldEqual` "Item added successfully"
-          _ -> (false) `shouldEqual` true
+      it "parses empty inventory" do
+        (readJSON_ "[]" :: Maybe Inventory) `shouldSatisfy` isJust
 
   -- ═══════════════════════════════════════════════
   -- SECTION 3: Verify frontend WriteForeign output

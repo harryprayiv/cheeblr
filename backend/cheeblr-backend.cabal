@@ -84,6 +84,7 @@ test-suite cheeblr-unit-tests
     Test.Auth.SimpleSpec
     Test.API.TransactionSpec
     Test.DB.PureFunctionsSpec
+    Test.Integration.JsonContractSpec
   build-depends:
     cheeblr-backend
     , hspec

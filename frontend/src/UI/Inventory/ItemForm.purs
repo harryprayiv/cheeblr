@@ -25,7 +25,7 @@ import Effect.Class (liftEffect)
 import FRP.Poll (Poll)
 import Services.AuthService (UserId)
 import Types.Formatting (ValidationRule)
-import Types.Inventory (MenuItem(..), StrainLineage(..), InventoryResponse(..), validateMenuItem)
+import Types.Inventory (MenuItem(..), StrainLineage(..), validateMenuItem)
 import Utils.Formatting (formatCentsToDecimal)
 import Utils.Validation (allOf, alphanumeric, dollarAmount, nonEmpty, nonNegativeInteger, percentage, runValidation, validMeasurementUnit, validUrl)
 import Web.Event.Event (target)
@@ -626,15 +626,15 @@ itemForm userId mode =
                               EditMode _   -> updateInventory userId menuItem
 
                             liftEffect $ case result of
-                              Right (Message msg) -> do
+                              Right { success: true, message: msg } -> do
                                 setStatusMessage $ "Success: " <> msg
                                 setSubmitting false
                                 case mode of
                                   CreateMode _ -> resetForm
                                   EditMode _   -> pure unit
 
-                              Right (InventoryData _ _) -> do
-                                setStatusMessage "Success"
+                              Right { success: false, message: msg } -> do
+                                setStatusMessage $ "Error: " <> msg
                                 setSubmitting false
 
                               Left err -> do

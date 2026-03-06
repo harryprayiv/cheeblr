@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-name-shadowing #-}
 
 module Test.Types.InventorySpec (spec) where
 
@@ -7,8 +8,14 @@ import Data.Aeson (encode, decode, toJSON, fromJSON, Result(..))
 import qualified Data.Vector as V
 import Data.UUID (UUID)
 import Types.Inventory
-import Types.Auth (UserCapabilities(..), capabilitiesForRole, UserRole(..))
-import qualified Types.Auth
+    ( Inventory(..),
+      MenuItem(..),
+      StrainLineage(..),
+      ItemCategory(Flower, PreRolls, Vaporizers, Edibles, Drinks,
+                   Concentrates, Topicals, Tinctures, Accessories),
+      Species(Indica, IndicaDominantHybrid, Hybrid, SativaDominantHybrid,
+              Sativa),
+      MutationResponse(message, success, MutationResponse) )
 import Data.Maybe (isJust)
 
 -- ──────────────────────────────────────────────
@@ -184,7 +191,7 @@ spec = describe "Types.Inventory" $ do
   describe "Inventory JSON" $ do
     it "serializes as array" $ do
       let inv = Inventory (V.fromList [testMenuItem])
-      decode (encode inv) `shouldSatisfy` (isJust :: Maybe Inventory -> Bool)
+      decode (encode inv) `shouldSatisfy` (Data.Maybe.isJust :: Maybe Inventory -> Bool)
 
     it "roundtrips through JSON" $ do
       let inv = Inventory (V.fromList [testMenuItem])
@@ -202,68 +209,25 @@ spec = describe "Types.Inventory" $ do
         Nothing -> expectationFailure "Failed to decode"
 
   -- ──────────────────────────────────────────────
-  -- InventoryResponse JSON
+  -- MutationResponse JSON
   -- ──────────────────────────────────────────────
-  describe "InventoryResponse JSON" $ do
-    it "roundtrips Message variant" $ do
-      let msg = Message "hello"
-      decode (encode msg) `shouldBe` Just msg
-
-    it "preserves message text" $ do
-      case decode (encode (Message "Item added successfully")) of
-        Just (Message txt) -> txt `shouldBe` "Item added successfully"
-        _ -> expectationFailure "Failed to decode or wrong variant"
-
-    it "roundtrips InventoryData variant" $ do
-      let inv = Inventory (V.fromList [testMenuItem])
-      let caps = capabilitiesForRole Admin
-      let resp = InventoryData inv caps
+  describe "MutationResponse JSON" $ do
+    it "roundtrips success response" $ do
+      let resp = MutationResponse { success = True, message = "Item added successfully" }
       decode (encode resp) `shouldBe` Just resp
 
-    it "preserves capabilities in InventoryData" $ do
-      let inv = Inventory V.empty
-      let caps = capabilitiesForRole Cashier
-      let resp = InventoryData inv caps
+    it "roundtrips failure response" $ do
+      let resp = MutationResponse { success = False, message = "Item not found" }
+      decode (encode resp) `shouldBe` Just resp
+
+    it "preserves success flag" $ do
+      let resp = MutationResponse { success = True, message = "ok" }
       case decode (encode resp) of
-        Just (InventoryData _ c) -> do
-          capCanEditItem c `shouldBe` True
-          capCanDeleteItem c `shouldBe` False
-          capCanProcessTransaction c `shouldBe` True
-        _ -> expectationFailure "Failed to decode InventoryData"
+        Just MutationResponse { success = s } -> s `shouldBe` True
+        Nothing -> expectationFailure "Failed to decode"
 
-    it "InventoryData type field is 'data'" $ do
-      let inv = Inventory V.empty
-      let caps = capabilitiesForRole Customer
-      let json = encode (InventoryData inv caps)
-      -- Just verify it decodes properly (the type discrimination is tested via roundtrip)
-      (decode json :: Maybe InventoryResponse) `shouldSatisfy` isJust
-
-    it "Message type field is 'message'" $ do
-      let json = encode (Message "test")
-      (decode json :: Maybe InventoryResponse) `shouldSatisfy` isJust
-
-  -- ──────────────────────────────────────────────
-  -- simpleMessage / inventoryWithCapabilities
-  -- ──────────────────────────────────────────────
-  describe "simpleMessage" $ do
-    it "creates a Message" $ do
-      case simpleMessage "hello" of
-        Message t -> t `shouldBe` "hello"
-        _ -> expectationFailure "Expected Message"
-
-  describe "inventoryWithCapabilities" $ do
-    it "uses role-appropriate capabilities" $ do
-      let inv = Inventory V.empty
-      let user = Types.Auth.AuthenticatedUser
-            { Types.Auth.auUserId = read "d3a1f4f0-c518-4db3-aa43-e80b428d6304"
-            , Types.Auth.auUserName = "Test"
-            , Types.Auth.auEmail = Nothing
-            , Types.Auth.auRole = Manager
-            , Types.Auth.auLocationId = Nothing
-            , Types.Auth.auCreatedAt = read "2024-01-01 00:00:00 UTC"
-            }
-      case inventoryWithCapabilities inv user of
-        InventoryData _ caps -> do
-          capCanCreateItem caps `shouldBe` True
-          capCanManageUsers caps `shouldBe` False
-        _ -> expectationFailure "Expected InventoryData"
+    it "preserves message text" $ do
+      let resp = MutationResponse { success = False, message = "Item added successfully" }
+      case decode (encode resp) of
+        Just MutationResponse { message = msg } -> msg `shouldBe` "Item added successfully"
+        Nothing -> expectationFailure "Failed to decode"
