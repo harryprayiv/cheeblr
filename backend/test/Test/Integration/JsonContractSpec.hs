@@ -4,7 +4,16 @@
 module Test.Integration.JsonContractSpec (spec) where
 
 import Test.Hspec
+    ( Spec, describe, it, shouldBe, expectationFailure )
 import Data.Aeson
+    ( Result(..),
+      ToJSON(toJSON),
+      Value(..),
+      encode,
+      decode,
+      fromJSON,
+      object,
+      KeyValue((.=)) )
 import Data.Aeson.KeyMap (member)
 import qualified Data.Aeson.KeyMap as KM
 import Data.Scientific (fromFloatDigits)
@@ -14,8 +23,38 @@ import qualified Data.Text as T
 import qualified Data.Vector as V
 
 import Types.Auth
+    ( capabilitiesForRole,
+      AuthenticatedUser(auRole),
+      SessionResponse(SessionResponse, sessionUserId, sessionUserName,
+                      sessionRole, sessionCapabilities),
+      UserCapabilities(capCanViewCompliance, capCanOpenRegister,
+                       capCanCloseRegister, capCanEditItem, capCanProcessTransaction,
+                       capCanRefundTransaction, capCanViewInventory, capCanCreateItem,
+                       capCanDeleteItem, capCanVoidTransaction, capCanApplyDiscount,
+                       capCanViewAllLocations, capCanManageUsers),
+      UserRole(Admin, Customer, Cashier, Manager) )
 import Types.Inventory
+    ( Inventory(Inventory),
+      ItemCategory(Flower, PreRolls, Vaporizers, Edibles),
+      MenuItem(..),
+      MutationResponse(MutationResponse),
+      Species(Indica, IndicaDominantHybrid, Hybrid, Sativa),
+      StrainLineage(species, thc, cbg, strain, creator, dominant_terpene,
+                    terpenes, lineage, leafly_url, img, StrainLineage) )
 import Types.Transaction
+    ( TaxRecord(taxDescription, TaxRecord, taxCategory, taxRate,
+                taxAmount),
+      TaxCategory(RegularSalesTax, ExciseTax, CannabisTax, LocalTax,
+                  MedicalTax, NoTax),
+      DiscountType(..),
+      TransactionItem(..),
+      PaymentTransaction(..),
+      PaymentMethod(..),
+      Transaction(..),
+      TransactionStatus(..),
+      TransactionType(Sale, Return, Exchange, InventoryAdjustment,
+                      ManagerComp, Administrative),
+      parsePaymentMethod )
 import API.Transaction
   ( Register(..)
   

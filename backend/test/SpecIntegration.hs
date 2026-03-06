@@ -1,8 +1,7 @@
 module Main (main) where
 
 import Test.Hspec
-import qualified Test.Integration.JsonContractSpec
+import Test.Integration.JsonContractSpec (spec)
 
 main :: IO ()
-main = hspec $ do
-  Test.Integration.JsonContractSpec.spec
+main = hspec spec
