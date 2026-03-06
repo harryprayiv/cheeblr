@@ -4,7 +4,6 @@ module Test.API.TransactionSpec (spec) where
 
 import Test.Hspec
 import Data.Aeson (encode, decode)
-import Data.Maybe (isJust)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import API.Transaction

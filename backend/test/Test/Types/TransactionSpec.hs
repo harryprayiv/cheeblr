@@ -4,12 +4,10 @@
 module Test.Types.TransactionSpec (spec) where
 
 import Test.Hspec
-import Data.Aeson (encode, decode, toJSON, fromJSON, Result(..), Value)
-import Data.Maybe (isJust, isNothing)
+import Data.Aeson (encode, decode, toJSON, fromJSON, Result(..))
 import Data.Scientific (fromFloatDigits)
-import Data.Time (UTCTime, getCurrentTime)
+import Data.Time (UTCTime)
 import Data.UUID (UUID)
-import qualified Data.Text as T
 import Types.Transaction
 
 -- ──────────────────────────────────────────────
