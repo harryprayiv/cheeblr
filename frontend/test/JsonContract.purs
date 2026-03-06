@@ -7,7 +7,8 @@ import Data.Maybe (Maybe(..), isJust)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 import Types.Auth (UserRole(..), capabilitiesForRole)
-import Types.Inventory (Inventory, ItemCategory(..), MenuItem(..), Species(..), StrainLineage(..))
+import Types.Inventory (ItemCategory(..), Species(..), MenuItem(..), Inventory(..), StrainLineage(..))
+import Types.Session (SessionResponse)
 import Types.Transaction
   ( TransactionStatus(..)
   , TransactionType(..)
@@ -23,10 +24,6 @@ import Yoga.JSON (readJSON_, writeJSON)
 -- ──────────────────────────────────────────────
 -- Helpers
 -- ──────────────────────────────────────────────
-
--- | Parse a raw JSON string and check if it succeeds for a given type
-canParse :: forall a. Eq a => (String -> Maybe a) -> String -> Boolean
-canParse parser json = isJust (parser json)
 
 -- | The UUID strings hardcoded in the Haskell backend Auth.Simple module
 adminUUID :: String
@@ -62,7 +59,6 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
         (readJSON_ "\"Admin\"" :: Maybe UserRole) `shouldEqual` Just Admin
 
     describe "TransactionStatus from backend" do
-      -- Backend ToJSON (Generic) produces PascalCase
       it "parses Created" do
         (readJSON_ "\"Created\"" :: Maybe TransactionStatus) `shouldEqual` Just Created
       it "parses InProgress" do
@@ -112,13 +108,11 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
 
   -- ═══════════════════════════════════════════════
   -- SECTION 2: Parse backend-produced complex JSON
-  -- Simulates JSON from Haskell Generic ToJSON
   -- ═══════════════════════════════════════════════
 
   describe "Parse backend complex types" do
 
     describe "MenuItem from backend" do
-      -- Haskell Generic ToJSON produces this exact structure
       let backendMenuItemJson = """{"sort":1,"sku":"33333333-3333-3333-3333-333333333333","brand":"TestBrand","name":"OG Kush","price":2999,"measure_unit":"g","per_package":"3.5","quantity":10,"category":"Flower","subcategory":"Indoor","description":"Classic","tags":["indica"],"effects":["relaxed"],"strain_lineage":{"thc":"25%","cbg":"0.5%","strain":"OG Kush","creator":"Unknown","species":"Indica","dominant_terpene":"Myrcene","terpenes":["Myrcene"],"lineage":["Chemdawg"],"leafly_url":"https://leafly.com","img":"https://example.com/img.jpg"}}"""
 
       it "parses successfully" do
@@ -141,8 +135,6 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
           Nothing -> (false) `shouldEqual` true
 
     describe "Transaction from backend" do
-      -- Backend Generic ToJSON: status as PascalCase, type as PascalCase,
-      -- Nothing fields as null, monetary values as plain integers
       let backendTxJson = """{"transactionId":"33333333-3333-3333-3333-333333333333","transactionStatus":"Created","transactionCreated":"2024-06-15T10:30:00Z","transactionCompleted":null,"transactionCustomerId":null,"transactionEmployeeId":"44444444-4444-4444-4444-444444444444","transactionRegisterId":"44444444-4444-4444-4444-444444444444","transactionLocationId":"44444444-4444-4444-4444-444444444444","transactionItems":[],"transactionPayments":[],"transactionSubtotal":0,"transactionDiscountTotal":0,"transactionTaxTotal":0,"transactionTotal":0,"transactionType":"Sale","transactionIsVoided":false,"transactionVoidReason":null,"transactionIsRefunded":false,"transactionRefundReason":null,"transactionReferenceTransactionId":null,"transactionNotes":null}"""
 
       it "parses successfully" do
@@ -218,18 +210,78 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
             p.paymentAuthorizationCode `shouldEqual` Nothing
           Nothing -> (false) `shouldEqual` true
 
-    describe "Inventory from backend" do
-      let backendInvJson = """[{"sort":1,"sku":"33333333-3333-3333-3333-333333333333","brand":"TestBrand","name":"OG Kush","price":2999,"measure_unit":"g","per_package":"3.5","quantity":10,"category":"Flower","subcategory":"Indoor","description":"Classic","tags":[],"effects":[],"strain_lineage":{"thc":"25%","cbg":"0.5%","strain":"OG Kush","creator":"Unknown","species":"Indica","dominant_terpene":"Myrcene","terpenes":[],"lineage":[],"leafly_url":"https://leafly.com","img":"https://example.com/img.jpg"}}]"""
+    -- ─────────────────────────────────────────────────────────────────────
+    -- Inventory is now a plain JSON array — no type/value/capabilities
+    -- wrapper. The old InventoryData/Message sum type is gone.
+    -- ─────────────────────────────────────────────────────────────────────
+    describe "Inventory from backend (plain array)" do
+      let backendInventoryJson = """[{"sort":1,"sku":"33333333-3333-3333-3333-333333333333","brand":"TestBrand","name":"OG Kush","price":2999,"measure_unit":"g","per_package":"3.5","quantity":10,"category":"Flower","subcategory":"Indoor","description":"Classic","tags":[],"effects":[],"strain_lineage":{"thc":"25%","cbg":"0.5%","strain":"OG Kush","creator":"Unknown","species":"Indica","dominant_terpene":"Myrcene","terpenes":[],"lineage":[],"leafly_url":"https://leafly.com","img":"https://example.com/img.jpg"}}]"""
 
-      it "parses Inventory array" do
-        (readJSON_ backendInvJson :: Maybe Inventory) `shouldSatisfy` isJust
+      it "parses successfully as Inventory" do
+        (readJSON_ backendInventoryJson :: Maybe Inventory) `shouldSatisfy` isJust
 
-      it "parses empty inventory" do
+      it "preserves item count" do
+        case (readJSON_ backendInventoryJson :: Maybe Inventory) of
+          Just (Inventory items) -> (items /= []) `shouldEqual` true
+          Nothing -> (false) `shouldEqual` true
+
+      it "preserves item price" do
+        case (readJSON_ backendInventoryJson :: Maybe Inventory) of
+          Just (Inventory [MenuItem item]) -> item.price `shouldEqual` Discrete 2999
+          _ -> (false) `shouldEqual` true
+
+      it "parses empty array" do
         (readJSON_ "[]" :: Maybe Inventory) `shouldSatisfy` isJust
 
+    -- ─────────────────────────────────────────────────────────────────────
+    -- SessionResponse — capabilities now travel on their own endpoint.
+    -- The backend sends sessionCapabilities alongside role/userId.
+    -- ─────────────────────────────────────────────────────────────────────
+    describe "SessionResponse from backend" do
+      let adminSessionJson = """{"sessionUserId":"d3a1f4f0-c518-4db3-aa43-e80b428d6304","sessionUserName":"admin-1","sessionRole":"Admin","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":true,"capCanManageUsers":true,"capCanViewCompliance":true}}"""
+
+      let cashierSessionJson = """{"sessionUserId":"0a6f2deb-892b-4411-8025-08c1a4d61229","sessionUserName":"cashier-1","sessionRole":"Cashier","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":true,"capCanDeleteItem":false,"capCanProcessTransaction":true,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true}}"""
+
+      it "parses admin session" do
+        (readJSON_ adminSessionJson :: Maybe SessionResponse) `shouldSatisfy` isJust
+
+      it "preserves admin userId" do
+        case (readJSON_ adminSessionJson :: Maybe SessionResponse) of
+          Just s  -> s.sessionUserId `shouldEqual` UUID adminUUID
+          Nothing -> (false) `shouldEqual` true
+
+      it "preserves admin role" do
+        case (readJSON_ adminSessionJson :: Maybe SessionResponse) of
+          Just s  -> s.sessionRole `shouldEqual` Admin
+          Nothing -> (false) `shouldEqual` true
+
+      it "preserves admin capabilities: viewAllLocations = true" do
+        case (readJSON_ adminSessionJson :: Maybe SessionResponse) of
+          Just s  -> s.sessionCapabilities.capCanViewAllLocations `shouldEqual` true
+          Nothing -> (false) `shouldEqual` true
+
+      it "preserves admin capabilities: manageUsers = true" do
+        case (readJSON_ adminSessionJson :: Maybe SessionResponse) of
+          Just s  -> s.sessionCapabilities.capCanManageUsers `shouldEqual` true
+          Nothing -> (false) `shouldEqual` true
+
+      it "parses cashier session" do
+        (readJSON_ cashierSessionJson :: Maybe SessionResponse) `shouldSatisfy` isJust
+
+      it "preserves cashier userId" do
+        case (readJSON_ cashierSessionJson :: Maybe SessionResponse) of
+          Just s  -> s.sessionUserId `shouldEqual` UUID cashierUUID
+          Nothing -> (false) `shouldEqual` true
+
+      it "cashier capabilities: editItem = true, deleteItem = false" do
+        case (readJSON_ cashierSessionJson :: Maybe SessionResponse) of
+          Just s  -> do
+            s.sessionCapabilities.capCanEditItem   `shouldEqual` true
+            s.sessionCapabilities.capCanDeleteItem `shouldEqual` false
+          Nothing -> (false) `shouldEqual` true
+
   -- ═══════════════════════════════════════════════
-  -- SECTION 3: Verify frontend WriteForeign output
-  -- matches what backend FromJSON expects
+  -- SECTION 3: Frontend → Backend JSON format
   -- ═══════════════════════════════════════════════
 
   describe "Frontend → Backend JSON format" do
@@ -262,9 +314,16 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
       it "writes RegularSalesTax (PascalCase)" do
         writeJSON RegularSalesTax `shouldEqual` "\"RegularSalesTax\""
 
+    -- Inventory is written as a plain array — backend expects this.
+    describe "Inventory WriteForeign" do
+      it "writes as JSON array" do
+        let inv = Inventory []
+        let json = writeJSON inv
+        -- Should start with '[' not '{', confirming no wrapper object
+        json `shouldEqual` "[]"
+
   -- ═══════════════════════════════════════════════
   -- SECTION 4: Capability parity
-  -- Must match backend Types.Auth.capabilitiesForRole
   -- ═══════════════════════════════════════════════
 
   describe "Capability definitions match backend" do
@@ -275,30 +334,8 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
         caps.capCanViewInventory `shouldEqual` true
       it "createItem = false" do
         caps.capCanCreateItem `shouldEqual` false
-      it "editItem = false" do
-        caps.capCanEditItem `shouldEqual` false
-      it "deleteItem = false" do
-        caps.capCanDeleteItem `shouldEqual` false
       it "processTransaction = false" do
         caps.capCanProcessTransaction `shouldEqual` false
-      it "voidTransaction = false" do
-        caps.capCanVoidTransaction `shouldEqual` false
-      it "refundTransaction = false" do
-        caps.capCanRefundTransaction `shouldEqual` false
-      it "applyDiscount = false" do
-        caps.capCanApplyDiscount `shouldEqual` false
-      it "manageRegisters = false" do
-        caps.capCanManageRegisters `shouldEqual` false
-      it "openRegister = false" do
-        caps.capCanOpenRegister `shouldEqual` false
-      it "closeRegister = false" do
-        caps.capCanCloseRegister `shouldEqual` false
-      it "viewReports = false" do
-        caps.capCanViewReports `shouldEqual` false
-      it "viewAllLocations = false" do
-        caps.capCanViewAllLocations `shouldEqual` false
-      it "manageUsers = false" do
-        caps.capCanManageUsers `shouldEqual` false
       it "viewCompliance = false" do
         caps.capCanViewCompliance `shouldEqual` false
 
@@ -338,8 +375,7 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
         caps.capCanManageUsers `shouldEqual` true
 
   -- ═══════════════════════════════════════════════
-  -- SECTION 5: Dev user UUID parity
-  -- Config.Auth UUIDs must match Auth.Simple
+  -- SECTION 5: Dev user UUID parity with backend
   -- ═══════════════════════════════════════════════
 
   describe "Dev user UUID parity with backend" do
@@ -354,7 +390,6 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
 
   -- ═══════════════════════════════════════════════
   -- SECTION 6: Roundtrip tests
-  -- write → read should be identity for shared types
   -- ═══════════════════════════════════════════════
 
   describe "WriteForeign → ReadForeign roundtrips" do

@@ -16,7 +16,6 @@ import Types.Inventory
   , MenuItemFormInput
   , StrainLineage(..)
   , Inventory(..)
-  , MutationResponse
   , generateClassName
   , findItemBySku
   , findItemNameBySku
@@ -123,12 +122,11 @@ spec = describe "Types.Inventory" do
     it "accepts Flower" do
       validateCategory "cat" "Flower" `shouldSatisfy` \v ->
         case v of
-          _ -> true -- V doesn't have direct Eq, just check it doesn't crash
+          _ -> true
     it "accepts all valid categories" do
       let categories = ["Flower", "PreRolls", "Vaporizers", "Edibles", "Drinks",
                          "Concentrates", "Topicals", "Tinctures", "Accessories"]
       let _ = map (\c -> validateCategory "cat" c) categories
-      -- All should succeed (not crash)
       (true) `shouldEqual` true
 
   describe "validateSpecies" do
@@ -174,7 +172,7 @@ spec = describe "Types.Inventory" do
     it "produces correct price in cents" do
       case validateMenuItem testFormInput of
         Right (MenuItem item) -> unwrap item.price `shouldEqual` 2999
-        Left _ -> (false) `shouldEqual` true -- fail
+        Left _ -> (false) `shouldEqual` true
 
     it "parses tags from comma list" do
       case validateMenuItem testFormInput of
@@ -248,13 +246,9 @@ spec = describe "Types.Inventory" do
             }
 
     it "compares by default config sort fields" do
-      -- defaultViewConfig sorts by Quantity desc, Category asc, Species desc
       let itemA = makeItem 0 "A" Flower Indica 10 1000
       let itemB = makeItem 0 "B" Flower Indica 5 1000
-      -- A has more quantity, and sort is descending, so A should come first (GT -> flipped to LT)
       let result = compareMenuItems defaultViewConfig itemA itemB
-      -- quantity 10 vs 5, descending: 10 > 5 -> GT -> inverted to LT
-      -- So itemA < itemB in sort order (A comes first)
       result `shouldEqual` LT
 
     it "equal items compare as EQ" do
@@ -279,20 +273,23 @@ spec = describe "Types.Inventory" do
         Just (MenuItem item) -> item.price `shouldEqual` Discrete 2999
         Nothing -> (false) `shouldEqual` true
 
-  describe "MutationResponse JSON serialization" do
-    it "parses success response" do
-      let json = """{"success":true,"message":"Item added successfully"}"""
-      let parsed = readJSON_ json :: Maybe MutationResponse
-      parsed `shouldSatisfy` isJust
-
-    it "parses failure response" do
-      let json = """{"success":false,"message":"Item not found"}"""
-      let parsed = readJSON_ json :: Maybe MutationResponse
-      parsed `shouldSatisfy` isJust
-
+  -- Inventory is now serialized as a plain JSON array — no wrapper type.
   describe "Inventory JSON" do
     it "serializes as array" do
       let inv = Inventory [testMenuItem]
       let json = writeJSON inv
       let parsed = readJSON_ json :: Maybe Inventory
       parsed `shouldSatisfy` isJust
+
+    it "serializes empty inventory" do
+      let inv = Inventory []
+      let json = writeJSON inv
+      let parsed = readJSON_ json :: Maybe Inventory
+      parsed `shouldSatisfy` isJust
+
+    it "round-trips item count" do
+      let inv = Inventory [testMenuItem]
+      let json = writeJSON inv
+      case (readJSON_ json :: Maybe Inventory) of
+        Just (Inventory items) -> items `shouldEqual` [testMenuItem]
+        Nothing -> (false) `shouldEqual` true
