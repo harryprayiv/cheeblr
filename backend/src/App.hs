@@ -20,6 +20,10 @@ import qualified Data.ByteString.Builder as B
 import System.Environment (lookupEnv)
 import Data.Maybe (fromMaybe)
 import System.Directory (doesFileExist)
+import Control.Exception (fromException)
+import Network.TLS (TLSException(..))
+
+
 
 data AppConfig = AppConfig
   { dbConfig :: DBConfig
@@ -80,11 +84,17 @@ run = do
         }
 
     app = cors (const $ Just corsPolicy) $ serve api (combinedServer pool)
-    appWithOptions = handleOptionsMiddleware app
-    
+    appWithOptions = handleOptionsMiddleware app    
+    -- warpSettings = Warp.setPort (serverPort config)
+    --              $ Warp.setHost "*"  -- bind all interfaces
+    --              $ Warp.defaultSettings
     warpSettings = Warp.setPort (serverPort config)
-                 $ Warp.setHost "*"  -- bind all interfaces
-                 $ Warp.defaultSettings
+                    $ Warp.setHost "*"
+                    $ Warp.setOnException onEx Warp.defaultSettings
+          where
+            onEx _ e = case fromException e :: Maybe TLSException of
+              Just _ -> pure ()
+              Nothing -> Warp.defaultOnException Nothing e
 
   case (useTLS, tlsCertFile config, tlsKeyFile config) of
     (Just "true", Just cert, Just key) -> do
@@ -126,3 +136,5 @@ handleOptionsMiddleware app req responder =
       , (CI.mk $ B8.pack "Access-Control-Allow-Headers", B8.pack "Content-Type, Authorization, Accept, Origin, Content-Length, x-requested-with, x-user-id")
       , (CI.mk $ B8.pack "Access-Control-Max-Age", B8.pack "86400")
       ]
+
+

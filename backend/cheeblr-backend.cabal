@@ -24,6 +24,7 @@ common shared-properties
                 , aeson
                 , containers
                 , directory
+                , tls
                 , wai
                 , warp 
                 , warp-tls

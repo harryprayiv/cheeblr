@@ -7,171 +7,83 @@ module GraphQL.API.Inventory
 
 import Prelude
 
-import Data.Array (uncons)
 import Data.Either (Either(..))
-import Data.Finance.Money (Discrete(..))
-import Data.Maybe (Maybe(..))
 import Effect.Aff (Aff, attempt)
-import GraphQL.Client (makeClientForUser)
-import GraphQL.Client.Args (Args(..))
-import GraphQL.Client.Query (mutation, query)
-import GraphQL.Schema (MenuItemGql, MenuItemInputGql, StrainLineageGql, StrainLineageInputGql)
+import Fetch (Method(..), fetch)
+import Fetch.Yoga.Json (fromJSON)
+import Config.Network (currentConfig)
 import Services.AuthService (UserId)
-import Types.Inventory (Inventory(..), ItemCategory(..), MenuItem(..), Species(..), StrainLineage(..))
-import Types.UUID (parseUUID)
+import Types.Inventory (Inventory, MenuItem, MutationResponse)
+import Yoga.JSON (class ReadForeign, writeJSON)
 
--- ---------------------------------------------------------------------------
--- Conversion: GQL → domain
--- ---------------------------------------------------------------------------
+type GqlResponse a = { data :: a }
 
-gqlToStrainLineage :: StrainLineageGql -> StrainLineage
-gqlToStrainLineage g = StrainLineage
-  { thc:              g.thc
-  , cbg:              g.cbg
-  , strain:           g.strain
-  , creator:          g.creator
-  , species:          parseSpecies g.species
-  , dominant_terpene: g.dominant_terpene
-  , terpenes:         g.terpenes
-  , lineage:          g.lineage
-  , leafly_url:       g.leafly_url
-  , img:              g.img
-  }
+type InventoryData = { inventory :: Inventory }
 
-parseSpecies :: String -> Species
-parseSpecies = case _ of
-  "Indica"               -> Indica
-  "IndicaDominantHybrid" -> IndicaDominantHybrid
-  "Hybrid"               -> Hybrid
-  "SativaDominantHybrid" -> SativaDominantHybrid
-  _                      -> Sativa
+type MutationData = { result :: MutationResponse }
 
-parseCategory :: String -> ItemCategory
-parseCategory = case _ of
-  "Flower"       -> Flower
-  "PreRolls"     -> PreRolls
-  "Vaporizers"   -> Vaporizers
-  "Edibles"      -> Edibles
-  "Drinks"       -> Drinks
-  "Concentrates" -> Concentrates
-  "Topicals"     -> Topicals
-  "Tinctures"    -> Tinctures
-  _              -> Accessories
+gqlPost
+  :: forall a
+   . ReadForeign a
+  => UserId
+  -> String
+  -> Aff (Either String a)
+gqlPost userId query = do
+  result <- attempt do
+    response <- fetch (currentConfig.apiBaseUrl <> "/graphql/inventory")
+      { method: POST
+      , body: writeJSON { query }
+      , headers:
+          { "Content-Type": "application/json"
+          , "Accept":       "application/json"
+          , "X-User-Id":    userId
+          }
+      }
+    (r :: GqlResponse a) <- fromJSON response.json
+    pure r.data
+  pure $ case result of
+    Left err -> Left $ show err
+    Right v  -> Right v
 
-gqlToMenuItem :: MenuItemGql -> Either String MenuItem
-gqlToMenuItem g = case parseUUID g.sku of
-  Nothing  -> Left $ "Invalid UUID in GraphQL response: " <> g.sku
-  Just sku -> Right $ MenuItem
-    { sort:           g.sort
-    , sku
-    , brand:          g.brand
-    , name:           g.name
-    , price:          Discrete g.price
-    , measure_unit:   g.measure_unit
-    , per_package:    g.per_package
-    , quantity:       g.quantity
-    , category:       parseCategory g.category
-    , subcategory:    g.subcategory
-    , description:    g.description
-    , tags:           g.tags
-    , effects:        g.effects
-    , strain_lineage: gqlToStrainLineage g.strain_lineage
-    }
-
-gqlToInventory :: Array MenuItemGql -> Either String Inventory
-gqlToInventory = go []
-  where
-  go acc xs = case uncons xs of
-    Nothing          -> Right (Inventory (acc))
-    Just { head, tail } -> case gqlToMenuItem head of
-      Left e    -> Left e
-      Right item -> go (acc <> [item]) tail
-
--- ---------------------------------------------------------------------------
--- Conversion: domain → GQL input
--- ---------------------------------------------------------------------------
-
-menuItemToInput :: MenuItem -> MenuItemInputGql
-menuItemToInput (MenuItem i) =
-  { sort:           i.sort
-  , sku:            show i.sku
-  , brand:          i.brand
-  , name:           i.name
-  , price:          unwrapDiscrete i.price
-  , measure_unit:   i.measure_unit
-  , per_package:    i.per_package
-  , quantity:       i.quantity
-  , category:       show i.category
-  , subcategory:    i.subcategory
-  , description:    i.description
-  , tags:           i.tags
-  , effects:        i.effects
-  , strain_lineage: strainLineageToInput i.strain_lineage
-  }
-  where
-  unwrapDiscrete (Discrete n) = n
-
-strainLineageToInput :: StrainLineage -> StrainLineageInputGql
-strainLineageToInput (StrainLineage sl) =
-  { thc:              sl.thc
-  , cbg:              sl.cbg
-  , strain:           sl.strain
-  , creator:          sl.creator
-  , species:          show sl.species
-  , dominant_terpene: sl.dominant_terpene
-  , terpenes:         sl.terpenes
-  , lineage:          sl.lineage
-  , leafly_url:       sl.leafly_url
-  , img:              sl.img
-  }
-
--- ---------------------------------------------------------------------------
--- Public API
--- ---------------------------------------------------------------------------
+inventoryQuery :: String
+inventoryQuery = """
+  { inventory {
+      sort sku brand name price measure_unit per_package quantity
+      category subcategory description tags effects
+      strain_lineage {
+        thc cbg strain creator species dominant_terpene
+        terpenes lineage leafly_url img
+      }
+  } }
+"""
 
 readInventoryGql :: UserId -> Aff (Either String Inventory)
 readInventoryGql userId = do
-  result <- attempt $
-    query (makeClientForUser userId) "readInventory"
-      { inventory:
-          { sort: unit, sku: unit, brand: unit, name: unit, price: unit
-          , measure_unit: unit, per_package: unit, quantity: unit
-          , category: unit, subcategory: unit, description: unit
-          , tags: unit, effects: unit
-          , strain_lineage:
-              { thc: unit, cbg: unit, strain: unit, creator: unit
-              , species: unit, dominant_terpene: unit
-              , terpenes: unit, lineage: unit, leafly_url: unit, img: unit
-              }
-          }
-      }
-  case result of
-    Left err   -> pure $ Left $ show err
-    Right resp -> pure $ gqlToInventory resp.inventory
+  result <- gqlPost userId inventoryQuery
+  pure $ case result of
+    Left err         -> Left err
+    Right (d :: InventoryData) -> Right d.inventory
 
-writeInventoryGql :: UserId -> MenuItem -> Aff (Either String { success :: Boolean, message :: String })
+writeInventoryGql :: UserId -> MenuItem -> Aff (Either String MutationResponse)
 writeInventoryGql userId item = do
-  result <- attempt $
-    mutation (makeClientForUser userId) "writeInventory"
-      { createMenuItem: { input: menuItemToInput item } `Args` { success: unit, message: unit } }
+  result <- gqlPost userId
+    ("mutation { createMenuItem(input: " <> writeJSON item <> ") { success message } }")
   pure $ case result of
-    Left err -> Left $ show err
-    Right r  -> Right r.createMenuItem
+    Left err -> Left err
+    Right (d :: { createMenuItem :: MutationResponse }) -> Right d.createMenuItem
 
-updateInventoryGql :: UserId -> MenuItem -> Aff (Either String { success :: Boolean, message :: String })
+updateInventoryGql :: UserId -> MenuItem -> Aff (Either String MutationResponse)
 updateInventoryGql userId item = do
-  result <- attempt $
-    mutation (makeClientForUser userId) "updateInventory"
-      { updateMenuItem: { input: menuItemToInput item } `Args` { success: unit, message: unit } }
+  result <- gqlPost userId
+    ("mutation { updateMenuItem(input: " <> writeJSON item <> ") { success message } }")
   pure $ case result of
-    Left err -> Left $ show err
-    Right r  -> Right r.updateMenuItem
+    Left err -> Left err
+    Right (d :: { updateMenuItem :: MutationResponse }) -> Right d.updateMenuItem
 
-deleteInventoryGql :: UserId -> String -> Aff (Either String { success :: Boolean, message :: String })
-deleteInventoryGql userId skuStr = do
-  result <- attempt $
-    mutation (makeClientForUser userId) "deleteInventory"
-      { deleteMenuItem: { sku: skuStr } `Args` { success: unit, message: unit } }
+deleteInventoryGql :: UserId -> String -> Aff (Either String MutationResponse)
+deleteInventoryGql userId sku = do
+  result <- gqlPost userId
+    ("mutation { deleteMenuItem(sku: \"" <> sku <> "\") { success message } }")
   pure $ case result of
-    Left err -> Left $ show err
-    Right r  -> Right r.deleteMenuItem
+    Left err -> Left err
+    Right (d :: { deleteMenuItem :: MutationResponse }) -> Right d.deleteMenuItem
