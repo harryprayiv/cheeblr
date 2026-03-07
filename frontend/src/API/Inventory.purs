@@ -11,6 +11,7 @@ import Effect.Class.Console as Console
 import Effect.Now (now)
 import Fetch (fetch)
 import Fetch.Yoga.Json (fromJSON)
+import GraphQL.API.Inventory (readInventoryGql)
 import Services.AuthService (UserId)
 import Types.Inventory (Inventory, MenuItem, MutationResponse)
 import Types.Session (SessionResponse)
@@ -51,8 +52,15 @@ fetchInventoryFromHttp :: UserId -> FetchConfig -> Aff (Either String Inventory)
 fetchInventoryFromHttp userId config =
   Request.authGetFullUrl userId config.apiEndpoint
 
+-- fetchInventory
+--   :: UserId -> FetchConfig -> QueryMode -> Aff (Either String Inventory)
+-- fetchInventory userId config = case _ of
+--   JsonMode -> fetchInventoryFromJson config
+--   HttpMode -> fetchInventoryFromHttp userId config
+
 fetchInventory
   :: UserId -> FetchConfig -> QueryMode -> Aff (Either String Inventory)
 fetchInventory userId config = case _ of
   JsonMode -> fetchInventoryFromJson config
   HttpMode -> fetchInventoryFromHttp userId config
+  GqlMode  -> readInventoryGql userId

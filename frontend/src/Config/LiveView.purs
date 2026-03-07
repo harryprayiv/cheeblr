@@ -20,7 +20,7 @@ defaultViewConfig =
       , SortBySpecies /\ Descending
       ]
   , hideOutOfStock: false
-  , mode: HttpMode
+  , mode: GqlMode
   , refreshRate: 5000
   , screens: 1
   , fetchConfig: defaultConfig
@@ -29,7 +29,8 @@ defaultViewConfig =
       }
   }
 
-data QueryMode = JsonMode | HttpMode
+-- data QueryMode = JsonMode | HttpMode
+data QueryMode = JsonMode | HttpMode | GqlMode
 
 derive instance eqQueryMode :: Eq QueryMode
 derive instance ordQueryMode :: Ord QueryMode
@@ -37,6 +38,8 @@ derive instance ordQueryMode :: Ord QueryMode
 instance Show QueryMode where
   show JsonMode = "JsonMode"
   show HttpMode = "HttpMode"
+  show GqlMode = "GqlMode"
+
 
 -- | Configuration type for fetcher
 type FetchConfig =

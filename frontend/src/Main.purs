@@ -3,6 +3,7 @@ module Main where
 import Prelude
 
 import API.Inventory (fetchInventory, fetchSession, readInventory)
+import GraphQL.API.Inventory (readInventoryGql)
 import Config.Entity (dummyEmployeeId, dummyLocationId)
 import Config.LiveView (defaultViewConfig)
 import Control.Alt ((<|>))
@@ -57,11 +58,18 @@ testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
 
 -- | Load inventory status for LiveView — no capabilities bundled in.
+-- loadInventory :: String -> Aff Pages.LiveView.InventoryLoadStatus
+-- loadInventory userId = do
+--   result <- fetchInventory userId
+--     defaultViewConfig.fetchConfig
+--     defaultViewConfig.mode
+--   pure $ case result of
+--     Right inv -> Pages.LiveView.InventoryLoaded inv
+--     Left err  -> Pages.LiveView.InventoryError err
+
 loadInventory :: String -> Aff Pages.LiveView.InventoryLoadStatus
 loadInventory userId = do
-  result <- fetchInventory userId
-    defaultViewConfig.fetchConfig
-    defaultViewConfig.mode
+  result <- readInventoryGql userId
   pure $ case result of
     Right inv -> Pages.LiveView.InventoryLoaded inv
     Left err  -> Pages.LiveView.InventoryError err
