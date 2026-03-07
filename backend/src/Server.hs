@@ -6,6 +6,8 @@ module Server where
 import API.Inventory
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
+import Data.Morpheus (interpreter)
+import Data.Morpheus.Types (GQLRequest, GQLResponse)
 import Database.PostgreSQL.Simple
 import Data.Pool (Pool)
 import Data.Text (Text, pack)
@@ -20,6 +22,7 @@ import Auth.Simple (lookupUser)
 import Data.UUID (UUID)
 
 import qualified Data.Pool as Pool
+import GraphQL.Resolvers (rootResolver)
 import Server.Transaction (posServerImpl)
 
 inventoryServer :: Pool.Pool Connection -> Server InventoryAPI
@@ -29,15 +32,15 @@ inventoryServer pool =
     :<|> updateMenuItem
     :<|> deleteInventoryItem
     :<|> getSession
+    :<|> graphqlInventory
   where
-    -- GET /inventory — plain JSON array, no capabilities bundled in
+
     getInventory :: Maybe Text -> Handler Inventory
     getInventory mUserId = do
       let user = lookupUser mUserId
       liftIO $ putStrLn $ "GET /inventory - User: " ++ show (auRole user)
       liftIO $ getAllMenuItems pool
 
-    -- POST /inventory
     addMenuItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     addMenuItem mUserId item = do
       let user = lookupUser mUserId
@@ -46,14 +49,12 @@ inventoryServer pool =
       if not (capCanCreateItem caps)
         then throwError err403 { errBody = "You don't have permission to create items" }
         else do
-          liftIO $ putStrLn "Received request to add menu item"
           result <- liftIO $ try $ insertMenuItem pool item
           pure $ case result of
             Right _             -> MutationResponse True "Item added successfully"
             Left (e :: SomeException) ->
               MutationResponse False (pack $ "Error inserting item: " <> show e)
 
-    -- PUT /inventory
     updateMenuItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     updateMenuItem mUserId item = do
       let user = lookupUser mUserId
@@ -62,14 +63,12 @@ inventoryServer pool =
       if not (capCanEditItem caps)
         then throwError err403 { errBody = "You don't have permission to edit items" }
         else do
-          liftIO $ putStrLn "Received request to update menu item"
           result <- liftIO $ try $ updateExistingMenuItem pool item
           pure $ case result of
             Right _             -> MutationResponse True "Item updated successfully"
             Left (e :: SomeException) ->
               MutationResponse False (pack $ "Error updating item: " <> show e)
 
-    -- DELETE /inventory/:sku
     deleteInventoryItem :: Maybe Text -> UUID -> Handler MutationResponse
     deleteInventoryItem mUserId uuid = do
       let user = lookupUser mUserId
@@ -80,7 +79,6 @@ inventoryServer pool =
         then throwError err403 { errBody = "You don't have permission to delete items" }
         else deleteMenuItem pool uuid
 
-    -- GET /session — capabilities for the identified user
     getSession :: Maybe Text -> Handler SessionResponse
     getSession mUserId = do
       let user = lookupUser mUserId
@@ -91,6 +89,15 @@ inventoryServer pool =
         , sessionRole         = auRole user
         , sessionCapabilities = capabilitiesForRole (auRole user)
         }
+
+    -- | POST /graphql/inventory
+    -- | Accepts a standard GraphQL request and returns a GraphQL response.
+    -- | Auth is resolved the same way as the REST endpoints via X-User-Id.
+    graphqlInventory :: Maybe Text -> GQLRequest -> Handler GQLResponse
+    graphqlInventory mUserId req = do
+      liftIO $ putStrLn $
+        "POST /graphql/inventory - User: " ++ show (auRole (lookupUser mUserId))
+      liftIO $ interpreter (rootResolver pool mUserId) req
 
 combinedServer :: Pool Connection -> Server API
 combinedServer pool =
