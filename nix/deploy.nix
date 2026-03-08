@@ -2,42 +2,72 @@
 
 let
   config = import ./config.nix { inherit name; };
-  
-  # Network
-  host = config.network.host;
+
+  host        = config.network.host;
   bindAddress = config.network.bindAddress;
-  
-  # TLS
-  tlsModule = import ./tls.nix { inherit pkgs name; };
-  tlsConfig = config.tls;
-  certDir = tlsConfig.certDir;
+  tlsConfig   = config.tls;
+  certDir     = tlsConfig.certDir;
+  protocol    = if tlsConfig.enable then "https" else "http";
 
-  # protocol/URL helpers:
-  protocol = if tlsConfig.enable then "https" else "http";
-
-  # Ports
   frontendPort = toString config.vite.port;
-  backendPort = toString config.haskell.port;
-  dbPort = toString config.database.port;
-  
-  # Directories
-  backendDir = builtins.head (builtins.split "/[^/]*$" (builtins.head config.haskell.codeDirs));
+  backendPort  = toString config.haskell.port;
+  dbPort       = toString config.database.port;
+
+  backendDir  = builtins.head (builtins.split "/[^/]*$" (builtins.head config.haskell.codeDirs));
   frontendDir = builtins.head (builtins.split "/[^/]*$" (builtins.head config.purescript.codeDirs));
-  dataDir = config.dataDir;
+  dataDir     = config.dataDir;
 
-  deploy = pkgs.writeShellScriptBin "deploy" ''
-    #!/usr/bin/env bash
-    set -euo pipefail
 
-    echo "Building projects..."
-    (cd ${backendDir} && cabal build) || { echo "Backend build failed"; exit 1; }
-    (cd ${frontendDir} && spago build) || { echo "Frontend build failed"; exit 1; }
-    
-    # Check for and handle database backup
+  # ── Shared shell fragments ───────────────────────────────────────────────
+
+  firewallOpen = ''
+    echo "Ensuring firewall ports are open..."
+    sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport ${backendPort} -j ACCEPT
+    sudo iptables -C INPUT -p tcp --dport ${frontendPort} -j ACCEPT 2>/dev/null || \
+      sudo iptables -I INPUT -p tcp --dport ${frontendPort} -j ACCEPT
+    echo "  Ports ${backendPort} and ${frontendPort} open"
+  '';
+
+  # Sets USE_TLS + TLS_CERT_FILE + TLS_KEY_FILE in the current shell.
+  tlsEnvSetup = if tlsConfig.enable then ''
+    echo "Setting up TLS certificates..."
+    tls-setup
+    CERT_DIR="$(echo "${certDir}" | envsubst)"
+    export USE_TLS="true"
+    export TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}"
+    export TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
+  '' else ''
+    export USE_TLS="false"
+  '';
+
+  # Inline env prefix for tmux/alacritty pane commands (source-based).
+  # Expands certDir at Nix-eval time; $HOME / $CERT_DIR expand at runtime.
+  tlsEnvPrefix = if tlsConfig.enable then
+    ''CERT_DIR="$(echo "${certDir}" | envsubst)" USE_TLS=true TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}" TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}" ''
+  else "";
+
+  # Inline env prefix for tmux pane commands (nix-build artifacts).
+  # Uses already-exported $TLS_CERT_FILE / $TLS_KEY_FILE via shell quoting trick.
+  tlsEnvPrefixNix = if tlsConfig.enable then
+    ''USE_TLS=true TLS_CERT_FILE="'"$TLS_CERT_FILE"'" TLS_KEY_FILE="'"$TLS_KEY_FILE"'" ''
+  else "";
+
+  # For alacritty -e bash -c '...export...' patterns.
+  tlsExportBlock = if tlsConfig.enable then ''
+    export USE_TLS="true"; \
+    export TLS_CERT_FILE="'"$TLS_CERT"'"; \
+    export TLS_KEY_FILE="'"$TLS_KEY"'"; \
+  '' else ''
+    export USE_TLS="false"; \
+  '';
+
+  # Start postgres, restoring the latest backup when one exists.
+  pgStartWithBackup = ''
     BACKUP_DIR="${dataDir}/backups"
     mkdir -p "$BACKUP_DIR"
     LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-    
+
     if [ -z "$LATEST_BACKUP" ]; then
       echo "No backup found, starting fresh database..."
       pg-start
@@ -47,173 +77,119 @@ let
       echo "Restoring from backup..."
       pg-restore "$LATEST_BACKUP"
     fi
+  '';
 
-    ${if tlsConfig.enable then ''
-      # Ensure TLS certs exist
-      echo "Setting up TLS certificates..."
-      tls-setup
-      
-      CERT_DIR="$(echo "${certDir}" | envsubst)"
-      export USE_TLS="true"
-      export TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}"
-      export TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
-    '' else ''
-      export USE_TLS="false"
-    ''}
-
-    # Open firewall for dev ports (idempotent, persists until reboot)
-    echo "Ensuring firewall ports are open..."
-    sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
-      sudo iptables -I INPUT -p tcp --dport ${backendPort} -j ACCEPT
-    sudo iptables -C INPUT -p tcp --dport ${frontendPort} -j ACCEPT 2>/dev/null || \
-      sudo iptables -I INPUT -p tcp --dport ${frontendPort} -j ACCEPT
-    echo "  Ports ${backendPort} and ${frontendPort} open"
-
-    # Display tmux instructions
-    echo "TMux Commands:"
-    echo "-------------"
-    echo "Ctrl-b d    - Detach (safe exit)"
-    echo "Ctrl-b o    - Switch between panes"
-    echo "Ctrl-b z    - Zoom/unzoom current pane"
-    echo "Arrow keys  - Navigate panes (with Ctrl-b)"
-    echo "Ctrl-b [    - Scroll mode (q to exit)"
-    echo ""
-    echo "Starting services..."
-    echo "  Backend:  http://${host}:${backendPort}"
-    echo "  Frontend: http://${host}:${frontendPort}"
-    echo "  Postgres: ${host}:${dbPort}"
-    echo ""
-
-    # Start completely fresh
+  # Shared tmux layout: creates a 4-pane session and attaches.
+  # Callers supply the send-keys lines for panes 0 and 1 between the two fragments.
+  tmuxLayout = ''
     tmux kill-session -t ${name} 2>/dev/null || true
-
-    # Create a new session with a single pane (this will be the interactive shell)
     tmux new-session -d -s ${name} -n "Services" -x 120 -y 42
-    
-    # Create three small panes at the top - 12 lines tall
+
     tmux split-window -v -b -l 12
-    
-    # Now split this top pane horizontally into three parts
     tmux split-window -h -t ${name}:Services.0 -p 66
     tmux split-window -h -t ${name}:Services.1 -p 50
-    
-    # Make absolutely sure our panes are correctly sized
+
     tmux resize-pane -t ${name}:Services.0 -y 12
     tmux resize-pane -t ${name}:Services.1 -y 12
     tmux resize-pane -t ${name}:Services.2 -y 12
-    
-    # Send commands to each pane
+  '';
 
-    # Backend pane — pass TLS env vars through
-    tmux send-keys -t ${name}:Services.0 \
-      '${if tlsConfig.enable then ''
-        CERT_DIR="$(echo "${certDir}" | envsubst)" \
-        USE_TLS=true \
-        TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}" \
-        TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}" \
-      '' else ""}cd ${backendDir} && cabal run ${name}-backend' C-m
-
-    # Frontend pane — vite with HTTPS
-    tmux send-keys -t ${name}:Services.1 \
-      '${if tlsConfig.enable then ''
-        CERT_DIR="$(echo "${certDir}" | envsubst)" \
-        TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}" \
-        TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}" \
-      '' else ""}cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
-        
+  tmuxAttach = ''
     tmux send-keys -t ${name}:Services.2 'watch -n 5 pg-stats' C-m
-
-    # Info pane — show correct protocol
     tmux send-keys -t ${name}:Services.3 \
       'echo "Backend: ${protocol}://${host}:${backendPort}"; echo "Frontend: ${protocol}://${host}:${frontendPort}"' C-m
-    
-    # Make sure the layout is maintained when resizing
-    tmux set-hook -t ${name} client-resized 'resize-pane -t ${name}:Services.0 -y 12; resize-pane -t ${name}:Services.1 -y 12; resize-pane -t ${name}:Services.2 -y 12'
-    
-    # Select the interactive shell pane
+
+    tmux set-hook -t ${name} client-resized \
+      'resize-pane -t ${name}:Services.0 -y 12; resize-pane -t ${name}:Services.1 -y 12; resize-pane -t ${name}:Services.2 -y 12'
+
     tmux select-pane -t ${name}:Services.3
-    
-    # Attach to the session
     tmux attach-session -t ${name}
   '';
 
-  stop = pkgs.writeShellScriptBin "stop" ''
-    #!/usr/bin/env bash
-    set -euo pipefail
-    
-    # Store our own PID so we don't kill ourselves
-    OUR_PID=$$
-    PARENT_PID=$PPID
-    
+  # Shared stop logic: backup, pg-stop, kill vite + leftover port occupants.
+  # Expects OUR_PID / PARENT_PID to be set by the caller.
+  stopCore = ''
     echo "Creating database backup..."
     pg-backup
     echo "Database backup completed."
-    
+
     echo "Stopping database..."
     pg-stop || { echo "Failed to stop PostgreSQL completely"; exit 1; }
-    echo "Database stopped successfully."
-    
+    echo "Database stopped."
+
     echo "Stopping vite..."
     vite-cleanup || true
-    
-    echo "Ensuring all vite processes are stopped..."
+
     VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
     if [ -n "$VITE_PIDS" ]; then
-      echo "Found remaining vite processes: $VITE_PIDS"
-      for pid in $VITE_PIDS; do
-        echo "Killing vite process $pid"
-        kill -9 "$pid" 2>/dev/null || true
-      done
-    fi
-    
-    # Check frontend port but protect our process
-    PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
-    if [ -n "$PORT_PIDS" ]; then
-      echo "Found processes still using port ${frontendPort}: $PORT_PIDS"
-      for pid in $PORT_PIDS; do
-        echo "Killing process $pid on port ${frontendPort}"
-        kill -9 "$pid" 2>/dev/null || true
-      done
+      for pid in $VITE_PIDS; do kill -9 "$pid" 2>/dev/null || true; done
     fi
 
-    echo "Stopping tmux services..."
+    PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t \
+      | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
+    if [ -n "$PORT_PIDS" ]; then
+      for pid in $PORT_PIDS; do kill -9 "$pid" 2>/dev/null || true; done
+    fi
+  '';
+
+  killTmux = ''
     if tmux has-session -t ${name} 2>/dev/null; then
-      echo "Sending interrupt signal to tmux panes..."
       for pane_index in 0 1 2 3; do
         tmux send-keys -t ${name}:Services.$pane_index C-c 2>/dev/null || true
       done
-      
       sleep 2
-      
-      echo "Detaching all clients from tmux session..."
       tmux detach-client -s ${name} 2>/dev/null || true
-      
-      echo "Killing tmux session..."
-      (
-        tmux kill-session -t ${name} 2>/dev/null || true
-        sleep 1
-      ) &
-      wait
-      
+      ( tmux kill-session -t ${name} 2>/dev/null || true; sleep 1 ) & wait
       if tmux has-session -t ${name} 2>/dev/null; then
-        echo "Session still exists, using last resort measures..."
-        (
-          tmux kill-server 2>/dev/null || true
-        ) &
-        wait
+        ( tmux kill-server 2>/dev/null || true ) & wait
       fi
     fi
+  '';
 
-    # Final verification
+
+  # ── Source-based deployment (cabal run / spago / vite) ──────────────────
+
+  deploy = pkgs.writeShellScriptBin "deploy" ''
+    set -euo pipefail
+
+    echo "Building projects..."
+    (cd ${backendDir} && cabal build) || { echo "Backend build failed"; exit 1; }
+    (cd ${frontendDir} && spago build) || { echo "Frontend build failed"; exit 1; }
+
+    ${pgStartWithBackup}
+    ${tlsEnvSetup}
+    ${firewallOpen}
+
+    echo "TMux Commands:"
+    echo "  Ctrl-b d  Detach | Ctrl-b o  Switch panes | Ctrl-b z  Zoom"
+    echo "  Arrow keys  Navigate (with Ctrl-b) | Ctrl-b [  Scroll mode (q to exit)"
+    echo ""
+    echo "Starting services..."
+    echo "  Backend:  ${protocol}://${host}:${backendPort}"
+    echo "  Frontend: ${protocol}://${host}:${frontendPort}"
+    echo "  Postgres: ${host}:${dbPort}"
+    echo ""
+
+    ${tmuxLayout}
+    tmux send-keys -t ${name}:Services.0 \
+      '${tlsEnvPrefix}cd ${backendDir} && cabal run ${name}-backend' C-m
+    tmux send-keys -t ${name}:Services.1 \
+      '${tlsEnvPrefix}cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
+    ${tmuxAttach}
+  '';
+
+  stop = pkgs.writeShellScriptBin "stop" ''
+    set -euo pipefail
+    OUR_PID=$$
+    PARENT_PID=$PPID
+
+    ${stopCore}
+    ${killTmux}
+
     BACKEND_PIDS=$(pgrep -f "${name}-backend" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
     VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" || echo "")
-    
     if [ -n "$BACKEND_PIDS" ] || [ -n "$VITE_PIDS" ]; then
-      echo "Final cleanup of remaining processes..."
-      for pid in $BACKEND_PIDS $VITE_PIDS; do
-        echo "Force killing process $pid"
-        kill -9 "$pid" 2>/dev/null || true
-      done
+      for pid in $BACKEND_PIDS $VITE_PIDS; do kill -9 "$pid" 2>/dev/null || true; done
     fi
 
     echo "All services stopped."
@@ -221,88 +197,55 @@ let
 
   launch-dev = pkgs.writeShellScriptBin "launch-dev" ''
     set -euo pipefail
-
     PROJECT_DIR="$(pwd)"
 
     ${if tlsConfig.enable then ''
       echo "Setting up TLS certificates..."
       tls-setup
-
       CERT_DIR="$(echo "${certDir}" | envsubst)"
       TLS_CERT="$CERT_DIR/${tlsConfig.certFile}"
       TLS_KEY="$CERT_DIR/${tlsConfig.keyFile}"
-    '' else ''
-      true
-    ''}
+    '' else "true"}
 
-    echo "Ensuring firewall ports are open..."
-    sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
-      sudo iptables -I INPUT -p tcp --dport ${backendPort} -j ACCEPT
-    sudo iptables -C INPUT -p tcp --dport ${frontendPort} -j ACCEPT 2>/dev/null || \
-      sudo iptables -I INPUT -p tcp --dport ${frontendPort} -j ACCEPT
-    echo "  Ports ${backendPort} and ${frontendPort} open"
-
+    ${firewallOpen}
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"
 
-    # ── Database ──
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Database" \
       --working-directory "$PROJECT_DIR" \
       -e ${pkgs.bash}/bin/bash -c \
         '${pkgs.direnv}/bin/direnv exec "'"$PROJECT_DIR"'" db-start' &
 
-    # Wait for postgres to actually be ready, not just a fixed sleep
-    echo "Waiting for database to start..."
+    echo "Waiting for database..."
     RETRIES=0
     while ! ${pkgs.postgresql}/bin/pg_isready -h "$PGDATA" -p "${dbPort}" -q 2>/dev/null; do
       RETRIES=$((RETRIES + 1))
-      if [ $RETRIES -ge 30 ]; then
-        echo "Database failed to start within 30 seconds"
-        exit 1
-      fi
+      [ $RETRIES -ge 30 ] && { echo "Database failed to start within 30 seconds"; exit 1; }
       sleep 1
     done
     echo "  Database ready"
 
-    # ── Backend ──
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Backend" \
       --working-directory "$PROJECT_DIR" \
       -e ${pkgs.bash}/bin/bash -c \
-        '${if tlsConfig.enable then ''
-          export USE_TLS="true"; \
-          export TLS_CERT_FILE="'"$TLS_CERT"'"; \
-          export TLS_KEY_FILE="'"$TLS_KEY"'"; \
-        '' else ''
-          export USE_TLS="false"; \
-        ''}cd '"$PROJECT_DIR"'/${backendDir} && cabal run ${name}-backend' &
+        '${tlsExportBlock}cd '"$PROJECT_DIR"'/${backendDir} && cabal run ${name}-backend' &
 
-    # Wait for the backend to respond
     echo "Waiting for backend..."
     RETRIES=0
-    while ! ${pkgs.curl}/bin/curl -sk "https://${host}:${backendPort}/inventory" > /dev/null 2>&1; do
+    while ! ${pkgs.curl}/bin/curl -sk "${protocol}://${host}:${backendPort}/inventory" > /dev/null 2>&1; do
       RETRIES=$((RETRIES + 1))
-      if [ $RETRIES -ge 60 ]; then
-        echo "Backend failed to start within 60 seconds"
-        exit 1
-      fi
+      [ $RETRIES -ge 60 ] && { echo "Backend failed to start within 60 seconds"; exit 1; }
       sleep 1
     done
     echo "  Backend ready"
 
-    # ── Frontend ──
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Frontend" \
       --working-directory "$PROJECT_DIR" \
       -e ${pkgs.bash}/bin/bash -c \
-        '${if tlsConfig.enable then ''
-          export USE_TLS="true"; \
-          export TLS_CERT_FILE="'"$TLS_CERT"'"; \
-          export TLS_KEY_FILE="'"$TLS_KEY"'"; \
-        '' else ''
-          export USE_TLS="false"; \
-        ''}cd '"$PROJECT_DIR"'/${frontendDir} && npx vite --host ${bindAddress} --port ${frontendPort} --open' &
+        '${tlsExportBlock}cd '"$PROJECT_DIR"'/${frontendDir} && npx vite --host ${bindAddress} --port ${frontendPort} --open' &
 
     echo ""
     echo "All windows launched."
@@ -311,212 +254,365 @@ let
     echo "  Frontend:  window 3 (${protocol}://${host}:${frontendPort})"
   '';
 
-  # Database start script
-  db-start = pkgs.writeShellScriptBin "db-start" ''
-    #!/usr/bin/env bash
-    set -euo pipefail
 
+  # ── Individual service scripts ───────────────────────────────────────────
+
+  db-start = pkgs.writeShellScriptBin "db-start" ''
+    set -euo pipefail
     echo "Starting database service on port ${dbPort}..."
-    
-    BACKUP_DIR="${dataDir}/backups"
-    mkdir -p "$BACKUP_DIR"
-    LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
-    
-    if [ -z "$LATEST_BACKUP" ]; then
-      echo "No backup found, starting fresh database..."
-      pg-start
-    else
-      echo "Found backup at $LATEST_BACKUP"
-      pg-start
-      echo "Restoring from backup..."
-      pg-restore "$LATEST_BACKUP"
-    fi
-    
-    echo "Database started successfully at ${host}:${dbPort}"
+    ${pgStartWithBackup}
+    echo "Database started at ${host}:${dbPort}"
     echo ""
-    echo "You can monitor database stats with: watch -n 5 pg-stats"
-    echo "You can backup the database with: pg-backup"
-    echo "You can stop the database with: pg-stop"
+    echo "Monitor with: watch -n 5 pg-stats  |  Backup: pg-backup  |  Stop: pg-stop"
     watch -n 5 pg-stats
   '';
 
-  # Database stop script
   db-stop = pkgs.writeShellScriptBin "db-stop" ''
-    #!/usr/bin/env bash
     set -euo pipefail
-    
     echo "Creating database backup..."
     pg-backup
     echo "Database backup completed."
-    
     echo "Stopping database..."
     pg-stop || { echo "Failed to stop PostgreSQL completely"; exit 1; }
     echo "Database stopped successfully."
   '';
 
-  # Backend start script  
   backend-start = pkgs.writeShellScriptBin "backend-start" ''
-    #!/usr/bin/env bash
     set -euo pipefail
-
     echo "Building and starting Haskell backend..."
-    
-    # Check if we're in the right directory
+
     if [ ! -f "${backendDir}/cabal.project" ] && [ ! -f "${backendDir}/${name}-backend.cabal" ]; then
       if [ -f "cabal.project" ] || [ -f "${name}-backend.cabal" ]; then
         BACKEND_DIR="."
       else
-        echo "Error: Cannot find backend directory. Please run from project root or backend directory."
+        echo "Error: Cannot find backend directory. Run from project root or backend directory."
         exit 1
       fi
     else
       BACKEND_DIR="${backendDir}"
     fi
-    
-    echo "Building backend..."
-    (cd "$BACKEND_DIR" && cabal build) || { 
-      echo "Backend build failed"
-      exit 1
-    }
-    
-    echo "Starting backend server on ${host}:${backendPort}..."
-    echo "Press Ctrl+C to stop the backend"
-    echo ""
-    
-    cd "$BACKEND_DIR"
-    exec cabal run ${name}-backend
+
+    (cd "$BACKEND_DIR" && cabal build) || { echo "Backend build failed"; exit 1; }
+    echo "Starting backend on ${host}:${backendPort}..."
+    cd "$BACKEND_DIR" && exec cabal run ${name}-backend
   '';
 
-  # Backend stop script  
   backend-stop = pkgs.writeShellScriptBin "backend-stop" ''
-    #!/usr/bin/env bash
     set -euo pipefail
-    
-    echo "Stopping backend..."
-    
     BACKEND_PIDS=$(pgrep -f "${name}-backend" 2>/dev/null || echo "")
     if [ -n "$BACKEND_PIDS" ]; then
-      echo "Found backend processes: $BACKEND_PIDS"
-      for pid in $BACKEND_PIDS; do
-        echo "Stopping backend process $pid"
-        kill -TERM "$pid" 2>/dev/null || true
-      done
-      
+      for pid in $BACKEND_PIDS; do kill -TERM "$pid" 2>/dev/null || true; done
       sleep 2
-      
-      REMAINING_PIDS=$(pgrep -f "${name}-backend" 2>/dev/null || echo "")
-      if [ -n "$REMAINING_PIDS" ]; then
-        echo "Force stopping remaining backend processes..."
-        for pid in $REMAINING_PIDS; do
-          kill -9 "$pid" 2>/dev/null || true
-        done
-      fi
+      REMAINING=$(pgrep -f "${name}-backend" 2>/dev/null || echo "")
+      [ -n "$REMAINING" ] && for pid in $REMAINING; do kill -9 "$pid" 2>/dev/null || true; done
     fi
-    
     echo "Backend stopped."
   '';
 
-  # Frontend start script
   frontend-start = pkgs.writeShellScriptBin "frontend-start" ''
-    #!/usr/bin/env bash
     set -euo pipefail
-
-    echo "Building and starting PureScript frontend..."
-    
-    # Check if we're in the right directory
     if [ ! -f "${frontendDir}/spago.yaml" ] && [ ! -f "${frontendDir}/spago.dhall" ] && [ ! -f "${frontendDir}/package.json" ]; then
       if [ -f "spago.yaml" ] || [ -f "spago.dhall" ] || [ -f "package.json" ]; then
         FRONTEND_DIR="."
       else
-        echo "Error: Cannot find frontend directory. Please run from project root or frontend directory."
+        echo "Error: Cannot find frontend directory. Run from project root or frontend directory."
         exit 1
       fi
     else
       FRONTEND_DIR="${frontendDir}"
     fi
-    
-    echo "Checking for existing vite processes..."
+
     VITE_PIDS=$(pgrep -f "vite" 2>/dev/null || echo "")
     if [ -n "$VITE_PIDS" ]; then
-      echo "Found existing vite processes, cleaning up..."
-      for pid in $VITE_PIDS; do
-        kill -TERM "$pid" 2>/dev/null || true
-      done
+      for pid in $VITE_PIDS; do kill -TERM "$pid" 2>/dev/null || true; done
       sleep 1
     fi
-    
-    # Check if frontend port is in use
-    if ${pkgs.lsof}/bin/lsof -i :${frontendPort} &>/dev/null; then
-      echo "Warning: Port ${frontendPort} is already in use. Attempting to free it..."
-      PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t 2>/dev/null || echo "")
-      for pid in $PORT_PIDS; do
-        kill -TERM "$pid" 2>/dev/null || true
-      done
-      sleep 1
-    fi
-    
-    echo "Building frontend..."
-    (cd "$FRONTEND_DIR" && spago build) || { 
-      echo "Frontend build failed"
-      exit 1
-    }
-    
-    echo "Starting Vite development server on ${host}:${frontendPort}..."
-    echo "Press Ctrl+C to stop the frontend"
-    echo ""
-    
-    cd "$FRONTEND_DIR"
-    exec vite --host ${bindAddress} --port ${frontendPort} --open
-  ''; 
 
-  # Frontend stop script
+    if ${pkgs.lsof}/bin/lsof -i :${frontendPort} &>/dev/null; then
+      PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t 2>/dev/null || echo "")
+      for pid in $PORT_PIDS; do kill -TERM "$pid" 2>/dev/null || true; done
+      sleep 1
+    fi
+
+    (cd "$FRONTEND_DIR" && spago build) || { echo "Frontend build failed"; exit 1; }
+    cd "$FRONTEND_DIR" && exec vite --host ${bindAddress} --port ${frontendPort} --open
+  '';
+
   frontend-stop = pkgs.writeShellScriptBin "frontend-stop" ''
-    #!/usr/bin/env bash
     set -euo pipefail
-    
-    echo "Stopping frontend..."
-    
     OUR_PID=$$
     PARENT_PID=$PPID
-    
-    echo "Stopping vite..."
+
     vite-cleanup 2>/dev/null || true
-    
-    echo "Ensuring all vite processes are stopped..."
+
     VITE_PIDS=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
     if [ -n "$VITE_PIDS" ]; then
-      echo "Found remaining vite processes: $VITE_PIDS"
-      for pid in $VITE_PIDS; do
-        echo "Stopping vite process $pid"
-        kill -TERM "$pid" 2>/dev/null || true
-      done
-      
+      for pid in $VITE_PIDS; do kill -TERM "$pid" 2>/dev/null || true; done
       sleep 1
-      
-      REMAINING_VITE=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
-      if [ -n "$REMAINING_VITE" ]; then
-        echo "Force stopping remaining vite processes..."
-        for pid in $REMAINING_VITE; do
-          kill -9 "$pid" 2>/dev/null || true
-        done
-      fi
+      REMAINING=$(pgrep -f "vite" | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
+      [ -n "$REMAINING" ] && for pid in $REMAINING; do kill -9 "$pid" 2>/dev/null || true; done
     fi
-    
-    PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
-    if [ -n "$PORT_PIDS" ]; then
-      echo "Found processes still using port ${frontendPort}: $PORT_PIDS"
-      for pid in $PORT_PIDS; do
-        echo "Killing process $pid on port ${frontendPort}"
-        kill -9 "$pid" 2>/dev/null || true
-      done
-    fi
-    
+
+    PORT_PIDS=$(${pkgs.lsof}/bin/lsof -i :${frontendPort} -t \
+      | grep -v "^$OUR_PID$" | grep -v "^$PARENT_PID$" 2>/dev/null || echo "")
+    [ -n "$PORT_PIDS" ] && for pid in $PORT_PIDS; do kill -9 "$pid" 2>/dev/null || true; done
+
     echo "Frontend stopped."
   '';
 
+
+  # ── Nix-build artifact deployment ───────────────────────────────────────
+
+  build-all = pkgs.writeShellScriptBin "build-all" ''
+    set -euo pipefail
+    echo "Building ${name}..."
+    nix build .
+    echo ""
+    echo "Build complete."
+    echo "  Binary:   ./result/bin/${name}-backend"
+    echo "  Frontend: ./result-frontend"
+  '';
+
+  deploy-nix = pkgs.writeShellScriptBin "deploy-nix" ''
+    set -euo pipefail
+    LOGDIR="${dataDir}/logs"
+    PIDDIR="${dataDir}/pids"
+    BACKUP_DIR="${dataDir}/backups"
+    mkdir -p "$LOGDIR" "$PIDDIR" "$BACKUP_DIR"
+
+    [ ! -f "./result/bin/${name}-backend" ] && { echo "Binary not found, building..."; nix build .; }
+
+    echo "Starting PostgreSQL on port ${dbPort}..."
+    LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+    pg-start
+    [ -n "$LATEST_BACKUP" ] && { echo "Restoring from backup: $LATEST_BACKUP"; pg-restore "$LATEST_BACKUP"; }
+
+    ${tlsEnvSetup}
+    ${firewallOpen}
+
+    echo "Starting backend..."
+    ${if tlsConfig.enable then ''
+      USE_TLS=true TLS_CERT_FILE="$TLS_CERT_FILE" TLS_KEY_FILE="$TLS_KEY_FILE" \
+      ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
+    '' else ''
+      USE_TLS=false ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
+    ''}
+    echo $! > "$PIDDIR/backend.pid"
+
+    echo "Waiting for backend..."
+    for i in $(seq 1 30); do
+      ${pkgs.curl}/bin/curl -s ${if tlsConfig.enable then "-k" else ""} \
+        ${protocol}://${host}:${backendPort}/inventory > /dev/null 2>&1 && { echo "Backend ready."; break; }
+      sleep 1
+    done
+
+    echo "Starting frontend..."
+    cd ${frontendDir}
+    ${pkgs.nodejs}/bin/npx vite --host ${bindAddress} --port ${frontendPort} > "$LOGDIR/frontend.log" 2>&1 &
+    echo $! > "$PIDDIR/frontend.pid"
+    cd ..
+
+    echo ""
+    echo "Services started."
+    echo "  Backend:  ${protocol}://${host}:${backendPort} (PID: $(cat $PIDDIR/backend.pid))"
+    echo "  Frontend: ${protocol}://${host}:${frontendPort} (PID: $(cat $PIDDIR/frontend.pid))"
+    echo "  Postgres: ${host}:${dbPort}"
+    echo "  Logs: $LOGDIR/"
+  '';
+
+  deploy-nix-interactive = pkgs.writeShellScriptBin "deploy-nix-interactive" ''
+    set -euo pipefail
+    BACKUP_DIR="${dataDir}/backups"
+    mkdir -p "$BACKUP_DIR"
+
+    [ ! -f "./result/bin/${name}-backend" ] && { echo "Binary not found, building..."; nix build .; }
+
+    LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
+    pg-start
+    [ -n "$LATEST_BACKUP" ] && { echo "Restoring from backup: $LATEST_BACKUP"; pg-restore "$LATEST_BACKUP"; }
+
+    ${tlsEnvSetup}
+    ${firewallOpen}
+
+    ${tmuxLayout}
+    tmux send-keys -t ${name}:Services.0 \
+      '${tlsEnvPrefixNix}./result/bin/${name}-backend' C-m
+    tmux send-keys -t ${name}:Services.1 \
+      'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
+    ${tmuxAttach}
+  '';
+
+  stop-nix = pkgs.writeShellScriptBin "stop-nix" ''
+    set -euo pipefail
+    PIDDIR="${dataDir}/pids"
+
+    echo "Backing up database..."
+    pg-backup || true
+
+    for service in backend frontend; do
+      PIDFILE="$PIDDIR/$service.pid"
+      if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+          echo "Stopping $service (PID: $PID)..."
+          kill -TERM "$PID" 2>/dev/null || true
+          sleep 2
+          kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null || true
+        fi
+        rm -f "$PIDFILE"
+      fi
+    done
+
+    ${pkgs.lsof}/bin/lsof -ti :${frontendPort} | xargs -r kill -9 2>/dev/null || true
+    tmux kill-session -t ${name} 2>/dev/null || true
+    pg-stop || true
+
+    echo "All services stopped."
+  '';
+
+  status-nix = pkgs.writeShellScriptBin "status-nix" ''
+    PIDDIR="${dataDir}/pids"
+
+    echo "${name} Service Status"
+    echo "===================="
+    echo ""
+
+    for service in backend frontend; do
+      PIDFILE="$PIDDIR/$service.pid"
+      if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "$service: running (PID: $(cat "$PIDFILE"))"
+      else
+        echo "$service: stopped"
+      fi
+    done
+
+    echo ""
+    echo "Configuration:"
+    echo "  Host:     ${host}"
+    echo "  Bind:     ${bindAddress}"
+    echo "  Protocol: ${protocol}"
+    echo "  Backend:  ${protocol}://${host}:${backendPort}"
+    echo "  Frontend: ${protocol}://${host}:${frontendPort}"
+    echo "  Postgres: ${host}:${dbPort}"
+    echo "  TLS:      ${if tlsConfig.enable then "enabled" else "disabled"}"
+    echo ""
+    pg-stats 2>/dev/null || echo "postgres: stopped"
+  '';
+
+  tui = pkgs.writeShellScriptBin "${name}-tui" ''
+    set -euo pipefail
+
+    show_config() {
+      echo ""
+      echo "${name} Configuration"
+      echo "========================"
+      echo ""
+      echo "Network:"
+      echo "  Host:         ${host}"
+      echo "  Bind address: ${bindAddress}"
+      echo "  Protocol:     ${protocol}"
+      echo ""
+      echo "TLS: ${if tlsConfig.enable then "enabled" else "disabled"}"
+      ${if tlsConfig.enable then ''
+        CERT_DIR="$(echo "${certDir}" | envsubst)"
+        echo "  Cert dir: $CERT_DIR"
+        echo "  Cert:     $CERT_DIR/${tlsConfig.certFile}"
+        echo "  Key:      $CERT_DIR/${tlsConfig.keyFile}"
+      '' else ""}
+      echo ""
+      echo "Services:"
+      echo "  Backend:  ${protocol}://${host}:${backendPort}"
+      echo "  Frontend: ${protocol}://${host}:${frontendPort}"
+      echo "  Postgres: ${host}:${dbPort}"
+      echo ""
+      echo "Directories:"
+      echo "  Backend:  ${backendDir}"
+      echo "  Frontend: ${frontendDir}"
+      echo "  Data:     ${dataDir}"
+    }
+
+    case "''${1:-}" in
+      --build)              nix build .; exit 0 ;;
+      --deploy)             deploy-nix; exit 0 ;;
+      --deploy-interactive) deploy-nix-interactive; exit 0 ;;
+      --deploy-source)      deploy; exit 0 ;;
+      --launch-dev)         launch-dev; exit 0 ;;
+      --stop)               stop-nix; exit 0 ;;
+      --stop-source)        stop; exit 0 ;;
+      --status)             status-nix; exit 0 ;;
+      --config)             show_config; exit 0 ;;
+      --gc)                 nix-collect-garbage -d; exit 0 ;;
+      --update)             nix flake update; exit 0 ;;
+      --tls-setup)          tls-setup; exit 0 ;;
+      --help)
+        echo "Usage: ${name}-tui [OPTION]"
+        echo ""
+        echo "Nix-build artifact workflows:"
+        echo "  --build              nix build ."
+        echo "  --deploy             Headless (Nix artifacts)"
+        echo "  --deploy-interactive tmux (Nix artifacts)"
+        echo "  --stop               Stop Nix deployment"
+        echo "  --status             Service status"
+        echo ""
+        echo "Source workflows (cabal / spago):"
+        echo "  --deploy-source      tmux (cabal run / spago)"
+        echo "  --launch-dev         Alacritty windows"
+        echo "  --stop-source        Stop source deployment"
+        echo ""
+        echo "Maintenance:"
+        echo "  --config             Show configuration"
+        echo "  --tls-setup          Generate / refresh TLS certificates"
+        echo "  --gc                 Nix garbage collect"
+        echo "  --update             nix flake update"
+        exit 0 ;;
+    esac
+
+    PS3='Choice: '
+    options=(
+      "── Nix artifacts ──────────────"
+      "Build (nix build .)"
+      "Deploy headless (nix)"
+      "Deploy tmux (nix)"
+      "Stop (nix)"
+      "Status"
+      "── Source (cabal/spago) ───────"
+      "Deploy tmux (source)"
+      "Launch dev (Alacritty)"
+      "Stop (source)"
+      "── Maintenance ────────────────"
+      "Show config"
+      "Setup TLS"
+      "Garbage collect"
+      "Update flake"
+      "Quit"
+    )
+
+    select opt in "''${options[@]}"; do
+      case $opt in
+        "Build (nix build .)")      nix build . ;;
+        "Deploy headless (nix)")    deploy-nix; break ;;
+        "Deploy tmux (nix)")        deploy-nix-interactive; break ;;
+        "Stop (nix)")               stop-nix ;;
+        "Status")                   status-nix ;;
+        "Deploy tmux (source)")     deploy; break ;;
+        "Launch dev (Alacritty)")   launch-dev; break ;;
+        "Stop (source)")            stop ;;
+        "Show config")              show_config ;;
+        "Setup TLS")                tls-setup ;;
+        "Garbage collect")          nix-collect-garbage -d ;;
+        "Update flake")             nix flake update ;;
+        "Quit")                     break ;;
+        *) [ -n "$opt" ] && echo "Invalid option" ;;
+      esac
+    done
+  '';
+
 in {
+  # Source-based
   inherit deploy stop launch-dev;
   inherit db-start db-stop;
-  inherit frontend-start frontend-stop;
   inherit backend-start backend-stop;
+  inherit frontend-start frontend-stop;
+  # Nix-build-based
+  inherit build-all deploy-nix deploy-nix-interactive stop-nix status-nix tui;
 }
