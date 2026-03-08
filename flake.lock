@@ -50,23 +50,6 @@
         "type": "github"
       }
     },
-    "cabal-32": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1603716527,
-        "narHash": "sha256-X0TFfdD4KZpwl0Zr6x+PLxUt/VyKQfX7ylXHdmZIL+w=",
-        "owner": "haskell",
-        "repo": "cabal",
-        "rev": "48bf10787e27364730dd37a42b603cee8d6af7ee",
-        "type": "github"
-      },
-      "original": {
-        "owner": "haskell",
-        "ref": "3.2",
-        "repo": "cabal",
-        "type": "github"
-      }
-    },
     "cabal-34": {
       "flake": false,
       "locked": {
@@ -250,11 +233,11 @@
     "hackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1769426957,
-        "narHash": "sha256-IA4Ti6FD1l4zKahvawFkV71wW8+KQLzv+4Ewq6JaKdQ=",
+        "lastModified": 1772995792,
+        "narHash": "sha256-LrPHnNqk2aQ8JLMdlpLmEUxaza96X/8l60RQgs52GAQ=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "9415abecd7c3f16a60af042cd9dc10ebd87a5766",
+        "rev": "6c362892e3b1735060d92180fa3cd85d2b660a39",
         "type": "github"
       },
       "original": {
@@ -266,11 +249,11 @@
     "hackage-for-stackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1769387432,
-        "narHash": "sha256-0ueQg9DZDFxG168M/My9TJt59CXooz5pz8lER2iSz8Y=",
+        "lastModified": 1772930174,
+        "narHash": "sha256-IBwL+zqaLQo7icOkrtf6lCRzwjpJMb2l5LZlyD1lj4s=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "df14d57fe406a746d84f6ed743bbb36f6adb8947",
+        "rev": "b3ae4e616da86f3084c4d0ab09d31477391c99be",
         "type": "github"
       },
       "original": {
@@ -299,11 +282,11 @@
     "hackage_2": {
       "flake": false,
       "locked": {
-        "lastModified": 1769387443,
-        "narHash": "sha256-Kv6kGETl9ZuhDfMhAFd6vihQdqI7ptWdkLeSgBlFCv8=",
+        "lastModified": 1772930185,
+        "narHash": "sha256-E0bHQky6LVpInolHoXW1XXHd5s6q0Ee5+5ivuIaCVGM=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "4e8bfb1fee9caaffd6aa7d83948a4dac1cf72eba",
+        "rev": "819aa2b2f892e450bedb7a888ae59c1ffc403b0f",
         "type": "github"
       },
       "original": {
@@ -315,7 +298,6 @@
     "haskellNix": {
       "inputs": {
         "HTTP": "HTTP",
-        "cabal-32": "cabal-32",
         "cabal-34": "cabal-34",
         "cabal-36": "cabal-36",
         "cardano-shell": "cardano-shell",
@@ -354,11 +336,11 @@
         "stackage": "stackage"
       },
       "locked": {
-        "lastModified": 1769388749,
-        "narHash": "sha256-0vILl3g/VxZk8IWbhAIwcMyQojIUeaP97bUnW7ETsK8=",
+        "lastModified": 1772931446,
+        "narHash": "sha256-01Vw8vYC7sB8Y+WQN4n+aH+mNGWbwU6YOODSdJjjhIM=",
         "owner": "input-output-hk",
         "repo": "haskell.nix",
-        "rev": "c81decb31e92eb064a0f7a4a339effa3eccd9f14",
+        "rev": "ce252cc410d98a3254d1090cbd305ecff6b184d5",
         "type": "github"
       },
       "original": {
@@ -648,11 +630,11 @@
         "sodium": "sodium"
       },
       "locked": {
-        "lastModified": 1767797951,
-        "narHash": "sha256-74YzTQnjU8zXjFsSGNTElT/JrjEJ+UWxXP4W/aqegKk=",
+        "lastModified": 1770069549,
+        "narHash": "sha256-jHgw8KL0/TFGY2aVwxhD0DeDq7sl5Ti7jAp8T3RLNb0=",
         "owner": "input-output-hk",
         "repo": "iohk-nix",
-        "rev": "a489231f4a6749fe6a81a63af7159d75bdaff700",
+        "rev": "0ce7cc21b9a4cfde41871ef486d01a8fafbf9627",
         "type": "github"
       },
       "original": {
@@ -664,11 +646,11 @@
     "iserv-proxy": {
       "flake": false,
       "locked": {
-        "lastModified": 1755243078,
-        "narHash": "sha256-GLbl1YaohKdpzZVJFRdcI1O1oE3F3uBer4lFv3Yy0l8=",
+        "lastModified": 1770174258,
+        "narHash": "sha256-x6QYupvHZM7rRpVO4AIC5gUWFprFQ59A95FPC7/Owjg=",
         "owner": "stable-haskell",
         "repo": "iserv-proxy",
-        "rev": "150605195cb7183a6fb7bed82f23fedf37c6f52a",
+        "rev": "91ef7ffdeedfb141a4d69dcf9e550abe3e1160c6",
         "type": "github"
       },
       "original": {
@@ -846,11 +828,11 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 1769170682,
-        "narHash": "sha256-oMmN1lVQU0F0W2k6OI3bgdzp2YOHWYUAw79qzDSjenU=",
+        "lastModified": 1772773019,
+        "narHash": "sha256-E1bxHxNKfDoQUuvriG71+f+s/NT0qWkImXsYZNFFfCs=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "c5296fdd05cfa2c187990dd909864da9658df755",
+        "rev": "aca4d95fce4914b3892661bcb80b8087293536c6",
         "type": "github"
       },
       "original": {
@@ -892,22 +874,6 @@
         "type": "github"
       }
     },
-    "official-package-set": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1767512513,
-        "narHash": "sha256-zNRYCDXkTzw8QjmTRcv/n5Uedvhn9aIgmamcqCD2g8Q=",
-        "owner": "purescript",
-        "repo": "package-sets",
-        "rev": "603e17fc270eb4e9584ad815b8d4972dd56fdde2",
-        "type": "github"
-      },
-      "original": {
-        "owner": "purescript",
-        "repo": "package-sets",
-        "type": "github"
-      }
-    },
     "old-ghc-nix": {
       "flake": false,
       "locked": {
@@ -941,11 +907,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1765692861,
-        "narHash": "sha256-8UeEtzOtqK1yKJcYsy+ikr13ssXWKE5mmt+KvmL0TeQ=",
+        "lastModified": 1770243793,
+        "narHash": "sha256-DnX8XJa5YvAYc0+pchI71C0928gLpFX6FtZXI+gbDJE=",
         "owner": "purs-nix",
         "repo": "purescript-tools",
-        "rev": "9d5b05dc6abd02e65c47d702e6a5fb97fec3a290",
+        "rev": "913348dfc63faf105485e492fec0a66bed8d15ab",
         "type": "github"
       },
       "original": {
@@ -1061,11 +1027,11 @@
         "nixpkgs": "nixpkgs_4"
       },
       "locked": {
-        "lastModified": 1769431322,
-        "narHash": "sha256-aDklh25vsEBE2RQnjx4fAOVlSs+BRuw1MEVhEYr5V7g=",
+        "lastModified": 1772331060,
+        "narHash": "sha256-CJ2aAPa64MY7N0dCle/BiUibvDX9PJcrKF97Gk7NcII=",
         "owner": "harryprayiv",
         "repo": "purescript-overlay",
-        "rev": "819770f0f47beb98085baf83a34f633ddd8cdf7b",
+        "rev": "5e6ec082e7efc00609a4574183335950876b42e6",
         "type": "github"
       },
       "original": {
@@ -1129,17 +1095,16 @@
         "get-flake": "get-flake",
         "lint-utils": "lint-utils",
         "nixpkgs": "nixpkgs_5",
-        "official-package-set": "official-package-set",
         "ps-tools": "ps-tools",
         "registry": "registry",
         "utils": "utils"
       },
       "locked": {
-        "lastModified": 1767815062,
-        "narHash": "sha256-ZKaNGux0zyE4lskZJaneSmYXEwpeUO+6Lf1Hnf3MwvE=",
+        "lastModified": 1770318805,
+        "narHash": "sha256-ajS0G7GjY2S9VdlTITQ38bexIpWL0CaSBcdB3xdaDVM=",
         "owner": "purs-nix",
         "repo": "purs-nix",
-        "rev": "26c637c5b12aad873108c991cfaa0b7600712b4b",
+        "rev": "6d72287a3490c1459d6149bd975b4d1c6b5df7b6",
         "type": "github"
       },
       "original": {
@@ -1151,11 +1116,11 @@
     "registry": {
       "flake": false,
       "locked": {
-        "lastModified": 1767531332,
-        "narHash": "sha256-t3Mzoh4atyTXPavEXQmvxKbUzjmuKUz+K7wlmEV5uo8=",
+        "lastModified": 1770240638,
+        "narHash": "sha256-fgCY6D+x4VOHhM11ASWiLxaBgsLJ33fsGhy1W1hR1ZU=",
         "owner": "purescript",
         "repo": "registry",
-        "rev": "62242b47093f47c17689adc7897bf8483b08202c",
+        "rev": "15b8a097f098f515d4bb0cfc8486c409eb066fba",
         "type": "github"
       },
       "original": {
@@ -1228,11 +1193,11 @@
     "stackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1769386533,
-        "narHash": "sha256-V8N59LFXdNKgMBIZqUuwp8OdEAINKChNI1Ow5SWdxHs=",
+        "lastModified": 1772929041,
+        "narHash": "sha256-SP+bDMKQSpl7MUCqs9lVSssS5uo+csP+bmiKLpV37VA=",
         "owner": "input-output-hk",
         "repo": "stackage.nix",
-        "rev": "8da8e0594e4ff55844d0cab84f6f0879831e87ce",
+        "rev": "ae0a0a37ff791b7178b6168c49a7da05e4af7c3b",
         "type": "github"
       },
       "original": {

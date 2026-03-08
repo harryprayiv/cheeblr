@@ -90,7 +90,6 @@ let
   };
 
 in with ps-pkgs; [
-  # Core dependencies
   aff
   aff-promise
   affjax
@@ -114,6 +113,7 @@ in with ps-pkgs; [
   node-fs
   node-path
   node-buffer
+  now
   numbers
   parsing
   prelude
