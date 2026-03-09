@@ -2,9 +2,10 @@
 
 let
   inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP purescript-overlay purs-nix sops-nix;
-  
-  # Project name - single source of truth
-  name = "cheeblr";
+
+  # Project name - single source of truth via config.nix
+  appConfig = import ./config.nix {};
+  name      = appConfig.name;
 
   # NixOS modules (system-independent)
   nixosModules = {
@@ -13,6 +14,7 @@ let
       imports = [ nixosModules.postgresql ];
     };
   };
+
 
   # Per-system build configuration
   mkSystemOutputs = system:
@@ -78,8 +80,8 @@ let
 
       # Use the combined source (with generated files) for the main build
       frontendProject = purs-nix-instance.build {
-        name = "cheeblr-frontend";
-        src.path = ../frontend;        
+        name = "${name}-frontend";
+        src.path = ../frontend;
         info.dependencies = psDependencies;
       };
 
@@ -100,8 +102,8 @@ let
       legacyPackages = pkgs;
 
       packages = backendFlake.packages // {
-        default = backendFlake.packages."cheeblr-backend:exe:cheeblr-backend";
-        backend = backendFlake.packages."cheeblr-backend:exe:cheeblr-backend";
+        default  = backendFlake.packages."${name}-backend:exe:${name}-backend";
+        backend  = backendFlake.packages."${name}-backend:exe:${name}-backend";
         frontend = frontendProject;
       };
 
@@ -123,6 +125,7 @@ let
       in {
         default = shell;
       };
+
 
       # Legacy attribute for older nix versions
       devShell = devShells.default;

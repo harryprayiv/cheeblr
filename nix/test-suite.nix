@@ -11,17 +11,13 @@ let
   frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head config.purescript.codeDirs));
   dataDir = config.dataDir;
 
-  # TLS config
+
   tlsConfig = config.tls;
   certDir = tlsConfig.certDir;
 
   testBackendPort = "18080";
   testDbPort = "5432";
 
-
-  # ════════════════════════════════════════════════
-  # test-unit — no services needed
-  # ════════════════════════════════════════════════
 
   test-unit = pkgs.writeShellScriptBin "test-unit" ''
     set -euo pipefail
@@ -33,11 +29,11 @@ let
 
     FAILURES=0
 
-    # ── Backend ──
+
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend (Haskell) unit tests             │"
     echo "└──────────────────────────────────────────┘"
-    if (cd ${backendPath} && cabal test cheeblr-unit-tests --test-show-details=streaming 2>&1); then
+    if (cd ${backendPath} && cabal test ${name}-unit-tests --test-show-details=streaming 2>&1); then
       echo "✓ Backend tests passed"
     else
       echo "✗ Backend tests FAILED"
@@ -46,7 +42,7 @@ let
 
     echo ""
 
-    # ── Frontend ──
+
     echo "┌──────────────────────────────────────────┐"
     echo "│  Frontend (PureScript) unit tests          │"
     echo "└──────────────────────────────────────────┘"
@@ -70,9 +66,6 @@ let
   '';
 
 
-  # ════════════════════════════════════════════════
-  # test-integration — ephemeral DB + backend
-  # ════════════════════════════════════════════════
   test-integration = pkgs.writeShellScriptBin "test-integration" ''
       set -euo pipefail
 
@@ -88,7 +81,7 @@ let
       export PGDATA="$TEST_PGDATA"
       export PGPORT="${testDbPort}"
       export PGUSER="$(whoami)"
-      export PGPASSWORD="postgres"
+      export PGPASSWORD="BOOTSTRAP_FALLBACK_ONLY_USE_SOPS"
       export PGDATABASE="${name}"
       export PGHOST="$PGDATA"
 
@@ -214,7 +207,7 @@ let
       echo "┌──────────────────────────────────────────┐"
       echo "│  Backend Integration Tests (DB + API)     │"
       echo "└──────────────────────────────────────────┘"
-      if (cd ${backendPath} && cabal test cheeblr-integration-tests --test-show-details=streaming 2>&1); then
+      if (cd ${backendPath} && cabal test ${name}-integration-tests --test-show-details=streaming 2>&1); then
         echo "✓ Backend integration tests passed"
       else
         echo "✗ Backend integration tests FAILED (or suite not found, which is OK)"
@@ -232,7 +225,6 @@ let
       exit $FAILURES
     '';
 
-
     test-integration-tls = pkgs.writeShellScriptBin "test-integration-tls" ''
       set -euo pipefail
 
@@ -241,7 +233,7 @@ let
       echo "════════════════════════════════════════════"
       echo ""
 
-      # Set up TLS certs
+
       echo "Setting up TLS certificates..."
       tls-setup
 
@@ -251,7 +243,7 @@ let
       export TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
       TEST_PROTOCOL="https"
 
-      # Resolve mkcert CA so Nix curl trusts it
+
       CAROOT="$(${pkgs.mkcert}/bin/mkcert -CAROOT 2>/dev/null)"
       CURL_CA_ARGS=""
       if [ -f "$CAROOT/rootCA.pem" ]; then
@@ -264,7 +256,7 @@ let
       export PGDATA="$TEST_PGDATA"
       export PGPORT="${testDbPort}"
       export PGUSER="$(whoami)"
-      export PGPASSWORD="postgres"
+      export PGPASSWORD="BOOTSTRAP_FALLBACK_ONLY_USE_SOPS"
       export PGDATABASE="${name}"
       export PGHOST="$PGDATA"
 
@@ -390,7 +382,7 @@ let
       echo "┌──────────────────────────────────────────┐"
       echo "│  Backend Integration Tests (DB + API)     │"
       echo "└──────────────────────────────────────────┘"
-      if (cd ${backendPath} && cabal test cheeblr-integration-tests --test-show-details=streaming 2>&1); then
+      if (cd ${backendPath} && cabal test ${name}-integration-tests --test-show-details=streaming 2>&1); then
         echo "✓ Backend integration tests passed"
       else
         echo "✗ Backend integration tests FAILED (or suite not found, which is OK)"
@@ -402,7 +394,7 @@ let
       echo "│  TLS-specific checks                      │"
       echo "└──────────────────────────────────────────┘"
 
-      # Verify the cert covers localhost via SAN (mkcert puts domains in SAN, not subject)
+
       CERT_SANS=$(${pkgs.openssl}/bin/openssl s_client -connect ${host}:${testBackendPort} </dev/null 2>/dev/null \
         | ${pkgs.openssl}/bin/openssl x509 -noout -ext subjectAltName 2>/dev/null || echo "FAIL")
       if echo "$CERT_SANS" | grep -qi "DNS:localhost"; then
@@ -412,7 +404,7 @@ let
         FAILURES=$((FAILURES + 1))
       fi
 
-      # Verify plain HTTP is rejected (426 Upgrade Required or connection refused are both correct)
+
       HTTP_STATUS=$(${pkgs.curl}/bin/curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
         "http://${host}:${testBackendPort}/inventory" 2>/dev/null || echo "000")
       if [ "$HTTP_STATUS" = "000" ] || [ "$HTTP_STATUS" = "426" ]; then
@@ -434,9 +426,7 @@ let
         exit $FAILURES
       '';
 
-  # ════════════════════════════════════════════════
-  # test-suite — unit + integration
-  # ════════════════════════════════════════════════
+
   test-suite = pkgs.writeShellScriptBin "test-suite" ''
       set -euo pipefail
 
@@ -500,11 +490,7 @@ let
       exit $TOTAL_FAILURES
     '';
 
-  # ════════════════════════════════════════════════
-  # test-smoke — quick check against running backend
-  # Uses the PRODUCTION port (8080) since it tests
-  # an already-running deployment.
-  # ════════════════════════════════════════════════
+
   test-smoke = pkgs.writeShellScriptBin "test-smoke" ''
       set -euo pipefail
 
@@ -513,7 +499,7 @@ let
       echo "Smoke testing backend at $BASE_URL ..."
       echo ""
 
-      # Resolve mkcert CA for curl (Nix curl doesn't see system trust store)
+
       CAROOT="$(${pkgs.mkcert}/bin/mkcert -CAROOT 2>/dev/null)"
       CURL_CA_ARGS=""
       if [ -f "$CAROOT/rootCA.pem" ]; then

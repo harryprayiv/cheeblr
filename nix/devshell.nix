@@ -1,4 +1,3 @@
-# nix/devshell.nix
 { pkgs, name, lib, system ? builtins.currentSystem }:
 
 let

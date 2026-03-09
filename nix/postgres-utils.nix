@@ -1,10 +1,8 @@
-# nix/postgres-utils.nix
-#
 # PostgreSQL dev utilities.
 #
 # Password resolution order:
 #   1. $PGPASSWORD  (set by sops in shellHook — preferred)
-#   2. config.password fallback ("postgres") for bare `nix develop` without sops
+#   2. config.password fallback ("BOOTSTRAP_FALLBACK_ONLY_USE_SOPS") for bare `nix develop` without sops
 #
 # pg_hba.conf uses trust on Unix socket (local connections never need password)
 # and md5 on TCP so $PGPASSWORD is actually verified for LAN / test connections.

@@ -7,13 +7,13 @@ let
   allDomains = tlsConfig.domains ++ tlsConfig.extraDomains;
   domainArgs = lib.concatStringsSep " " (map (d: ''"${d}"'') allDomains);
 
-  # Sops-managed paths (used in NixOS module / systemd service context)
-  sopsCertPath = "/run/secrets/cheeblr/tls.crt";
-  sopsKeyPath  = "/run/secrets/cheeblr/tls.key";
+
+  sopsCertPath = "/run/secrets/${name}/tls.crt";
+  sopsKeyPath  = "/run/secrets/${name}/tls.key";
 
 in {
 
-  # ── Dev workflow: mkcert (unchanged) ──────────────────────────────────────
+
 
   tls-setup = pkgs.writeShellScriptBin "tls-setup" ''
     set -euo pipefail
@@ -68,16 +68,16 @@ in {
     fi
   '';
 
-  # ── Sops secret management helpers ────────────────────────────────────────
 
-  # Update the encrypted secrets/cheeblr.yaml from freshly-generated mkcert certs
+
+
   tls-sops-update = pkgs.writeShellScriptBin "tls-sops-update" ''
     set -euo pipefail
     CERT_DIR="${certDir}"
     CERT_DIR="$(echo "$CERT_DIR" | envsubst)"
     CERT_FILE="$CERT_DIR/${tlsConfig.certFile}"
     KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}"
-    SECRETS_FILE="$(pwd)/secrets/cheeblr.yaml"
+    SECRETS_FILE="$(pwd)/secrets/${name}.yaml"
 
     if [ ! -f "$CERT_FILE" ] || [ ! -f "$KEY_FILE" ]; then
       echo "No local certs found. Run 'tls-setup' first."
@@ -86,7 +86,7 @@ in {
 
     if [ ! -f "$SECRETS_FILE" ]; then
       echo "No sops secrets file found at $SECRETS_FILE"
-      echo "Bootstrap with: sops secrets/cheeblr.yaml"
+      echo "Bootstrap with: sops secrets/${name}.yaml"
       exit 1
     fi
 
@@ -96,16 +96,16 @@ in {
     echo "Updating TLS cert in sops secrets..."
     ${pkgs.sops}/bin/sops --set '["tls_cert"] "'"$CERT_CONTENT"'"' "$SECRETS_FILE"
     ${pkgs.sops}/bin/sops --set '["tls_key"] "'"$KEY_CONTENT"'"' "$SECRETS_FILE"
-    echo "Done. Commit secrets/cheeblr.yaml when ready."
+    echo "Done. Commit secrets/${name}.yaml when ready."
   '';
 
-  # Extract sops-managed certs to local paths (for dev machines pulling from shared secrets)
+
   tls-sops-extract = pkgs.writeShellScriptBin "tls-sops-extract" ''
     set -euo pipefail
     CERT_DIR="${certDir}"
     CERT_DIR="$(echo "$CERT_DIR" | envsubst)"
     mkdir -p "$CERT_DIR"
-    SECRETS_FILE="$(pwd)/secrets/cheeblr.yaml"
+    SECRETS_FILE="$(pwd)/secrets/${name}.yaml"
 
     if [ ! -f "$SECRETS_FILE" ]; then
       echo "No sops secrets file found."
@@ -121,13 +121,13 @@ in {
     echo "Extracted to $CERT_DIR"
   '';
 
-  # Env vars for NixOS service deployment (points at sops-managed paths)
+
   deployTlsEnv = {
     USE_TLS      = "true";
     TLS_CERT_FILE = sopsCertPath;
     TLS_KEY_FILE  = sopsKeyPath;
   };
 
-  # Paths for use in systemd service configs
+
   inherit sopsCertPath sopsKeyPath;
 }

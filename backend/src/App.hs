@@ -41,7 +41,7 @@ run = do
   envPort     <- maybe 8080 read <$> lookupEnv "PORT"
   envDb       <- fromMaybe "cheeblr"   <$> lookupEnv "PGDATABASE"
   envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
-  envPassword <- fromMaybe "postgres"   <$> lookupEnv "PGPASSWORD"
+  envPassword <- fromMaybe "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS"   <$> lookupEnv "PGPASSWORD"
   
   -- TLS config from environment
   useTLS      <- lookupEnv "USE_TLS"
