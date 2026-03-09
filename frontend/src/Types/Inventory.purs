@@ -3,7 +3,6 @@ module Types.Inventory where
 import Prelude
 
 import Config.LiveView (LiveViewConfig, SortField(..), SortOrder(..))
-import Control.Alt ((<|>))
 import Data.Array (find)
 import Data.Array as Array
 import Data.Either (Either(..))

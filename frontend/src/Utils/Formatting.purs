@@ -2,8 +2,7 @@ module Utils.Formatting where
 
 import Prelude
 
-import Config.LiveView (LiveViewConfig, SortField(..), SortOrder(..))
-import Data.Array (length, uncons) as Array
+import Data.Array (length) as Array
 import Data.Either (Either(..))
 import Data.Enum (class BoundedEnum, fromEnum, toEnum)
 import Data.Int (fromString, toNumber) as Int
@@ -13,10 +12,7 @@ import Data.String (Pattern(..), split, take, trim)
 import Data.String as String
 import Data.String.Regex (regex, replace) as Regex
 import Data.String.Regex.Flags (global) as Regex
-import Data.Tuple (Tuple)
-import Data.Tuple.Nested ((/\))
 import Partial.Unsafe (unsafePartial)
--- import Types.Inventory (MenuItem(..), StrainLineage(..))
 import Data.Array (catMaybes, filter, range, (!!))
 
 ensureNumber :: String -> String
