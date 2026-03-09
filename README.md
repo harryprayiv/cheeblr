@@ -8,7 +8,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 
 - [Frontend Documentation](./Docs/FrontEnd.md) — PureScript/Deku SPA architecture, async loading pattern, page modules, services
 - [Backend Documentation](./Docs/BackEnd.md) — Haskell/Servant API, database layer, transaction processing, inventory reservations
-- [Nix Development Environment](./Docs/NixDevEnvironment.md) — Setup and configuration of the Nix-based development environment
+- [Nix Development Environment](./Docs/NixDevEnvironment.md) — Setup, TLS, sops secrets management, service scripts, and test suite
 - [Dependencies](./Docs/Dependencies.md) — Project dependency listing
 - [To Do list](./Docs/TODO.md) — Planned features and optimizations
 - [Security Recommendations](./Docs/SecurityStrategies.md) — Planned security and authentication upgrades
@@ -21,10 +21,11 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - **Role-Based Access Control**: Dev-mode auth system with four roles (Customer, Cashier, Manager, Admin) and 15 granular capabilities governing inventory CRUD, transaction processing, register management, and reporting access
 - **Flexible Sorting & Filtering**: Multi-field priority sorting (quantity, category, species) with configurable sort order and optional out-of-stock hiding
 - **Complete CRUD Operations**: Create, read, update, and delete inventory items with full strain lineage data
+- **GraphQL Inventory API**: Inventory queries available via `/graphql/inventory` using `morpheus-graphql` (backend) and `purescript-graphql-client` (frontend), scoped to read-only inventory access
 
 ### Point-of-Sale System
 - **Full Transaction Lifecycle**: Create → add items (with reservation) → add payments → finalize (commits inventory) or clear (releases reservations)
-- **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a transaction concurrently using the frontend's `parallel`/`sequential` pattern
+- **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a transaction concurrently using the frontend's `parSequence_` pattern; degrades gracefully to `TxPageDegraded` state on partial load failure
 - **Multiple Payment Methods**: Cash, credit, debit, ACH, gift card, stored value, mixed, and custom payment types with change calculation
 - **Tax Management**: Per-item tax records with category tracking (regular sales, excise, cannabis, local, medical)
 - **Discount Support**: Percentage-based, fixed amount, BOGO, and custom discount types with approval tracking
@@ -51,6 +52,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | State | **FRP.Poll** — reactive streams with `create`/`push` for mutable cells |
 | Routing | **Routing.Duplex** + **Routing.Hash** — hash-based client-side routing |
 | HTTP | **purescript-fetch** with **Yoga.JSON** for serialization |
+| GraphQL | **purescript-graphql-client** with `AffjaxWebClient` — inventory queries via `/graphql/inventory` |
 | Money | **Data.Finance.Money** — `Discrete USD` (integer cents) with formatting |
 | Async | **Effect.Aff** with `run` helper, `parSequence_`, `killFiber` for route-driven loading |
 | Parallelism | **Control.Parallel** — concurrent data fetching within a single route |
@@ -60,8 +62,9 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 |---|---|
 | Language | **Haskell** |
 | API | **Servant** — type-level REST API definitions |
+| GraphQL | **morpheus-graphql** — inventory-scoped GraphQL resolver at `/graphql/inventory` |
 | Database | **postgresql-simple** with `sql` quasiquoter, **resource-pool** for connection management |
-| Server | **Warp** |
+| Server | **Warp** + **warp-tls** — HTTPS via TLS 1.2+ with mkcert certs in development |
 | JSON | **Aeson** (derived + manual instances) |
 | Auth | Dev-mode `X-User-Id` header lookup with role-based capabilities |
 
@@ -69,16 +72,18 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | Concern | Technology |
 |---|---|
 | Database | **PostgreSQL** with reservation-based inventory, cascading deletes, parameterized queries |
-| Dev Environment | **Nix** flakes for reproducible builds |
-| Build (Haskell) | **Cabal** |
+| Dev Environment | **Nix** flakes — reproducible builds, per-machine dev shells |
+| Secrets | **sops** + **age** — encrypted `secrets/cheeblr.yaml`, key derived from SSH ed25519 key |
+| TLS | **mkcert** for local dev certs; **warp-tls** for HTTPS on the backend; **Vite** HTTPS config |
+| Build (Haskell) | **Cabal** via haskell.nix / CHaP |
 | Build (PureScript) | **Spago** |
-| Database Service | NixOS systemd integration |
+| Testing | Haskell unit + integration tests; 484 PureScript tests; ephemeral-PostgreSQL integration harness |
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
-- [Nix package manager](https://nixos.org/download.html) with flakes enabled
+- [Nix](https://nixos.org/download.html) with flakes enabled
 
 ### Development Setup
 
@@ -86,23 +91,39 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 git clone https://github.com/harryprayiv/cheeblr.git
 cd cheeblr
 nix develop
-deploy
+
+# First-time: set up secrets and TLS
+sops-init-key       # derive age key from ~/.ssh/id_ed25519
+sops-bootstrap      # create secrets/cheeblr.yaml with a random DB password
+tls-setup           # generate mkcert dev certs for localhost
+tls-sops-update     # encrypt certs into secrets/cheeblr.yaml
+sops-status         # verify everything is wired up
+
+# Start everything
+pg-start
+deploy              # tmux session: backend (HTTPS :8080) + frontend (HTTPS :5173) + pg-stats
 ```
 
-This launches the full development stack: PostgreSQL service, backend API server (port 8080), and frontend dev server (port 5174).
+See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full command reference, individual service scripts (`backend-start`, `frontend-start`, etc.), and the test suite.
 
 ### API Overview
+
+#### Session
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/session` | Current user capabilities (separated from inventory payload) |
 
 #### Inventory
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/inventory` | All items with available quantities and user capabilities |
+| GET | `/inventory` | All items with available quantities |
 | POST | `/inventory` | Create item (Manager+) |
 | PUT | `/inventory` | Update item (Cashier+) |
 | DELETE | `/inventory/:sku` | Delete item (Manager+) |
 | GET | `/inventory/available/:sku` | Real-time availability (total, reserved, actual) |
 | POST | `/inventory/reserve` | Reserve inventory for a transaction |
 | DELETE | `/inventory/release/:id` | Release a reservation |
+| POST | `/graphql/inventory` | GraphQL endpoint — inventory queries (read-only) |
 
 #### Transactions
 | Method | Endpoint | Description |
@@ -133,14 +154,15 @@ This launches the full development stack: PostgreSQL service, backend API server
 
 ### Frontend Architecture
 
-The frontend follows a centralized async loading pattern inspired by [purescript-deku-realworld](https://github.com/mfp22/purescript-deku-realworld):
+The frontend follows a centralized async loading pattern:
 
 - **`Main.purs`** owns all async data fetching, route matching, and fiber lifecycle management
 - **Pages** are pure renderers: `Poll Status → Nut` — no side effects, no `launchAff_`, no `Poll.create`
 - **Route changes** cancel in-flight loading via `killFiber` on the previous fiber
 - **`parSequence_`** runs multiple loaders in parallel per route
-- **Status ADTs** per page (`Loading | Ready data | Error msg`) provide type-safe loading states
+- **Status ADTs** per page (`Loading | Ready data | Error msg | Degraded partialData`) provide type-safe loading states
 - **`pure Loading <|> poll`** ensures pages always start with a loading state
+- **`TxPageDegraded`** allows the transaction page to render with partial data when non-critical loads fail
 
 ```
 Main.purs (orchestration)
@@ -152,22 +174,29 @@ Pages/ (pure renderers)
   ├── LiveView:           Poll InventoryLoadStatus → Nut
   ├── EditItem:           Poll EditItemStatus → Nut
   ├── DeleteItem:         Poll DeleteItemStatus → Nut
-  ├── CreateTransaction:  Poll TxPageStatus → Nut (parallel: inventory + register + tx)
-  ├── CreateItem:         UserId → String → Nut (no async needed)
+  ├── CreateTransaction:  Poll TxPageStatus → Nut  (parallel: inventory + register + tx; degrades gracefully)
+  ├── CreateItem:         UserId → String → Nut
   └── TransactionHistory: Nut (placeholder)
 ```
 
 ### Backend Architecture
 
 ```
-App.hs (bootstrap, CORS, middleware)
-  ├── Server.hs (inventory handlers with capability checks)
+App.hs (bootstrap, CORS, TLS middleware, warp-tls)
+  ├── Server.hs (inventory + session handlers with capability checks)
+  ├── Server/GraphQL.hs (morpheus-graphql resolver, /graphql/inventory)
   ├── Server/Transaction.hs (POS: transactions, registers, ledger, compliance)
   ├── Auth/Simple.hs (dev auth: X-User-Id → role → capabilities)
   ├── DB/Database.hs (inventory CRUD, connection pooling)
   ├── DB/Transaction.hs (transactions, reservations, registers, payments)
   └── Types/ (domain models with Aeson + postgresql-simple instances)
 ```
+
+### Response Types
+
+- **`InventoryResponse`** — plain array newtype of inventory items (capabilities separated)
+- **`MutationResponse`** — uniform wrapper for all write operations (success/failure + message)
+- **Session endpoint** — user capabilities delivered independently of inventory data
 
 ### Data Flow
 
@@ -193,13 +222,27 @@ App.hs (bootstrap, CORS, middleware)
 
 ## 🔐 Security
 
+- **TLS everywhere**: backend runs warp-tls; frontend Vite dev server configured for HTTPS; all service scripts inject `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE` from sops
 - **Parameterized queries** throughout — no string interpolation in SQL
-- **Type safety** across the full stack — shared domain types between PureScript and Haskell
+- **Type safety** across the full stack — shared domain types between PureScript and Haskell enforce JSON contract at compile time (contract tests catch serialization divergence)
 - **Role-based capabilities** — 15 granular permissions mapped to 4 roles, enforced on inventory writes
 - **Input validation** — frontend (ValidationRule combinators) and backend (type-level constraints via Servant)
+- **Secrets management** — database password and TLS cert/key stored in sops-encrypted `secrets/cheeblr.yaml`; never in plaintext on disk
 - **Audit trail** — transactions track void/refund reasons, reference transactions, and modification timestamps
 
-**Current limitation**: Authentication is dev-mode only (`X-User-Id` header with fixed users). See [Security Recommendations](./Docs/SecurityStrategies.md) for the planned upgrade path.
+**Current limitation**: Authentication is dev-mode only (`X-User-Id` header with fixed users). See [Security Recommendations](./Docs/SecurityStrategies.md) for the planned upgrade path to libsodium public-key challenge-response.
+
+## 🧪 Testing
+
+```bash
+test-unit             # Haskell unit tests + 484 PureScript tests (no services needed)
+test-integration      # ephemeral PostgreSQL + backend on :18080, HTTP integration suite
+test-integration-tls  # same as above with TLS; validates cert SAN and plain-HTTP rejection
+test-suite            # all three phases in sequence
+test-smoke            # hit live backend on :8080, check endpoint and JSON contract health
+```
+
+Integration tests spin up and tear down their own isolated PostgreSQL instance so they can run independently of `pg-start`.
 
 ## 🚧 Development Status
 
@@ -214,21 +257,28 @@ App.hs (bootstrap, CORS, middleware)
 - ✅ Dev auth with `X-User-Id` header and user switcher widget
 - ✅ Centralized async loading with fiber cancellation on route change
 - ✅ Parallel data loading for POS page (inventory + register + transaction)
-- ✅ `InventoryResponse` includes user capabilities for frontend UI gating
+- ✅ `TxPageDegraded` state for resilient POS page loading
+- ✅ `MutationResponse` uniform write response type
+- ✅ `/session` endpoint — user capabilities separated from inventory payload
+- ✅ TLS/HTTPS via warp-tls + mkcert; all service scripts TLS-aware
+- ✅ sops secrets management (DB password + TLS certs)
+- ✅ GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
+- ✅ Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
+- ✅ JSON contract tests between PureScript and Haskell catching serialization divergence
 
 ### In Progress
 - 🔄 Daily financial reporting (endpoints exist, implementation pending)
 - 🔄 Compliance verification system (types and stubs defined)
+- 🔄 GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
 
 ### Planned
-- 📋 Real authentication (JWT or session-based, replacing dev `X-User-Id` header)
+- 📋 Real authentication (libsodium public-key challenge-response, replacing dev `X-User-Id`)
 - 📋 Capability enforcement on transaction/register endpoints
 - 📋 Inventory reservation expiry (cleanup of abandoned reservations)
 - 📋 Transaction history page (currently a placeholder)
 - 📋 Advanced reporting and analytics
 - 📋 Multi-location support
 - 📋 Third-party integrations (Metrc, Leafly)
-- 📋 Auto-refresh/polling for live inventory view
 
 ## 📜 License
 
