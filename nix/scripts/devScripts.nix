@@ -161,13 +161,16 @@ let
         fi
     }
 
+    # safe_archive <prefix> <ext>
+    # Archives only files matching <prefix>*.<ext> so sections sharing an
+    # extension (e.g. Haskell_ vs HaskellTests_) don't clobber each other.
     safe_archive() {
-        local ext="$1"
-        local pattern="*.$ext"
+        local prefix="$1"
+        local ext="$2"
         local found
-        found=$(find "$OUTPUT_DIR" -maxdepth 1 -name "$pattern" 2>/dev/null | head -1)
+        found=$(find "$OUTPUT_DIR" -maxdepth 1 -name "''${prefix}*.$ext" 2>/dev/null | head -1)
         if [ -n "$found" ]; then
-            mv "$OUTPUT_DIR"/*."$ext" "$ARCHIVE_DIR/" 2>/dev/null || true
+            mv "$OUTPUT_DIR"/''${prefix}*.$ext "$ARCHIVE_DIR/" 2>/dev/null || true
         fi
     }
 
@@ -180,11 +183,13 @@ let
         local comment_char="$4"
         local compile_fn="$5"
 
-        local file_ext
+        local file_ext file_prefix
         case "$section_key" in
-            haskell|haskellTests)   file_ext="hs"   ;;
-            purescript|purescriptTests) file_ext="purs" ;;
-            nix)                    file_ext="nix"  ;;
+            haskell)            file_ext="hs";   file_prefix="Haskell_" ;;
+            haskellTests)       file_ext="hs";   file_prefix="HaskellTests_" ;;
+            purescript)         file_ext="purs"; file_prefix="PureScript_" ;;
+            purescriptTests)    file_ext="purs"; file_prefix="PureScriptTests_" ;;
+            nix)                file_ext="nix";  file_prefix="Nix_" ;;
         esac
 
         # Read file list from manifest
@@ -206,8 +211,8 @@ let
             return
         fi
 
-        # Only archive existing outputs for this extension now that we know we'll regenerate
-        safe_archive "$file_ext"
+        # Archive only the matching prefix — other sections are untouched
+        safe_archive "$file_prefix" "$file_ext"
 
         local compile_output=""
         if [ -n "$compile_fn" ]; then
