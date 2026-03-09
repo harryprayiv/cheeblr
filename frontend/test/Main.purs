@@ -6,6 +6,7 @@ import Effect (Effect)
 import Test.Auth as Auth
 import Test.Cart as Cart
 import Test.Formatting as Formatting
+import Test.GraphQL as GraphQL
 import Test.Inventory as Inventory
 import Test.JsonContract as JsonContract
 import Test.Money as Money
@@ -17,7 +18,7 @@ import Test.UUID as UUID
 import Test.Validation as Validation
 
 main :: Effect Unit
-main = runSpecAndExitProcess [consoleReporter] $ describe "Cheeblr Frontend" do
+main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" do
   Validation.spec
   Formatting.spec
   Money.spec
@@ -27,3 +28,4 @@ main = runSpecAndExitProcess [consoleReporter] $ describe "Cheeblr Frontend" do
   UUID.spec
   Session.spec
   JsonContract.spec
+  GraphQL.spec
