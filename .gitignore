@@ -46,3 +46,4 @@ cabal.project.local~
 backend/output
 result-frontend
 **/src/Generated/
+frontend/.spec-results
