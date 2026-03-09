@@ -293,7 +293,10 @@ let
     fi
 
     (cd "$BACKEND_DIR" && cabal build) || { echo "Backend build failed"; exit 1; }
-    echo "Starting backend on ${host}:${backendPort}..."
+
+    ${tlsEnvSetup}
+
+    echo "Starting backend on ${protocol}://${host}:${backendPort}..."
     cd "$BACKEND_DIR" && exec cabal run ${name}-backend
   '';
 
