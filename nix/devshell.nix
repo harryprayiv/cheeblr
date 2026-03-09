@@ -6,15 +6,12 @@ let
     inherit name;
   };
 
-
   psConfig  = appConfig.purescript;
   hsConfig  = appConfig.haskell;
   dbConfig  = appConfig.database;
   viteConfig = appConfig.vite;
 
-
   dirsToString = dirs: lib.concatStringsSep " " dirs;
-
 
   psDirs = psConfig.codeDirs;
   hsDirs = hsConfig.codeDirs;
@@ -25,6 +22,21 @@ let
   backendDir  = builtins.match "(.*)/.*" (builtins.elemAt hsConfig.codeDirs 0);
   backendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head hsConfig.codeDirs));
 
+  # Strip the leading path prefix from a test path like "./backend/test" → "test"
+  stripBackendPrefix = path:
+    builtins.replaceStrings [ "${backendPath}/" ] [ "" ] path;
+
+  stripFrontendPrefix = path:
+    builtins.replaceStrings [ "${frontendPath}/" ] [ "" ] path;
+
+  # Extract test dirs from config, relative to their respective project roots
+  hsTestDirs =
+    let testPath = hsConfig.tests or null;
+    in if testPath != null then [ (stripBackendPrefix testPath) ] else [];
+
+  psTestDirs =
+    let testPath = psConfig.tests or null;
+    in if testPath != null then [ (stripFrontendPrefix testPath) ] else [];
 
   postgresModule = import ./postgres-utils.nix {
     inherit pkgs name;
@@ -39,7 +51,7 @@ let
     };
   };
 
-  # Single merged deploy module — covers both source-based and nix-build workflows.
+
   deployModule = import ./deploy.nix {
     inherit pkgs name;
   };
@@ -59,6 +71,7 @@ let
       frontendPath = frontendPath;
       hsDirs = map (dir: builtins.replaceStrings ["${backendPath}/"] [""] dir) hsConfig.codeDirs;
       psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
+      inherit hsTestDirs psTestDirs;
       hsConfig = {
         cabalFile = hsConfig.cabalFile;
       };
@@ -71,6 +84,7 @@ let
     frontendPath = frontendPath;
     hsDirs = map (dir: builtins.replaceStrings ["${backendPath}/"] [""] dir) hsConfig.codeDirs;
     psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
+    inherit hsTestDirs psTestDirs;
     hsConfig = hsConfig;
   };
 
@@ -83,7 +97,6 @@ let
       sudo iptables -I INPUT -p tcp --dport 5173 -j ACCEPT
     echo "Ports 8080 and 5173 open (until reboot)"
   '';
-
 
   extensions = (with pkgs.vscode-extensions; [
     mkhl.direnv
@@ -126,12 +139,10 @@ let
     }
   ];
 
-
   vscodiumWithExtensions = pkgs.vscode-with-extensions.override {
     vscode           = pkgs.vscodium;
     vscodeExtensions = extensions;
   };
-
 
   workspaceModule = {
     code-workspace = pkgs.writeShellApplication {
@@ -202,10 +213,9 @@ let
     };
   };
 
-
   commonBuildInputs = with pkgs; [
 
-    # ── Nix-build artifact workflows ──────────────────────────────────────
+
     deployModule.build-all
     deployModule.deploy-nix
     deployModule.deploy-nix-interactive
@@ -213,7 +223,7 @@ let
     deployModule.status-nix
     deployModule.tui
 
-    # ── Source workflows (cabal / spago / vite) ───────────────────────────
+
     deployModule.deploy
     deployModule.stop
     deployModule.launch-dev
@@ -224,7 +234,7 @@ let
     deployModule.frontend-start
     deployModule.frontend-stop
 
-    # ── Frontend toolchain ────────────────────────────────────────────────
+
     esbuild
     nodejs_20
     nixpkgs-fmt
@@ -241,7 +251,7 @@ let
     frontendModule.codegen
     frontendModule.dev
 
-    # ── Native / crypto libs ──────────────────────────────────────────────
+
     zlib
     pgcli
     pkg-config
@@ -249,14 +259,14 @@ let
     libiconv
     openssl
 
-    # ── TLS ───────────────────────────────────────────────────────────────
+
     tlsModule.tls-setup
     tlsModule.tls-info
     tlsModule.tls-clean
     pkgs.mkcert
     open-firewall
 
-    # ── PostgreSQL utils ──────────────────────────────────────────────────
+
     postgresModule.pg-start
     postgresModule.pg-connect
     postgresModule.pg-stop
@@ -270,7 +280,7 @@ let
     pgadmin4
     gettext
 
-    # ── Project tooling ───────────────────────────────────────────────────
+
     toilet
     rsync
     tmux
@@ -281,14 +291,14 @@ let
     devScripts.compile-manifest
     devScripts.compile-archive
 
-    # ── Test suite ────────────────────────────────────────────────────────
+
     testSuiteModule.test-unit
     testSuiteModule.test-integration
     testSuiteModule.test-integration-tls
     testSuiteModule.test-suite
     testSuiteModule.test-smoke
 
-    # ── Shell utils ───────────────────────────────────────────────────────
+
     coreutils
     bash
     gnused
@@ -297,7 +307,6 @@ let
     perl
     findutils
   ];
-
 
   nativeBuildInputs = with pkgs; [
     pkg-config
@@ -313,14 +322,12 @@ let
     direnv
   ];
 
-
   darwinInputs = if (system == "aarch64-darwin" || system == "x86_64-darwin") then
     (with pkgs.darwin.apple_sdk.frameworks; [
       Cocoa
       CoreServices
     ])
   else [];
-
 
   devShell = pkgs.mkShell {
     inherit name;

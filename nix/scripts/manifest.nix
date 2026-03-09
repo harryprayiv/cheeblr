@@ -1,15 +1,17 @@
-{ lib, pkgs, config ? {} }:
+{ lib, pkgs, config ? { } }:
 
 let
-  # Default configuration
+
   defaultConfig = {
     projectRoot = ".";
     backendPath = "backend";
     frontendPath = "frontend";
-    hsDirs = [ "src" "app" "test" ];
-    psDirs = [ "src" "test" ];
-    
-    # Explicitly track generated code directory
+    hsDirs = [ "src" "app" ];
+    psDirs = [ "src" ];
+    hsTestDirs = [ "test" ];
+    psTestDirs = [ "test" ];
+
+
     generatedDir = "src/Generated";
 
     hsConfig = {
@@ -35,15 +37,27 @@ let
     ];
   };
 
-  # Merge default config with provided config
+
   cfg = lib.recursiveUpdate defaultConfig config;
-  
-  # Build exclude patterns for find command
+
+
   excludePatternStr = lib.concatMapStringsSep "\\|" (p: p) cfg.excludePatterns;
 
-  # Generate the manifest script
+  # Helper: emit a JSON array section from a bash array variable name
+  emitJsonArray = varName: ''
+    if [ ''${#${varName}[@]} -gt 0 ]; then
+      for i in "''${!${varName}[@]}"; do
+        if [ $i -eq $((''${#${varName}[@]} - 1)) ]; then
+          echo "      \"''${${varName}[$i]}\""  >> $MANIFEST_FILE
+        else
+          echo "      \"''${${varName}[$i]}\","  >> $MANIFEST_FILE
+        fi
+      done
+    fi
+  '';
+
   generateManifestScript = pkgs.writeShellScriptBin "generate-manifest" ''
-    #!/usr/bin/env bash
+
     set -euo pipefail
 
     PROJECT_ROOT="$(pwd)"
@@ -53,25 +67,42 @@ let
 
     echo "Generating manifest..."
 
-    # Define base directories from configuration
+
     BACKEND_PATH="${cfg.backendPath}"
     FRONTEND_PATH="${cfg.frontendPath}"
     GENERATED_DIR="${cfg.generatedDir}"
-    
-    # Define Haskell directories
+
+    # ── Source dirs ────────────────────────────────────────────────────────────
+
     HASKELL_DIRS=()
     for dir in ${lib.concatStringsSep " " cfg.hsDirs}; do
       HASKELL_DIRS+=("$PROJECT_ROOT/$BACKEND_PATH/$dir")
     done
 
-    # Define PureScript directories
     PURESCRIPT_DIRS=()
     for dir in ${lib.concatStringsSep " " cfg.psDirs}; do
       PURESCRIPT_DIRS+=("$PROJECT_ROOT/$FRONTEND_PATH/$dir")
     done
 
-    # Find Haskell files
-    echo "Finding Haskell files..."
+    # ── Test dirs ──────────────────────────────────────────────────────────────
+
+    HS_TEST_DIRS=()
+    ${if cfg.hsTestDirs != [] then ''
+    for dir in ${lib.concatStringsSep " " cfg.hsTestDirs}; do
+      HS_TEST_DIRS+=("$PROJECT_ROOT/$BACKEND_PATH/$dir")
+    done
+    '' else ""}
+
+    PS_TEST_DIRS=()
+    ${if cfg.psTestDirs != [] then ''
+    for dir in ${lib.concatStringsSep " " cfg.psTestDirs}; do
+      PS_TEST_DIRS+=("$PROJECT_ROOT/$FRONTEND_PATH/$dir")
+    done
+    '' else ""}
+
+    # ── Scan Haskell source files ──────────────────────────────────────────────
+
+    echo "Finding Haskell source files..."
     HS_FILES=()
 
     for dir in "''${HASKELL_DIRS[@]}"; do
@@ -86,8 +117,26 @@ let
       fi
     done
 
-    # Find PureScript files - separate generated from hand-written
-    echo "Finding PureScript files..."
+    # ── Scan Haskell test files ────────────────────────────────────────────────
+
+    echo "Finding Haskell test files..."
+    HS_TEST_FILES=()
+
+    for dir in "''${HS_TEST_DIRS[@]}"; do
+      if [ -d "$dir" ]; then
+        echo "Scanning $dir for Haskell test files"
+        while IFS= read -r file; do
+          if [ -n "$file" ]; then
+            rel_path="''${file#$PROJECT_ROOT/}"
+            HS_TEST_FILES+=("$rel_path")
+          fi
+        done < <(find "$dir" -type f -name "*.hs" 2>/dev/null | grep -v "${excludePatternStr}" | sort)
+      fi
+    done
+
+    # ── Scan PureScript source files ──────────────────────────────────────────
+
+    echo "Finding PureScript source files..."
     PS_FILES=()
     PS_GENERATED_FILES=()
 
@@ -97,7 +146,7 @@ let
         while IFS= read -r file; do
           if [ -n "$file" ]; then
             rel_path="''${file#$PROJECT_ROOT/}"
-            # Separate generated files
+
             if [[ "$rel_path" == *"/Generated/"* ]] || [[ "$rel_path" == *"/$GENERATED_DIR/"* ]]; then
               PS_GENERATED_FILES+=("$rel_path")
             else
@@ -107,15 +156,32 @@ let
         done < <(find "$dir" -type f -name "*.purs" 2>/dev/null | grep -v "${excludePatternStr}" | sort)
       fi
     done
-    
-    # Combine: generated files first, then regular files
+
     ALL_PS_FILES=("''${PS_GENERATED_FILES[@]}" "''${PS_FILES[@]}")
 
-    # Find Nix files in project root and nix directory
+    # ── Scan PureScript test files ─────────────────────────────────────────────
+
+    echo "Finding PureScript test files..."
+    PS_TEST_FILES=()
+
+    for dir in "''${PS_TEST_DIRS[@]}"; do
+      if [ -d "$dir" ]; then
+        echo "Scanning $dir for PureScript test files"
+        while IFS= read -r file; do
+          if [ -n "$file" ]; then
+            rel_path="''${file#$PROJECT_ROOT/}"
+            PS_TEST_FILES+=("$rel_path")
+          fi
+        done < <(find "$dir" -type f -name "*.purs" 2>/dev/null | grep -v "${excludePatternStr}" | sort)
+      fi
+    done
+
+    # ── Scan Nix files ─────────────────────────────────────────────────────────
+
     echo "Finding Nix files..."
     NIX_FILES=()
 
-    # Find Nix files in project root
+
     if [ -d "$PROJECT_ROOT" ]; then
       while IFS= read -r file; do
         rel_path="''${file#$PROJECT_ROOT/}"
@@ -125,7 +191,7 @@ let
       done < <(find "$PROJECT_ROOT" -maxdepth 1 -type f -name "*.nix" 2>/dev/null | sort)
     fi
 
-    # Find Nix files in nix directory
+
     if [ -d "$PROJECT_ROOT/nix" ]; then
       while IFS= read -r file; do
         rel_path="''${file#$PROJECT_ROOT/}"
@@ -133,7 +199,8 @@ let
       done < <(find "$PROJECT_ROOT/nix" -type f -name "*.nix" 2>/dev/null | sort)
     fi
 
-    # Create manifest JSON
+    # ── Write manifest.json ────────────────────────────────────────────────────
+
     echo "{" > $MANIFEST_FILE
     echo "  \"meta\": {" >> $MANIFEST_FILE
     echo "    \"generated\": \"$(date '+%s')\","  >> $MANIFEST_FILE
@@ -143,86 +210,69 @@ let
     echo "    \"frontendPath\": \"$FRONTEND_PATH\""  >> $MANIFEST_FILE
     echo "  },"  >> $MANIFEST_FILE
 
-    # Add Haskell files section
+    # haskell source section
     echo "  \"haskell\": {"  >> $MANIFEST_FILE
     echo "    \"include\": ["  >> $MANIFEST_FILE
-    if [ ''${#HS_FILES[@]} -gt 0 ]; then
-      for i in "''${!HS_FILES[@]}"; do
-        if [ $i -eq $((''${#HS_FILES[@]}-1)) ]; then
-          echo "      \"''${HS_FILES[$i]}\""  >> $MANIFEST_FILE
-        else
-          echo "      \"''${HS_FILES[$i]}\","  >> $MANIFEST_FILE
-        fi
-      done
-    fi
+    ${emitJsonArray "HS_FILES"}
     echo "    ],"  >> $MANIFEST_FILE
     echo "    \"exclude\": [],"  >> $MANIFEST_FILE
-    echo "    \"count\": ''${#HS_FILES[@]},"  >> $MANIFEST_FILE
-    echo "    \"timestamp\": \"$(date '+%s')\""  >> $MANIFEST_FILE
+    echo "    \"count\": ''${#HS_FILES[@]}"  >> $MANIFEST_FILE
     echo "  },"  >> $MANIFEST_FILE
 
-    # Add PureScript files section with generated tracking
+    # haskell test section
+    echo "  \"haskellTests\": {"  >> $MANIFEST_FILE
+    echo "    \"include\": ["  >> $MANIFEST_FILE
+    ${emitJsonArray "HS_TEST_FILES"}
+    echo "    ],"  >> $MANIFEST_FILE
+    echo "    \"exclude\": [],"  >> $MANIFEST_FILE
+    echo "    \"count\": ''${#HS_TEST_FILES[@]}"  >> $MANIFEST_FILE
+    echo "  },"  >> $MANIFEST_FILE
+
+    # purescript source section
     echo "  \"purescript\": {"  >> $MANIFEST_FILE
     echo "    \"include\": ["  >> $MANIFEST_FILE
-    if [ ''${#ALL_PS_FILES[@]} -gt 0 ]; then
-      for i in "''${!ALL_PS_FILES[@]}"; do
-        if [ $i -eq $((''${#ALL_PS_FILES[@]}-1)) ]; then
-          echo "      \"''${ALL_PS_FILES[$i]}\""  >> $MANIFEST_FILE
-        else
-          echo "      \"''${ALL_PS_FILES[$i]}\","  >> $MANIFEST_FILE
-        fi
-      done
-    fi
+    ${emitJsonArray "ALL_PS_FILES"}
     echo "    ],"  >> $MANIFEST_FILE
     echo "    \"exclude\": [],"  >> $MANIFEST_FILE
     echo "    \"generated\": ["  >> $MANIFEST_FILE
-    if [ ''${#PS_GENERATED_FILES[@]} -gt 0 ]; then
-      for i in "''${!PS_GENERATED_FILES[@]}"; do
-        if [ $i -eq $((''${#PS_GENERATED_FILES[@]}-1)) ]; then
-          echo "      \"''${PS_GENERATED_FILES[$i]}\""  >> $MANIFEST_FILE
-        else
-          echo "      \"''${PS_GENERATED_FILES[$i]}\","  >> $MANIFEST_FILE
-        fi
-      done
-    fi
+    ${emitJsonArray "PS_GENERATED_FILES"}
     echo "    ],"  >> $MANIFEST_FILE
     echo "    \"count\": ''${#ALL_PS_FILES[@]},"  >> $MANIFEST_FILE
-    echo "    \"generatedCount\": ''${#PS_GENERATED_FILES[@]},"  >> $MANIFEST_FILE
-    echo "    \"timestamp\": \"$(date '+%s')\""  >> $MANIFEST_FILE
+    echo "    \"generatedCount\": ''${#PS_GENERATED_FILES[@]}"  >> $MANIFEST_FILE
     echo "  },"  >> $MANIFEST_FILE
 
-    # Add Nix files section
-    echo "  \"nix\": {"  >> $MANIFEST_FILE
+    # purescript test section
+    echo "  \"purescriptTests\": {"  >> $MANIFEST_FILE
     echo "    \"include\": ["  >> $MANIFEST_FILE
-    if [ ''${#NIX_FILES[@]} -gt 0 ]; then
-      for i in "''${!NIX_FILES[@]}"; do
-        if [ $i -eq $((''${#NIX_FILES[@]}-1)) ]; then
-          echo "      \"''${NIX_FILES[$i]}\""  >> $MANIFEST_FILE
-        else
-          echo "      \"''${NIX_FILES[$i]}\","  >> $MANIFEST_FILE
-        fi
-      done
-    fi
+    ${emitJsonArray "PS_TEST_FILES"}
     echo "    ],"  >> $MANIFEST_FILE
     echo "    \"exclude\": [],"  >> $MANIFEST_FILE
-    echo "    \"count\": ''${#NIX_FILES[@]},"  >> $MANIFEST_FILE
-    echo "    \"timestamp\": \"$(date '+%s')\""  >> $MANIFEST_FILE
+    echo "    \"count\": ''${#PS_TEST_FILES[@]}"  >> $MANIFEST_FILE
+    echo "  },"  >> $MANIFEST_FILE
+
+    # nix section
+    echo "  \"nix\": {"  >> $MANIFEST_FILE
+    echo "    \"include\": ["  >> $MANIFEST_FILE
+    ${emitJsonArray "NIX_FILES"}
+    echo "    ],"  >> $MANIFEST_FILE
+    echo "    \"exclude\": [],"  >> $MANIFEST_FILE
+    echo "    \"count\": ''${#NIX_FILES[@]}"  >> $MANIFEST_FILE
     echo "  }"  >> $MANIFEST_FILE
     echo "}"  >> $MANIFEST_FILE
 
-    # Format the manifest JSON
+
     ${pkgs.jq}/bin/jq . "$MANIFEST_FILE" > "$MANIFEST_FILE.tmp" && mv "$MANIFEST_FILE.tmp" "$MANIFEST_FILE"
 
-    # Create backup of manifest
+
     BACKUP_TIME=$(date '+%Y%m%d_%H%M%S')
     cp "$MANIFEST_FILE" "$MANIFEST_FILE.$BACKUP_TIME"
 
     echo "Manifest generated at: $MANIFEST_FILE"
     echo "Backup created at: $MANIFEST_FILE.$BACKUP_TIME"
-    echo "Found ''${#HS_FILES[@]} Haskell, ''${#ALL_PS_FILES[@]} PureScript (''${#PS_GENERATED_FILES[@]} generated), ''${#NIX_FILES[@]} Nix files"
+    echo "Found ''${#HS_FILES[@]} Haskell source, ''${#HS_TEST_FILES[@]} Haskell test, ''${#ALL_PS_FILES[@]} PureScript source, ''${#PS_TEST_FILES[@]} PureScript test, ''${#NIX_FILES[@]} Nix files"
   '';
 
-  # Manifest data structure
+
   manifestData = {
     meta = {
       projectRoot = cfg.projectRoot;
@@ -232,27 +282,33 @@ let
     haskell.include = [];
     haskell.exclude = [];
     haskell.count = 0;
+    haskellTests.include = [];
+    haskellTests.exclude = [];
+    haskellTests.count = 0;
     purescript.include = [];
     purescript.exclude = [];
     purescript.generated = [];
     purescript.count = 0;
     purescript.generatedCount = 0;
+    purescriptTests.include = [];
+    purescriptTests.exclude = [];
+    purescriptTests.count = 0;
     nix.include = [];
     nix.exclude = [];
     nix.count = 0;
   };
 
 in {
-  # Export the manifest data
+
   data = manifestData;
 
-  # Export the manifest as JSON
+
   json = builtins.toJSON manifestData;
 
-  # Export the manifest generation script
+
   generateScript = generateManifestScript;
-  
-  # Debug info
+
+
   debug = {
     config = cfg;
     excludePattern = excludePatternStr;
