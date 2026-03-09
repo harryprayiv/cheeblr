@@ -206,6 +206,9 @@ let
             return
         fi
 
+        # Only archive existing outputs for this extension now that we know we'll regenerate
+        safe_archive "$file_ext"
+
         local compile_output=""
         if [ -n "$compile_fn" ]; then
             compile_output=$($compile_fn "$PROJECT_ROOT")
@@ -250,12 +253,6 @@ let
         save_current_hash "$section_key" "$current_hash"
         echo "Generated $output_file"
     }
-
-    # ── Archive previous outputs ───────────────────────────────────────────────
-
-    safe_archive "hs"
-    safe_archive "purs"
-    safe_archive "nix"
 
     # ── Output base paths ──────────────────────────────────────────────────────
 
