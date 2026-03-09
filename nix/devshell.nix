@@ -263,6 +263,9 @@ let
     tlsModule.tls-setup
     tlsModule.tls-info
     tlsModule.tls-clean
+    tlsModule.tls-sops-update
+    tlsModule.tls-sops-extract
+    pkgs.sops
     pkgs.mkcert
     open-firewall
 
@@ -395,10 +398,13 @@ let
       echo "    concurrent             - Run concurrent development tasks"
       echo "    dev                    - Start all dev services in tmux"
       echo ""
-      echo "  TLS:"
+      echo "  TLS + Sops:"
       echo "    tls-setup              - Generate/refresh TLS certificates"
       echo "    tls-info               - Show certificate details"
       echo "    tls-clean              - Remove certificates"
+      echo "    tls-sops-update        - Sync local certs → sops secrets file"
+      echo "    tls-sops-extract       - Pull certs from sops secrets → local paths"
+      echo "    sops secrets/cheeblr.yaml - Edit secrets directly"
       echo ""
       echo "  Project:"
       echo "    code-workspace         - Open VSCodium workspace"

@@ -1,7 +1,7 @@
 { inputs }:
 
 let
-  inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP purescript-overlay purs-nix;
+  inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP purescript-overlay purs-nix sops-nix;
   
   # Project name - single source of truth
   name = "cheeblr";

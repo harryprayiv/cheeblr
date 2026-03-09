@@ -1153,7 +1153,8 @@
         "purescript-tidy": "purescript-tidy",
         "purescript-tidy-codegen": "purescript-tidy-codegen",
         "purescript-vector": "purescript-vector",
-        "purs-nix": "purs-nix"
+        "purs-nix": "purs-nix",
+        "sops-nix": "sops-nix"
       }
     },
     "secp256k1": {
@@ -1187,6 +1188,26 @@
         "owner": "input-output-hk",
         "repo": "libsodium",
         "rev": "dbb48cce5429cb6585c9034f002568964f1ce567",
+        "type": "github"
+      }
+    },
+    "sops-nix": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1772944399,
+        "narHash": "sha256-xTzsSd3r5HBeufSZ3fszAn0ldfKctvsYG7tT2YJg5gY=",
+        "owner": "Mic92",
+        "repo": "sops-nix",
+        "rev": "c8e69670b316d6788e435a3aa0bda74eb1b82cc0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Mic92",
+        "repo": "sops-nix",
         "type": "github"
       }
     },

@@ -69,6 +69,11 @@
       url = "github:edolstra/flake-compat";
       flake = false;
     };
+
+    sops-nix.url = "github:Mic92/sops-nix";
+    
+    sops-nix.inputs.nixpkgs.follows = "nixpkgs"; 
+ 
   };
 
   outputs = inputs@{ self, flake-utils, ... }:

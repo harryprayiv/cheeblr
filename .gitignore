@@ -47,3 +47,7 @@ backend/output
 result-frontend
 **/src/Generated/
 frontend/.spec-results
+*.pem
+*.key
+*.crt
+secrets/*.decrypted.*
