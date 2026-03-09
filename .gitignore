@@ -51,3 +51,12 @@ frontend/.spec-results
 *.key
 *.crt
 secrets/*.decrypted.*
+keys.txt
+*.key
+*.pem
+*.crt
+*.yaml~
+*.yaml.bak
+*.yaml.dec
+*.yaml.plain
+*.yaml.tmp
