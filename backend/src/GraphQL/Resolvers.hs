@@ -9,6 +9,10 @@ module GraphQL.Resolvers
   ( rootResolver
   , Query (..)
   , Mutation (..)
+  , menuItemToGql
+  , strainLineageToGql
+  , gqlInputToMenuItem
+  , gqlInputToStrainLineage
   ) where
 
 import Control.Exception (SomeException, try)

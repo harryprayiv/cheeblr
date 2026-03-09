@@ -8,7 +8,8 @@ import qualified Test.Types.InventorySpec
 import qualified Test.Auth.SimpleSpec
 import qualified Test.API.TransactionSpec
 import qualified Test.DB.PureFunctionsSpec
-import qualified Test.Integration.JsonContractSpec
+import qualified Test.GraphQL.SchemaSpec
+import qualified Test.GraphQL.ResolversSpec
 
 main :: IO ()
 main = hspec $ do
@@ -19,4 +20,5 @@ main = hspec $ do
     Test.Auth.SimpleSpec.spec
     Test.API.TransactionSpec.spec
     Test.DB.PureFunctionsSpec.spec
-    Test.Integration.JsonContractSpec.spec
+    Test.GraphQL.SchemaSpec.spec
+    Test.GraphQL.ResolversSpec.spec

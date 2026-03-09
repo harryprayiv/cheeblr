@@ -1,6 +1,6 @@
 cabal-version: 3.14
 name: cheeblr-backend
-version: 0.0.0.4
+version: 0.0.0.5
 category: web
 author: Harry Pray IV
 maintainer: harryprayiv@harryprayiv.com
@@ -26,11 +26,11 @@ common shared-properties
                 , directory
                 , tls
                 , wai
-                , warp 
+                , warp
                 , warp-tls
                 , morpheus-graphql >= 0.27
                 , opaleye
-                , postgresql-simple 
+                , postgresql-simple
                 , postgresql-libpq
                 , text
                 , uuid
@@ -77,29 +77,31 @@ executable cheeblr-backend
     pkgconfig-depends: libpq
 
 test-suite cheeblr-unit-tests
-  import:           shared-properties
-  type:             exitcode-stdio-1.0
-  main-is:          Spec.hs
-  hs-source-dirs:   test
-  other-modules:
-    Test.Types.AuthSpec
-    Test.Types.TransactionSpec
-    Test.Types.InventorySpec
-    Test.Auth.SimpleSpec
-    Test.API.TransactionSpec
-    Test.DB.PureFunctionsSpec
-    Test.Integration.JsonContractSpec
-  build-depends:
-    cheeblr-backend
-    , hspec
+    import:         shared-properties
+    type:           exitcode-stdio-1.0
+    main-is:        Spec.hs
+    hs-source-dirs: test
+    other-modules:
+        Test.Types.AuthSpec
+        Test.Types.TransactionSpec
+        Test.Types.InventorySpec
+        Test.Auth.SimpleSpec
+        Test.API.TransactionSpec
+        Test.DB.PureFunctionsSpec
+        Test.GraphQL.SchemaSpec
+        Test.GraphQL.ResolversSpec
+    build-depends:
+        cheeblr-backend
+        , hspec
 
 test-suite cheeblr-integration-tests
-  import:           shared-properties
-  type:             exitcode-stdio-1.0
-  main-is:          SpecIntegration.hs
-  hs-source-dirs:   test
-  other-modules:
-    Test.Integration.JsonContractSpec
-  build-depends:
-    cheeblr-backend
-    , hspec
+    import:         shared-properties
+    type:           exitcode-stdio-1.0
+    main-is:        SpecIntegration.hs
+    hs-source-dirs: test
+    other-modules:
+        Test.Integration.JsonContractSpec
+        Test.GraphQL.IntegrationSpec
+    build-depends:
+        cheeblr-backend
+        , hspec
