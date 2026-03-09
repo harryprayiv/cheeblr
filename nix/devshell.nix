@@ -1,35 +1,20 @@
+# nix/devshell.nix
 { pkgs, name, lib, system ? builtins.currentSystem }:
 
 let
+  appConfig = import ./config.nix { inherit name; };
 
-  appConfig = import ./config.nix {
-    inherit name;
-  };
-
-  psConfig  = appConfig.purescript;
-  hsConfig  = appConfig.haskell;
-  dbConfig  = appConfig.database;
+  psConfig   = appConfig.purescript;
+  hsConfig   = appConfig.haskell;
+  dbConfig   = appConfig.database;
   viteConfig = appConfig.vite;
 
-  dirsToString = dirs: lib.concatStringsSep " " dirs;
-
-  psDirs = psConfig.codeDirs;
-  hsDirs = hsConfig.codeDirs;
-
-  frontendDir  = builtins.match "(.*)/.*" (builtins.elemAt psConfig.codeDirs 0);
   frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head psConfig.codeDirs));
+  backendPath  = builtins.head (builtins.split "/[^/]*$" (builtins.head hsConfig.codeDirs));
 
-  backendDir  = builtins.match "(.*)/.*" (builtins.elemAt hsConfig.codeDirs 0);
-  backendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head hsConfig.codeDirs));
+  stripBackendPrefix  = path: builtins.replaceStrings [ "${backendPath}/"  ] [ "" ] path;
+  stripFrontendPrefix = path: builtins.replaceStrings [ "${frontendPath}/" ] [ "" ] path;
 
-  # Strip the leading path prefix from a test path like "./backend/test" → "test"
-  stripBackendPrefix = path:
-    builtins.replaceStrings [ "${backendPath}/" ] [ "" ] path;
-
-  stripFrontendPrefix = path:
-    builtins.replaceStrings [ "${frontendPath}/" ] [ "" ] path;
-
-  # Extract test dirs from config, relative to their respective project roots
   hsTestDirs =
     let testPath = hsConfig.tests or null;
     in if testPath != null then [ (stripBackendPrefix testPath) ] else [];
@@ -51,30 +36,24 @@ let
     };
   };
 
+  deployModule = import ./deploy.nix { inherit pkgs name; };
+  tlsModule    = import ./tls.nix    { inherit pkgs name; };
 
-  deployModule = import ./deploy.nix {
-    inherit pkgs name;
-  };
+  testSuiteModule = import ./test-suite.nix { inherit pkgs name; };
 
-  tlsModule = import ./tls.nix {
-    inherit pkgs name;
-  };
-
-  testSuiteModule = import ./test-suite.nix {
-    inherit pkgs name;
-  };
+  # ── sops ──────────────────────────────────────────────────────────────
+  sopsModule = import ./sops-dev.nix { inherit pkgs lib name; };
+  # ──────────────────────────────────────────────────────────────────────
 
   manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
     config = {
       backendPath  = backendPath;
       frontendPath = frontendPath;
-      hsDirs = map (dir: builtins.replaceStrings ["${backendPath}/"] [""] dir) hsConfig.codeDirs;
-      psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
+      hsDirs = map (d: builtins.replaceStrings ["${backendPath}/"]  [""] d) hsConfig.codeDirs;
+      psDirs = map (d: builtins.replaceStrings ["${frontendPath}/"] [""] d) psConfig.codeDirs;
       inherit hsTestDirs psTestDirs;
-      hsConfig = {
-        cabalFile = hsConfig.cabalFile;
-      };
+      hsConfig = { cabalFile = hsConfig.cabalFile; };
     };
   };
 
@@ -82,8 +61,8 @@ let
     inherit pkgs name lib;
     backendPath  = backendPath;
     frontendPath = frontendPath;
-    hsDirs = map (dir: builtins.replaceStrings ["${backendPath}/"] [""] dir) hsConfig.codeDirs;
-    psDirs = map (dir: builtins.replaceStrings ["${frontendPath}/"] [""] dir) psConfig.codeDirs;
+    hsDirs = map (d: builtins.replaceStrings ["${backendPath}/"]  [""] d) hsConfig.codeDirs;
+    psDirs = map (d: builtins.replaceStrings ["${frontendPath}/"] [""] d) psConfig.codeDirs;
     inherit hsTestDirs psTestDirs;
     hsConfig = hsConfig;
   };
@@ -108,34 +87,24 @@ let
     gruntfuggly.todo-tree
   ]) ++ pkgs.vscode-utils.extensionsFromVscodeMarketplace [
     {
-      publisher = "cab404";
-      name      = "vscode-direnv";
-      version   = "1.0.0";
-      sha256    = "sha256-+nLH+T9v6TQCqKZw6HPN/ZevQ65FVm2SAo2V9RecM3Y=";
+      publisher = "cab404"; name = "vscode-direnv"; version = "1.0.0";
+      sha256 = "sha256-+nLH+T9v6TQCqKZw6HPN/ZevQ65FVm2SAo2V9RecM3Y=";
     }
     {
-      publisher = "nwolverson";
-      name      = "language-purescript";
-      version   = "0.2.9";
-      sha256    = "sha256-9LBdo6lj+hz2NsvPmMV73nCT7uk6Q/ViguiilngOsGc=";
+      publisher = "nwolverson"; name = "language-purescript"; version = "0.2.9";
+      sha256 = "sha256-9LBdo6lj+hz2NsvPmMV73nCT7uk6Q/ViguiilngOsGc=";
     }
     {
-      publisher = "nwolverson";
-      name      = "ide-purescript";
-      version   = "0.26.6";
-      sha256    = "sha256-zYLAcPgvfouMQj3NJlNJA0DNeayKxQhOYNloRN2YuU8=";
+      publisher = "nwolverson"; name = "ide-purescript"; version = "0.26.6";
+      sha256 = "sha256-zYLAcPgvfouMQj3NJlNJA0DNeayKxQhOYNloRN2YuU8=";
     }
     {
-      publisher = "hoovercj";
-      name      = "haskell-linter";
-      version   = "0.0.6";
-      sha256    = "sha256-MjgqR547GC0tMnBJDMsiB60hJE9iqhKhzP6GLhcLZzk=";
+      publisher = "hoovercj"; name = "haskell-linter"; version = "0.0.6";
+      sha256 = "sha256-MjgqR547GC0tMnBJDMsiB60hJE9iqhKhzP6GLhcLZzk=";
     }
     {
-      publisher = "justusadam";
-      name      = "language-haskell";
-      version   = "3.6.0";
-      sha256    = "sha256-rZXRzPmu7IYmyRWANtpJp3wp0r/RwB7eGHEJa7hBvoQ=";
+      publisher = "justusadam"; name = "language-haskell"; version = "3.6.0";
+      sha256 = "sha256-rZXRzPmu7IYmyRWANtpJp3wp0r/RwB7eGHEJa7hBvoQ=";
     }
   ];
 
@@ -146,10 +115,9 @@ let
 
   workspaceModule = {
     code-workspace = pkgs.writeShellApplication {
-      name            = "code-workspace";
-      runtimeInputs   = with pkgs; [ vscodiumWithExtensions ];
+      name          = "code-workspace";
+      runtimeInputs = [ vscodiumWithExtensions ];
       text = ''
-
         if [ ! -f "${name}.code-workspace" ]; then
           cat > ${name}.code-workspace <<EOF
         {
@@ -161,11 +129,6 @@ let
             { "name": "Root",        "path": "./" }
           ],
           "settings": {
-            "files.exclude": {
-              "frontend": false,
-              "backend":  false,
-              "nix":      false
-            },
             "[purescript]": {
               "editor.defaultFormatter": "nwolverson.ide-purescript",
               "editor.fontFamily": "Hasklig",
@@ -178,52 +141,37 @@ let
               "editor.fontSize": 14
             },
             "purescript.addSpagoSources": true,
-            "purescript.workspace.multiRootMode": true,
-            "purescript.sourcePath": "src",
-            "haskell.checkProject": true,
-            "files.watcherExclude": {
-              "**/distdist-newstyle.spagooutput.psci_modules/**": true
-            }
-          },
-          "extensions": {
-            "recommendations": [
-              "nwolverson.ide-purescript",
-              "nwolverson.language-purescript",
-              "haskell.haskell",
-              "justusadam.language-haskell"
-            ]
+            "haskell.checkProject": true
           }
         }
         EOF
           echo "Created ${name}.code-workspace"
         fi
-
         codium ${name}.code-workspace
       '';
     };
 
     backup-project = pkgs.writeShellApplication {
       name          = "backup-project";
-      runtimeInputs = with pkgs; [ rsync ];
+      runtimeInputs = [ pkgs.rsync ];
       text = ''
-        rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' ~/NAS/plutus/workdir/${name}/ ~/NAS/plutus/workspace/scdWs/${name}/
+        rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' \
+          ~/NAS/plutus/workdir/${name}/ ~/NAS/plutus/workspace/scdWs/${name}/
         rsync -va ~/.local/share/${name}/backups/ ~/NAS/plutus/${name}DB/
-        rsync -va script/concat_archive/ ~/NAS/plutus/workspace/scdWs/${name}/script/concat_archive/
+        rsync -va script/concat_archive/ \
+          ~/NAS/plutus/workspace/scdWs/${name}/script/concat_archive/
       '';
     };
   };
 
   commonBuildInputs = with pkgs; [
-
-
+    # deploy
     deployModule.build-all
     deployModule.deploy-nix
     deployModule.deploy-nix-interactive
     deployModule.stop-nix
     deployModule.status-nix
     deployModule.tui
-
-
     deployModule.deploy
     deployModule.stop
     deployModule.launch-dev
@@ -234,7 +182,7 @@ let
     deployModule.frontend-start
     deployModule.frontend-stop
 
-
+    # frontend
     esbuild
     nodejs_20
     nixpkgs-fmt
@@ -243,7 +191,6 @@ let
     purs-backend-es
     purescript-language-server
     spago-unstable
-
     frontendModule.vite
     frontendModule.vite-cleanup
     frontendModule.spago-watch
@@ -251,25 +198,32 @@ let
     frontendModule.codegen
     frontendModule.dev
 
+    # system
+    zlib pgcli pkg-config openssl.dev libiconv openssl
 
-    zlib
-    pgcli
-    pkg-config
-    openssl.dev
-    libiconv
-    openssl
-
-
+    # TLS
     tlsModule.tls-setup
     tlsModule.tls-info
     tlsModule.tls-clean
     tlsModule.tls-sops-update
     tlsModule.tls-sops-extract
-    pkgs.sops
     pkgs.mkcert
+
+    # ── sops: key + secrets management ────────────────────────────────
+    sopsModule.sops-init-key
+    sopsModule.sops-pubkey
+    sopsModule.sops-bootstrap
+    sopsModule.sops-get
+    sopsModule.sops-exec
+    sopsModule.sops-status
+    pkgs.sops
+    pkgs.age
+    pkgs.ssh-to-age
+    # ──────────────────────────────────────────────────────────────────
+
     open-firewall
 
-
+    # postgres
     postgresModule.pg-start
     postgresModule.pg-connect
     postgresModule.pg-stop
@@ -279,14 +233,11 @@ let
     postgresModule.pg-rotate-credentials
     postgresModule.pg-create-schema
     postgresModule.pg-stats
-
     pgadmin4
     gettext
 
-
-    toilet
-    rsync
-    tmux
+    # project
+    toilet rsync tmux
     vscodiumWithExtensions
     workspaceModule.backup-project
     workspaceModule.code-workspace
@@ -294,43 +245,25 @@ let
     devScripts.compile-manifest
     devScripts.compile-archive
 
-
+    # testing
     testSuiteModule.test-unit
     testSuiteModule.test-integration
     testSuiteModule.test-integration-tls
     testSuiteModule.test-suite
     testSuiteModule.test-smoke
 
-
-    coreutils
-    bash
-    gnused
-    gnugrep
-    jq
-    perl
-    findutils
+    coreutils bash gnused gnugrep jq perl findutils
   ];
 
   nativeBuildInputs = with pkgs; [
-    pkg-config
-    postgresql
-    postgresql.lib
-    zlib
-    openssl.dev
-    libiconv
-    openssl
-    lsof
-    tmux
-    alacritty
-    direnv
+    pkg-config postgresql postgresql.lib zlib openssl.dev libiconv openssl
+    lsof tmux alacritty direnv
   ];
 
-  darwinInputs = if (system == "aarch64-darwin" || system == "x86_64-darwin") then
-    (with pkgs.darwin.apple_sdk.frameworks; [
-      Cocoa
-      CoreServices
-    ])
-  else [];
+  darwinInputs =
+    if (system == "aarch64-darwin" || system == "x86_64-darwin") then
+      (with pkgs.darwin.apple_sdk.frameworks; [ Cocoa CoreServices ])
+    else [];
 
   devShell = pkgs.mkShell {
     inherit name;
@@ -341,11 +274,12 @@ let
       export PGDATA="${dbConfig.dataDir}"
       export PGPORT="${toString dbConfig.port}"
       export PGUSER="${dbConfig.user}"
-      export PGPASSWORD="${dbConfig.password}"
       export PGDATABASE="${dbConfig.name}"
       export PKG_CONFIG_PATH="${pkgs.postgresql.lib}/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-      mkdir -p "$(pwd)/script/concat_archive/output" "$(pwd)/script/concat_archive/archive" "$(pwd)/script/concat_archive/.hashes"
+      mkdir -p "$(pwd)/script/concat_archive/output" \
+               "$(pwd)/script/concat_archive/archive" \
+               "$(pwd)/script/concat_archive/.hashes"
       mkdir -p "$(pwd)/.vscode"
 
       cat > "$(pwd)/.vscode/argv.json" <<EOF
@@ -358,73 +292,52 @@ let
       EOF
 
       echo "Welcome to the ${lib.toSentenceCase name} dev environment!"
-
-      echo "Available commands:"
-      echo "  Database:"
-      echo "    pg-start               - Start PostgreSQL server"
-      echo "    pg-connect             - Connect to PostgreSQL server"
-      echo "    pg-stop                - Stop PostgreSQL server"
-      echo "    pg-cleanup             - Remove PostgreSQL data directory"
-      echo "    pg-backup              - Backup PostgreSQL database"
-      echo "    pg-restore <file>      - Restore PostgreSQL database from backup"
-      echo "    pg-rotate-credentials  - Generate new PostgreSQL password"
-      echo "    pg-create-schema <n>   - Create new schema"
-      echo "    pg-stats               - Show PostgreSQL statistics"
       echo ""
-      echo "  Nix Deployment (artifact-based):"
+      echo "Secrets:"
+      ${sopsModule.loadSecretsHook}
+      echo ""
+      echo "Available commands:"
+      echo "  Secrets / TLS:"
+      echo "    sops-init-key          - Derive age key from ~/.ssh/id_ed25519"
+      echo "    sops-pubkey            - Print this machine's age public key"
+      echo "    sops-bootstrap         - Create secrets/${name}.yaml (first-time)"
+      echo "    sops-get <key>         - Decrypt a single value to stdout"
+      echo "    sops-exec <cmd ...>    - Run command with all secrets as env vars"
+      echo "    sops-status            - Verify sops setup end-to-end"
+      echo "    tls-setup              - Generate/refresh local mkcert TLS certs"
+      echo "    tls-sops-update        - Encrypt local certs into sops secrets"
+      echo "    tls-sops-extract       - Extract sops certs to local cert path"
+      echo "    tls-info               - Show certificate details"
+      echo "    sops secrets/${name}.yaml - Edit secrets directly"
+      echo ""
+      echo "  Database:"
+      echo "    pg-start               - Start PostgreSQL"
+      echo "    pg-connect             - Connect to PostgreSQL"
+      echo "    pg-stop                - Stop PostgreSQL"
+      echo "    pg-backup / pg-restore - Backup / restore"
+      echo "    pg-rotate-credentials  - Rotate password + update sops hint"
+      echo "    pg-stats               - Database statistics"
+      echo ""
+      echo "  Nix Deployment:"
       echo "    build-all              - nix build ."
-      echo "    deploy-nix             - Deploy headless (Nix artifacts)"
-      echo "    deploy-nix-interactive - Deploy with tmux (Nix artifacts)"
-      echo "    stop-nix               - Stop Nix deployment"
-      echo "    status-nix             - Show service status"
+      echo "    deploy-nix             - Headless (Nix artifacts)"
+      echo "    deploy-nix-interactive - tmux (Nix artifacts)"
+      echo "    stop-nix / status-nix  - Stop / status"
       echo "    ${name}-tui            - Interactive TUI menu"
       echo ""
-      echo "  Source Deployment (cabal/spago):"
-      echo "    deploy                 - Deploy with tmux (cabal run / spago)"
-      echo "    stop                   - Stop source deployment"
-      echo "    launch-dev             - Launch in Alacritty windows"
-      echo "    db-start               - Start database"
-      echo "    db-stop                - Stop database"
-      echo "    backend-start          - Start Haskell backend"
-      echo "    backend-stop           - Stop Haskell backend"
-      echo "    frontend-start         - Start PureScript frontend"
-      echo "    frontend-stop          - Stop PureScript frontend"
+      echo "  Source Deployment:"
+      echo "    deploy / stop          - tmux (cabal/spago)"
+      echo "    launch-dev             - Alacritty windows"
+      echo "    backend-start/stop     - Haskell backend"
+      echo "    frontend-start/stop    - PureScript frontend"
       echo ""
-      echo "  Frontend:"
-      echo "    vite                   - Start Vite development server"
-      echo "    vite-cleanup           - Clean up vite processes"
-      echo "    spago-watch            - Watch PureScript files for changes"
-      echo "    codegen                - Generate types from schema"
-      echo "    concurrent             - Run concurrent development tasks"
-      echo "    dev                    - Start all dev services in tmux"
-      echo ""
-      echo "  TLS + Sops:"
-      echo "    tls-setup              - Generate/refresh TLS certificates"
-      echo "    tls-info               - Show certificate details"
-      echo "    tls-clean              - Remove certificates"
-      echo "    tls-sops-update        - Sync local certs → sops secrets file"
-      echo "    tls-sops-extract       - Pull certs from sops secrets → local paths"
-      echo "    sops secrets/cheeblr.yaml - Edit secrets directly"
-      echo ""
-      echo "  Project:"
-      echo "    code-workspace         - Open VSCodium workspace"
-      echo "    backup-project         - Backup project files"
-      echo "    compile-manifest       - Concatenate project files"
-      echo "    compile-archive        - Full project archive"
-      echo ""
-      echo "  Testing:"
-      echo "    test-unit              - Unit tests (no services needed)"
-      echo "    test-integration       - Integration tests (HTTP)"
-      echo "    test-integration-tls   - Integration tests (TLS)"
-      echo "    test-suite             - Full suite (unit + HTTP + TLS)"
-      echo "    test-smoke             - Smoke test against running backend"
-      echo ""
+      echo "  Frontend:  vite  spago-watch  codegen  dev"
+      echo "  Testing:   test-unit  test-integration  test-integration-tls  test-suite  test-smoke"
       echo ""
       toilet ${lib.toSentenceCase name} -t --metal
     '';
   };
 
 in {
-  inherit devShell;
-  inherit workspaceModule;
+  inherit devShell workspaceModule;
 }

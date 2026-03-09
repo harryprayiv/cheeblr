@@ -25,7 +25,7 @@
   database = {
     name = name;
     user = "$(whoami)";
-    password = "postgres";
+    password = "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS";  # never used after sops-bootstrap
     port = 5432;
     dataDir = "$HOME/.local/share/${name}/postgres";
     settings = {
