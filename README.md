@@ -4,7 +4,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-## 📚 Documentation
+## Documentation
 
 - [Frontend Documentation](./Docs/FrontEnd.md) — PureScript/Deku SPA architecture, async loading pattern, page modules, services
 - [Backend Documentation](./Docs/BackEnd.md) — Haskell/Servant API, database layer, transaction processing, inventory reservations
@@ -13,7 +13,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - [To Do list](./Docs/TODO.md) — Planned features and optimizations
 - [Security Recommendations](./Docs/SecurityStrategies.md) — Planned security and authentication upgrades
 
-## 🌟 Features
+## Features
 
 ### Inventory Management
 - **Comprehensive Product Tracking**: Detailed cannabis product data including strain lineage, THC/CBD content, terpene profiles, species classification, and Leafly integration
@@ -42,7 +42,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - **Compliance Records**: Per-transaction compliance tracking with verification status, state reporting status, and reference IDs
 - **Reporting Stubs**: Compliance and daily financial report endpoints defined with types — implementation pending
 
-## 🔧 Technology Stack
+## Technology Stack
 
 ### Frontend
 | Concern | Technology |
@@ -79,7 +79,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | Build (PureScript) | **Spago** |
 | Testing | Haskell unit + integration tests; 484 PureScript tests; ephemeral-PostgreSQL integration harness |
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -150,7 +150,7 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 | POST | `/register/open/:id` | Open with starting cash |
 | POST | `/register/close/:id` | Close with counted cash, returns variance |
 
-## 🏗 Architecture
+## Architecture
 
 ### Frontend Architecture
 
@@ -220,7 +220,7 @@ App.hs (bootstrap, CORS, TLS middleware, warp-tls)
 | `inventory_reservation` | Reservation tracking (Reserved → Completed/Released) |
 | `register` | Cash register state and history |
 
-## 🔐 Security
+## Security
 
 - **TLS everywhere**: backend runs warp-tls; frontend Vite dev server configured for HTTPS; all service scripts inject `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE` from sops
 - **Parameterized queries** throughout — no string interpolation in SQL
@@ -232,7 +232,7 @@ App.hs (bootstrap, CORS, TLS middleware, warp-tls)
 
 **Current limitation**: Authentication is dev-mode only (`X-User-Id` header with fixed users). See [Security Recommendations](./Docs/SecurityStrategies.md) for the planned upgrade path to libsodium public-key challenge-response.
 
-## 🧪 Testing
+## Testing
 
 ```bash
 test-unit             # Haskell unit tests + 484 PureScript tests (no services needed)
@@ -244,45 +244,45 @@ test-smoke            # hit live backend on :8080, check endpoint and JSON contr
 
 Integration tests spin up and tear down their own isolated PostgreSQL instance so they can run independently of `pg-start`.
 
-## 🚧 Development Status
+## Development Status
 
 ### Implemented
-- ✅ Full inventory CRUD with strain lineage
-- ✅ Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
-- ✅ Complete transaction lifecycle (create → items → payments → finalize/void/refund/clear)
-- ✅ Multiple payment methods with change calculation
-- ✅ Cash register open/close with variance tracking
-- ✅ Tax and discount record management
-- ✅ Role-based capability system (4 roles, 15 capabilities)
-- ✅ Dev auth with `X-User-Id` header and user switcher widget
-- ✅ Centralized async loading with fiber cancellation on route change
-- ✅ Parallel data loading for POS page (inventory + register + transaction)
-- ✅ `TxPageDegraded` state for resilient POS page loading
-- ✅ `MutationResponse` uniform write response type
-- ✅ `/session` endpoint — user capabilities separated from inventory payload
-- ✅ TLS/HTTPS via warp-tls + mkcert; all service scripts TLS-aware
-- ✅ sops secrets management (DB password + TLS certs)
-- ✅ GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
-- ✅ Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
-- ✅ JSON contract tests between PureScript and Haskell catching serialization divergence
+-  Full inventory CRUD with strain lineage
+-  Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
+-  Complete transaction lifecycle (create → items → payments → finalize/void/refund/clear)
+-  Multiple payment methods with change calculation
+-  Cash register open/close with variance tracking
+-  Tax and discount record management
+-  Role-based capability system (4 roles, 15 capabilities)
+-  Dev auth with `X-User-Id` header and user switcher widget
+-  Centralized async loading with fiber cancellation on route change
+-  Parallel data loading for POS page (inventory + register + transaction)
+-  `TxPageDegraded` state for resilient POS page loading
+-  `MutationResponse` uniform write response type
+-  `/session` endpoint — user capabilities separated from inventory payload
+-  TLS/HTTPS via warp-tls + mkcert; all service scripts TLS-aware
+-  sops secrets management (DB password + TLS certs)
+-  GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
+-  Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
+-  JSON contract tests between PureScript and Haskell catching serialization divergence
 
 ### In Progress
-- 🔄 Daily financial reporting (endpoints exist, implementation pending)
-- 🔄 Compliance verification system (types and stubs defined)
-- 🔄 GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
+-  Daily financial reporting (endpoints exist, implementation pending)
+-  Compliance verification system (types and stubs defined)
+-  GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
 
 ### Planned
-- 📋 Real authentication (libsodium public-key challenge-response, replacing dev `X-User-Id`)
-- 📋 Capability enforcement on transaction/register endpoints
-- 📋 Inventory reservation expiry (cleanup of abandoned reservations)
-- 📋 Transaction history page (currently a placeholder)
-- 📋 Advanced reporting and analytics
-- 📋 Multi-location support
-- 📋 Third-party integrations (Metrc, Leafly)
+-  Real authentication (libsodium public-key challenge-response, replacing dev `X-User-Id`)
+-  Capability enforcement on transaction/register endpoints
+-  Inventory reservation expiry (cleanup of abandoned reservations)
+-  Transaction history page (currently a placeholder)
+-  Advanced reporting and analytics
+-  Multi-location support
+-  Third-party integrations (Metrc, Leafly)
 
 ## 📜 License
 
-This project is licensed under the MIT License — see the LICENSE file for details.
+This project is licensed under the Apache License Version 2.0, January 2004 — see the LICENSE file for details.
 
 ## 🤝 Contributing
 
