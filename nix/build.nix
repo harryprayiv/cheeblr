@@ -39,7 +39,7 @@ let
 
         inputMap = {
           "https://chap.intersectmbo.org/" = CHaP;
-          "https://hackage.haskell.org/"   = hackage;   # ← add this
+          "https://hackage.haskell.org/"   = hackage;
         };
 
         shell = {
