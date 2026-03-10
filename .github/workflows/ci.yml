@@ -30,6 +30,12 @@ jobs:
             trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
+      - uses: cachix/cache-nix-action@v5
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
+
       - name: Build
         run: nix build --accept-flake-config
 
@@ -50,6 +56,12 @@ jobs:
             trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
+      - uses: cachix/cache-nix-action@v5
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
+
       - name: Run unit tests
         run: nix develop --accept-flake-config --command test-unit
 
@@ -69,6 +81,12 @@ jobs:
             substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+
+      - uses: cachix/cache-nix-action@v5
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
 
       - name: Build backend binary
         run: nix build --accept-flake-config .#backend
@@ -95,6 +113,12 @@ jobs:
             substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+
+      - uses: cachix/cache-nix-action@v5
+        with:
+          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-store-${{ runner.os }}-
+          gc-max-store-size-linux: 8G
 
       - name: Build backend binary
         run: nix build --accept-flake-config .#backend
