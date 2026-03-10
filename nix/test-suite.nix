@@ -171,7 +171,12 @@ let
       echo "✓ Test database created"
 
       echo "Starting backend server on port ${testBackendPort}..."
-      (cd ${backendPath} && cabal run ${name}-backend 2>&1 | sed 's/^/  [backend] /') &
+      if [ -n "''${BACKEND_BIN:-}" ] && [ -x "''${BACKEND_BIN}" ]; then
+        echo "Using pre-built binary: ''${BACKEND_BIN}"
+        ("''${BACKEND_BIN}" 2>&1 | sed 's/^/  [backend] /') &
+      else
+        (cd ${backendPath} && cabal run ${name}-backend 2>&1 | sed 's/^/  [backend] /') &
+      fi
       BACKEND_PID=$!
 
       echo "Waiting for backend on port ${testBackendPort}..."
@@ -346,7 +351,12 @@ let
       echo "✓ Test database created"
 
       echo "Starting backend server on port ${testBackendPort} (TLS)..."
-      (cd ${backendPath} && cabal run ${name}-backend 2>&1 | sed 's/^/  [backend] /') &
+      if [ -n "''${BACKEND_BIN:-}" ] && [ -x "''${BACKEND_BIN}" ]; then
+        echo "Using pre-built binary: ''${BACKEND_BIN}"
+        ("''${BACKEND_BIN}" 2>&1 | sed 's/^/  [backend] /') &
+      else
+        (cd ${backendPath} && cabal run ${name}-backend 2>&1 | sed 's/^/  [backend] /') &
+      fi
       BACKEND_PID=$!
 
       echo "Waiting for backend on port ${testBackendPort}..."

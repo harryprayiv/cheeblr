@@ -70,9 +70,13 @@ jobs:
             trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
+      - name: Build backend binary
+        run: nix build --accept-flake-config .#backend
+
       - name: Run HTTP integration tests
         env:
           PGDATA: /tmp/cheeblr-pgdata
+          BACKEND_BIN: ${{ github.workspace }}/result/bin/cheeblr-backend
         run: nix develop --accept-flake-config --command test-integration
 
   integration-tls:
@@ -92,6 +96,9 @@ jobs:
             trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
+      - name: Build backend binary
+        run: nix build --accept-flake-config .#backend
+
       - name: Install mkcert CA
         run: |
           nix develop --accept-flake-config --command bash -c "
@@ -107,6 +114,7 @@ jobs:
       - name: Run TLS integration tests
         env:
           PGDATA: /tmp/cheeblr-pgdata
+          BACKEND_BIN: ${{ github.workspace }}/result/bin/cheeblr-backend
         run: nix develop --accept-flake-config --command test-integration-tls
 
   ci-ok:
