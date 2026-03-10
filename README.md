@@ -4,9 +4,8 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-yellowgreen.svg)](https://opensource.org/licenses/Apache-2.0) 
 
-[![Nix Flake Check](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml)
-
-[![CI](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml)
+[![Nix Environment](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml)
+[![CI & Unit Tests](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml)
 
 ## Documentation
 
