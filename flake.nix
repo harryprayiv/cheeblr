@@ -34,7 +34,7 @@
       flake = false;
     };
     purescript-vector = {
-      url = "github:rowtype-yoga/purescript-vector/086268b7e60b570b2be7c104159e021259de98df";
+      url = "github:mgmeier/purescript-vector/31f9867a7155852bb6ddada1818adf03113a250e";
       flake = false;
     };
     purescript-hyrule = {
