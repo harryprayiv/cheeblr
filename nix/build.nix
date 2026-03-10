@@ -1,7 +1,7 @@
 { inputs }:
 
 let
-  inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP purescript-overlay purs-nix sops-nix;
+  inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP hackage purescript-overlay purs-nix sops-nix;
 
   # Project name - single source of truth via config.nix
   appConfig = import ./config.nix {};
@@ -39,6 +39,7 @@ let
 
         inputMap = {
           "https://chap.intersectmbo.org/" = CHaP;
+          "https://hackage.haskell.org/"   = hackage;   # ← add this
         };
 
         shell = {
