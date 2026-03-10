@@ -1076,17 +1076,17 @@
     "purescript-vector": {
       "flake": false,
       "locked": {
-        "lastModified": 1741644481,
-        "narHash": "sha256-kq0hsvJ/jWHc6+UBtLuRVHUb1xovVHIwa32IJM8j2hw=",
-        "owner": "rowtype-yoga",
+        "lastModified": 1742046494,
+        "narHash": "sha256-7PtYunfyIvzgltqCR+MSOP8jiQvTkd7yMIAVGVmN0hY=",
+        "owner": "mgmeier",
         "repo": "purescript-vector",
-        "rev": "086268b7e60b570b2be7c104159e021259de98df",
+        "rev": "31f9867a7155852bb6ddada1818adf03113a250e",
         "type": "github"
       },
       "original": {
-        "owner": "rowtype-yoga",
+        "owner": "mgmeier",
         "repo": "purescript-vector",
-        "rev": "086268b7e60b570b2be7c104159e021259de98df",
+        "rev": "31f9867a7155852bb6ddada1818adf03113a250e",
         "type": "github"
       }
     },
