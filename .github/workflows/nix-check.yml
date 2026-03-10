@@ -17,7 +17,7 @@ on:
 
 jobs:
   flake-check:
-    name: Evaluate flake
+    name: Evaluate flake (x86_64-linux)
     runs-on: ubuntu-latest
 
     steps:
@@ -41,10 +41,19 @@ jobs:
           restore-keys: |
             nix-store-${{ runner.os }}-
 
-      - name: Show flake outputs
-        # --accept-flake-config picks up the substituters/keys in your flake's
-        # nixConfig block, which is required for haskell.nix IFD to find the
-        # plan-to-nix-pkgs derivation in the IOG cache.
-        # Do NOT pass --no-build: haskell.nix uses import-from-derivation
-        # and --no-build prevents IFD from running, causing "path not valid".
-        run: nix flake show --accept-flake-config --allow-import-from-derivation --system x86_64-linux
+      # nix flake show evaluates ALL systems regardless of --system, which
+      # causes "aarch64-darwin required but I am x86_64-linux" on the
+      # haskell.nix IFD path. Instead we eval specific x86_64-linux
+      # attributes directly, which triggers the same IFD resolution but
+      # only for the runner's native system.
+      - name: Evaluate devShell (x86_64-linux)
+        run: |
+          nix eval --accept-flake-config --allow-import-from-derivation \
+            .#devShells.x86_64-linux.default \
+            --apply 'x: "ok: ${x.name}"'
+
+      - name: Evaluate packages (x86_64-linux)
+        run: |
+          nix eval --accept-flake-config --allow-import-from-derivation \
+            .#packages.x86_64-linux \
+            --apply 'builtins.attrNames'
