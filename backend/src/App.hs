@@ -8,7 +8,7 @@ import qualified Network.Wai.Handler.Warp as Warp
 import Network.Wai.Handler.WarpTLS (runTLS, tlsSettings)
 import Servant
 import Server (combinedServer)
-import System.Posix.User (getLoginName)
+import System.Posix.User (getEffectiveUserName)
 import Network.HTTP.Types.Header (hContentType, hAccept, hAuthorization, hOrigin, hContentLength)
 import Network.HTTP.Types.Method (methodGet, methodPost, methodPut, methodDelete, methodOptions)
 import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy, CorsResourcePolicy(..), cors)
@@ -34,7 +34,7 @@ data AppConfig = AppConfig
 
 run :: IO ()
 run = do
-  currentUser <- getLoginName
+  currentUser <- getEffectiveUserName
   
   envHost     <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
   envDbPort   <- maybe 5432 read <$> lookupEnv "PGPORT"
