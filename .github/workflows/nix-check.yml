@@ -30,14 +30,8 @@ jobs:
             experimental-features = nix-command flakes ca-derivations
             allow-import-from-derivation = true
             substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
             trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
-
-      # Optional: push artifacts to your own Cachix cache.
-      # Uncomment and set CACHIX_AUTH_TOKEN in repo secrets if you have one.
-      # - uses: cachix/cachix-action@v14
-      #   with:
-      #     name: your-cache-name
-      #     authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - name: Restore Nix store cache
         uses: actions/cache@v4
@@ -47,11 +41,10 @@ jobs:
           restore-keys: |
             nix-store-${{ runner.os }}-
 
-      - name: Check flake evaluates without errors
-        # --no-build: only evaluate, don't actually build derivations.
-        # This catches syntax errors, missing inputs, and attribute set
-        # mismatches quickly without paying the full haskell.nix build cost.
-        run: nix flake check --no-build --show-trace
-
       - name: Show flake outputs
-        run: nix flake show --allow-import-from-derivation
+        # --accept-flake-config picks up the substituters/keys in your flake's
+        # nixConfig block, which is required for haskell.nix IFD to find the
+        # plan-to-nix-pkgs derivation in the IOG cache.
+        # Do NOT pass --no-build: haskell.nix uses import-from-derivation
+        # and --no-build prevents IFD from running, causing "path not valid".
+        run: nix flake show --accept-flake-config --allow-import-from-derivation

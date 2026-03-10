@@ -6,28 +6,29 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Weekly Sunday midnight — keeps the IOG cache warm and catches upstream breakage.
     - cron: "0 0 * * 0"
   workflow_dispatch:
 
-# Cancel in-flight runs for the same branch/PR so pushes don't queue up.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Shared nix config applied to every step via extra_nix_config.
+# trusted-substituters is required: without it the nix daemon on
+# GitHub-hosted runners ignores extra substituters entirely, which
+# causes haskell.nix IFD derivations to fail with "path not valid"
+# instead of being fetched from cache.iog.io.
 env:
-  # Surfaced to all steps; mirrors what nix/config.nix declares.
-  CHEEBLR_NAME: cheeblr
-  BACKEND_PORT: "8080"
-  FRONTEND_PORT: "5173"
-  DB_PORT: "5432"
+  NIX_CONFIG: |
+    experimental-features = nix-command flakes ca-derivations
+    allow-import-from-derivation = true
+    substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+    trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+    trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
 jobs:
   # ─────────────────────────────────────────────────────────────
   # Phase 0: Build
-  # Validates that cabal and spago both compile before running
-  # anything. Subsequent jobs depend on this, so a broken build
-  # stops the pipeline immediately.
   # ─────────────────────────────────────────────────────────────
   build:
     name: Build (cabal + spago)
@@ -39,11 +40,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+          extra_nix_config: ${{ env.NIX_CONFIG }}
 
       - name: Restore Nix store cache
         uses: actions/cache@v4
@@ -53,8 +50,6 @@ jobs:
           restore-keys: |
             nix-store-${{ runner.os }}-
 
-      # cabal build artifacts are keyed on the cabal.project.freeze /
-      # cabal.project so they're reused across runs on the same dep set.
       - name: Restore cabal store
         uses: actions/cache@v4
         with:
@@ -65,7 +60,7 @@ jobs:
           restore-keys: |
             cabal-${{ runner.os }}-
 
-      - name: Restore spago / node_modules cache
+      - name: Restore spago cache
         uses: actions/cache@v4
         with:
           path: |
@@ -76,16 +71,17 @@ jobs:
           restore-keys: |
             spago-${{ runner.os }}-
 
+      # --accept-flake-config is required on every nix invocation so that
+      # the nixConfig block in flake.nix (substituters, trusted-public-keys)
+      # is honoured in addition to what install-nix-action wrote to nix.conf.
       - name: Build backend (cabal)
-        run: nix develop --command bash -c "cd backend && cabal build all"
+        run: nix develop --accept-flake-config --command bash -c "cd backend && cabal build all"
 
       - name: Build frontend (spago)
-        run: nix develop --command bash -c "cd frontend && spago build"
+        run: nix develop --accept-flake-config --command bash -c "cd frontend && spago build"
 
   # ─────────────────────────────────────────────────────────────
   # Phase 1: Unit tests
-  # Runs Haskell unit tests (cabal test) and PureScript unit
-  # tests (spago test) in isolation — no running services needed.
   # ─────────────────────────────────────────────────────────────
   unit-tests:
     name: Unit tests
@@ -98,11 +94,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+          extra_nix_config: ${{ env.NIX_CONFIG }}
 
       - name: Restore Nix store cache
         uses: actions/cache@v4
@@ -122,7 +114,7 @@ jobs:
           restore-keys: |
             cabal-${{ runner.os }}-
 
-      - name: Restore spago / node_modules cache
+      - name: Restore spago cache
         uses: actions/cache@v4
         with:
           path: |
@@ -134,16 +126,10 @@ jobs:
             spago-${{ runner.os }}-
 
       - name: Run unit tests
-        # test-unit is defined in nix/test-suite.nix and runs:
-        #   cabal test cheeblr-unit-tests  (Haskell)
-        #   spago test                     (PureScript)
-        run: nix develop --command test-unit
+        run: nix develop --accept-flake-config --command test-unit
 
   # ─────────────────────────────────────────────────────────────
   # Phase 2: HTTP integration tests
-  # test-integration spins up its own ephemeral PostgreSQL (unix
-  # socket only, no port conflict risk), starts the backend on
-  # port 18080, and tears everything down via trap on exit.
   # ─────────────────────────────────────────────────────────────
   integration-http:
     name: Integration tests (HTTP)
@@ -156,11 +142,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+          extra_nix_config: ${{ env.NIX_CONFIG }}
 
       - name: Restore Nix store cache
         uses: actions/cache@v4
@@ -180,7 +162,7 @@ jobs:
           restore-keys: |
             cabal-${{ runner.os }}-
 
-      - name: Restore spago / node_modules cache
+      - name: Restore spago cache
         uses: actions/cache@v4
         with:
           path: |
@@ -192,19 +174,12 @@ jobs:
             spago-${{ runner.os }}-
 
       - name: Run HTTP integration tests
-        # PGDATA must be set for the pg-* helper env setup block inside
-        # test-integration, even though the script overrides it with
-        # TEST_PGDATA. Setting it to /tmp/cheeblr-pgdata satisfies the
-        # validateEnv guard without conflicting with the ephemeral instance.
         env:
           PGDATA: /tmp/cheeblr-pgdata
-        run: nix develop --command test-integration
+        run: nix develop --accept-flake-config --command test-integration
 
   # ─────────────────────────────────────────────────────────────
   # Phase 3: TLS integration tests
-  # Same as above but with USE_TLS=true. mkcert -install needs
-  # to write to the system trust store, which requires sudo on
-  # GitHub-hosted runners (they allow it without a password).
   # ─────────────────────────────────────────────────────────────
   integration-tls:
     name: Integration tests (TLS)
@@ -217,11 +192,7 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+          extra_nix_config: ${{ env.NIX_CONFIG }}
 
       - name: Restore Nix store cache
         uses: actions/cache@v4
@@ -241,7 +212,7 @@ jobs:
           restore-keys: |
             cabal-${{ runner.os }}-
 
-      - name: Restore spago / node_modules cache
+      - name: Restore spago cache
         uses: actions/cache@v4
         with:
           path: |
@@ -252,11 +223,9 @@ jobs:
           restore-keys: |
             spago-${{ runner.os }}-
 
-      # mkcert -install writes to /usr/local/share/ca-certificates and
-      # calls update-ca-certificates, both of which need root on Ubuntu.
       - name: Install mkcert root CA into system trust store
         run: |
-          nix develop --command bash -c "
+          nix develop --accept-flake-config --command bash -c "
             CAROOT=\$(mkcert -CAROOT)
             mkdir -p \"\$CAROOT\"
             mkcert -install || true
@@ -270,11 +239,10 @@ jobs:
       - name: Run TLS integration tests
         env:
           PGDATA: /tmp/cheeblr-pgdata
-        run: nix develop --command test-integration-tls
+        run: nix develop --accept-flake-config --command test-integration-tls
 
   # ─────────────────────────────────────────────────────────────
-  # Summary job — gives a single required status check to set in
-  # branch protection rules instead of listing every job.
+  # Summary
   # ─────────────────────────────────────────────────────────────
   ci-ok:
     name: All CI checks passed
