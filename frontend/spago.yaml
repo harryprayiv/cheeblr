@@ -68,7 +68,7 @@ workspace:
         - tuples
     vector:
       git: "https://github.com/mgmeier/purescript-vector.git"
-      ref: "086268b7e60b570b2be7c104159e021259de98df"
+      ref: "31f9867a7155852bb6ddada1818adf03113a250e"
       dependencies:
         - arrays
         - assert
