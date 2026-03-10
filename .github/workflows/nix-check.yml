@@ -47,4 +47,4 @@ jobs:
         # plan-to-nix-pkgs derivation in the IOG cache.
         # Do NOT pass --no-build: haskell.nix uses import-from-derivation
         # and --no-build prevents IFD from running, causing "path not valid".
-        run: nix flake show --accept-flake-config --allow-import-from-derivation
+        run: nix flake show --accept-flake-config --allow-import-from-derivation --system x86_64-linux
