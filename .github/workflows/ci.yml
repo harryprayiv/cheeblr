@@ -13,217 +13,86 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Shared nix config applied to every step via extra_nix_config.
-# trusted-substituters is required: without it the nix daemon on
-# GitHub-hosted runners ignores extra substituters entirely, which
-# causes haskell.nix IFD derivations to fail with "path not valid"
-# instead of being fetched from cache.iog.io.
-env:
-  NIX_CONFIG: |
-    experimental-features = nix-command flakes ca-derivations
-    allow-import-from-derivation = true
-    substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
-    trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
-    trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
-
 jobs:
-  # ─────────────────────────────────────────────────────────────
-  # Phase 0: Build
-  # ─────────────────────────────────────────────────────────────
   build:
-    name: Build (cabal + spago)
+    name: Build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: ${{ env.NIX_CONFIG }}
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes ca-derivations
+            allow-import-from-derivation = true
+            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
-      - name: Restore Nix store cache
-        uses: actions/cache@v4
-        with:
-          path: /nix/store
-          key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: |
-            nix-store-${{ runner.os }}-
+      - name: Build
+        run: nix build --accept-flake-config
 
-      - name: Restore cabal store
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cabal/store
-            backend/dist-newstyle
-          key: cabal-${{ runner.os }}-${{ hashFiles('backend/cabal.project', 'backend/cabal.project.freeze', 'backend/**/*.cabal') }}
-          restore-keys: |
-            cabal-${{ runner.os }}-
-
-      - name: Restore spago cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            frontend/.spago
-            frontend/node_modules
-            frontend/output
-          key: spago-${{ runner.os }}-${{ hashFiles('frontend/spago.yaml', 'frontend/spago.lock', 'frontend/package-lock.json') }}
-          restore-keys: |
-            spago-${{ runner.os }}-
-
-      # --accept-flake-config is required on every nix invocation so that
-      # the nixConfig block in flake.nix (substituters, trusted-public-keys)
-      # is honoured in addition to what install-nix-action wrote to nix.conf.
-      - name: Build backend (cabal)
-        run: nix develop --accept-flake-config --command bash -c "cd backend && cabal build all"
-
-      - name: Build frontend (spago)
-        run: nix develop --accept-flake-config --command bash -c "cd frontend && spago build"
-
-  # ─────────────────────────────────────────────────────────────
-  # Phase 1: Unit tests
-  # ─────────────────────────────────────────────────────────────
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-latest
     needs: build
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: ${{ env.NIX_CONFIG }}
-
-      - name: Restore Nix store cache
-        uses: actions/cache@v4
-        with:
-          path: /nix/store
-          key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: |
-            nix-store-${{ runner.os }}-
-
-      - name: Restore cabal store
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cabal/store
-            backend/dist-newstyle
-          key: cabal-${{ runner.os }}-${{ hashFiles('backend/cabal.project', 'backend/cabal.project.freeze', 'backend/**/*.cabal') }}
-          restore-keys: |
-            cabal-${{ runner.os }}-
-
-      - name: Restore spago cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            frontend/.spago
-            frontend/node_modules
-            frontend/output
-          key: spago-${{ runner.os }}-${{ hashFiles('frontend/spago.yaml', 'frontend/spago.lock', 'frontend/package-lock.json') }}
-          restore-keys: |
-            spago-${{ runner.os }}-
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes ca-derivations
+            allow-import-from-derivation = true
+            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
       - name: Run unit tests
         run: nix develop --accept-flake-config --command test-unit
 
-  # ─────────────────────────────────────────────────────────────
-  # Phase 2: HTTP integration tests
-  # ─────────────────────────────────────────────────────────────
   integration-http:
     name: Integration tests (HTTP)
     runs-on: ubuntu-latest
     needs: unit-tests
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: ${{ env.NIX_CONFIG }}
-
-      - name: Restore Nix store cache
-        uses: actions/cache@v4
-        with:
-          path: /nix/store
-          key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: |
-            nix-store-${{ runner.os }}-
-
-      - name: Restore cabal store
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cabal/store
-            backend/dist-newstyle
-          key: cabal-${{ runner.os }}-${{ hashFiles('backend/cabal.project', 'backend/cabal.project.freeze', 'backend/**/*.cabal') }}
-          restore-keys: |
-            cabal-${{ runner.os }}-
-
-      - name: Restore spago cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            frontend/.spago
-            frontend/node_modules
-            frontend/output
-          key: spago-${{ runner.os }}-${{ hashFiles('frontend/spago.yaml', 'frontend/spago.lock', 'frontend/package-lock.json') }}
-          restore-keys: |
-            spago-${{ runner.os }}-
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes ca-derivations
+            allow-import-from-derivation = true
+            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
       - name: Run HTTP integration tests
         env:
           PGDATA: /tmp/cheeblr-pgdata
         run: nix develop --accept-flake-config --command test-integration
 
-  # ─────────────────────────────────────────────────────────────
-  # Phase 3: TLS integration tests
-  # ─────────────────────────────────────────────────────────────
   integration-tls:
     name: Integration tests (TLS)
     runs-on: ubuntu-latest
     needs: integration-http
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v27
+      - uses: cachix/install-nix-action@v27
         with:
-          extra_nix_config: ${{ env.NIX_CONFIG }}
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes ca-derivations
+            allow-import-from-derivation = true
+            substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://hercules-ci.cachix.org
+            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
 
-      - name: Restore Nix store cache
-        uses: actions/cache@v4
-        with:
-          path: /nix/store
-          key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-keys: |
-            nix-store-${{ runner.os }}-
-
-      - name: Restore cabal store
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cabal/store
-            backend/dist-newstyle
-          key: cabal-${{ runner.os }}-${{ hashFiles('backend/cabal.project', 'backend/cabal.project.freeze', 'backend/**/*.cabal') }}
-          restore-keys: |
-            cabal-${{ runner.os }}-
-
-      - name: Restore spago cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            frontend/.spago
-            frontend/node_modules
-            frontend/output
-          key: spago-${{ runner.os }}-${{ hashFiles('frontend/spago.yaml', 'frontend/spago.lock', 'frontend/package-lock.json') }}
-          restore-keys: |
-            spago-${{ runner.os }}-
-
-      - name: Install mkcert root CA into system trust store
+      - name: Install mkcert CA
         run: |
           nix develop --accept-flake-config --command bash -c "
             CAROOT=\$(mkcert -CAROOT)
@@ -232,7 +101,6 @@ jobs:
             if [ -f \"\$CAROOT/rootCA.pem\" ]; then
               sudo cp \"\$CAROOT/rootCA.pem\" /usr/local/share/ca-certificates/mkcert-cheeblr.crt
               sudo update-ca-certificates
-              echo 'mkcert CA installed into system trust store'
             fi
           "
 
@@ -241,15 +109,11 @@ jobs:
           PGDATA: /tmp/cheeblr-pgdata
         run: nix develop --accept-flake-config --command test-integration-tls
 
-  # ─────────────────────────────────────────────────────────────
-  # Summary
-  # ─────────────────────────────────────────────────────────────
   ci-ok:
     name: All CI checks passed
     runs-on: ubuntu-latest
     needs: [build, unit-tests, integration-http, integration-tls]
     if: always()
-
     steps:
       - name: Check all jobs succeeded
         run: |
@@ -257,7 +121,6 @@ jobs:
           failures=$(echo "$results" | grep -o '"result":"failure"' | wc -l)
           cancelled=$(echo "$results" | grep -o '"result":"cancelled"' | wc -l)
           if [ "$failures" -gt 0 ] || [ "$cancelled" -gt 0 ]; then
-            echo "One or more CI jobs failed or were cancelled."
             echo "$results"
             exit 1
           fi
