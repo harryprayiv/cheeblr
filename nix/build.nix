@@ -111,20 +111,23 @@ let
       devShells = let
         shell = pkgs.mkShell {
           inherit name;
-
           inputsFrom = [
             backendFlake.devShells.default
             devshellModule.devShell
           ];
-
           buildInputs = [
             (ps.command { })
             purescript-language-server
             purs-tidy
           ];
         };
+        ciShell = import ./ci-shell.nix {
+            inherit pkgs lib name system;
+            inherit backendFlake purs-nix-instance purescript psDependencies;
+        };
       in {
         default = shell;
+        ci      = ciShell;
       };
 
 

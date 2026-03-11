@@ -9,9 +9,36 @@ on:
     - cron: "0 0 * * 0"
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Reusable step fragments (YAML anchors)
+# ---------------------------------------------------------------------------
+x-nix-setup: &nix-setup
+  uses: cachix/install-nix-action@v27
+  with:
+    github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    extra_nix_config: |
+      experimental-features = nix-command flakes ca-derivations
+      allow-import-from-derivation = true
+      substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
+      trusted-substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
+      trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixpkgs.cachix.org-1:q91R6hxbwFvDqTSDKwDAV4T5PxqXGxswD8vhONFMeOE= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
+
+x-nix-cache: &nix-cache
+  uses: nix-community/cache-nix-action@v6
+  with:
+    primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+    restore-prefixes-first-match: nix-store-${{ runner.os }}-
+    gc-max-store-size-linux: 8G
+    save-always: true
+
+# ---------------------------------------------------------------------------
 
 jobs:
   build:
@@ -19,24 +46,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - *nix-setup
+      - *nix-cache
 
-      - uses: cachix/install-nix-action@v27
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixpkgs.cachix.org-1:q91R6hxbwFvDqTSDKwDAV4T5PxqXGxswD8vhONFMeOE= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
-
-      - uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
-
-      - name: Build
+      - name: Build default package
         run: nix build --accept-flake-config
 
   unit-tests:
@@ -45,25 +58,12 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixpkgs.cachix.org-1:q91R6hxbwFvDqTSDKwDAV4T5PxqXGxswD8vhONFMeOE= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
-
-      - uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
+      - *nix-setup
+      - *nix-cache
 
       - name: Run unit tests
-        run: nix develop --accept-flake-config --command test-unit
+        # Uses the lean .#ci shell — no VSCodium, Alacritty, pgadmin, sops, etc.
+        run: nix develop --accept-flake-config .#ci --command test-unit
 
   integration-http:
     name: Integration tests (HTTP)
@@ -71,22 +71,8 @@ jobs:
     needs: unit-tests
     steps:
       - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixpkgs.cachix.org-1:q91R6hxbwFvDqTSDKwDAV4T5PxqXGxswD8vhONFMeOE= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
-
-      - uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
+      - *nix-setup
+      - *nix-cache
 
       - name: Build backend binary
         run: nix build --accept-flake-config .#backend
@@ -95,7 +81,7 @@ jobs:
         env:
           PGDATA: /tmp/cheeblr-pgdata
           BACKEND_BIN: ${{ github.workspace }}/result/bin/cheeblr-backend
-        run: nix develop --accept-flake-config --command test-integration
+        run: nix develop --accept-flake-config .#ci --command test-integration
 
   integration-tls:
     name: Integration tests (TLS)
@@ -103,29 +89,15 @@ jobs:
     needs: integration-http
     steps:
       - uses: actions/checkout@v4
-
-      - uses: cachix/install-nix-action@v27
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes ca-derivations
-            allow-import-from-derivation = true
-            substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-substituters = https://cache.iog.io https://cache.nixos.org https://nixpkgs.cachix.org https://hercules-ci.cachix.org
-            trusted-public-keys = hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ= cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= nixpkgs.cachix.org-1:q91R6hxbwFvDqTSDKwDAV4T5PxqXGxswD8vhONFMeOE= hercules-ci.cachix.org-1:ZZeDl9Va+xe9j+KqdzoBZMFJHVQ42Uu/c/1/KMC5Lw0=
-
-      - uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-store-${{ runner.os }}-${{ hashFiles('flake.lock') }}
-          restore-prefixes-first-match: nix-store-${{ runner.os }}-
-          gc-max-store-size-linux: 8G
+      - *nix-setup
+      - *nix-cache
 
       - name: Build backend binary
         run: nix build --accept-flake-config .#backend
 
       - name: Install mkcert CA
         run: |
-          nix develop --accept-flake-config --command bash -c "
+          nix develop --accept-flake-config .#ci --command bash -c "
             CAROOT=\$(mkcert -CAROOT)
             mkdir -p \"\$CAROOT\"
             mkcert -install || true
@@ -139,7 +111,7 @@ jobs:
         env:
           PGDATA: /tmp/cheeblr-pgdata
           BACKEND_BIN: ${{ github.workspace }}/result/bin/cheeblr-backend
-        run: nix develop --accept-flake-config --command test-integration-tls
+        run: nix develop --accept-flake-config .#ci --command test-integration-tls
 
   ci-ok:
     name: All CI checks passed
