@@ -5,6 +5,7 @@
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Core Components](#core-components)
+- [State Machine Layer](#state-machine-layer)
 - [Authentication & Authorization](#authentication--authorization)
 - [API Reference](#api-reference)
 - [Data Models](#data-models)
@@ -18,57 +19,75 @@
 
 The Cheeblr backend is a Haskell-based API server built for inventory and transaction management in cannabis dispensary retail operations. It provides inventory tracking with reservation-based availability, point-of-sale transaction processing, cash register operations, compliance verification, and financial reporting stubs.
 
-The system uses a layered architecture with Servant for type-safe API definitions and PostgreSQL for persistence. All monetary values are stored as integer cents to avoid floating-point rounding.
+The system uses a layered architecture with Servant for type-safe API definitions and PostgreSQL for persistence. State machine transitions for transactions and registers are enforced at compile time via [crem](https://github.com/tweag/crem), a library that encodes state machine topologies as type-level constraints. All monetary values are stored as integer cents to avoid floating-point rounding.
+
+For a detailed treatment of what crem adds to the codebase and how it compares to full dependent types, see [Crem.md](./Crem.md).
 
 ## Architecture
 
 ### Architectural Layers
 
-1. **API Layer** (`API/`): Type-level API definitions using Servant's DSL. `API.Inventory` defines the inventory CRUD endpoints with auth headers. `API.Transaction` defines the POS, register, ledger, and compliance endpoints plus all request/response types that aren't domain models.
+1. **API Layer** (`API/`): Type-level API definitions using Servant's DSL. `API.Inventory` defines the inventory CRUD endpoints with auth headers. `API.Transaction` defines the POS, register, ledger, and compliance endpoints plus all request/response types that are not domain models.
 2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`): Request handlers. `Server` handles inventory endpoints with capability checks. `Server.Transaction` implements all POS subsystem handlers (transactions, registers, ledger, compliance).
-3. **Database Layer** (`DB/`): `DB.Database` handles inventory CRUD and connection pooling. `DB.Transaction` handles all transaction, register, reservation, and payment database operations.
-4. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
-5. **Types Layer** (`Types/`): Domain models — `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities).
-6. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, middleware setup.
+3. **Service Layer** (`Service/`): Business logic that sits between the server and database layers for state-machine-backed operations. `Service.Transaction` and `Service.Register` load domain state, run the relevant state machine transition to validate the command, and only proceed to the database if the transition is legal.
+4. **State Machine Layer** (`State/`): Compile-time-enforced state machine definitions built on crem. `State.TransactionMachine` and `State.RegisterMachine` define the vertex types, GADT-indexed state types, topologies, commands, events, and transition functions. No IO. No database access. Pure transition logic only.
+5. **Database Layer** (`DB/`): `DB.Database` handles inventory CRUD and connection pooling. `DB.Transaction` handles all transaction, register, reservation, and payment database operations.
+6. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
+7. **Types Layer** (`Types/`): Domain models — `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities).
+8. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, TLS configuration, middleware setup.
 
 ### Key Technologies
 
 | Concern | Library |
 |---|---|
 | API definition | **Servant** — type-level web DSL |
+| State machine enforcement | **crem** — topology-indexed state machines |
+| Singleton types | **singletons-base** — bridges type-level and value-level universe |
 | Database | **postgresql-simple** with `sql` quasiquoter |
 | Connection pooling | **resource-pool** (`Data.Pool`) |
-| HTTP server | **Warp** |
+| HTTP server | **Warp** / **warp-tls** |
 | JSON | **Aeson** (derived + manual instances) |
 | CORS | **wai-cors** with custom OPTIONS middleware |
 | UUID generation | **uuid** + **uuid-v4** (`Data.UUID.V4.nextRandom`) |
 
 ### System Flow
 
+**Inventory operations:**
+
 1. Warp receives request, custom OPTIONS middleware handles preflight
 2. `wai-cors` applies CORS headers
 3. Servant routes to handler in `Server` (inventory) or `Server.Transaction` (POS subsystem)
 4. Inventory handlers extract user from `X-User-Id` header via `Auth.Simple.lookupUser`, check capabilities
-5. Handlers interact with database layer (`DB.Database` or `DB.Transaction`)
-6. Database layer uses connection pool, executes parameterized queries
-7. Results serialized as JSON and returned
+5. Handlers interact with `DB.Database`
+6. Results serialized as JSON and returned
+
+**State-machine-backed operations (transactions, registers):**
+
+1. Steps 1-3 above
+2. Server handler delegates to the appropriate `Service` function
+3. Service layer loads the current entity from the database
+4. `fromTransaction` or `fromRegister` promotes the DB row into a `SomeTxState` or `SomeRegState` existential
+5. `runTxCommand` or `runRegCommand` runs the transition function against the promoted state, returning an event and a next state
+6. If the event is `InvalidTxCommand` or `InvalidRegCommand`, the service throws `err409` immediately — no database write occurs
+7. If the transition is valid, the service calls the corresponding `DB.Transaction` function to persist the change
+8. Result serialized as JSON and returned
 
 ## Core Components
 
 ### Main Application (`App.hs`)
 
-Bootstraps the server: reads system username for DB config, initializes connection pool, creates all tables, configures CORS, and starts Warp on port 8080.
+Bootstraps the server: reads environment variables for DB and server config, initializes the connection pool, creates all tables, configures CORS, conditionally enables TLS, and starts Warp.
 
 ```haskell
 data AppConfig = AppConfig
-  { dbConfig :: DBConfig
-  , serverPort :: Int
+  { dbConfig    :: DBConfig
+  , serverPort  :: Int
+  , tlsCertFile :: Maybe FilePath
+  , tlsKeyFile  :: Maybe FilePath
   }
 ```
 
-Default configuration:
-- **Database**: `localhost:5432/cheeblr`, current system user, password `"postgres"`, pool size 10
-- **Server**: port 8080, binds all interfaces
+Environment variables: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PORT`, `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE`. All have defaults. When `USE_TLS=true` and both cert/key files exist on disk, the server starts with `runTLS`; otherwise it falls back to plain HTTP.
 
 CORS is configured to allow any origin (`corsOrigins = Nothing`) with all standard methods and custom headers (`x-requested-with`, `x-user-id`). A separate `handleOptionsMiddleware` intercepts `OPTIONS` requests directly to handle preflight before Servant routing.
 
@@ -81,9 +100,7 @@ combinedServer :: Pool Connection -> Server API
 combinedServer pool = inventoryServer pool :<|> posServerImpl pool
 ```
 
-`inventoryServer` handles the four inventory CRUD endpoints. Each handler extracts the user from the `X-User-Id` header via `lookupUser`, derives capabilities from the user's role, and gates write operations behind capability checks (`capCanCreateItem`, `capCanEditItem`, `capCanDeleteItem`). Read (GET) is allowed for all authenticated users.
-
-The inventory GET response includes the user's `UserCapabilities` alongside the inventory data, allowing the frontend to render UI based on permissions.
+`inventoryServer` handles the five inventory endpoints (four CRUD plus `/session`). Each handler extracts the user from the `X-User-Id` header via `lookupUser`, derives capabilities from the user's role, and gates write operations behind capability checks (`capCanCreateItem`, `capCanEditItem`, `capCanDeleteItem`). Read (GET) is allowed for all authenticated users.
 
 ### POS Server (`Server/Transaction.hs`)
 
@@ -101,6 +118,245 @@ Four sub-servers compose the POS API:
 - **registerServer**: Register CRUD, open/close operations
 - **ledgerServer**: Stub implementations — returns empty lists or `501 Not Implemented`
 - **complianceServer**: Stub implementations — echoes verification, returns `501` for record lookup, returns placeholder report
+
+### Service Layer (`Service/Transaction.hs`, `Service/Register.hs`)
+
+The service layer is the integration point between the server handlers and the state machines. Its responsibilities are narrow: load state, validate the transition, delegate to the database.
+
+```haskell
+-- Service.Transaction
+addItem    :: Pool Connection -> TransactionItem    -> Handler TransactionItem
+removeItem :: Pool Connection -> UUID               -> Handler NoContent
+addPayment :: Pool Connection -> PaymentTransaction -> Handler PaymentTransaction
+removePayment :: Pool Connection -> UUID            -> Handler NoContent
+finalizeTx :: Pool Connection -> UUID              -> Handler Transaction
+voidTx     :: Pool Connection -> UUID -> Text      -> Handler Transaction
+refundTx   :: Pool Connection -> UUID -> Text      -> Handler Transaction
+```
+
+```haskell
+-- Service.Register
+openRegister  :: Pool Connection -> UUID -> OpenRegisterRequest  -> Handler Register
+closeRegister :: Pool Connection -> UUID -> CloseRegisterRequest -> Handler CloseRegisterResult
+```
+
+The common pattern throughout both modules is:
+
+```haskell
+loadTx :: Pool Connection -> UUID -> Handler (Transaction, SomeTxState)
+loadTx pool txId = do
+  maybeTx <- liftIO $ DB.getTransactionById pool txId
+  case maybeTx of
+    Nothing -> throwError err404 { errBody = "Transaction not found" }
+    Just tx -> pure (tx, fromTransaction tx)
+
+guardEvent :: TxEvent -> Handler ()
+guardEvent (InvalidTxCommand msg) =
+  throwError err409 { errBody = LBS.fromStrict (TE.encodeUtf8 msg) }
+guardEvent _ = pure ()
+```
+
+`loadTx` hydrates the `SomeTxState` from the database row. `guardEvent` inspects the event that the state machine emitted and short-circuits with `409 Conflict` if the transition was rejected. Only after `guardEvent` passes does the service call the database write function. The state machine never touches IO; all effects are the service layer's responsibility.
+
+## State Machine Layer
+
+### Design Philosophy
+
+Before crem, transaction and register state transitions were enforced entirely by convention and tests. A handler could attempt to finalize a voided transaction and the type system would not object. The state machine layer promotes those invariants into compile-time proof obligations. The topology of each machine is a type, not a comment, and every transition clause must satisfy it or the project will not build.
+
+### Key Technologies Used
+
+crem uses several GHC extensions to achieve this:
+
+- **`DataKinds`**: Promotes value-level constructors (e.g. `RegClosed`) to type-level inhabitants (e.g. `'RegClosed :: RegVertex`), allowing them to appear as type indices
+- **`GADTs`**: Enables state types indexed by vertex, giving GHC local type equality witnesses at each pattern match branch
+- **`TypeFamilies`** and **`singletons-base`**: Bridge the types-versus-values gap. Since GHC erases types at runtime, a promoted type like `'RegClosed` cannot be inspected at runtime. The `singletons` machinery generates a parallel `SRegVertex` type whose constructors (`SRegClosed`, `SRegOpen`) live at both levels simultaneously
+
+### `State.RegisterMachine`
+
+Manages the `Closed / Open` lifecycle of a cash register.
+
+#### Topology
+
+```haskell
+$(singletons [d|
+  data RegVertex = RegClosed | RegOpen deriving (Eq, Show)
+  |])
+
+type RegTopology = 'Topology
+  '[ '( 'RegClosed, '[ 'RegClosed, 'RegOpen])
+   , '( 'RegOpen,   '[ 'RegOpen,   'RegClosed])
+   ]
+```
+
+`RegClosed` can transition to itself or to `RegOpen`. `RegOpen` can transition to itself or to `RegClosed`. Any `regAction` clause that attempts to return a state at a vertex not in the successor list for the current vertex will fail to compile.
+
+#### State Type
+
+```haskell
+data RegState (v :: RegVertex) where
+  ClosedState :: Register -> RegState 'RegClosed
+  OpenState   :: Register -> RegState 'RegOpen
+```
+
+The GADT index `v` is a phantom at runtime but a hard constraint at compile time. `regAction (ClosedState reg) cmd` can only return states whose vertex type is in `successors 'RegClosed`.
+
+#### Existential Wrapper
+
+```haskell
+data SomeRegState = forall v. SomeRegState (SRegVertex v) (RegState v)
+```
+
+The existential is necessary because `fromRegister` determines the vertex at runtime by inspecting `registerIsOpen`. The singleton `SRegVertex v` travels alongside the state so that callers can recover vertex information by pattern-matching on it without losing the type-index connection to the state.
+
+#### Commands and Events
+
+```haskell
+data RegCommand
+  = OpenRegCmd  UUID Int   -- employee id, starting cash
+  | CloseRegCmd UUID Int   -- employee id, counted cash
+
+data RegEvent
+  = RegOpened         Register
+  | RegWasClosed      Register Int   -- register, variance
+  | InvalidRegCommand Text
+```
+
+#### Transition Function
+
+```haskell
+regAction :: RegState v -> RegCommand -> ActionResult Identity RegTopology RegState v RegEvent
+```
+
+`ActionResult` is a crem type that wraps the next state in a way that lets the library verify, at the type level, that the next-state vertex is reachable from `v` in `RegTopology`. Attempting to return an `OpenState` from a `(ClosedState reg, CloseRegCmd _ _)` branch produces a compile error.
+
+Variance is computed purely inside `regAction`:
+
+```haskell
+regAction (OpenState reg) (CloseRegCmd _ countedCash) =
+  let variance = registerExpectedDrawerAmount reg - countedCash
+      closed   = reg { registerIsOpen = False, registerCurrentDrawerAmount = countedCash }
+  in pureResult (RegWasClosed closed variance) (ClosedState closed)
+```
+
+Invalid commands (e.g. opening an already-open register) produce `InvalidRegCommand` and leave the state unchanged, which is legal since both vertices include themselves in their successor lists.
+
+#### Entry Point
+
+```haskell
+runRegCommand :: SomeRegState -> RegCommand -> (RegEvent, SomeRegState)
+runRegCommand (SomeRegState _ st) cmd =
+  case regAction st cmd of
+    ActionResult m ->
+      let (evt, nextSt) = runIdentity m
+      in  (evt, toSomeRegState nextSt)
+```
+
+### `State.TransactionMachine`
+
+Manages the full transaction lifecycle.
+
+#### Topology
+
+```haskell
+$(singletons [d|
+  data TxVertex
+    = TxCreated | TxInProgress | TxCompleted | TxVoided | TxRefunded
+    deriving (Eq, Show)
+  |])
+
+type TxTopology = 'Topology
+  '[ '( 'TxCreated,    '[ 'TxCreated,    'TxInProgress, 'TxVoided])
+   , '( 'TxInProgress, '[ 'TxInProgress, 'TxCompleted,  'TxVoided])
+   , '( 'TxCompleted,  '[ 'TxCompleted,  'TxVoided,     'TxRefunded])
+   , '( 'TxVoided,     '[ 'TxVoided])
+   , '( 'TxRefunded,   '[ 'TxRefunded])
+   ]
+```
+
+Terminal states (`TxVoided`, `TxRefunded`) only list themselves as successors. Any attempt to transition out of them produces a compile error. `TxCreated` can only reach `TxInProgress` via `AddItemCmd`, not directly reach `TxCompleted` — the type system enforces that finalization requires passing through `InProgress`.
+
+#### State Type
+
+```haskell
+data TxState (v :: TxVertex) where
+  CreatedState    :: T.Transaction -> TxState 'TxCreated
+  InProgressState :: T.Transaction -> TxState 'TxInProgress
+  CompletedState  :: T.Transaction -> TxState 'TxCompleted
+  VoidedState     :: T.Transaction -> TxState 'TxVoided
+  RefundedState   :: T.Transaction -> TxState 'TxRefunded
+```
+
+#### Commands and Events
+
+```haskell
+data TxCommand
+  = AddItemCmd       T.TransactionItem
+  | RemoveItemCmd    UUID
+  | AddPaymentCmd    T.PaymentTransaction
+  | RemovePaymentCmd UUID
+  | FinalizeCmd
+  | VoidCmd          Text
+  | RefundCmd        Text UUID
+
+data TxEvent
+  = ItemAdded        T.TransactionItem
+  | ItemRemoved      UUID
+  | PaymentAdded     T.PaymentTransaction
+  | PaymentRemoved   UUID
+  | TxFinalized
+  | TxWasVoided      Text
+  | TxWasRefunded    Text UUID
+  | InvalidTxCommand Text
+```
+
+#### Selected Transition Clauses
+
+```haskell
+-- First item addition transitions Created -> InProgress
+txAction (CreatedState tx) (AddItemCmd item) =
+  pureResult (ItemAdded item)
+    (InProgressState tx { T.transactionStatus = T.InProgress })
+
+-- Finalization transitions InProgress -> Completed
+txAction (InProgressState tx) FinalizeCmd =
+  pureResult TxFinalized
+    (CompletedState tx { T.transactionStatus = T.Completed })
+
+-- Refund only available from Completed
+txAction (CompletedState tx) (RefundCmd reason refundId) =
+  pureResult (TxWasRefunded reason refundId)
+    (RefundedState tx { T.transactionStatus = T.Refunded, ... })
+
+-- Terminal states reject everything
+txAction (VoidedState   tx) _ =
+  pureResult (InvalidTxCommand "Transaction is voided")   (VoidedState   tx)
+txAction (RefundedState tx) _ =
+  pureResult (InvalidTxCommand "Transaction is refunded") (RefundedState tx)
+```
+
+The `cmdLabel` helper produces readable error messages for the catch-all invalid-command clauses at each non-terminal vertex.
+
+### `fromTransaction` and `fromRegister`
+
+These functions are the bridge from the database layer into the state machine layer:
+
+```haskell
+fromTransaction :: T.Transaction -> SomeTxState
+fromTransaction tx = case T.transactionStatus tx of
+  T.Created    -> SomeTxState STxCreated    (CreatedState    tx)
+  T.InProgress -> SomeTxState STxInProgress (InProgressState tx)
+  T.Completed  -> SomeTxState STxCompleted  (CompletedState  tx)
+  T.Voided     -> SomeTxState STxVoided     (VoidedState     tx)
+  T.Refunded   -> SomeTxState STxRefunded   (RefundedState   tx)
+
+fromRegister :: Register -> SomeRegState
+fromRegister reg
+  | registerIsOpen reg = SomeRegState SRegOpen   (OpenState   reg)
+  | otherwise          = SomeRegState SRegClosed (ClosedState reg)
+```
+
+These are total functions. Every possible database state maps to exactly one vertex. The singleton constructor (`STxCreated`, `SRegOpen`, etc.) carried in the existential is what allows downstream code to recover the vertex without losing the type index.
 
 ## Authentication & Authorization
 
@@ -165,24 +421,7 @@ data UserRole = Customer | Cashier | Manager | Admin
 requireAuth :: Maybe Text -> (UserCapabilities -> Bool) -> Text -> Handler AuthenticatedUser
 ```
 
-It looks up the user, checks the capability predicate, and either returns the user or throws `err403`. Currently, only inventory write endpoints use explicit capability checks (directly in handlers rather than via `requireAuth`). Transaction endpoints do not yet enforce capabilities.
-
-### InventoryResponse with Capabilities
-
-The `GET /inventory` response includes the requesting user's capabilities:
-
-```haskell
-data InventoryResponse
-  = InventoryData { inventoryItems :: Inventory, inventoryCapabilities :: UserCapabilities }
-  | Message Text
-```
-
-JSON shape for `InventoryData`:
-```json
-{ "type": "data", "value": [...items...], "capabilities": {...} }
-```
-
-This allows the frontend to gate UI elements without a separate capabilities endpoint.
+It looks up the user, checks the capability predicate, and either returns the user or throws `err403`. Currently, only inventory write endpoints use explicit capability checks (directly in handlers rather than via `requireAuth`). Transaction and register endpoints do not yet enforce capabilities — the state machine layer validates transition legality but not caller authorization.
 
 ## API Reference
 
@@ -192,10 +431,12 @@ All inventory endpoints require the `X-User-Id` header.
 
 | Method | Endpoint | Auth | Description |
 |---|---|---|---|
-| GET | `/inventory` | Any role | Returns all inventory items with user capabilities |
+| GET | `/inventory` | Any role | Returns all inventory items |
 | POST | `/inventory` | `capCanCreateItem` | Add a new menu item |
 | PUT | `/inventory` | `capCanEditItem` | Update an existing menu item |
 | DELETE | `/inventory/:sku` | `capCanDeleteItem` | Delete a menu item by SKU UUID |
+| GET | `/session` | Any role | Returns user role and capabilities |
+| POST | `/graphql/inventory` | Any role | GraphQL endpoint for inventory queries and mutations |
 
 **Note**: `GET /inventory` returns `available_quantity` (stock minus active reservations) rather than raw `quantity`, via a LEFT JOIN on `inventory_reservation`.
 
@@ -216,6 +457,8 @@ All inventory endpoints require the `X-User-Id` header.
 | POST | `/transaction/finalize/:id` | Finalize transaction (commits reservations, decrements stock) |
 | POST | `/transaction/clear/:id` | Clear all items/payments, release reservations, reset totals |
 
+State machine validation applies to all item, payment, finalize, void, and refund operations. Illegal transitions return `409 Conflict` with the rejection message as the response body.
+
 ### Inventory Availability Endpoints
 
 | Method | Endpoint | Description |
@@ -234,6 +477,8 @@ All inventory endpoints require the `X-User-Id` header.
 | PUT | `/register/:id` | Update a register |
 | POST | `/register/open/:id` | Open register with starting cash |
 | POST | `/register/close/:id` | Close register, report variance |
+
+Open and close operations pass through `Service.Register`, which validates the transition via `State.RegisterMachine` before writing. Attempting to open an already-open register or close an already-closed register returns `409 Conflict`.
 
 ### Ledger Endpoints (stubs)
 
@@ -290,17 +535,13 @@ data StrainLineage = StrainLineage
 - **Species**: `Indica | IndicaDominantHybrid | Hybrid | SativaDominantHybrid | Sativa` — derived `FromJSON`/`ToJSON`
 - **ItemCategory**: `Flower | PreRolls | Vaporizers | Edibles | Drinks | Concentrates | Topicals | Tinctures | Accessories` — derived `FromJSON`/`ToJSON`
 
-#### Inventory & InventoryResponse
+#### Inventory
 
 ```haskell
 newtype Inventory = Inventory { items :: V.Vector MenuItem }
-
-data InventoryResponse
-  = InventoryData { inventoryItems :: Inventory, inventoryCapabilities :: UserCapabilities }
-  | Message Text
 ```
 
-`Inventory` serializes as a bare JSON array (custom `ToJSON`/`FromJSON`). `InventoryResponse` serializes as `{ "type": "data"|"message", "value": ..., "capabilities": ... }`.
+`Inventory` serializes as a bare JSON array (custom `ToJSON`/`FromJSON`).
 
 ### Transaction Models (`Types/Transaction.hs`)
 
@@ -664,20 +905,21 @@ CREATE TABLE IF NOT EXISTS inventory_reservation (
 ### Transaction Lifecycle
 
 1. **Creation** (`POST /transaction`): Transaction created with status `CREATED`, zero totals, empty items/payments. Checks for duplicate transaction IDs.
-2. **Item Addition** (`POST /transaction/item`): Validates inventory availability (stock minus active reservations), creates an `inventory_reservation` with status `"Reserved"`, inserts the transaction item with associated taxes and discounts.
-3. **Payment Addition** (`POST /transaction/payment`): Inserts payment, then auto-updates transaction status — if total payments ≥ transaction total, status becomes `COMPLETED`, otherwise `IN_PROGRESS`.
-4. **Finalization** (`POST /transaction/finalize/:id`): Decrements actual `menu_items.quantity` by reserved amounts, changes reservation status from `"Reserved"` to `"Completed"`, sets transaction status to `COMPLETED` with completion timestamp.
+2. **Item Addition** (`POST /transaction/item`): `Service.Transaction.addItem` loads the transaction, calls `runTxCommand` with `AddItemCmd`. The state machine validates the transition (only `Created` and `InProgress` states accept items). If valid, validates inventory availability (stock minus active reservations), creates an `inventory_reservation` with status `"Reserved"`, inserts the transaction item with associated taxes and discounts.
+3. **Payment Addition** (`POST /transaction/payment`): `Service.Transaction.addPayment` validates the transition via `AddPaymentCmd`, then inserts the payment and auto-updates transaction status — if total payments >= transaction total, status becomes `COMPLETED`, otherwise `IN_PROGRESS`.
+4. **Finalization** (`POST /transaction/finalize/:id`): `Service.Transaction.finalizeTx` validates via `FinalizeCmd` (only `InProgress` transactions can be finalized). Decrements actual `menu_items.quantity` by reserved amounts, changes reservation status from `"Reserved"` to `"Completed"`, sets transaction status to `COMPLETED` with completion timestamp.
 
 ### Transaction Reversal Operations
 
-**Void** (`POST /transaction/void/:id`): Sets status to `VOIDED`, marks `is_voided = TRUE`, records reason. Does not create a new transaction or reverse inventory.
+**Void** (`POST /transaction/void/:id`): `Service.Transaction.voidTx` validates via `VoidCmd`. The state machine permits voiding from `Created`, `InProgress`, and `Completed`. Terminal states (`Voided`, `Refunded`) reject the command at the machine level. Sets status to `VOIDED`, marks `is_voided = TRUE`, records reason. Does not create a new transaction or reverse inventory.
 
-**Refund** (`POST /transaction/refund/:id`): Creates a new inverse transaction with negated monetary amounts, type `Return`, referencing the original transaction. Marks the original as `is_refunded = TRUE`. The refund transaction gets its own UUID and items/payments are negated copies of the original.
+**Refund** (`POST /transaction/refund/:id`): `Service.Transaction.refundTx` validates via `RefundCmd`. Only `Completed` transactions can be refunded — the topology enforces this. Creates a new inverse transaction with negated monetary amounts, type `Return`, referencing the original transaction. Marks the original as `is_refunded = TRUE`.
 
 ### Clear Transaction (`POST /transaction/clear/:id`)
 
-Resets a transaction to empty state:
-1. Releases all active reservations (status → `"Released"`)
+Resets a transaction to empty state without passing through the state machine (clear is an operational reset, not a domain transition):
+
+1. Releases all active reservations (status to `"Released"`)
 2. Deletes all taxes, discounts, transaction items, and payments
 3. Resets monetary totals to 0
 4. Sets status back to `CREATED`
@@ -748,16 +990,20 @@ Two layers of CORS handling:
    - `corsMaxAge = 86400` (24 hours)
    - `corsIgnoreFailures = True`
 
+### TLS Configuration
+
+When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, the server starts with `warp-tls`. If the files are missing, it logs a warning and falls back to plain HTTP. The `onException` handler suppresses `TLSException` noise from client disconnects. Intended for use with mkcert-generated local certificates.
+
 ### Server Configuration
 
 | Setting | Value |
 |---|---|
-| Port | 8080 |
-| DB host | localhost |
-| DB port | 5432 |
-| DB name | cheeblr |
-| DB user | Current system user (`getLoginName`) |
-| DB password | `"postgres"` |
+| Port | `PORT` env var, default 8080 |
+| DB host | `PGHOST` env var, default `localhost` |
+| DB port | `PGPORT` env var, default 5432 |
+| DB name | `PGDATABASE` env var, default `cheeblr` |
+| DB user | `PGUSER` env var, default current system user |
+| DB password | `PGPASSWORD` env var, default bootstrap fallback string |
 | Pool size | 10 |
 | Pool idle timeout | 0.5 seconds |
 | Pool max connections | 10 |
@@ -768,9 +1014,31 @@ Two layers of CORS handling:
 
 - `API/` — Servant type definitions and request/response types. No business logic.
 - `Auth/` — Authentication/authorization. Currently dev-only with fixed users.
-- `Server/` and `Server.hs` — Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`.
+- `State/` — State machine definitions. Pure functions only. No IO, no database access, no Servant. `State.TransactionMachine` and `State.RegisterMachine` each define a vertex type, a GADT-indexed state type, a promoted topology, commands, events, and a transition function. Adding a new state machine means adding a new module here.
+- `Service/` — Business logic combining state machine validation with database effects. Each function follows the pattern: load entity, call `fromX` to promote to state machine type, call `runXCommand`, call `guardEvent`, call database function. No SQL lives here.
+- `Server/` and `Server.hs` — Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`. Handlers should delegate state-machine-backed operations to `Service/` rather than calling the database directly.
 - `DB/` — Database operations. Parameterized queries, connection pooling, all SQL lives here.
 - `Types/` — Domain models with serialization instances. No effects.
+
+### State Machine Patterns
+
+**Adding a new vertex**: Add the constructor to the `TxVertex` or `RegVertex` data type inside the `$(singletons [d| ... |])` splice. Update the `Topology` type to include the new vertex with its successor list. Add a new `TxState` or `RegState` GADT constructor. Add a `toSomeTxState` / `fromTransaction` clause. GHC will then enumerate every `txAction` clause that needs a new branch.
+
+**Adding a new command**: Add to `TxCommand` or `RegCommand`. Add the corresponding event to `TxEvent` or `RegEvent`. Add `txAction` / `regAction` clauses for every vertex that should accept the command. The `cmdLabel` catch-all clauses will handle rejection at vertices that do not.
+
+**Recovering the vertex at runtime**: Pattern-match on the singleton carried in the `SomeRegState` or `SomeTxState` existential:
+
+```haskell
+vertexOf :: SomeTxState -> TxVertex
+vertexOf (SomeTxState sv _) = case sv of
+  STxCreated    -> TxCreated
+  STxInProgress -> TxInProgress
+  ...
+```
+
+The `{-# LANGUAGE GADTs #-}` pragma is required in any module that does this, because each case branch refines the type index and `GADTs` implies `MonoLocalBinds`, which ensures that refinement does not escape its scope unsoundly.
+
+**Testing transitions**: Test files should use `case` expressions with explicit `expectationFailure` fallbacks rather than irrefutable `let` bindings, since `TxEvent` and `RegEvent` have multiple constructors and GHC cannot statically verify which one `runTxCommand` produces in a given test scenario.
 
 ### Database Patterns
 
@@ -788,6 +1056,7 @@ Enums are stored in the database as SCREAMING_SNAKE_CASE text (`"CREATED"`, `"IN
 ### Error Handling
 
 - Database operations use `try @SomeException` with descriptive error messages
+- State machine validation uses `guardEvent` in service functions, returning `err409` with the rejection message
 - Transaction item addition uses custom `InventoryException` types caught and converted to `err400` with JSON error bodies
 - Missing resources return `err404`
 - Unimplemented endpoints return `err501`
@@ -798,9 +1067,15 @@ Enums are stored in the database as SCREAMING_SNAKE_CASE text (`"CREATED"`, `"IN
 
 - **No real authentication**: `X-User-Id` header is trusted without verification. Default user is cashier, not admin.
 - **Backend default vs frontend default**: Backend defaults to `cashier-1` when no header provided; frontend sends admin UUID. This mismatch is harmless in dev but worth noting.
-- **Capability enforcement incomplete**: Only inventory write endpoints check capabilities. Transaction, register, and other endpoints do not enforce role-based access.
+- **Capability enforcement incomplete**: Only inventory write endpoints check capabilities. Transaction, register, and other endpoints do not enforce role-based access. The state machine layer validates transition legality but is orthogonal to authorization — a cashier could currently void a transaction.
 - **Ledger and compliance are stubs**: Endpoints exist and types are defined, but no database tables or real logic back them.
 - **`PaymentMethod.Other` text dropped on DB write**: `showPaymentMethod (Other text) = "OTHER"` — the custom text payload is lost in the database.
 - **`DiscountType` round-trip lossy**: `parseDiscountType` reconstructs from a `(Text, Maybe Int)` tuple, but `PercentOff` stores the percent as `Scientific` in Haskell while the DB stores it as a nullable `NUMERIC` on the discount row.
 - **No inventory reservation expiry**: Reservations with status `"Reserved"` persist indefinitely if a transaction is abandoned without being cleared or finalized.
 - **`error` calls in DB layer**: Several functions (e.g., `finalizeTransaction`, `refundTransaction`) use `error` for "impossible" states (record not found after insert/update), which would crash the server thread rather than returning an HTTP error.
+- **State machine and DB status can diverge**: `fromTransaction` trusts `transactionStatus` as stored in the database. If a DB write partially fails after a state machine transition was validated, the two can fall out of sync. There is no transaction-level rollback coordinating the state machine output with the DB write.
+- **`clear` bypasses the state machine**: `clearTransaction` resets a transaction to `CREATED` directly in the database without going through `runTxCommand`. This is intentional as an operational escape hatch, but it means the state machine topology does not govern the clear operation.
+
+---
+
+For a deeper look at the design tradeoffs in the state machine layer, including why singletons exist, what the GHC warnings mean, and how dependent types would change the picture, see [Crem.md](./Crem.md).
