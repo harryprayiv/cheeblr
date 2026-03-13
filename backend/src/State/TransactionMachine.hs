@@ -100,7 +100,7 @@ data TxCommand
   | FinalizeCmd
   | VoidCmd          Text
   | RefundCmd        Text UUID
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 data TxEvent
   = ItemAdded        T.TransactionItem
@@ -111,7 +111,7 @@ data TxEvent
   | TxWasVoided      Text
   | TxWasRefunded    Text UUID
   | InvalidTxCommand Text
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 txAction :: TxState v -> TxCommand -> ActionResult Identity TxTopology TxState v TxEvent
 
