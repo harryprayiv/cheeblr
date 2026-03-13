@@ -1225,3 +1225,21 @@ closeRegister pool registerId request = withConnection pool $ \conn -> do
             closeRegisterResultRegister = updatedRegister,
             closeRegisterResultVariance = variance
           }
+
+getTransactionIdByItemId :: ConnectionPool -> UUID -> IO (Maybe UUID)
+getTransactionIdByItemId pool itemId = withConnection pool $ \conn -> do
+  results <- query conn
+    "SELECT transaction_id FROM transaction_item WHERE id = ?"
+    (Only itemId)
+  case results of
+    [Only txId] -> pure (Just txId)
+    _           -> pure Nothing
+
+getTransactionIdByPaymentId :: ConnectionPool -> UUID -> IO (Maybe UUID)
+getTransactionIdByPaymentId pool paymentId = withConnection pool $ \conn -> do
+  results <- query conn
+    "SELECT transaction_id FROM payment_transaction WHERE id = ?"
+    (Only paymentId)
+  case results of
+    [Only txId] -> pure (Just txId)
+    _           -> pure Nothing

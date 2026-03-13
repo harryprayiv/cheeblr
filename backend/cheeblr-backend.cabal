@@ -33,6 +33,7 @@ common shared-properties
                 , postgresql-simple
                 , postgresql-libpq
                 , singletons-th
+                , singletons-base
                 , text
                 , uuid
                 , time
@@ -46,6 +47,7 @@ common shared-properties
                 , unix
                 , http-types
                 , case-insensitive
+                , crem
 
 library
     import: shared-properties
@@ -62,6 +64,10 @@ library
                    , API.Transaction
                    , GraphQL.Resolvers
                    , GraphQL.Schema
+                   , State.TransactionMachine
+                   , State.RegisterMachine
+                   , Service.Transaction
+                   , Service.Register
     build-depends: refined
                  , string-conversions
                  , filepath
