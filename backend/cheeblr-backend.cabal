@@ -97,6 +97,8 @@ test-suite cheeblr-unit-tests
         Test.DB.PureFunctionsSpec
         Test.GraphQL.SchemaSpec
         Test.GraphQL.ResolversSpec
+        Test.State.TransactionMachineSpec
+        Test.State.RegisterMachineSpec
     build-depends:
         cheeblr-backend
         , hspec

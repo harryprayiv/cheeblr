@@ -78,13 +78,13 @@ toSomeRegState = \case
 data RegCommand
   = OpenRegCmd  UUID Int
   | CloseRegCmd UUID Int
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 data RegEvent
   = RegOpened         Register
   | RegWasClosed      Register Int
   | InvalidRegCommand Text
-  deriving (Show, Generic)
+  deriving (Show, Eq, Generic)
 
 regAction :: RegState v -> RegCommand -> ActionResult Identity RegTopology RegState v RegEvent
 

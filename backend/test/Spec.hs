@@ -10,6 +10,8 @@ import qualified Test.API.TransactionSpec
 import qualified Test.DB.PureFunctionsSpec
 import qualified Test.GraphQL.SchemaSpec
 import qualified Test.GraphQL.ResolversSpec
+import qualified Test.State.TransactionMachineSpec
+import qualified Test.State.RegisterMachineSpec
 
 main :: IO ()
 main = hspec $ do
@@ -22,3 +24,5 @@ main = hspec $ do
     Test.DB.PureFunctionsSpec.spec
     Test.GraphQL.SchemaSpec.spec
     Test.GraphQL.ResolversSpec.spec
+    Test.State.TransactionMachineSpec.spec
+    Test.State.RegisterMachineSpec.spec
