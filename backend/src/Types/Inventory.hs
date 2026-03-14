@@ -9,12 +9,7 @@ import Data.OpenApi (ToSchema)
 import Data.Text (Text)
 import Data.UUID (UUID)
 import qualified Data.Vector as V
-import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
-import Database.PostgreSQL.Simple.ToField (ToField (..))
-import Database.PostgreSQL.Simple.ToRow (ToRow (..))
-import Database.PostgreSQL.Simple.Types (PGArray (..))
 import GHC.Generics (Generic)
-
 
 data Species
   = Indica
@@ -69,53 +64,6 @@ data MenuItem = MenuItem
   , strain_lineage :: StrainLineage
   } deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
-instance ToRow MenuItem where
-  toRow MenuItem {..} =
-    [ toField sort
-    , toField sku
-    , toField brand
-    , toField name
-    , toField price
-    , toField measure_unit
-    , toField per_package
-    , toField quantity
-    , toField (show category)
-    , toField subcategory
-    , toField description
-    , toField (PGArray $ V.toList tags)
-    , toField (PGArray $ V.toList effects)
-    ]
-
-instance FromRow MenuItem where
-  fromRow =
-    MenuItem
-      <$> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> (read <$> field)
-      <*> field
-      <*> field
-      <*> (V.fromList . fromPGArray <$> field)
-      <*> (V.fromList . fromPGArray <$> field)
-      <*> ( StrainLineage
-              <$> field
-              <*> field
-              <*> field
-              <*> field
-              <*> (read <$> field)
-              <*> field
-              <*> (V.fromList . fromPGArray <$> field)
-              <*> (V.fromList . fromPGArray <$> field)
-              <*> field
-              <*> field
-          )
-
--- | GET /inventory -- serialises as a plain JSON array.
 newtype Inventory = Inventory
   { items :: V.Vector MenuItem
   } deriving (Show, Eq, Generic, ToSchema)
@@ -126,7 +74,6 @@ instance ToJSON Inventory where
 instance FromJSON Inventory where
   parseJSON v = Inventory <$> parseJSON v
 
--- | Returned by POST / PUT / DELETE /inventory.
 data MutationResponse = MutationResponse
   { success :: Bool
   , message :: Text

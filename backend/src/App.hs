@@ -3,8 +3,6 @@
 module App where
 
 import Control.Exception (fromException)
-import DB.Database (initializeDB, createTables, DBConfig (..))
-import DB.Transaction (createTransactionTables)
 import Data.Maybe (fromMaybe)
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Char8 as B8
@@ -22,6 +20,8 @@ import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Posix.User (getEffectiveUserName)
 import API.OpenApi (cheeblrAPI)
+import DB.Database (DBConfig (..), initializeDB, createTables)
+import DB.Transaction (createTransactionTables)
 import Server (combinedServer)
 
 data AppConfig = AppConfig
@@ -35,10 +35,10 @@ run :: IO ()
 run = do
   currentUser <- getEffectiveUserName
 
-  envHost     <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
-  envDbPort   <- maybe 5432 read       <$> lookupEnv "PGPORT"
-  envPort     <- maybe 8080 read       <$> lookupEnv "PORT"
-  envDb       <- fromMaybe "cheeblr"   <$> lookupEnv "PGDATABASE"
+  envHost     <- fromMaybe "localhost"  <$> lookupEnv "PGHOST"
+  envDbPort   <- maybe (5432 :: Int) read <$> lookupEnv "PGPORT"
+  envPort     <- maybe 8080 read        <$> lookupEnv "PORT"
+  envDb       <- fromMaybe "cheeblr"    <$> lookupEnv "PGDATABASE"
   envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
   envPassword <- fromMaybe "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS" <$> lookupEnv "PGPASSWORD"
 
@@ -48,11 +48,11 @@ run = do
 
   let config = AppConfig
         { dbConfig = DBConfig
-            { dbHost     = envHost
-            , dbPort     = envDbPort
-            , dbName     = envDb
-            , dbUser     = envUser
-            , dbPassword = envPassword
+            { dbHost     = B8.pack envHost
+            , dbPort     = fromIntegral envDbPort
+            , dbName     = B8.pack envDb
+            , dbUser     = B8.pack envUser
+            , dbPassword = B8.pack envPassword
             , poolSize   = 10
             }
         , serverPort  = envPort
@@ -70,7 +70,8 @@ run = do
 
     corsPolicy = simpleCorsResourcePolicy
       { corsOrigins        = Nothing
-      , corsRequestHeaders = [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith, hXUserId]
+      , corsRequestHeaders =
+          [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith, hXUserId]
       , corsMethods        = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
       , corsMaxAge         = Just 86400
       , corsVaryOrigin     = False
@@ -84,9 +85,10 @@ run = do
 
     appWithOptions = handleOptionsMiddleware app
 
-    warpSettings = Warp.setPort (serverPort config)
-                 $ Warp.setHost "*"
-                 $ Warp.setOnException onEx Warp.defaultSettings
+    warpSettings =
+      Warp.setPort (serverPort config)
+      $ Warp.setHost "*"
+      $ Warp.setOnException onEx Warp.defaultSettings
       where
         onEx _ e = case fromException e :: Maybe TLSException of
           Just _  -> pure ()
@@ -112,7 +114,7 @@ run = do
           putStrLn $ "  Key exists:  " ++ show keyExists  ++ " (" ++ key  ++ ")"
           Warp.runSettings warpSettings appWithOptions
     _ -> do
-      putStrLn $ "Starting http server on port " ++ show (serverPort config)
+      putStrLn $ "Starting HTTP server on port " ++ show (serverPort config)
       putStrLn "=================================="
       putStrLn $ "http://YOUR_MACHINE_IP:" ++ show (serverPort config)
       putStrLn "=================================="
@@ -128,6 +130,7 @@ handleOptionsMiddleware app req responder =
       [ (hContentType,                                          B8.pack "text/plain")
       , (CI.mk $ B8.pack "Access-Control-Allow-Origin",        B8.pack "*")
       , (CI.mk $ B8.pack "Access-Control-Allow-Methods",       B8.pack "GET, POST, PUT, DELETE, OPTIONS")
-      , (CI.mk $ B8.pack "Access-Control-Allow-Headers",       B8.pack "Content-Type, Authorization, Accept, Origin, Content-Length, x-requested-with, x-user-id")
+      , (CI.mk $ B8.pack "Access-Control-Allow-Headers",       B8.pack
+            "Content-Type, Authorization, Accept, Origin, Content-Length, x-requested-with, x-user-id")
       , (CI.mk $ B8.pack "Access-Control-Max-Age",             B8.pack "86400")
       ]

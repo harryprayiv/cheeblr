@@ -1,222 +1,297 @@
+-- {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 module DB.Database where
 
-import Control.Concurrent (threadDelay)
-import Control.Exception (catch, throwIO, SomeException, try)
-import qualified Data.Pool as Pool
-import qualified Data.Vector as V
-import Database.PostgreSQL.Simple
-import Database.PostgreSQL.Simple.SqlQQ (sql)
-import Database.PostgreSQL.Simple.Types (PGArray (..))
-import System.IO (hPutStrLn, stderr)
-import Types.Inventory
-import Data.UUID
-import Servant (Handler)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Error.Class (throwError)
-import Data.Text (pack)
-import Servant.Server (err404)
+import Data.ByteString (ByteString)
+import Data.Functor.Contravariant (contramap)
+import Data.Int (Int32)
+import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
+import Data.Text (pack, unpack)
+import Data.UUID (UUID)
+import qualified Data.Vector as V
+import qualified Hasql.Pool as Pool
+import qualified Hasql.Session as Session
+import qualified Hasql.Statement as Statement
+import qualified Hasql.Decoders as Decoders
+import qualified Hasql.Encoders as Encoders
+import qualified Hasql.Pool.Config as PoolConfig
+import qualified Hasql.Connection.Setting as ConnSetting
+import qualified Hasql.Connection.Setting.Connection as ConnSetting.Conn
+import qualified Hasql.Connection.Setting.Connection.Param as ConnSetting.Param
+import qualified Data.Text.Encoding as TE
+import Rel8
+import Servant (Handler, throwError, err404)
+
+import DB.Schema
+import qualified Types.Inventory as TI
+import Types.Inventory (MenuItem (..), StrainLineage (..), Inventory (..), MutationResponse (..))
 
 data DBConfig = DBConfig
-  { dbHost     :: String
-  , dbPort     :: Int
-  , dbName     :: String
-  , dbUser     :: String
-  , dbPassword :: String
+  { dbHost     :: ByteString
+  , dbPort     :: Word
+  , dbName     :: ByteString
+  , dbUser     :: ByteString
+  , dbPassword :: ByteString
   , poolSize   :: Int
   }
 
-initializeDB :: DBConfig -> IO (Pool.Pool Connection)
-initializeDB config = do
-  let poolConfig =
-        Pool.defaultPoolConfig
-          (connectWithRetry config)
-          close
-          0.5
-          10
-  pool <- Pool.newPool poolConfig
-  Pool.withResource pool $ \conn -> do
-    _ <- query_ conn "SELECT 1" :: IO [Only Int]
-    pure ()
-  pure pool
+type DBPool = Pool.Pool
 
-connectWithRetry :: DBConfig -> IO Connection
-connectWithRetry DBConfig {..} = go 5
-  where
-    go :: Int -> IO Connection
-    go retriesLeft = do
-      let connInfo =
-            defaultConnectInfo
-              { connectHost     = dbHost
-              , connectPort     = fromIntegral dbPort
-              , connectDatabase = dbName
-              , connectUser     = dbUser
-              , connectPassword = dbPassword
-              }
-      catch (connect connInfo) (`handleConnError` retriesLeft)
-
-    handleConnError :: SqlError -> Int -> IO Connection
-    handleConnError e retriesLeft
-      | retriesLeft == 0 = do
-          hPutStrLn stderr $
-            "Failed to connect to database after 5 attempts: " ++ show e
-          throwIO e
-      | otherwise = do
-          hPutStrLn stderr
-            "Database connection attempt failed, retrying in 5 seconds..."
-          threadDelay 5000000
-          go (retriesLeft - 1)
-
-withConnection :: Pool.Pool Connection -> (Connection -> IO a) -> IO a
-withConnection = Pool.withResource
-
-createTables :: Pool.Pool Connection -> IO ()
-createTables pool = withConnection pool $ \conn -> do
-  _ <- execute_ conn
-    [sql|
-      CREATE TABLE IF NOT EXISTS menu_items (
-          sort INT NOT NULL,
-          sku UUID PRIMARY KEY,
-          brand TEXT NOT NULL,
-          name TEXT NOT NULL,
-          price INTEGER NOT NULL,
-          measure_unit TEXT NOT NULL,
-          per_package TEXT NOT NULL,
-          quantity INT NOT NULL,
-          category TEXT NOT NULL,
-          subcategory TEXT NOT NULL,
-          description TEXT NOT NULL,
-          tags TEXT[] NOT NULL,
-          effects TEXT[] NOT NULL
-      )
-    |]
-
-  _ <- execute_ conn
-    [sql|
-      CREATE TABLE IF NOT EXISTS strain_lineage (
-          sku UUID PRIMARY KEY REFERENCES menu_items(sku),
-          thc TEXT NOT NULL,
-          cbg TEXT NOT NULL,
-          strain TEXT NOT NULL,
-          creator TEXT NOT NULL,
-          species TEXT NOT NULL,
-          dominant_terpene TEXT NOT NULL,
-          terpenes TEXT[] NOT NULL,
-          lineage TEXT[] NOT NULL,
-          leafly_url TEXT NOT NULL,
-          img TEXT NOT NULL
-      )
-    |]
-  pure ()
-
-insertMenuItem :: Pool.Pool Connection -> MenuItem -> IO ()
-insertMenuItem pool MenuItem {..} = withConnection pool $ \conn -> do
-  _ <- execute conn
-    [sql|
-      INSERT INTO menu_items
-          (sort, sku, brand, name, price, measure_unit, per_package,
-           quantity, category, subcategory, description, tags, effects)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    |]
-    ( sort, sku, brand, name, price, measure_unit, per_package, quantity
-    , show category, subcategory, description
-    , PGArray $ V.toList tags, PGArray $ V.toList effects
-    )
-
-  let StrainLineage {..} = strain_lineage
-  _ <- execute conn
-    [sql|
-      INSERT INTO strain_lineage
-          (sku, thc, cbg, strain, creator, species, dominant_terpene,
-           terpenes, lineage, leafly_url, img)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    |]
-    ( sku, thc, cbg, strain, creator, show species, dominant_terpene
-    , PGArray $ V.toList terpenes, PGArray $ V.toList lineage
-    , leafly_url, img
-    )
-  pure ()
-
-deleteMenuItem :: Pool.Pool Connection -> UUID -> Handler MutationResponse
-deleteMenuItem pool uuid = do
-  liftIO $ putStrLn $
-    "Received request to delete menu item with UUID: " ++ show uuid
-
-  result <- liftIO $ try @SomeException $ do
-    _ <- withConnection pool $ \conn ->
-      execute conn
-        "DELETE FROM strain_lineage WHERE sku = ?"
-        (Only uuid)
-    withConnection pool $ \conn ->
-      execute conn
-        "DELETE FROM menu_items WHERE sku = ?"
-        (Only uuid)
-
+initializeDB :: DBConfig -> IO DBPool
+initializeDB DBConfig{..} = do
+  let connSettings =
+        [ ConnSetting.connection $ ConnSetting.Conn.params
+            [ ConnSetting.Param.host     (TE.decodeUtf8 dbHost)
+            , ConnSetting.Param.port     (fromIntegral dbPort)
+            , ConnSetting.Param.user     (TE.decodeUtf8 dbUser)
+            , ConnSetting.Param.password (TE.decodeUtf8 dbPassword)
+            , ConnSetting.Param.dbname   (TE.decodeUtf8 dbName)
+            ]
+        ]
+      cfg = PoolConfig.settings
+              [ PoolConfig.size (fromIntegral poolSize)
+              , PoolConfig.acquisitionTimeout 30
+              , PoolConfig.staticConnectionSettings connSettings
+              ]
+  pool <- Pool.acquire cfg
+  result <- Pool.use pool (Session.statement () smokeTestStmt)
   case result of
-    Left e -> do
-      let errMsg = pack $ "Error deleting item: " <> show e
-      liftIO $ putStrLn $ "Error in delete operation: " ++ show e
-      return $ MutationResponse False errMsg
-    Right affected ->
-      if affected > 0
-        then return $ MutationResponse True "Item deleted successfully"
+    Left err -> throwIO $ userError $ "DB connection failed: " <> show err
+    Right _  -> pure pool
+  where
+    smokeTestStmt :: Statement.Statement () ()
+    smokeTestStmt = Statement.Statement "SELECT 1" Encoders.noParams Decoders.noResult False
+
+runSession :: DBPool -> Session.Session a -> IO a
+runSession pool session = do
+  result <- Pool.use pool session
+  case result of
+    Left err  -> throwIO $ userError $ show err
+    Right val -> pure val
+
+ddl :: ByteString -> Statement.Statement () ()
+ddl sql = Statement.Statement sql Encoders.noParams Decoders.noResult False
+
+createTables :: DBPool -> IO ()
+createTables pool = runSession pool $ do
+  Session.statement () $ ddl
+    "CREATE TABLE IF NOT EXISTS menu_items (\
+    \  sort          INT NOT NULL,\
+    \  sku           UUID PRIMARY KEY,\
+    \  brand         TEXT NOT NULL,\
+    \  name          TEXT NOT NULL,\
+    \  price         INTEGER NOT NULL,\
+    \  measure_unit  TEXT NOT NULL,\
+    \  per_package   TEXT NOT NULL,\
+    \  quantity      INT NOT NULL,\
+    \  category      TEXT NOT NULL,\
+    \  subcategory   TEXT NOT NULL,\
+    \  description   TEXT NOT NULL,\
+    \  tags          TEXT[] NOT NULL,\
+    \  effects       TEXT[] NOT NULL\
+    \)"
+  Session.statement () $ ddl
+    "CREATE TABLE IF NOT EXISTS strain_lineage (\
+    \  sku               UUID PRIMARY KEY REFERENCES menu_items(sku),\
+    \  thc               TEXT NOT NULL,\
+    \  cbg               TEXT NOT NULL,\
+    \  strain            TEXT NOT NULL,\
+    \  creator           TEXT NOT NULL,\
+    \  species           TEXT NOT NULL,\
+    \  dominant_terpene  TEXT NOT NULL,\
+    \  terpenes          TEXT[] NOT NULL,\
+    \  lineage           TEXT[] NOT NULL,\
+    \  leafly_url        TEXT NOT NULL,\
+    \  img               TEXT NOT NULL\
+    \)"
+
+-- asc :: DBOrd a => Order (Expr a) — a value, not a function.
+-- Use contramap to produce an Order over a larger type.
+menuItemsQuery :: Query (MenuItemRow Expr, StrainLineageRow Expr)
+menuItemsQuery =
+  orderBy (contramap (\(mi, _) -> menuSort mi) asc) $ do
+    mi <- each menuItemSchema
+    sl <- each strainLineageSchema
+    where_ $ menuSku mi ==. slSku sl
+    pure (mi, sl)
+
+-- aggregate1 :: Aggregator' fold i a -> Query i -> Query a
+-- groupByOn / sumOn are Aggregator values; combine with Applicative.
+reservedBySkuQuery :: Query (Expr UUID, Expr Int32)
+reservedBySkuQuery =
+  aggregate1
+    ((,) <$> groupByOn resItemSku <*> sumOn resQuantity)
+    ( do
+        res <- each reservationSchema
+        where_ $ resStatus res ==. lit "Reserved"
+        pure res
+    )
+
+getAllMenuItems :: DBPool -> IO Inventory
+getAllMenuItems pool = do
+  -- Rel8.select :: Query a -> Statement (Query a)
+  -- run :: Statement (Query exprs) -> Hasql.Statement () [a]
+  rows     <- runSession pool $ Session.statement () $ run $ Rel8.select menuItemsQuery
+  reserved <- runSession pool $ Session.statement () $ run $ Rel8.select reservedBySkuQuery
+  let reservedMap :: Map UUID Int32 =
+        Map.fromList [ (sku, qty) | (sku, qty) <- reserved ]
+  let toMenuItem (mi, sl) =
+        let qty = fromIntegral (menuQuantity mi)
+                - fromIntegral (Map.findWithDefault 0 (menuSku mi) reservedMap)
+        in rowsToMenuItem mi sl qty
+  pure $ Inventory $ V.fromList $ map toMenuItem rows
+
+insertMenuItem :: DBPool -> MenuItem -> IO ()
+insertMenuItem pool item = runSession pool $ do
+  Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = menuItemSchema
+    , rows       = values [menuItemToRow item]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
+  Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = strainLineageSchema
+    , rows       = values [strainLineageToRow (TI.sku item) (TI.strain_lineage item)]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
+
+updateExistingMenuItem :: DBPool -> MenuItem -> IO ()
+updateExistingMenuItem pool item = runSession pool $ do
+  Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = menuItemSchema
+    , from        = pure ()
+    , set         = \() row -> row
+        { menuSort        = lit $ fromIntegral (TI.sort item)
+        , menuBrand       = lit (TI.brand item)
+        , menuName        = lit (TI.name item)
+        , menuPrice       = lit $ fromIntegral (TI.price item)
+        , menuMeasureUnit = lit (TI.measure_unit item)
+        , menuPerPackage  = lit (TI.per_package item)
+        , menuQuantity    = lit $ fromIntegral (TI.quantity item)
+        , menuCategory    = lit $ pack $ show (TI.category item)
+        , menuSubcategory = lit (TI.subcategory item)
+        , menuDescription = lit (TI.description item)
+        , menuTags        = lit $ V.toList (TI.tags item)
+        , menuEffects     = lit $ V.toList (TI.effects item)
+        }
+    , updateWhere = \() row -> menuSku row ==. lit (TI.sku item)
+    , returning   = NoReturning
+    }
+  let sl = TI.strain_lineage item
+  Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = strainLineageSchema
+    , from        = pure ()
+    , set         = \() row -> row
+        { slThc             = lit (TI.thc sl)
+        , slCbg             = lit (TI.cbg sl)
+        , slStrain          = lit (TI.strain sl)
+        , slCreator         = lit (TI.creator sl)
+        , slSpecies         = lit $ pack $ show (TI.species sl)
+        , slDominantTerpene = lit (TI.dominant_terpene sl)
+        , slTerpenes        = lit $ V.toList (TI.terpenes sl)
+        , slLineage         = lit $ V.toList (TI.lineage sl)
+        , slLeaflyUrl       = lit (TI.leafly_url sl)
+        , slImg             = lit (TI.img sl)
+        }
+    , updateWhere = \() row -> slSku row ==. lit (TI.sku item)
+    , returning   = NoReturning
+    }
+
+deleteMenuItem :: DBPool -> UUID -> Handler MutationResponse
+deleteMenuItem pool uuid = do
+  result <- liftIO $ try @SomeException $ runSession pool $ do
+    Session.statement () $ run_ $ Rel8.delete $ Delete
+      { from        = strainLineageSchema
+      , using       = pure ()
+      , deleteWhere = \() row -> slSku row ==. lit uuid
+      , returning   = NoReturning
+      }
+    -- runN :: Statement () -> Hasql.Statement () Int64
+    Session.statement () $ runN $ Rel8.delete $ Delete
+      { from        = menuItemSchema
+      , using       = pure ()
+      , deleteWhere = \() row -> menuSku row ==. lit uuid
+      , returning   = NoReturning
+      }
+  case result of
+    Left e ->
+      pure $ MutationResponse False (pack $ "Error deleting item: " <> show e)
+    Right n ->
+      if n > 0
+        then pure $ MutationResponse True "Item deleted successfully"
         else throwError err404
 
-getAllMenuItems :: Pool.Pool Connection -> IO Inventory
-getAllMenuItems pool = withConnection pool $ \conn -> do
-  items <- query_ conn
-    [sql|
-      SELECT
-        m.sort, m.sku, m.brand, m.name, m.price, m.measure_unit, m.per_package,
-        m.quantity - COALESCE(r.reserved_qty, 0) as available_quantity,
-        m.category, m.subcategory, m.description, m.tags, m.effects,
-        s.thc, s.cbg, s.strain, s.creator, s.species,
-        s.dominant_terpene, s.terpenes, s.lineage,
-        s.leafly_url, s.img
-      FROM menu_items m
-      JOIN strain_lineage s ON m.sku = s.sku
-      LEFT JOIN (
-        SELECT item_sku, SUM(quantity) as reserved_qty
-        FROM inventory_reservation
-        WHERE status = 'Reserved'
-        GROUP BY item_sku
-      ) r ON r.item_sku = m.sku
-      ORDER BY m.sort
-    |]
-  return $ Inventory $ V.fromList items
+withConnection :: DBPool -> (DBPool -> IO a) -> IO a
+withConnection pool f = f pool
 
-updateExistingMenuItem :: Pool.Pool Connection -> MenuItem -> IO ()
-updateExistingMenuItem pool MenuItem {..} = withConnection pool $ \conn -> do
-  _ <- execute conn
-    [sql|
-      UPDATE menu_items
-      SET sort = ?, brand = ?, name = ?, price = ?, measure_unit = ?,
-          per_package = ?, quantity = ?, category = ?, subcategory = ?,
-          description = ?, tags = ?, effects = ?
-      WHERE sku = ?
-    |]
-    ( sort, brand, name, price, measure_unit, per_package, quantity
-    , show category, subcategory, description
-    , PGArray $ V.toList tags, PGArray $ V.toList effects
-    , sku
-    )
+menuItemToRow :: MenuItem -> MenuItemRow Expr
+menuItemToRow mi = MenuItemRow
+  { menuSort        = lit $ fromIntegral (TI.sort mi)
+  , menuSku         = lit (TI.sku mi)
+  , menuBrand       = lit (TI.brand mi)
+  , menuName        = lit (TI.name mi)
+  , menuPrice       = lit $ fromIntegral (TI.price mi)
+  , menuMeasureUnit = lit (TI.measure_unit mi)
+  , menuPerPackage  = lit (TI.per_package mi)
+  , menuQuantity    = lit $ fromIntegral (TI.quantity mi)
+  , menuCategory    = lit $ pack $ show (TI.category mi)
+  , menuSubcategory = lit (TI.subcategory mi)
+  , menuDescription = lit (TI.description mi)
+  , menuTags        = lit $ V.toList (TI.tags mi)
+  , menuEffects     = lit $ V.toList (TI.effects mi)
+  }
 
-  let StrainLineage {..} = strain_lineage
-  _ <- execute conn
-    [sql|
-      UPDATE strain_lineage
-      SET thc = ?, cbg = ?, strain = ?, creator = ?, species = ?,
-          dominant_terpene = ?, terpenes = ?, lineage = ?,
-          leafly_url = ?, img = ?
-      WHERE sku = ?
-    |]
-    ( thc, cbg, strain, creator, show species, dominant_terpene
-    , PGArray $ V.toList terpenes, PGArray $ V.toList lineage
-    , leafly_url, img
-    , sku
-    )
-  pure ()
+strainLineageToRow :: UUID -> StrainLineage -> StrainLineageRow Expr
+strainLineageToRow u sl = StrainLineageRow
+  { slSku             = lit u
+  , slThc             = lit (TI.thc sl)
+  , slCbg             = lit (TI.cbg sl)
+  , slStrain          = lit (TI.strain sl)
+  , slCreator         = lit (TI.creator sl)
+  , slSpecies         = lit $ pack $ show (TI.species sl)
+  , slDominantTerpene = lit (TI.dominant_terpene sl)
+  , slTerpenes        = lit $ V.toList (TI.terpenes sl)
+  , slLineage         = lit $ V.toList (TI.lineage sl)
+  , slLeaflyUrl       = lit (TI.leafly_url sl)
+  , slImg             = lit (TI.img sl)
+  }
+
+rowsToMenuItem :: MenuItemRow Result -> StrainLineageRow Result -> Int -> MenuItem
+rowsToMenuItem mi sl availQty = MenuItem
+  { TI.sort           = fromIntegral (menuSort mi)
+  , TI.sku            = menuSku mi
+  , TI.brand          = menuBrand mi
+  , TI.name           = menuName mi
+  , TI.price          = fromIntegral (menuPrice mi)
+  , TI.measure_unit   = menuMeasureUnit mi
+  , TI.per_package    = menuPerPackage mi
+  , TI.quantity       = availQty
+  , TI.category       = read $ unpack (menuCategory mi)
+  , TI.subcategory    = menuSubcategory mi
+  , TI.description    = menuDescription mi
+  , TI.tags           = V.fromList (menuTags mi)
+  , TI.effects        = V.fromList (menuEffects mi)
+  , TI.strain_lineage = rowToStrainLineage sl
+  }
+
+rowToStrainLineage :: StrainLineageRow Result -> StrainLineage
+rowToStrainLineage sl = StrainLineage
+  { TI.thc              = slThc sl
+  , TI.cbg              = slCbg sl
+  , TI.strain           = slStrain sl
+  , TI.creator          = slCreator sl
+  , TI.species          = read $ unpack (slSpecies sl)
+  , TI.dominant_terpene = slDominantTerpene sl
+  , TI.terpenes         = V.fromList (slTerpenes sl)
+  , TI.lineage          = V.fromList (slLineage sl)
+  , TI.leafly_url       = slLeaflyUrl sl
+  , TI.img              = slImg sl
+  }

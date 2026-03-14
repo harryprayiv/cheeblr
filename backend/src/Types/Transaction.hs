@@ -14,7 +14,6 @@ import qualified Data.Text as T
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
-import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
 import GHC.Generics (Generic)
 
 data TransactionStatus
@@ -156,14 +155,14 @@ data PaymentTransaction = PaymentTransaction
   } deriving (Show, Eq, Generic)
 
 instance ToJSON PaymentMethod where
-  toJSON Cash          = String "Cash"
-  toJSON Debit         = String "Debit"
-  toJSON Credit        = String "Credit"
-  toJSON ACH           = String "ACH"
-  toJSON GiftCard      = String "GiftCard"
-  toJSON StoredValue   = String "StoredValue"
-  toJSON Mixed         = String "Mixed"
-  toJSON (Other t)     = String ("Other:" <> t)
+  toJSON Cash        = String "Cash"
+  toJSON Debit       = String "Debit"
+  toJSON Credit      = String "Credit"
+  toJSON ACH         = String "ACH"
+  toJSON GiftCard    = String "GiftCard"
+  toJSON StoredValue = String "StoredValue"
+  toJSON Mixed       = String "Mixed"
+  toJSON (Other t)   = String ("Other:" <> t)
 
 instance ToJSON PaymentTransaction
 
@@ -275,12 +274,12 @@ instance ToJSON AccountType
 instance FromJSON AccountType
 
 data Account = Account
-  { accountId             :: UUID
-  , accountCode           :: Text
-  , accountName           :: Text
-  , accountIsDebitNormal  :: Bool
+  { accountId              :: UUID
+  , accountCode            :: Text
+  , accountName            :: Text
+  , accountIsDebitNormal   :: Bool
   , accountParentAccountId :: Maybe UUID
-  , accountType           :: AccountType
+  , accountType            :: AccountType
   } deriving (Show, Eq, Generic)
 
 instance ToJSON Account
@@ -378,84 +377,30 @@ data InventoryStatus
 instance ToJSON InventoryStatus
 instance FromJSON InventoryStatus
 
--- | FromRow instances for database access
+-- ToSchema instances (unchanged)
+deriving instance ToSchema TransactionStatus
+deriving instance ToSchema TransactionType
+deriving instance ToSchema PaymentMethod
+deriving instance ToSchema TaxCategory
+deriving instance ToSchema DiscountType
+deriving instance ToSchema TaxRecord
+deriving instance ToSchema DiscountRecord
+deriving instance ToSchema TransactionItem
+deriving instance ToSchema PaymentTransaction
+deriving instance ToSchema Transaction
+deriving instance ToSchema InventoryReservation
+deriving instance ToSchema LedgerEntryType
+deriving instance ToSchema AccountType
+deriving instance ToSchema Account
+deriving instance ToSchema LedgerEntry
+deriving instance ToSchema VerificationType
+deriving instance ToSchema VerificationStatus
+deriving instance ToSchema CustomerVerification
+deriving instance ToSchema ReportingStatus
+deriving instance ToSchema ComplianceRecord
+deriving instance ToSchema InventoryStatus
 
-instance FromRow Transaction where
-  fromRow =
-    Transaction
-      <$> field
-      <*> (parseTransactionStatus <$> field)
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> pure []
-      <*> pure []
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> (parseTransactionType <$> field)
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-
-instance FromRow TransactionItem where
-  fromRow =
-    TransactionItem
-      <$> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> pure []
-      <*> pure []
-      <*> field
-      <*> field
-
-instance FromRow DiscountRecord where
-  fromRow =
-    DiscountRecord
-      <$> (parseDiscountType <$> field <*> field)
-      <*> field
-      <*> field
-      <*> field
-
-parseDiscountType :: Text -> Maybe Int -> DiscountType
-parseDiscountType typ (Just val)
-  | typ == "PERCENT_OFF"    = PercentOff (fromIntegral val / 100)
-  | typ == "AMOUNT_OFF"     = AmountOff val
-  | typ == "BUY_ONE_GET_ONE" = BuyOneGetOne
-  | otherwise               = Custom typ val
-parseDiscountType typ _
-  | typ == "BUY_ONE_GET_ONE" = BuyOneGetOne
-  | otherwise               = AmountOff 0
-
-instance FromRow TaxRecord where
-  fromRow =
-    (TaxRecord . parseTaxCategory <$> field)
-      <*> field
-      <*> field
-      <*> field
-
-instance FromRow PaymentTransaction where
-  fromRow =
-    PaymentTransaction
-      <$> field
-      <*> field
-      <*> (parsePaymentMethod <$> field)
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-      <*> field
-
+-- Parse helpers (used by DB.Transaction row conversions)
 parseTransactionStatus :: String -> TransactionStatus
 parseTransactionStatus "CREATED"     = Created
 parseTransactionStatus "IN_PROGRESS" = InProgress
@@ -506,26 +451,3 @@ parseTaxCategory "MedicalTax"        = MedicalTax
 parseTaxCategory "NO_TAX"            = NoTax
 parseTaxCategory "NoTax"             = NoTax
 parseTaxCategory s                   = error $ "Unknown TaxCategory: " ++ s
-
--- | OpenAPI3 instances
-deriving instance ToSchema TransactionStatus
-deriving instance ToSchema TransactionType
-deriving instance ToSchema PaymentMethod
-deriving instance ToSchema TaxCategory
-deriving instance ToSchema DiscountType
-deriving instance ToSchema TaxRecord
-deriving instance ToSchema DiscountRecord
-deriving instance ToSchema TransactionItem
-deriving instance ToSchema PaymentTransaction
-deriving instance ToSchema Transaction
-deriving instance ToSchema InventoryReservation
-deriving instance ToSchema LedgerEntryType
-deriving instance ToSchema AccountType
-deriving instance ToSchema Account
-deriving instance ToSchema LedgerEntry
-deriving instance ToSchema VerificationType
-deriving instance ToSchema VerificationStatus
-deriving instance ToSchema CustomerVerification
-deriving instance ToSchema ReportingStatus
-deriving instance ToSchema ComplianceRecord
-deriving instance ToSchema InventoryStatus

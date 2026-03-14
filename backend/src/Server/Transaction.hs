@@ -1,30 +1,29 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
 {-# HLINT ignore "Redundant return" #-}
-{-# LANGUAGE TypeApplications #-}
 
 module Server.Transaction where
 
 import API.Transaction
-import Control.Monad.IO.Class (liftIO)
 import Control.Exception (SomeException, try, displayException, fromException)
-import DB.Transaction
-import Data.Pool (Pool)
-import Data.UUID (UUID)
-import Database.PostgreSQL.Simple (Connection, Only(..), query, execute, Query)
-import Servant
-import Types.Transaction
+import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (encode, object, (.=))
 import Data.Text (Text, pack)
-import qualified Data.ByteString.Lazy.Char8 as LBS
-import qualified DB.Database as DB
-import Data.UUID.V4 (nextRandom)
 import Data.Time (getCurrentTime)
+import Data.UUID (UUID)
+import Data.UUID.V4 (nextRandom)
+import qualified Data.ByteString.Lazy.Char8 as LBS
+import Servant
+import Types.Transaction
+
+import DB.Database (DBPool)
+import qualified DB.Transaction as DB
 
 stringToLBS :: String -> LBS.ByteString
 stringToLBS = LBS.pack
 
-transactionServer :: Pool Connection -> Server TransactionAPI
+transactionServer :: DBPool -> Server TransactionAPI
 transactionServer pool =
   getAllTransactionsHandler
     :<|> getTransactionHandler
@@ -45,190 +44,151 @@ transactionServer pool =
     getAllTransactionsHandler :: Handler [Transaction]
     getAllTransactionsHandler = do
       liftIO $ putStrLn "Handling GET /transaction request"
-      transactions <- liftIO $ getAllTransactions pool
+      transactions <- liftIO $ DB.getAllTransactions pool
       liftIO $ putStrLn $ "Returning " ++ show (length transactions) ++ " transactions"
       return transactions
 
     getTransactionHandler :: UUID -> Handler Transaction
     getTransactionHandler txId = do
       liftIO $ putStrLn $ "Handling GET /transaction/" ++ show txId ++ " request"
-      maybeTransaction <- liftIO $ getTransactionById pool txId
+      maybeTransaction <- liftIO $ DB.getTransactionById pool txId
       case maybeTransaction of
-        Just transaction -> return transaction
+        Just tx -> return tx
         Nothing -> throwError err404 { errBody = stringToLBS "Transaction not found" }
 
     getAvailableInventoryHandler :: UUID -> Handler AvailableInventory
     getAvailableInventoryHandler sku = do
       liftIO $ putStrLn $ "Handling GET /inventory/available/" ++ show sku ++ " request"
-      
-      -- Perform the database query in IO and then handle the result
-      result <- liftIO $ DB.withConnection pool $ \conn -> do
-        query conn
-          ("SELECT m.quantity, COALESCE(SUM(r.quantity), 0) " <>
-           "FROM menu_items m " <>
-           "LEFT JOIN inventory_reservation r ON r.item_sku = m.sku AND r.status = 'Reserved' " <>
-           "WHERE m.sku = ? " <>
-           "GROUP BY m.quantity" :: Query)
-          (Only sku) :: IO [(Int, Int)]
-      
+      result <- liftIO $ DB.getInventoryAvailability pool sku
       case result of
-        [] -> throwError err404 { errBody = stringToLBS "Item not found" }
-        ((total, reserved):_) ->
-          return $ AvailableInventory
-            { availableTotal = total
+        Nothing               -> throwError err404 { errBody = stringToLBS "Item not found" }
+        Just (total, reserved) ->
+          return AvailableInventory
+            { availableTotal    = total
             , availableReserved = reserved
-            , availableActual = total - reserved
+            , availableActual   = total - reserved
             }
 
     reserveInventoryHandler :: ReservationRequest -> Handler InventoryReservation
     reserveInventoryHandler request = do
       liftIO $ putStrLn "Handling POST /inventory/reserve request"
-      
-      -- Create a new reservation
-      reservationId <- liftIO nextRandom
-      now <- liftIO getCurrentTime
-      
-      -- Check availability and create reservation atomically
-      result <- liftIO $ DB.withConnection pool $ \conn -> do
-        -- Check current availability
-        availability <- query conn
-          ("SELECT m.quantity, COALESCE(SUM(r.quantity), 0) " <>
-           "FROM menu_items m " <>
-           "LEFT JOIN inventory_reservation r ON r.item_sku = m.sku AND r.status = 'Reserved' " <>
-           "WHERE m.sku = ? " <>
-           "GROUP BY m.quantity" :: Query)
-          (Only $ reserveItemSku request) :: IO [(Int, Int)]
-        
-        case availability of
-          [] -> return $ Left "Item not found"
-          ((total, reserved):_) -> do
-            let available = total - reserved
-            if available < reserveQuantity request
-              then return $ Left $ "Insufficient inventory. Only " ++ show available ++ " available"
-              else do
-                -- Create the reservation
-                _ <- execute conn
-                  ("INSERT INTO inventory_reservation " <>
-                   "(id, item_sku, transaction_id, quantity, status, created_at) " <>
-                   "VALUES (?, ?, ?, ?, 'Reserved', ?)" :: Query)
-                  ( reservationId
-                  , reserveItemSku request
-                  , reserveTransactionId request
-                  , reserveQuantity request
-                  , now
-                  )
-                
-                return $ Right $ InventoryReservation
-                  { reservationItemSku = reserveItemSku request
-                  , reservationTransactionId = reserveTransactionId request
-                  , reservationQuantity = reserveQuantity request
-                  , reservationStatus = "Reserved"
-                  }
-      
+      result <- liftIO $ DB.getInventoryAvailability pool (reserveItemSku request)
       case result of
-        Left errMsg -> throwError err400 { errBody = stringToLBS errMsg }
-        Right reservation -> return reservation
+        Nothing -> throwError err404 { errBody = stringToLBS "Item not found" }
+        Just (total, reserved) -> do
+          let available = total - reserved
+          if available < reserveQuantity request
+            then throwError err400
+                   { errBody = stringToLBS $
+                       "Insufficient inventory. Only " ++ show available ++ " available" }
+            else do
+              reservationId <- liftIO nextRandom
+              now           <- liftIO getCurrentTime
+              liftIO $ DB.createInventoryReservation pool reservationId
+                (reserveItemSku request)
+                (reserveTransactionId request)
+                (reserveQuantity request)
+                now
+              return InventoryReservation
+                { reservationItemSku       = reserveItemSku request
+                , reservationTransactionId = reserveTransactionId request
+                , reservationQuantity      = reserveQuantity request
+                , reservationStatus        = "Reserved"
+                }
 
     releaseInventoryHandler :: UUID -> Handler NoContent
     releaseInventoryHandler reservationId = do
       liftIO $ putStrLn $ "Handling DELETE /inventory/release/" ++ show reservationId ++ " request"
-      
-      rowsAffected <- liftIO $ DB.withConnection pool $ \conn ->
-        execute conn
-          ("UPDATE inventory_reservation " <>
-           "SET status = 'Released' " <>
-           "WHERE id = ? AND status = 'Reserved'" :: Query)
-          (Only reservationId)
-      
-      if rowsAffected > 0
+      released <- liftIO $ DB.releaseInventoryReservation pool reservationId
+      if released
         then return NoContent
-        else throwError err404 { errBody = stringToLBS "Reservation not found or already released" }
+        else throwError err404
+               { errBody = stringToLBS "Reservation not found or already released" }
 
     createTransactionHandler :: Transaction -> Handler Transaction
     createTransactionHandler transaction = do
       liftIO $ putStrLn "Handling POST /transaction request"
       liftIO $ putStrLn $ "Creating transaction: " ++ show (transactionId transaction)
-      createdTransaction <- liftIO $ createTransaction pool transaction
+      created <- liftIO $ DB.createTransaction pool transaction
       liftIO $ putStrLn "Transaction created successfully"
-      return createdTransaction
+      return created
 
     updateTransactionHandler :: UUID -> Transaction -> Handler Transaction
     updateTransactionHandler txId transaction = do
       liftIO $ putStrLn $ "Handling PUT /transaction/" ++ show txId ++ " request"
-      updatedTransaction <- liftIO $ updateTransaction pool txId transaction
+      updated <- liftIO $ DB.updateTransaction pool txId transaction
       liftIO $ putStrLn "Transaction updated successfully"
-      return updatedTransaction
+      return updated
 
     voidTransactionHandler :: UUID -> Text -> Handler Transaction
     voidTransactionHandler txId reason = do
       liftIO $ putStrLn $ "Handling POST /transaction/void/" ++ show txId ++ " request"
-      voidedTransaction <- liftIO $ voidTransaction pool txId reason
+      voided <- liftIO $ DB.voidTransaction pool txId reason
       liftIO $ putStrLn "Transaction voided successfully"
-      return voidedTransaction
+      return voided
 
     refundTransactionHandler :: UUID -> Text -> Handler Transaction
     refundTransactionHandler txId reason = do
       liftIO $ putStrLn $ "Handling POST /transaction/refund/" ++ show txId ++ " request"
-      refundedTransaction <- liftIO $ refundTransaction pool txId reason
+      refunded <- liftIO $ DB.refundTransaction pool txId reason
       liftIO $ putStrLn "Transaction refunded successfully"
-      return refundedTransaction
+      return refunded
 
     addTransactionItemHandler :: TransactionItem -> Handler TransactionItem
     addTransactionItemHandler item = do
       liftIO $ putStrLn "Handling POST /transaction/item request"
-      result <- liftIO $ try @SomeException $ addTransactionItem pool item
+      result <- liftIO $ try @SomeException $ DB.addTransactionItem pool item
       case result of
-        Right addedItem -> do
+        Right added -> do
           liftIO $ putStrLn "Transaction item added successfully"
-          return addedItem
-        Left e -> do  -- Fixed indentation - aligned with Right
+          return added
+        Left e -> do
           let errorMsg = case fromException e of
-                Just (ItemNotFound sku) -> 
+                Just (DB.ItemNotFound sku) ->
                   "Item not found: " ++ show sku
-                Just (InsufficientInventory sku requested available) -> 
-                  "Insufficient inventory for item " ++ show sku ++ 
-                  ". Only " ++ show available ++ " available, but " ++ 
+                Just (DB.InsufficientInventory sku requested available) ->
+                  "Insufficient inventory for item " ++ show sku ++
+                  ". Only " ++ show available ++ " available, but " ++
                   show requested ++ " requested."
                 Nothing -> displayException e
           liftIO $ putStrLn $ "Error adding transaction item: " ++ errorMsg
-          let jsonError = encode $ object ["error" .= errorMsg]
-          throwError err400 { errBody = jsonError }
+          throwError err400 { errBody = encode $ object ["error" .= errorMsg] }
 
     removeTransactionItemHandler :: UUID -> Handler NoContent
     removeTransactionItemHandler itemId = do
       liftIO $ putStrLn $ "Handling DELETE /transaction/item/" ++ show itemId ++ " request"
-      liftIO $ deleteTransactionItem pool itemId
+      liftIO $ DB.deleteTransactionItem pool itemId
       liftIO $ putStrLn "Transaction item deleted successfully"
       return NoContent
 
     clearTransactionHandler :: UUID -> Handler NoContent
     clearTransactionHandler txId = do
       liftIO $ putStrLn $ "Handling POST /transaction/clear/" ++ show txId ++ " request"
-      liftIO $ clearTransaction pool txId
+      liftIO $ DB.clearTransaction pool txId
       return NoContent
 
     addPaymentTransactionHandler :: PaymentTransaction -> Handler PaymentTransaction
     addPaymentTransactionHandler payment = do
       liftIO $ putStrLn "Handling POST /transaction/payment request"
-      addedPayment <- liftIO $ addPaymentTransaction pool payment
+      added <- liftIO $ DB.addPaymentTransaction pool payment
       liftIO $ putStrLn "Payment transaction added successfully"
-      return addedPayment
+      return added
 
     removePaymentTransactionHandler :: UUID -> Handler NoContent
     removePaymentTransactionHandler pymtId = do
       liftIO $ putStrLn $ "Handling DELETE /transaction/payment/" ++ show pymtId ++ " request"
-      liftIO $ deletePaymentTransaction pool pymtId
+      liftIO $ DB.deletePaymentTransaction pool pymtId
       liftIO $ putStrLn "Payment transaction deleted successfully"
       return NoContent
 
     finalizeTransactionHandler :: UUID -> Handler Transaction
     finalizeTransactionHandler txId = do
       liftIO $ putStrLn $ "Handling POST /transaction/finalize/" ++ show txId ++ " request"
-      finalizedTransaction <- liftIO $ finalizeTransaction pool txId
+      finalized <- liftIO $ DB.finalizeTransaction pool txId
       liftIO $ putStrLn "Transaction finalized successfully"
-      return finalizedTransaction
+      return finalized
 
-registerServer :: Pool Connection -> Server RegisterAPI
+registerServer :: DBPool -> Server RegisterAPI
 registerServer pool =
   getAllRegistersHandler
     :<|> getRegisterHandler
@@ -240,42 +200,37 @@ registerServer pool =
     getAllRegistersHandler :: Handler [Register]
     getAllRegistersHandler = do
       liftIO $ putStrLn "Handling GET /register request"
-      registers <- liftIO $ getAllRegisters pool
-      return registers
+      liftIO $ DB.getAllRegisters pool
 
     getRegisterHandler :: UUID -> Handler Register
     getRegisterHandler regId = do
       liftIO $ putStrLn $ "Handling GET /register/" ++ show regId ++ " request"
-      maybeRegister <- liftIO $ getRegisterById pool regId
+      maybeRegister <- liftIO $ DB.getRegisterById pool regId
       case maybeRegister of
-        Just register -> return register
-        Nothing -> throwError err404 { errBody = stringToLBS "Register not found" }
+        Just reg -> return reg
+        Nothing  -> throwError err404 { errBody = stringToLBS "Register not found" }
 
     createRegisterHandler :: Register -> Handler Register
     createRegisterHandler register = do
       liftIO $ putStrLn "Handling POST /register request"
-      createdRegister <- liftIO $ createRegister pool register
-      return createdRegister
+      liftIO $ DB.createRegister pool register
 
     updateRegisterHandler :: UUID -> Register -> Handler Register
     updateRegisterHandler regId register = do
       liftIO $ putStrLn $ "Handling PUT /register/" ++ show regId ++ " request"
-      updatedRegister <- liftIO $ updateRegister pool regId register
-      return updatedRegister
+      liftIO $ DB.updateRegister pool regId register
 
     openRegisterHandler :: UUID -> OpenRegisterRequest -> Handler Register
     openRegisterHandler regId request = do
       liftIO $ putStrLn $ "Handling POST /register/open/" ++ show regId ++ " request"
-      openedRegister <- liftIO $ openRegister pool regId request
-      return openedRegister
+      liftIO $ DB.openRegister pool regId request
 
     closeRegisterHandler :: UUID -> CloseRegisterRequest -> Handler CloseRegisterResult
     closeRegisterHandler regId request = do
       liftIO $ putStrLn $ "Handling POST /register/close/" ++ show regId ++ " request"
-      closeResult <- liftIO $ closeRegister pool regId request
-      return closeResult
+      liftIO $ DB.closeRegister pool regId request
 
-ledgerServer :: Pool Connection -> Server LedgerAPI
+ledgerServer :: DBPool -> Server LedgerAPI
 ledgerServer _ =
   getEntriesHandler
     :<|> getEntryHandler
@@ -314,7 +269,7 @@ ledgerServer _ =
       liftIO $ putStrLn "Handling POST /ledger/report/daily request"
       return $ DailyReportResult 0 0 0 0 0
 
-complianceServer :: Pool Connection -> Server ComplianceAPI
+complianceServer :: DBPool -> Server ComplianceAPI
 complianceServer _ =
   verificationHandler
     :<|> getRecordHandler
@@ -335,7 +290,7 @@ complianceServer _ =
       liftIO $ putStrLn "Handling POST /compliance/report request"
       return $ ComplianceReportResult (pack "Report Not Implemented")
 
-posServerImpl :: Pool Connection -> Server PosAPI
+posServerImpl :: DBPool -> Server PosAPI
 posServerImpl pool =
   transactionServer pool
     :<|> registerServer pool

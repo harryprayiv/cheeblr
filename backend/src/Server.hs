@@ -1,7 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Server where
 
@@ -12,12 +11,9 @@ import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import Data.Morpheus (interpreter)
 import Data.Morpheus.Types (GQLRequest, GQLResponse)
-import Data.Pool (Pool)
-import qualified Data.Pool as Pool
 import Data.Text (Text, pack)
 import Data.UUID (UUID)
-import Database.PostgreSQL.Simple
-import DB.Database (getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
+import DB.Database (DBPool, getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
 import GraphQL.Resolvers (rootResolver)
 import Servant
 import Server.Transaction (posServerImpl)
@@ -27,13 +23,13 @@ import Types.Auth
   )
 import Types.Inventory
 
-combinedServer :: Pool Connection -> Server CheeblrAPI
+combinedServer :: DBPool -> Server CheeblrAPI
 combinedServer pool
   =    inventoryServer pool
   :<|> posServerImpl pool
   :<|> pure cheeblrOpenApi
 
-inventoryServer :: Pool.Pool Connection -> Server InventoryAPI
+inventoryServer :: DBPool -> Server InventoryAPI
 inventoryServer pool =
   getInventory
     :<|> addMenuItem

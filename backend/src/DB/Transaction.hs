@@ -1,1245 +1,970 @@
-{-# LANGUAGE QuasiQuotes #-}
+{-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE DeriveAnyClass #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
-{-# OPTIONS_GHC -Wno-unused-do-bind #-}
-{-# OPTIONS_GHC -Wno-unused-matches #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
 
 module DB.Transaction where
 
-import Control.Monad.IO.Class (liftIO)
 import Control.Exception (Exception, throwIO)
 import Data.Typeable (Typeable)
-import Data.Pool (Pool, withResource)  -- Add withResource to the import
-import Data.Text (Text)
+import Control.Monad (forM_)
+import Data.Functor.Contravariant (contramap)
+import Data.Int (Int32)
+import Data.Scientific (fromFloatDigits)
+import Data.Text (Text, pack)
 import qualified Data.Text as T
-import Data.Time (getCurrentTime)
+import Data.Time (getCurrentTime, UTCTime)
 import Data.UUID (UUID, toString)
 import Data.UUID.V4 (nextRandom)
-import Database.PostgreSQL.Simple
-  ( Connection
-  , Only(..)
-
-  , execute
-  , execute_
-
-  , query
-  , query_, FromRow
-
-  )
-import Database.PostgreSQL.Simple.FromRow ( FromRow(..), field )
-import Database.PostgreSQL.Simple.SqlQQ (sql)
+import qualified Hasql.Session as Session
+import Rel8
 import System.IO (hPutStrLn, stderr)
 
-import Types.Transaction
-    ( DiscountRecord(discountAmount, discountType, discountReason,
-                     discountApprovedBy),
-      DiscountType(..),
-      PaymentMethod(..),
-      PaymentTransaction(paymentTransactionId, paymentMethod,
-                         paymentReference, paymentApproved, paymentAuthorizationCode,
-                         paymentId, paymentAmount, paymentTendered, paymentChange),
-      TaxCategory(..),
-      TaxRecord(taxAmount, taxCategory, taxRate, taxDescription),
-      Transaction(..),
-      TransactionItem(..),
-      TransactionStatus(..),
-      InventoryReservation (..),
-      TransactionType(..) )
-import API.Transaction (
-    OpenRegisterRequest(..),
-    Register(..),
-    CloseRegisterRequest(..),
-    CloseRegisterResult(CloseRegisterResult, closeRegisterResultRegister, closeRegisterResultVariance)
+import API.Transaction
+  ( Register (..)
+  , OpenRegisterRequest (..)
+  , CloseRegisterRequest (..)
+  , CloseRegisterResult (..)
   )
-import Data.Scientific (Scientific)
-import Control.Monad (void, when, forM_)
+import DB.Database (DBPool, runSession, ddl)
+import DB.Schema
+import Types.Transaction
 
-data InventoryException 
+data InventoryException
   = ItemNotFound UUID
-  | InsufficientInventory UUID Int Int  -- SKU, requested, available
+  | InsufficientInventory UUID Int Int
   deriving (Show, Typeable)
 
 instance Exception InventoryException
 
-type ConnectionPool = Pool Connection
-type DBAction a = Connection -> IO a
-
-withConnection :: ConnectionPool -> (Connection -> IO a) -> IO a
-withConnection = withResource
-
-createTransactionTables :: ConnectionPool -> IO ()
-createTransactionTables pool = withConnection pool $ \conn -> do
+createTransactionTables :: DBPool -> IO ()
+createTransactionTables pool = do
   hPutStrLn stderr "Creating transaction tables..."
-  
-  -- First, check and create the transaction table if needed
-  transactionTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction'" :: IO [Only Int]
-  when (null transactionTableResult) $ do
-    hPutStrLn stderr "Creating transaction table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS transaction (
-          id UUID PRIMARY KEY,
-          status TEXT NOT NULL,
-          created TIMESTAMP WITH TIME ZONE NOT NULL,
-          completed TIMESTAMP WITH TIME ZONE,
-          customer_id UUID,
-          employee_id UUID NOT NULL,
-          register_id UUID NOT NULL,
-          location_id UUID NOT NULL,
-          subtotal INTEGER NOT NULL,
-          discount_total INTEGER NOT NULL,
-          tax_total INTEGER NOT NULL,
-          total INTEGER NOT NULL,
-          transaction_type TEXT NOT NULL,
-          is_voided BOOLEAN NOT NULL DEFAULT FALSE,
-          void_reason TEXT,
-          is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
-          refund_reason TEXT,
-          reference_transaction_id UUID,
-          notes TEXT
-        )
-      |]
-
-  -- Check and create the register table if needed
-  registerTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'register'" :: IO [Only Int]
-  when (null registerTableResult) $ do
-    hPutStrLn stderr "Creating register table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS register (
-          id UUID PRIMARY KEY,
-          name TEXT NOT NULL,
-          location_id UUID NOT NULL,
-          is_open BOOLEAN NOT NULL DEFAULT FALSE,
-          current_drawer_amount INTEGER NOT NULL DEFAULT 0,
-          expected_drawer_amount INTEGER NOT NULL DEFAULT 0,
-          opened_at TIMESTAMP WITH TIME ZONE,
-          opened_by UUID,
-          last_transaction_time TIMESTAMP WITH TIME ZONE
-        )
-      |]
-
-  -- Check and create the inventory_reservation table if needed
-  reservationTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'inventory_reservation'" :: IO [Only Int]
-  when (null reservationTableResult) $ do
-    hPutStrLn stderr "Creating inventory_reservation table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS inventory_reservation (
-          id UUID PRIMARY KEY,
-          item_sku UUID NOT NULL,
-          transaction_id UUID NOT NULL,
-          quantity INTEGER NOT NULL,
-          status TEXT NOT NULL,
-          created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
-        )
-      |]
-
-  -- Check and create the transaction_item table if needed
-  itemTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction_item'" :: IO [Only Int]
-  when (null itemTableResult) $ do
-    hPutStrLn stderr "Creating transaction_item table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS transaction_item (
-          id UUID PRIMARY KEY,
-          transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
-          menu_item_sku UUID NOT NULL,
-          quantity INTEGER NOT NULL,
-          price_per_unit INTEGER NOT NULL,
-          subtotal INTEGER NOT NULL,
-          total INTEGER NOT NULL
-        )
-      |]
-
-  -- Check and create the transaction_tax table if needed
-  taxTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'transaction_tax'" :: IO [Only Int]
-  when (null taxTableResult) $ do
-    hPutStrLn stderr "Creating transaction_tax table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS transaction_tax (
-          id UUID PRIMARY KEY,
-          transaction_item_id UUID NOT NULL REFERENCES transaction_item(id) ON DELETE CASCADE,
-          category TEXT NOT NULL,
-          rate NUMERIC NOT NULL,
-          amount INTEGER NOT NULL,
-          description TEXT NOT NULL
-        )
-      |]
-
-  -- Check and create the discount table if needed
-  discountTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'discount'" :: IO [Only Int]
-  when (null discountTableResult) $ do
-    hPutStrLn stderr "Creating discount table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS discount (
-          id UUID PRIMARY KEY,
-          transaction_item_id UUID REFERENCES transaction_item(id) ON DELETE CASCADE,
-          transaction_id UUID REFERENCES transaction(id) ON DELETE CASCADE,
-          type TEXT NOT NULL,
-          amount INTEGER NOT NULL,
-          percent NUMERIC,
-          reason TEXT NOT NULL,
-          approved_by UUID
-        )
-      |]
-
-  -- Check and create the payment_transaction table if needed
-  paymentTableResult <- query_ conn "SELECT 1 FROM information_schema.tables WHERE table_name = 'payment_transaction'" :: IO [Only Int]
-  when (null paymentTableResult) $ do
-    hPutStrLn stderr "Creating payment_transaction table..."
-    void $ execute_ conn
-      [sql|
-        CREATE TABLE IF NOT EXISTS payment_transaction (
-          id UUID PRIMARY KEY,
-          transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
-          method TEXT NOT NULL,
-          amount INTEGER NOT NULL,
-          tendered INTEGER NOT NULL,
-          change_amount INTEGER NOT NULL,
-          reference TEXT,
-          approved BOOLEAN NOT NULL DEFAULT FALSE,
-          authorization_code TEXT
-        )
-      |]
-
+  runSession pool $ do
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS transaction (\
+      \  id                        UUID PRIMARY KEY,\
+      \  status                    TEXT NOT NULL,\
+      \  created                   TIMESTAMP WITH TIME ZONE NOT NULL,\
+      \  completed                 TIMESTAMP WITH TIME ZONE,\
+      \  customer_id               UUID,\
+      \  employee_id               UUID NOT NULL,\
+      \  register_id               UUID NOT NULL,\
+      \  location_id               UUID NOT NULL,\
+      \  subtotal                  INTEGER NOT NULL,\
+      \  discount_total            INTEGER NOT NULL,\
+      \  tax_total                 INTEGER NOT NULL,\
+      \  total                     INTEGER NOT NULL,\
+      \  transaction_type          TEXT NOT NULL,\
+      \  is_voided                 BOOLEAN NOT NULL DEFAULT FALSE,\
+      \  void_reason               TEXT,\
+      \  is_refunded               BOOLEAN NOT NULL DEFAULT FALSE,\
+      \  refund_reason             TEXT,\
+      \  reference_transaction_id  UUID,\
+      \  notes                     TEXT\
+      \)"
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS register (\
+      \  id                      UUID PRIMARY KEY,\
+      \  name                    TEXT NOT NULL,\
+      \  location_id             UUID NOT NULL,\
+      \  is_open                 BOOLEAN NOT NULL DEFAULT FALSE,\
+      \  current_drawer_amount   INTEGER NOT NULL DEFAULT 0,\
+      \  expected_drawer_amount  INTEGER NOT NULL DEFAULT 0,\
+      \  opened_at               TIMESTAMP WITH TIME ZONE,\
+      \  opened_by               UUID,\
+      \  last_transaction_time   TIMESTAMP WITH TIME ZONE\
+      \)"
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS inventory_reservation (\
+      \  id              UUID PRIMARY KEY,\
+      \  item_sku        UUID NOT NULL,\
+      \  transaction_id  UUID NOT NULL,\
+      \  quantity        INTEGER NOT NULL,\
+      \  status          TEXT NOT NULL,\
+      \  created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()\
+      \)"
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS transaction_item (\
+      \  id              UUID PRIMARY KEY,\
+      \  transaction_id  UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,\
+      \  menu_item_sku   UUID NOT NULL,\
+      \  quantity        INTEGER NOT NULL,\
+      \  price_per_unit  INTEGER NOT NULL,\
+      \  subtotal        INTEGER NOT NULL,\
+      \  total           INTEGER NOT NULL\
+      \)"
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS transaction_tax (\
+      \  id                    UUID PRIMARY KEY,\
+      \  transaction_item_id   UUID NOT NULL REFERENCES transaction_item(id) ON DELETE CASCADE,\
+      \  category              TEXT NOT NULL,\
+      \  rate                  NUMERIC NOT NULL,\
+      \  amount                INTEGER NOT NULL,\
+      \  description           TEXT NOT NULL\
+      \)"
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS discount (\
+      \  id                    UUID PRIMARY KEY,\
+      \  transaction_item_id   UUID REFERENCES transaction_item(id) ON DELETE CASCADE,\
+      \  transaction_id        UUID REFERENCES transaction(id) ON DELETE CASCADE,\
+      \  type                  TEXT NOT NULL,\
+      \  amount                INTEGER NOT NULL,\
+      \  percent               NUMERIC,\
+      \  reason                TEXT NOT NULL,\
+      \  approved_by           UUID\
+      \)"
+    Session.statement () $ ddl
+      "CREATE TABLE IF NOT EXISTS payment_transaction (\
+      \  id                 UUID PRIMARY KEY,\
+      \  transaction_id     UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,\
+      \  method             TEXT NOT NULL,\
+      \  amount             INTEGER NOT NULL,\
+      \  tendered           INTEGER NOT NULL,\
+      \  change_amount      INTEGER NOT NULL,\
+      \  reference          TEXT,\
+      \  approved           BOOLEAN NOT NULL DEFAULT FALSE,\
+      \  authorization_code TEXT\
+      \)"
   hPutStrLn stderr "Transaction tables setup completed."
 
--- Transaction Functions --
-getAllTransactions :: ConnectionPool -> IO [Transaction]
-getAllTransactions pool = withConnection pool $ \conn ->
-  Database.PostgreSQL.Simple.query_ conn
-    [sql|
-      SELECT 
-        t.id, 
-        t.status, 
-        t.created, 
-        t.completed, 
-        t.customer_id, 
-        t.employee_id, 
-        t.register_id, 
-        t.location_id, 
-        t.subtotal, 
-        t.discount_total, 
-        t.tax_total, 
-        t.total, 
-        t.transaction_type, 
-        t.is_voided, 
-        t.void_reason, 
-        t.is_refunded, 
-        t.refund_reason, 
-        t.reference_transaction_id, 
-        t.notes 
-      FROM transaction t 
-      ORDER BY t.created DESC
-    |]
+-- Queries
 
-getTransactionById :: ConnectionPool -> UUID -> IO (Maybe Transaction)
-getTransactionById pool transactionId = withConnection pool $ \conn -> do
-  let query_str = [sql|
-      SELECT 
-        t.id, 
-        t.status, 
-        t.created, 
-        t.completed, 
-        t.customer_id, 
-        t.employee_id, 
-        t.register_id, 
-        t.location_id, 
-        t.subtotal, 
-        t.discount_total, 
-        t.tax_total, 
-        t.total, 
-        t.transaction_type, 
-        t.is_voided, 
-        t.void_reason, 
-        t.is_refunded, 
-        t.refund_reason, 
-        t.reference_transaction_id, 
-        t.notes 
-      FROM transaction t 
-      WHERE t.id = ?
-    |]
+itemsForTx :: UUID -> Query (TransactionItemRow Expr)
+itemsForTx txId = do
+  ti <- each transactionItemSchema
+  where_ $ tiTransactionId ti ==. lit txId
+  pure ti
 
-  results <- Database.PostgreSQL.Simple.query conn query_str (Database.PostgreSQL.Simple.Only transactionId)
+taxesForItem :: UUID -> Query (TaxRow Expr)
+taxesForItem itemId = do
+  t <- each taxSchema
+  where_ $ taxRowTransactionItemId t ==. lit itemId
+  pure t
 
-  case results of
-    [transaction] -> do
-      items <- getTransactionItemsByTransactionId conn transactionId
-      payments <- getPaymentsByTransactionId conn transactionId
-      pure $ Just $ transaction { transactionItems = items, transactionPayments = payments }
-    _ -> pure Nothing
+discountsForItem :: UUID -> Query (DiscountRow Expr)
+discountsForItem itemId = do
+  d <- each discountSchema
+  where_ $ discRowTransactionItemId d ==. lit (Just itemId)
+  pure d
 
-getTransactionItemsByTransactionId :: Database.PostgreSQL.Simple.Connection -> UUID -> IO [TransactionItem]
-getTransactionItemsByTransactionId conn transactionId = do
-  let query_str = [sql|
-      SELECT 
-        id, 
-        transaction_id, 
-        menu_item_sku, 
-        quantity, 
-        price_per_unit, 
-        subtotal, 
-        total 
-      FROM transaction_item 
-      WHERE transaction_id = ?
-    |]
+paymentsForTx :: UUID -> Query (PaymentRow Expr)
+paymentsForTx txId = do
+  p <- each paymentSchema
+  where_ $ pymtTransactionId p ==. lit txId
+  pure p
 
-  items <- Database.PostgreSQL.Simple.query conn query_str (Database.PostgreSQL.Simple.Only transactionId)
+sel :: Query (MenuItemRow Expr) -> Query (MenuItemRow Expr)
+sel = id
 
-  mapM (\item -> do
-    discounts <- getDiscountsByTransactionItemId conn (transactionItemId item)
-    taxes <- getTaxesByTransactionItemId conn (transactionItemId item)
-    pure $ item { transactionItemDiscounts = discounts, transactionItemTaxes = taxes }
-    ) items
+hydrateTx :: DBPool -> TransactionRow Result -> IO Transaction
+hydrateTx pool txRow = do
+  let txId  = DB.Schema.txId txRow
+  itemRows  <- runSession pool $ Session.statement () $ run $ Rel8.select (itemsForTx txId)
+  items     <- mapM (hydrateItem pool) itemRows
+  pymtRows  <- runSession pool $ Session.statement () $ run $ Rel8.select (paymentsForTx txId)
+  let payments = map paymentRowToDomain pymtRows
+  pure $ txRowToDomain txRow items payments
 
-getDiscountsByTransactionItemId :: Database.PostgreSQL.Simple.Connection -> UUID -> IO [DiscountRecord]
-getDiscountsByTransactionItemId conn itemId = do
-  let query_str = [sql|
-      SELECT 
-        d.type, 
-        d.amount, 
-        d.percent, 
-        d.reason, 
-        d.approved_by 
-      FROM discount d 
-      WHERE d.transaction_item_id = ?
-    |]
+hydrateItem :: DBPool -> TransactionItemRow Result -> IO TransactionItem
+hydrateItem pool itemRow = do
+  let itemId   = tiId itemRow
+  taxRows      <- runSession pool $ Session.statement () $ run $ Rel8.select (taxesForItem itemId)
+  discountRows <- runSession pool $ Session.statement () $ run $ Rel8.select (discountsForItem itemId)
+  pure $ itemRowToDomain itemRow
+    (map taxRowToDomain taxRows)
+    (map discountRowToDomain discountRows)
 
-  Database.PostgreSQL.Simple.query conn query_str (Database.PostgreSQL.Simple.Only itemId)
+getAllTransactions :: DBPool -> IO [Transaction]
+getAllTransactions pool = do
+  txRows <- runSession pool $ Session.statement () $ run $ Rel8.select (each transactionSchema)
+  mapM (hydrateTx pool) txRows
 
+getTransactionById :: DBPool -> UUID -> IO (Maybe Transaction)
+getTransactionById pool txId = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    tx <- each transactionSchema
+    where_ $ DB.Schema.txId tx ==. lit txId
+    pure tx
+  case rows of
+    [row] -> Just <$> hydrateTx pool row
+    _     -> pure Nothing
 
-getTaxesByTransactionItemId :: Database.PostgreSQL.Simple.Connection -> UUID -> IO [TaxRecord]
-getTaxesByTransactionItemId conn itemId = do
-  let query_str = [sql|
-      SELECT 
-        t.category, 
-        t.rate, 
-        t.amount, 
-        t.description 
-      FROM transaction_tax t 
-      WHERE t.transaction_item_id = ?
-    |]
+createTransaction :: DBPool -> Transaction -> IO Transaction
+createTransaction pool tx = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = transactionSchema
+    , rows       = values [txDomainToRow tx]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
+  items    <- mapM (insertTransactionItem pool) (transactionItems tx)
+  payments <- mapM (insertPaymentTransaction pool) (transactionPayments tx)
+  pure tx { transactionItems = items, transactionPayments = payments }
 
-  Database.PostgreSQL.Simple.query conn query_str (Database.PostgreSQL.Simple.Only itemId)
+insertTransactionItem :: DBPool -> TransactionItem -> IO TransactionItem
+insertTransactionItem pool item = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = transactionItemSchema
+    , rows       = values [tiDomainToRow item]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
+  discounts <- mapM (insertDiscount pool (transactionItemId item) Nothing)
+                    (transactionItemDiscounts item)
+  taxes     <- mapM (insertTax pool (transactionItemId item))
+                    (transactionItemTaxes item)
+  pure item { transactionItemDiscounts = discounts, transactionItemTaxes = taxes }
 
-
-getPaymentsByTransactionId :: Database.PostgreSQL.Simple.Connection -> UUID -> IO [PaymentTransaction]
-getPaymentsByTransactionId conn transactionId = do
-  let query_str = [sql|
-      SELECT 
-        id, 
-        transaction_id, 
-        method, 
-        amount, 
-        tendered, 
-        change_amount, 
-        reference, 
-        approved, 
-        authorization_code 
-      FROM payment_transaction 
-      WHERE transaction_id = ?
-    |]
-
-  Database.PostgreSQL.Simple.query conn query_str (Database.PostgreSQL.Simple.Only transactionId)
-
-
-createTransaction :: ConnectionPool -> Transaction -> IO Transaction
-createTransaction pool transaction = withConnection pool $ \conn -> do
-  -- First check if transaction already exists to prevent duplicate key errors
-  results <- query conn "SELECT 1 FROM transaction WHERE id = ?" (Only (transactionId transaction)) :: IO [Only Int]
-  
-  if not (null results)
-    then error $ "Transaction with ID " ++ show (transactionId transaction) ++ " already exists"
-    else do
-      let insert_str = [sql|
-          INSERT INTO transaction (
-            id,
-            status,
-            created,
-            completed,
-            customer_id,
-            employee_id,
-            register_id,
-            location_id,
-            subtotal,
-            discount_total,
-            tax_total,
-            total,
-            transaction_type,
-            is_voided,
-            void_reason,
-            is_refunded,
-            refund_reason,
-            reference_transaction_id,
-            notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          RETURNING
-            id,
-            status,
-            created,
-            completed,
-            customer_id,
-            employee_id,
-            register_id,
-            location_id,
-            subtotal,
-            discount_total,
-            tax_total,
-            total,
-            transaction_type,
-            is_voided,
-            void_reason,
-            is_refunded,
-            refund_reason,
-            reference_transaction_id,
-            notes
-        |]
-
-      [newTransaction] <- Database.PostgreSQL.Simple.query conn insert_str (
-        transactionId transaction,
-        showStatus (transactionStatus transaction),
-        transactionCreated transaction,
-        transactionCompleted transaction,
-        transactionCustomerId transaction,
-        transactionEmployeeId transaction,
-        transactionRegisterId transaction,
-        transactionLocationId transaction,
-        transactionSubtotal transaction,
-        transactionDiscountTotal transaction,
-        transactionTaxTotal transaction,
-        transactionTotal transaction,
-        showTransactionType (transactionType transaction),
-        transactionIsVoided transaction,
-        transactionVoidReason transaction,
-        transactionIsRefunded transaction,
-        transactionRefundReason transaction,
-        transactionReferenceTransactionId transaction,
-        transactionNotes transaction
-       )
-
-      newItems <- mapM (insertTransactionItem conn) (transactionItems transaction)
-      newPayments <- mapM (insertPaymentTransaction conn) (transactionPayments transaction)
-      pure $ newTransaction { transactionItems = newItems, transactionPayments = newPayments }
-
--- | Insert a transaction item
-insertTransactionItem :: Database.PostgreSQL.Simple.Connection -> TransactionItem -> IO TransactionItem
-insertTransactionItem conn item = do
-  -- Insert transaction item
-  [newItem] <- Database.PostgreSQL.Simple.query conn [sql|
-    INSERT INTO transaction_item (
-      id, 
-      transaction_id, 
-      menu_item_sku, 
-      quantity, 
-      price_per_unit, 
-      subtotal, 
-      total
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    RETURNING 
-      id, 
-      transaction_id, 
-      menu_item_sku, 
-      quantity, 
-      price_per_unit, 
-      subtotal, 
-      total
-  |] (
-    transactionItemId item,
-    transactionItemTransactionId item,
-    transactionItemMenuItemSku item,
-    transactionItemQuantity item,
-    transactionItemPricePerUnit item,
-    transactionItemSubtotal item,
-    transactionItemTotal item
-   )
-
-  -- Insert discounts
-  discounts <- mapM (insertDiscount conn (transactionItemId item) Nothing)
-                   (transactionItemDiscounts item)
-
-  -- Insert taxes
-  taxes <- mapM (insertTax conn (transactionItemId item))
-               (transactionItemTaxes item)
-
-  -- Return complete item
-  pure $ newItem { transactionItemDiscounts = discounts, transactionItemTaxes = taxes }
-
--- | Insert a discount
-insertDiscount :: Database.PostgreSQL.Simple.Connection -> UUID -> Maybe UUID -> DiscountRecord -> IO DiscountRecord
-insertDiscount conn itemId transactionId discount = do
-  discountId <- liftIO nextRandom
-  Database.PostgreSQL.Simple.execute conn [sql|
-    INSERT INTO discount (
-      id,
-      transaction_item_id,
-      transaction_id,
-      type,
-      amount,
-      percent,
-      reason,
-      approved_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  |] (
-    discountId,
-    itemId,
-    transactionId,
-    showDiscountType (discountType discount),
-    discountAmount discount,
-    getDiscountPercent (discountType discount),
-    discountReason discount,
-    discountApprovedBy discount
-    )
+insertDiscount :: DBPool -> UUID -> Maybe UUID -> DiscountRecord -> IO DiscountRecord
+insertDiscount pool itemId mTxId discount = do
+  discId <- nextRandom
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = discountSchema
+    , rows       = values [discountDomainToRow discId itemId mTxId discount]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
   pure discount
 
--- | Get percent from discount type
-getDiscountPercent :: DiscountType -> Maybe Data.Scientific.Scientific
-getDiscountPercent (PercentOff percent) = Just percent
-getDiscountPercent _ = Nothing
-
--- | Insert a tax record
-insertTax :: Database.PostgreSQL.Simple.Connection -> UUID -> TaxRecord -> IO TaxRecord
-insertTax conn itemId tax = do
-  taxId <- liftIO nextRandom
-  Database.PostgreSQL.Simple.execute conn [sql|
-    INSERT INTO transaction_tax (
-      id,
-      transaction_item_id,
-      category,
-      rate,
-      amount,
-      description
-    ) VALUES (?, ?, ?, ?, ?, ?)
-  |] (
-    taxId,
-    itemId,
-    showTaxCategory (taxCategory tax),
-    taxRate tax,
-    taxAmount tax,
-    taxDescription tax
-    )
+insertTax :: DBPool -> UUID -> TaxRecord -> IO TaxRecord
+insertTax pool itemId tax = do
+  taxId <- nextRandom
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = taxSchema
+    , rows       = values [taxDomainToRow taxId itemId tax]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
   pure tax
 
--- | Insert a payment transaction
-insertPaymentTransaction :: Database.PostgreSQL.Simple.Connection -> PaymentTransaction -> IO PaymentTransaction
-insertPaymentTransaction conn payment = do
-  [newPayment] <- Database.PostgreSQL.Simple.query conn [sql|
-    INSERT INTO payment_transaction (
-      id,
-      transaction_id,
-      method,
-      amount,
-      tendered,
-      change_amount,
-      reference,
-      approved,
-      authorization_code
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    RETURNING
-      id,
-      transaction_id,
-      method,
-      amount,
-      tendered,
-      change_amount,
-      reference,
-      approved,
-      authorization_code
-  |] (
-    paymentId payment,
-    paymentTransactionId payment,
-    showPaymentMethod (paymentMethod payment),
-    paymentAmount payment,
-    paymentTendered payment,
-    paymentChange payment,
-    paymentReference payment,
-    paymentApproved payment,
-    paymentAuthorizationCode payment
-   )
-  pure newPayment
+insertPaymentTransaction :: DBPool -> PaymentTransaction -> IO PaymentTransaction
+insertPaymentTransaction pool payment = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = paymentSchema
+    , rows       = values [paymentDomainToRow payment]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
+  pure payment
 
--- | Update a transaction
-updateTransaction :: ConnectionPool -> UUID -> Transaction -> IO Transaction
-updateTransaction pool transactionId transaction = withConnection pool $ \conn -> do
-  -- Update transaction
-  Database.PostgreSQL.Simple.execute conn [sql|
-    UPDATE transaction SET
-      status = ?,
-      completed = ?,
-      customer_id = ?,
-      employee_id = ?,
-      register_id = ?,
-      location_id = ?,
-      subtotal = ?,
-      discount_total = ?,
-      tax_total = ?,
-      total = ?,
-      transaction_type = ?,
-      is_voided = ?,
-      void_reason = ?,
-      is_refunded = ?,
-      refund_reason = ?,
-      reference_transaction_id = ?,
-      notes = ?
-    WHERE id = ?
-  |] (
-    showStatus (transactionStatus transaction),
-    transactionCompleted transaction,
-    transactionCustomerId transaction,
-    transactionEmployeeId transaction,
-    transactionRegisterId transaction,
-    transactionLocationId transaction,
-    transactionSubtotal transaction,
-    transactionDiscountTotal transaction,
-    transactionTaxTotal transaction,
-    transactionTotal transaction,
-    showTransactionType (transactionType transaction),
-    transactionIsVoided transaction,
-    transactionVoidReason transaction,
-    transactionIsRefunded transaction,
-    transactionRefundReason transaction,
-    transactionReferenceTransactionId transaction,
-    transactionNotes transaction,
-    transactionId
-   )
+updateTransaction :: DBPool -> UUID -> Transaction -> IO Transaction
+updateTransaction pool txId tx = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = transactionSchema
+    , from        = pure ()
+    , set         = \() _ -> txDomainToRow tx
+    , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+    , returning   = NoReturning
+    }
+  mTx <- getTransactionById pool txId
+  case mTx of
+    Just updated -> pure updated
+    Nothing      -> throwIO $ userError $ "Transaction not found after update: " <> show txId
 
-  -- Get the updated transaction
-  maybeTransaction <- getTransactionById pool transactionId
-  case maybeTransaction of
-    Just updatedTransaction -> pure updatedTransaction
-    Nothing -> error $ "Transaction not found after update: " ++ show transactionId
+voidTransaction :: DBPool -> UUID -> Text -> IO Transaction
+voidTransaction pool txId reason = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = transactionSchema
+    , from        = pure ()
+    , set         = \() row -> row
+        { txStatus     = lit "VOIDED"
+        , txIsVoided   = lit True
+        , txVoidReason = lit (Just reason)
+        }
+    , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+    , returning   = NoReturning
+    }
+  mTx <- getTransactionById pool txId
+  case mTx of
+    Just tx -> pure tx
+    Nothing -> throwIO $ userError $ "Transaction not found after void: " <> show txId
 
--- | Void a transaction
-voidTransaction :: ConnectionPool -> UUID -> Text -> IO Transaction
-voidTransaction pool transactionId reason = withConnection pool $ \conn -> do
-  -- Update transaction to voided status
-  Database.PostgreSQL.Simple.execute conn [sql|
-    UPDATE transaction SET
-      status = 'VOIDED',
-      is_voided = TRUE,
-      void_reason = ?
-    WHERE id = ?
-  |] (reason, transactionId)
+refundTransaction :: DBPool -> UUID -> Text -> IO Transaction
+refundTransaction pool txId reason = do
+  mOrig <- getTransactionById pool txId
+  case mOrig of
+    Nothing   -> throwIO $ userError $ "Original transaction not found: " <> show txId
+    Just orig -> do
+      refundId <- nextRandom
+      now      <- getCurrentTime
+      let refund = orig
+            { transactionId                     = refundId
+            , transactionStatus                 = Completed
+            , transactionCreated                = now
+            , transactionCompleted              = Just now
+            , transactionSubtotal               = negate (transactionSubtotal orig)
+            , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
+            , transactionTaxTotal               = negate (transactionTaxTotal orig)
+            , transactionTotal                  = negate (transactionTotal orig)
+            , transactionType                   = Return
+            , transactionIsVoided               = False
+            , transactionVoidReason             = Nothing
+            , transactionIsRefunded             = False
+            , transactionRefundReason           = Nothing
+            , transactionReferenceTransactionId = Just txId
+            , transactionNotes                  = Just $
+                "Refund for transaction " <> pack (toString txId) <> ": " <> reason
+            , transactionItems    = map negateTransactionItem (transactionItems orig)
+            , transactionPayments = map negatePaymentTransaction (transactionPayments orig)
+            }
+      newRefund <- createTransaction pool refund
+      runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = transactionSchema
+        , from        = pure ()
+        , set         = \() row -> row
+            { txIsRefunded   = lit True
+            , txRefundReason = lit (Just reason)
+            }
+        , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+        , returning   = NoReturning
+        }
+      pure newRefund
 
-  -- Get the updated transaction
-  maybeTransaction <- getTransactionById pool transactionId
-  case maybeTransaction of
-    Just updatedTransaction -> pure updatedTransaction
-    Nothing -> error $ "Transaction not found after void: " ++ show transactionId
-
--- | Refund a transaction
-refundTransaction :: ConnectionPool -> UUID -> Text -> IO Transaction
-refundTransaction pool transactionId reason = withConnection pool $ \conn -> do
-  -- First, get the original transaction
-  maybeOriginalTransaction <- getTransactionById pool transactionId
-  case maybeOriginalTransaction of
-    Nothing -> error $ "Original transaction not found for refund: " ++ show transactionId
-    Just originalTransaction -> do
-      -- Create a new transaction for the refund
-      refundId <- liftIO nextRandom
-      now <- liftIO getCurrentTime
-
-      let refundTransaction = Transaction {
-        transactionId = refundId,
-        transactionStatus = Completed,
-        transactionCreated = now,
-        transactionCompleted = Just now,
-        transactionCustomerId = transactionCustomerId originalTransaction,
-        transactionEmployeeId = transactionEmployeeId originalTransaction,
-        transactionRegisterId = transactionRegisterId originalTransaction,
-        transactionLocationId = transactionLocationId originalTransaction,
-        -- Negate amounts for refund
-        transactionSubtotal = negate $ transactionSubtotal originalTransaction,
-        transactionDiscountTotal = negate $ transactionDiscountTotal originalTransaction,
-        transactionTaxTotal = negate $ transactionTaxTotal originalTransaction,
-        transactionTotal = negate $ transactionTotal originalTransaction,
-        transactionType = Return,
-        transactionIsVoided = False,
-        transactionVoidReason = Nothing,
-        transactionIsRefunded = False,
-        transactionRefundReason = Nothing,
-        transactionReferenceTransactionId = Just transactionId,
-        transactionNotes = Just $ "Refund for transaction " <> T.pack (toString transactionId) <> ": " <> reason,
-        -- Create refund items and payment
-        transactionItems = map negateTransactionItem $ transactionItems originalTransaction,
-        transactionPayments = map negatePaymentTransaction $ transactionPayments originalTransaction
+clearTransaction :: DBPool -> UUID -> IO ()
+clearTransaction pool txId = do
+  hPutStrLn stderr $ "Cancelling transaction: " <> show txId
+  runSession pool $ do
+    Session.statement () $ run_ $ Rel8.update $ Update
+      { target      = reservationSchema
+      , from        = pure ()
+      , set         = \() row -> row { resStatus = lit "Released" }
+      , updateWhere = \() row ->
+              resTransactionId row ==. lit txId
+          &&. resStatus row ==. lit "Reserved"
+      , returning   = NoReturning
       }
+    Session.statement () $ run_ $ Rel8.delete $ Delete
+      { from        = paymentSchema
+      , using       = pure ()
+      , deleteWhere = \() row -> pymtTransactionId row ==. lit txId
+      , returning   = NoReturning
+      }
+    Session.statement () $ run_ $ Rel8.delete $ Delete
+      { from        = transactionItemSchema
+      , using       = pure ()
+      , deleteWhere = \() row -> tiTransactionId row ==. lit txId
+      , returning   = NoReturning
+      }
+    Session.statement () $ run_ $ Rel8.update $ Update
+      { target      = transactionSchema
+      , from        = pure ()
+      , set         = \() row -> row
+          { txSubtotal      = lit 0
+          , txDiscountTotal = lit 0
+          , txTaxTotal      = lit 0
+          , txTotal         = lit 0
+          , txStatus        = lit "CREATED"
+          }
+      , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+      , returning   = NoReturning
+      }
+  hPutStrLn stderr "Transaction cancelled successfully."
 
-      -- Insert the refund transaction
-      newRefundTransaction <- createTransaction pool refundTransaction
+finalizeTransaction :: DBPool -> UUID -> IO Transaction
+finalizeTransaction pool txId = do
+  reservations <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    res <- each reservationSchema
+    where_ $ resTransactionId res ==. lit txId
+         &&. resStatus res ==. lit "Reserved"
+    pure res
+  forM_ reservations $ \res -> do
+    let sku = resItemSku res
+        qty = resQuantity res
+    runSession pool $ do
+      Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = menuItemSchema
+        , from        = pure ()
+        , set         = \() row -> row { menuQuantity = menuQuantity row - lit qty }
+        , updateWhere = \() row -> menuSku row ==. lit sku
+        , returning   = NoReturning
+        }
+      Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = reservationSchema
+        , from        = pure ()
+        , set         = \() row -> row { resStatus = lit "Completed" }
+        , updateWhere = \() row ->
+              resTransactionId row ==. lit txId
+          &&. resItemSku row ==. lit sku
+        , returning   = NoReturning
+        }
+  now <- getCurrentTime
+  runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = transactionSchema
+    , from        = pure ()
+    , set         = \() row -> row
+        { txStatus    = lit "COMPLETED"
+        , txCompleted = lit (Just now)
+        }
+    , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+    , returning   = NoReturning
+    }
+  mTx <- getTransactionById pool txId
+  case mTx of
+    Just tx -> pure tx
+    Nothing -> throwIO $ userError $ "Transaction not found after finalization: " <> show txId
 
-      -- Mark the original transaction as refunded
-      Database.PostgreSQL.Simple.execute conn [sql|
-        UPDATE transaction SET
-          is_refunded = TRUE,
-          refund_reason = ?
-        WHERE id = ?
-      |] (reason, transactionId)
+addTransactionItem :: DBPool -> TransactionItem -> IO TransactionItem
+addTransactionItem pool item = do
+  let sku = transactionItemMenuItemSku item
+      qty = transactionItemQuantity item
 
-      -- Return the refund transaction
-      pure newRefundTransaction
+  -- Two separate queries; aggregate always returns exactly one row for Full fold.
+  totals <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    mi <- each menuItemSchema
+    where_ $ menuSku mi ==. lit sku
+    pure (menuQuantity mi)
 
--- Fix for negateTransactionItem function
-negateTransactionItem :: TransactionItem -> TransactionItem
-negateTransactionItem item = TransactionItem {
-  transactionItemId = transactionItemId item,
-  transactionItemTransactionId = transactionItemTransactionId item,
-  transactionItemMenuItemSku = transactionItemMenuItemSku item,
-  transactionItemQuantity = transactionItemQuantity item,
-  transactionItemPricePerUnit = transactionItemPricePerUnit item,
-  transactionItemDiscounts = map negateDiscountRecord (transactionItemDiscounts item),
-  transactionItemTaxes = map negateTaxRecord (transactionItemTaxes item),
-  transactionItemSubtotal = negate (transactionItemSubtotal item),
-  transactionItemTotal = negate (transactionItemTotal item)
-}
+  reservedSums <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    aggregate (sumOn resQuantity) $ do
+      r <- each reservationSchema
+      where_ $ resItemSku r ==. lit sku
+           &&. resStatus r ==. lit "Reserved"
+      pure r
 
-clearTransaction :: ConnectionPool -> UUID -> IO ()
-clearTransaction pool transactionId = withConnection pool $ \conn -> do
-  hPutStrLn stderr $ "Cancelling transaction: " ++ show transactionId
-
-  _ <- execute conn
-    [sql|
-      UPDATE inventory_reservation
-      SET status = 'Released'
-      WHERE transaction_id = ? AND status = 'Reserved'
-    |]
-    (Only transactionId)
-
-  _ <- execute conn
-    [sql|
-      DELETE FROM transaction_tax
-      WHERE transaction_item_id IN (
-        SELECT id FROM transaction_item WHERE transaction_id = ?
-      )
-    |]
-    (Only transactionId)
-
-  _ <- execute conn
-    [sql|
-      DELETE FROM discount
-      WHERE transaction_item_id IN (
-        SELECT id FROM transaction_item WHERE transaction_id = ?
-      )
-      OR transaction_id = ?
-    |]
-    (transactionId, transactionId)
-
-  _ <- execute conn
-    [sql|
-      DELETE FROM transaction_item WHERE transaction_id = ?
-    |]
-    (Only transactionId)
-
-  _ <- execute conn
-    [sql|
-      DELETE FROM payment_transaction WHERE transaction_id = ?
-    |]
-    (Only transactionId)
-
-  _ <- execute conn
-    [sql|
-      UPDATE transaction SET
-        subtotal = 0,
-        discount_total = 0,
-        tax_total = 0,
-        total = 0,
-        status = 'CREATED'
-      WHERE id = ?
-    |]
-    (Only transactionId)
-
-  hPutStrLn stderr "Transaction cancelled successfully"
-
--- | Negate a discount record for refunds
-negateDiscountRecord :: DiscountRecord -> DiscountRecord
-negateDiscountRecord discount = discount {
-  discountAmount = negate $ discountAmount discount
-}
-
--- | Negate a tax record for refunds
-negateTaxRecord :: TaxRecord -> TaxRecord
-negateTaxRecord tax = tax {
-  taxAmount = negate $ taxAmount tax
-}
-
--- | Negate a payment transaction for refunds
-negatePaymentTransaction :: PaymentTransaction -> PaymentTransaction
-negatePaymentTransaction payment = payment {
-  paymentId = paymentId payment, -- Will be replaced when inserted
-  paymentAmount = negate $ paymentAmount payment,
-  paymentTendered = negate $ paymentTendered payment,
-  paymentChange = negate $ paymentChange payment
-}
-
--- Updated finalizeTransaction that converts reservations to actual sales
-finalizeTransaction :: ConnectionPool -> UUID -> IO Transaction
-finalizeTransaction pool transactionId = withConnection pool $ \conn -> do
-  -- Get all reserved items for this transaction with explicit type annotation
-  reservations <- query conn
-    [sql|
-      SELECT item_sku, quantity
-      FROM inventory_reservation
-      WHERE transaction_id = ? AND status = 'Reserved'
-    |]
-    (Only transactionId) :: IO [(UUID, Int)]  -- Add explicit type annotation
-
-  -- decrement inventory
-  forM_ reservations $ \(sku, qty) -> do
-    execute conn
-      "UPDATE menu_items SET quantity = quantity - ? WHERE sku = ?"
-      (qty :: Int, sku :: UUID)  -- Explicit types if needed
-
-    -- Mark reservations as completed
-    execute conn
-      "UPDATE inventory_reservation SET status = 'Completed' WHERE transaction_id = ? AND item_sku = ?"
-      (transactionId, sku)
-
-  -- Continue with existing finalization...
-  now <- liftIO getCurrentTime
-  execute conn [sql|
-    UPDATE transaction SET
-      status = 'COMPLETED',
-      completed = ?
-    WHERE id = ?
-  |] (now, transactionId)
-
-  -- Return updated transaction
-  maybeTransaction <- getTransactionById pool transactionId
-  case maybeTransaction of
-    Just updatedTransaction -> pure updatedTransaction
-    Nothing -> error $ "Transaction not found after finalization: " ++ show transactionId
-
-insertInventoryReservation :: Connection -> InventoryReservation -> IO ()
-insertInventoryReservation conn InventoryReservation{..} = do
-  reservationId <- liftIO nextRandom
-  void $ execute conn [sql|
-    INSERT INTO inventory_reservation
-    (id, item_sku, transaction_id, quantity, status)
-    VALUES (?, ?, ?, ?, ?)
-  |] (
-    reservationId,
-    reservationItemSku,
-    reservationTransactionId,
-    reservationQuantity,
-    reservationStatus
-    )
-
-addTransactionItem :: ConnectionPool -> TransactionItem -> IO TransactionItem
-addTransactionItem pool item = withConnection pool $ \conn -> do
-  let quantity = transactionItemQuantity item
-      menuItemSku = transactionItemMenuItemSku item
-
-  -- Check inventory availability
-  results <- query conn
-    [sql|
-      SELECT
-        m.quantity,
-        COALESCE(SUM(r.quantity), 0)
-      FROM menu_items m
-      LEFT JOIN inventory_reservation r
-        ON r.item_sku = m.sku
-        AND r.status = 'Reserved'
-      WHERE m.sku = ?
-      GROUP BY m.quantity
-    |]
-    (Only menuItemSku) :: IO [(Int, Int)]
-
-  case results of
-    [] -> throwIO $ ItemNotFound menuItemSku
-    ((availableQuantity, reservedQuantity):_) -> do
-      let actuallyAvailable = availableQuantity - reservedQuantity
-
-      if actuallyAvailable < quantity
-        then throwIO $ InsufficientInventory menuItemSku quantity actuallyAvailable
+  case totals of
+    [] -> throwIO $ ItemNotFound sku
+    (total : _) -> do
+      let reserved  = case reservedSums of { (r : _) -> r; _ -> 0 }
+          available = fromIntegral total - fromIntegral reserved :: Int
+      if available < qty
+        then throwIO $ InsufficientInventory sku qty available
         else do
-          -- Insert the item
-          newItem <- insertTransactionItem conn item
-
-          -- Create reservation
-          let reservation = InventoryReservation
-                { reservationItemSku = menuItemSku
-                , reservationTransactionId = transactionItemTransactionId item
-                , reservationQuantity = quantity
-                , reservationStatus = "Reserved"
-                }
-          insertInventoryReservation conn reservation
-
+          newItem <- insertTransactionItem pool item
+          resId   <- nextRandom
+          now     <- getCurrentTime
+          runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+            { into       = reservationSchema
+            , rows       = values
+                [ ReservationRow
+                    { resId            = lit resId
+                    , resItemSku       = lit sku
+                    , resTransactionId = lit (transactionItemTransactionId item)
+                    , resQuantity      = lit (fromIntegral qty)
+                    , resStatus        = lit "Reserved"
+                    , resCreatedAt     = lit now
+                    }
+                ]
+            , onConflict = Abort
+            , returning  = NoReturning
+            }
           pure newItem
 
-deleteTransactionItem :: ConnectionPool -> UUID -> IO ()
-deleteTransactionItem pool itemId = withConnection pool $ \conn -> do
-  -- First get the item details to release reservation with explicit type
-  itemDetails <- Database.PostgreSQL.Simple.query conn
-    "SELECT menu_item_sku, quantity, transaction_id FROM transaction_item WHERE id = ?"
-    (Database.PostgreSQL.Simple.Only itemId) :: IO [(UUID, Int, UUID)]  -- Add type annotation
-
-  case itemDetails of
-    [(sku, qty, txId)] -> do
-      -- Release the reservation
-      _ <- Database.PostgreSQL.Simple.execute conn
-        "UPDATE inventory_reservation SET status = 'Released' WHERE item_sku = ? AND transaction_id = ?"
-        (sku :: UUID, txId :: UUID)  -- Explicit types if still needed
-      pure ()
+deleteTransactionItem :: DBPool -> UUID -> IO ()
+deleteTransactionItem pool itemId = do
+  itemRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    ti <- each transactionItemSchema
+    where_ $ tiId ti ==. lit itemId
+    pure ti
+  case itemRows of
+    [item] ->
+      runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = reservationSchema
+        , from        = pure ()
+        , set         = \() row -> row { resStatus = lit "Released" }
+        , updateWhere = \() row ->
+              resItemSku row ==. lit (tiMenuItemSku item)
+          &&. resTransactionId row ==. lit (tiTransactionId item)
+        , returning   = NoReturning
+        }
     _ -> pure ()
+  runSession pool $ Session.statement () $ run_ $ Rel8.delete $ Delete
+    { from        = transactionItemSchema
+    , using       = pure ()
+    , deleteWhere = \() row -> tiId row ==. lit itemId
+    , returning   = NoReturning
+    }
+  case itemRows of
+    [item] -> updateTransactionTotals pool (tiTransactionId item)
+    _      -> pure ()
 
-  -- Continue with existing deletion logic
-  results <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT transaction_id FROM transaction_item WHERE id = ?
-  |] (Database.PostgreSQL.Simple.Only itemId)
+addPaymentTransaction :: DBPool -> PaymentTransaction -> IO PaymentTransaction
+addPaymentTransaction pool payment = do
+  p <- insertPaymentTransaction pool payment
+  updateTransactionPaymentStatus pool (paymentTransactionId payment)
+  pure p
 
-  case results of
-    [Database.PostgreSQL.Simple.Only transactionId] -> do
-      Database.PostgreSQL.Simple.execute conn [sql|
-        DELETE FROM discount WHERE transaction_item_id = ?
-      |] (Database.PostgreSQL.Simple.Only itemId)
+deletePaymentTransaction :: DBPool -> UUID -> IO ()
+deletePaymentTransaction pool paymentId = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    p <- each paymentSchema
+    where_ $ pymtId p ==. lit paymentId
+    pure p
+  runSession pool $ Session.statement () $ run_ $ Rel8.delete $ Delete
+    { from        = paymentSchema
+    , using       = pure ()
+    , deleteWhere = \() row -> pymtId row ==. lit paymentId
+    , returning   = NoReturning
+    }
+  case rows of
+    [p] -> updateTransactionPaymentStatus pool (pymtTransactionId p)
+    _   -> pure ()
 
-      Database.PostgreSQL.Simple.execute conn [sql|
-        DELETE FROM transaction_tax WHERE transaction_item_id = ?
-      |] (Database.PostgreSQL.Simple.Only itemId)
+-- aggregate :: Aggregator i a -> Query i -> Query a
+-- Returns exactly one row (identity value if query is empty).
+updateTransactionTotals :: DBPool -> UUID -> IO ()
+updateTransactionTotals pool txId = do
+  subtotals <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    aggregate (sumOn tiSubtotal) $ do
+      ti <- each transactionItemSchema
+      where_ $ tiTransactionId ti ==. lit txId
+      pure ti
+  let subtotal :: Int32 = case subtotals of { (s : _) -> s; _ -> 0 }
 
-      Database.PostgreSQL.Simple.execute conn [sql|
-        DELETE FROM transaction_item WHERE id = ?
-      |] (Database.PostgreSQL.Simple.Only itemId)
+  discountTotals <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    aggregate (sumOn discRowAmount) $ do
+      d  <- each discountSchema
+      ti <- each transactionItemSchema
+      where_ $ discRowTransactionItemId d ==. nullify (tiId ti)
+           &&. tiTransactionId ti ==. lit txId
+      pure d
+  let discountTotal :: Int32 = case discountTotals of { (d : _) -> d; _ -> 0 }
 
-      updateTransactionTotals conn transactionId
-
-    _ -> pure ()
-
--- | Add a payment to a transaction
-addPaymentTransaction :: ConnectionPool -> PaymentTransaction -> IO PaymentTransaction
-addPaymentTransaction pool payment = withConnection pool $ \conn -> do
-  -- Insert the payment
-  newPayment <- insertPaymentTransaction conn payment
-
-  -- Update transaction
-  updateTransactionPaymentStatus conn (paymentTransactionId payment)
-
-  -- Return the new payment
-  pure newPayment
-
--- | Delete a payment
-deletePaymentTransaction :: ConnectionPool -> UUID -> IO ()
-deletePaymentTransaction pool paymentId = withConnection pool $ \conn -> do
-  -- Get transaction ID before deleting
-  results <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT transaction_id FROM payment_transaction WHERE id = ?
-  |] (Database.PostgreSQL.Simple.Only paymentId)
-
-  case results of
-    [Database.PostgreSQL.Simple.Only transactionId] -> do
-      -- Delete the payment
-      Database.PostgreSQL.Simple.execute conn [sql|
-        DELETE FROM payment_transaction WHERE id = ?
-      |] (Database.PostgreSQL.Simple.Only paymentId)
-
-      -- Update transaction status
-      updateTransactionPaymentStatus conn transactionId
-
-    _ -> pure () -- Payment not found
-
--- | Update transaction totals
-updateTransactionTotals :: Database.PostgreSQL.Simple.Connection -> UUID -> IO ()
-updateTransactionTotals conn transactionId = do
-  [Database.PostgreSQL.Simple.Only subtotal] <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT COALESCE(SUM(subtotal), 0) FROM transaction_item WHERE transaction_id = ?
-  |] (Database.PostgreSQL.Simple.Only transactionId) :: IO [Database.PostgreSQL.Simple.Only Scientific]
-
-  [Database.PostgreSQL.Simple.Only discountTotal] <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT COALESCE(SUM(amount), 0) FROM discount
-    WHERE transaction_id = ? OR transaction_item_id IN (
-      SELECT id FROM transaction_item WHERE transaction_id = ?
-    )
-  |] (transactionId, transactionId) :: IO [Database.PostgreSQL.Simple.Only Scientific]
-
-  [Database.PostgreSQL.Simple.Only taxTotal] <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT COALESCE(SUM(amount), 0) FROM transaction_tax
-    WHERE transaction_item_id IN (
-      SELECT id FROM transaction_item WHERE transaction_id = ?
-    )
-  |] (Database.PostgreSQL.Simple.Only transactionId) :: IO [Database.PostgreSQL.Simple.Only Scientific]
+  taxTotals <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    aggregate (sumOn taxRowAmount) $ do
+      t  <- each taxSchema
+      ti <- each transactionItemSchema
+      where_ $ taxRowTransactionItemId t ==. tiId ti
+           &&. tiTransactionId ti ==. lit txId
+      pure t
+  let taxTotal :: Int32 = case taxTotals of { (t : _) -> t; _ -> 0 }
 
   let total = subtotal - discountTotal + taxTotal
+  runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = transactionSchema
+    , from        = pure ()
+    , set         = \() row -> row
+        { txSubtotal      = lit subtotal
+        , txDiscountTotal = lit discountTotal
+        , txTaxTotal      = lit taxTotal
+        , txTotal         = lit total
+        }
+    , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+    , returning   = NoReturning
+    }
 
-  void $ Database.PostgreSQL.Simple.execute conn [sql|
-    UPDATE transaction SET
-      subtotal = ?,
-      discount_total = ?,
-      tax_total = ?,
-      total = ?
-    WHERE id = ?
-  |] (subtotal, discountTotal, taxTotal, total, transactionId)
+updateTransactionPaymentStatus :: DBPool -> UUID -> IO ()
+updateTransactionPaymentStatus pool txId = do
+  totals <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    tx <- each transactionSchema
+    where_ $ DB.Schema.txId tx ==. lit txId
+    pure (txTotal tx)
+  pymtSums <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    aggregate (sumOn pymtAmount) $ do
+      p <- each paymentSchema
+      where_ $ pymtTransactionId p ==. lit txId
+      pure p
+  case (totals, pymtSums) of
+    (total : _, paid : _) -> do
+      let status = if paid >= total then "COMPLETED" else "IN_PROGRESS" :: Text
+      runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = transactionSchema
+        , from        = pure ()
+        , set         = \() row -> row { txStatus = lit status }
+        , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+        , returning   = NoReturning
+        }
+    _ -> pure ()
 
-updateTransactionPaymentStatus :: Database.PostgreSQL.Simple.Connection -> UUID -> IO ()
-updateTransactionPaymentStatus conn transactionId = do
-  [Database.PostgreSQL.Simple.Only total] <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT total FROM transaction WHERE id = ?
-  |] (Database.PostgreSQL.Simple.Only transactionId) :: IO [Database.PostgreSQL.Simple.Only Scientific]
+getTransactionIdByItemId :: DBPool -> UUID -> IO (Maybe UUID)
+getTransactionIdByItemId pool itemId = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    ti <- each transactionItemSchema
+    where_ $ tiId ti ==. lit itemId
+    pure (tiTransactionId ti)
+  case rows of
+    [txId] -> pure (Just txId)
+    _      -> pure Nothing
 
-  [Database.PostgreSQL.Simple.Only paymentTotal] <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT COALESCE(SUM(amount), 0) FROM payment_transaction
-    WHERE transaction_id = ?
-  |] (Database.PostgreSQL.Simple.Only transactionId) :: IO [Database.PostgreSQL.Simple.Only Scientific]
+getTransactionIdByPaymentId :: DBPool -> UUID -> IO (Maybe UUID)
+getTransactionIdByPaymentId pool paymentId = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    p <- each paymentSchema
+    where_ $ pymtId p ==. lit paymentId
+    pure (pymtTransactionId p)
+  case rows of
+    [txId] -> pure (Just txId)
+    _      -> pure Nothing
 
-  let status = if paymentTotal >= total then "COMPLETED" else "IN_PROGRESS" :: Text
+getAllRegisters :: DBPool -> IO [Register]
+getAllRegisters pool = do
+  -- asc :: Order (Expr a) — a value; contramap projects into it
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    orderBy (contramap regName asc) (each registerSchema)
+  pure $ map regRowToDomain rows
 
-  void $ Database.PostgreSQL.Simple.execute conn [sql|
-    UPDATE transaction SET
-      status = ?
-    WHERE id = ?
-  |] (status, transactionId)
+getRegisterById :: DBPool -> UUID -> IO (Maybe Register)
+getRegisterById pool regId = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    r <- each registerSchema
+    where_ $ DB.Schema.regId r ==. lit regId
+    pure r
+  case rows of
+    [row] -> pure $ Just $ regRowToDomain row
+    _     -> pure Nothing
 
--- Helper functions to convert enum types to database strings
+createRegister :: DBPool -> Register -> IO Register
+createRegister pool reg = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = registerSchema
+    , rows       = values [regDomainToRow reg]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
+  mReg <- getRegisterById pool (registerId reg)
+  case mReg of
+    Just r  -> pure r
+    Nothing -> throwIO $ userError "INSERT RETURNING produced no rows"
+
+updateRegister :: DBPool -> UUID -> Register -> IO Register
+updateRegister pool regId reg = do
+  runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = registerSchema
+    , from        = pure ()
+    , set         = \() _ -> regDomainToRow reg
+    , updateWhere = \() row -> DB.Schema.regId row ==. lit regId
+    , returning   = NoReturning
+    }
+  mReg <- getRegisterById pool regId
+  case mReg of
+    Just r  -> pure r
+    Nothing -> throwIO $ userError $ "Register not found after update: " <> show regId
+
+openRegister :: DBPool -> UUID -> OpenRegisterRequest -> IO Register
+openRegister pool regId req = do
+  now <- getCurrentTime
+  runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+    { target      = registerSchema
+    , from        = pure ()
+    , set         = \() row -> row
+        { regIsOpen               = lit True
+        , regCurrentDrawerAmount  = lit $ fromIntegral (openRegisterStartingCash req)
+        , regExpectedDrawerAmount = lit $ fromIntegral (openRegisterStartingCash req)
+        , regOpenedAt             = lit (Just now)
+        , regOpenedBy             = lit (Just (openRegisterEmployeeId req))
+        }
+    , updateWhere = \() row -> DB.Schema.regId row ==. lit regId
+    , returning   = NoReturning
+    }
+  mReg <- getRegisterById pool regId
+  case mReg of
+    Just r  -> pure r
+    Nothing -> throwIO $ userError $ "Register not found after opening: " <> show regId
+
+closeRegister :: DBPool -> UUID -> CloseRegisterRequest -> IO CloseRegisterResult
+closeRegister pool regId req = do
+  mReg <- getRegisterById pool regId
+  case mReg of
+    Nothing  -> throwIO $ userError $ "Register not found: " <> show regId
+    Just reg -> do
+      now <- getCurrentTime
+      let variance = registerExpectedDrawerAmount reg - closeRegisterCountedCash req
+      runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = registerSchema
+        , from        = pure ()
+        , set         = \() row -> row
+            { regIsOpen              = lit False
+            , regCurrentDrawerAmount = lit $ fromIntegral (closeRegisterCountedCash req)
+            , regLastTransactionTime = lit (Just now)
+            }
+        , updateWhere = \() row -> DB.Schema.regId row ==. lit regId
+        , returning   = NoReturning
+        }
+      mUpdated <- getRegisterById pool regId
+      case mUpdated of
+        Nothing      -> throwIO $ userError $ "Register not found after closing: " <> show regId
+        Just updated -> pure CloseRegisterResult
+          { closeRegisterResultRegister = updated
+          , closeRegisterResultVariance = variance
+          }
+
+-- Domain <-> row conversions
+
+txDomainToRow :: Transaction -> TransactionRow Expr
+txDomainToRow tx = TransactionRow
+  { txId                     = lit (transactionId tx)
+  , txStatus                 = lit $ showStatus (transactionStatus tx)
+  , txCreated                = lit (transactionCreated tx)
+  , txCompleted              = lit (transactionCompleted tx)
+  , txCustomerId             = lit (transactionCustomerId tx)
+  , txEmployeeId             = lit (transactionEmployeeId tx)
+  , txRegisterId             = lit (transactionRegisterId tx)
+  , txLocationId             = lit (transactionLocationId tx)
+  , txSubtotal               = lit $ fromIntegral (transactionSubtotal tx)
+  , txDiscountTotal          = lit $ fromIntegral (transactionDiscountTotal tx)
+  , txTaxTotal               = lit $ fromIntegral (transactionTaxTotal tx)
+  , txTotal                  = lit $ fromIntegral (transactionTotal tx)
+  , txTransactionType        = lit $ showTransactionType (transactionType tx)
+  , txIsVoided               = lit (transactionIsVoided tx)
+  , txVoidReason             = lit (transactionVoidReason tx)
+  , txIsRefunded             = lit (transactionIsRefunded tx)
+  , txRefundReason           = lit (transactionRefundReason tx)
+  , txReferenceTransactionId = lit (transactionReferenceTransactionId tx)
+  , txNotes                  = lit (transactionNotes tx)
+  }
+
+txRowToDomain :: TransactionRow Result -> [TransactionItem] -> [PaymentTransaction] -> Transaction
+txRowToDomain row items payments = Transaction
+  { transactionId                     = DB.Schema.txId row
+  , transactionStatus                 = parseTransactionStatus (T.unpack (txStatus row))
+  , transactionCreated                = txCreated row
+  , transactionCompleted              = txCompleted row
+  , transactionCustomerId             = txCustomerId row
+  , transactionEmployeeId             = txEmployeeId row
+  , transactionRegisterId             = txRegisterId row
+  , transactionLocationId             = txLocationId row
+  , transactionItems                  = items
+  , transactionPayments               = payments
+  , transactionSubtotal               = fromIntegral (txSubtotal row)
+  , transactionDiscountTotal          = fromIntegral (txDiscountTotal row)
+  , transactionTaxTotal               = fromIntegral (txTaxTotal row)
+  , transactionTotal                  = fromIntegral (txTotal row)
+  , transactionType                   = parseTransactionType (T.unpack (txTransactionType row))
+  , transactionIsVoided               = txIsVoided row
+  , transactionVoidReason             = txVoidReason row
+  , transactionIsRefunded             = txIsRefunded row
+  , transactionRefundReason           = txRefundReason row
+  , transactionReferenceTransactionId = txReferenceTransactionId row
+  , transactionNotes                  = txNotes row
+  }
+
+tiDomainToRow :: TransactionItem -> TransactionItemRow Expr
+tiDomainToRow ti = TransactionItemRow
+  { tiId            = lit (transactionItemId ti)
+  , tiTransactionId = lit (transactionItemTransactionId ti)
+  , tiMenuItemSku   = lit (transactionItemMenuItemSku ti)
+  , tiQuantity      = lit $ fromIntegral (transactionItemQuantity ti)
+  , tiPricePerUnit  = lit $ fromIntegral (transactionItemPricePerUnit ti)
+  , tiSubtotal      = lit $ fromIntegral (transactionItemSubtotal ti)
+  , tiTotal         = lit $ fromIntegral (transactionItemTotal ti)
+  }
+
+itemRowToDomain :: TransactionItemRow Result -> [TaxRecord] -> [DiscountRecord] -> TransactionItem
+itemRowToDomain row taxes discounts = TransactionItem
+  { transactionItemId            = tiId row
+  , transactionItemTransactionId = tiTransactionId row
+  , transactionItemMenuItemSku   = tiMenuItemSku row
+  , transactionItemQuantity      = fromIntegral (tiQuantity row)
+  , transactionItemPricePerUnit  = fromIntegral (tiPricePerUnit row)
+  , transactionItemDiscounts     = discounts
+  , transactionItemTaxes         = taxes
+  , transactionItemSubtotal      = fromIntegral (tiSubtotal row)
+  , transactionItemTotal         = fromIntegral (tiTotal row)
+  }
+
+taxDomainToRow :: UUID -> UUID -> TaxRecord -> TaxRow Expr
+taxDomainToRow taxId itemId tax = TaxRow
+  { taxRowId                = lit taxId
+  , taxRowTransactionItemId = lit itemId
+  , taxRowCategory          = lit $ showTaxCategory (taxCategory tax)
+  , taxRowRate              = lit $ realToFrac (taxRate tax)
+  , taxRowAmount            = lit $ fromIntegral (taxAmount tax)
+  , taxRowDescription       = lit (taxDescription tax)
+  }
+
+taxRowToDomain :: TaxRow Result -> TaxRecord
+taxRowToDomain row = TaxRecord
+  { taxCategory    = parseTaxCategory (T.unpack (taxRowCategory row))
+  , taxRate        = fromFloatDigits (taxRowRate row)
+  , taxAmount      = fromIntegral (taxRowAmount row)
+  , taxDescription = taxRowDescription row
+  }
+
+discountDomainToRow :: UUID -> UUID -> Maybe UUID -> DiscountRecord -> DiscountRow Expr
+discountDomainToRow discId itemId mTxId discount = DiscountRow
+  { discRowId                = lit discId
+  , discRowTransactionItemId = lit (Just itemId)
+  , discRowTransactionId     = lit mTxId
+  , discRowType              = lit $ showDiscountType (discountType discount)
+  , discRowAmount            = lit $ fromIntegral (discountAmount discount)
+  , discRowPercent           = lit $ getDiscountPercent (discountType discount)
+  , discRowReason            = lit (discountReason discount)
+  , discRowApprovedBy        = lit (discountApprovedBy discount)
+  }
+
+getDiscountPercent :: DiscountType -> Maybe Double
+getDiscountPercent (PercentOff pct) = Just (realToFrac pct)
+getDiscountPercent _                = Nothing
+
+discountRowToDomain :: DiscountRow Result -> DiscountRecord
+discountRowToDomain row = DiscountRecord
+  { discountType       = parseDiscountType (discRowType row) (fmap round (discRowPercent row))
+  , discountAmount     = fromIntegral (discRowAmount row)
+  , discountReason     = discRowReason row
+  , discountApprovedBy = discRowApprovedBy row
+  }
+
+paymentDomainToRow :: PaymentTransaction -> PaymentRow Expr
+paymentDomainToRow p = PaymentRow
+  { pymtId                = lit (paymentId p)
+  , pymtTransactionId     = lit (paymentTransactionId p)
+  , pymtMethod            = lit $ showPaymentMethod (paymentMethod p)
+  , pymtAmount            = lit $ fromIntegral (paymentAmount p)
+  , pymtTendered          = lit $ fromIntegral (paymentTendered p)
+  , pymtChange            = lit $ fromIntegral (paymentChange p)
+  , pymtReference         = lit (paymentReference p)
+  , pymtApproved          = lit (paymentApproved p)
+  , pymtAuthorizationCode = lit (paymentAuthorizationCode p)
+  }
+
+paymentRowToDomain :: PaymentRow Result -> PaymentTransaction
+paymentRowToDomain row = PaymentTransaction
+  { paymentId                = pymtId row
+  , paymentTransactionId     = pymtTransactionId row
+  , paymentMethod            = parsePaymentMethod (T.unpack (pymtMethod row))
+  , paymentAmount            = fromIntegral (pymtAmount row)
+  , paymentTendered          = fromIntegral (pymtTendered row)
+  , paymentChange            = fromIntegral (pymtChange row)
+  , paymentReference         = pymtReference row
+  , paymentApproved          = pymtApproved row
+  , paymentAuthorizationCode = pymtAuthorizationCode row
+  }
+
+regDomainToRow :: Register -> RegisterRow Expr
+regDomainToRow r = RegisterRow
+  { regId                   = lit (registerId r)
+  , regName                 = lit (registerName r)
+  , regLocationId           = lit (registerLocationId r)
+  , regIsOpen               = lit (registerIsOpen r)
+  , regCurrentDrawerAmount  = lit $ fromIntegral (registerCurrentDrawerAmount r)
+  , regExpectedDrawerAmount = lit $ fromIntegral (registerExpectedDrawerAmount r)
+  , regOpenedAt             = lit (registerOpenedAt r)
+  , regOpenedBy             = lit (registerOpenedBy r)
+  , regLastTransactionTime  = lit (registerLastTransactionTime r)
+  }
+
+regRowToDomain :: RegisterRow Result -> Register
+regRowToDomain row = Register
+  { registerId                   = DB.Schema.regId row
+  , registerName                 = regName row
+  , registerLocationId           = regLocationId row
+  , registerIsOpen               = regIsOpen row
+  , registerCurrentDrawerAmount  = fromIntegral (regCurrentDrawerAmount row)
+  , registerExpectedDrawerAmount = fromIntegral (regExpectedDrawerAmount row)
+  , registerOpenedAt             = regOpenedAt row
+  , registerOpenedBy             = regOpenedBy row
+  , registerLastTransactionTime  = regLastTransactionTime row
+  }
+
+negateTransactionItem :: TransactionItem -> TransactionItem
+negateTransactionItem ti = ti
+  { transactionItemDiscounts = map negateDiscountRecord (transactionItemDiscounts ti)
+  , transactionItemTaxes     = map negateTaxRecord      (transactionItemTaxes ti)
+  , transactionItemSubtotal  = negate (transactionItemSubtotal ti)
+  , transactionItemTotal     = negate (transactionItemTotal ti)
+  }
+
+negateDiscountRecord :: DiscountRecord -> DiscountRecord
+negateDiscountRecord d = d { discountAmount = negate (discountAmount d) }
+
+negateTaxRecord :: TaxRecord -> TaxRecord
+negateTaxRecord t = t { taxAmount = negate (taxAmount t) }
+
+negatePaymentTransaction :: PaymentTransaction -> PaymentTransaction
+negatePaymentTransaction p = p
+  { paymentAmount   = negate (paymentAmount p)
+  , paymentTendered = negate (paymentTendered p)
+  , paymentChange   = negate (paymentChange p)
+  }
+
 showStatus :: TransactionStatus -> Text
-showStatus Created = "CREATED"
+showStatus Created    = "CREATED"
 showStatus InProgress = "IN_PROGRESS"
-showStatus Completed = "COMPLETED"
-showStatus Voided = "VOIDED"
-showStatus Refunded = "REFUNDED"
+showStatus Completed  = "COMPLETED"
+showStatus Voided     = "VOIDED"
+showStatus Refunded   = "REFUNDED"
 
 showTransactionType :: TransactionType -> Text
-showTransactionType Sale = "SALE"
-showTransactionType Return = "RETURN"
-showTransactionType Exchange = "EXCHANGE"
+showTransactionType Sale                = "SALE"
+showTransactionType Return              = "RETURN"
+showTransactionType Exchange            = "EXCHANGE"
 showTransactionType InventoryAdjustment = "INVENTORY_ADJUSTMENT"
-showTransactionType ManagerComp = "MANAGER_COMP"
-showTransactionType Administrative = "ADMINISTRATIVE"
+showTransactionType ManagerComp         = "MANAGER_COMP"
+showTransactionType Administrative      = "ADMINISTRATIVE"
 
 showPaymentMethod :: PaymentMethod -> Text
-showPaymentMethod Cash = "CASH"
-showPaymentMethod Debit = "DEBIT"
-showPaymentMethod Credit = "CREDIT"
-showPaymentMethod ACH = "ACH"
-showPaymentMethod GiftCard = "GIFT_CARD"
+showPaymentMethod Cash        = "CASH"
+showPaymentMethod Debit       = "DEBIT"
+showPaymentMethod Credit      = "CREDIT"
+showPaymentMethod ACH         = "ACH"
+showPaymentMethod GiftCard    = "GIFT_CARD"
 showPaymentMethod StoredValue = "STORED_VALUE"
-showPaymentMethod Mixed = "MIXED"
-showPaymentMethod (Other text) = "OTHER:" <> text
-
+showPaymentMethod Mixed       = "MIXED"
+showPaymentMethod (Other t)   = "OTHER:" <> t
 
 showTaxCategory :: TaxCategory -> Text
 showTaxCategory RegularSalesTax = "REGULAR_SALES_TAX"
-showTaxCategory ExciseTax = "EXCISE_TAX"
-showTaxCategory CannabisTax = "CANNABIS_TAX"
-showTaxCategory LocalTax = "LOCAL_TAX"
-showTaxCategory MedicalTax = "MEDICAL_TAX"
-showTaxCategory NoTax = "NO_TAX"
+showTaxCategory ExciseTax       = "EXCISE_TAX"
+showTaxCategory CannabisTax     = "CANNABIS_TAX"
+showTaxCategory LocalTax        = "LOCAL_TAX"
+showTaxCategory MedicalTax      = "MEDICAL_TAX"
+showTaxCategory NoTax           = "NO_TAX"
 
 showDiscountType :: DiscountType -> Text
 showDiscountType (PercentOff _) = "PERCENT_OFF"
-showDiscountType (AmountOff _) = "AMOUNT_OFF"
-showDiscountType BuyOneGetOne = "BUY_ONE_GET_ONE"
-showDiscountType (Custom _ _) = "CUSTOM"
+showDiscountType (AmountOff _)  = "AMOUNT_OFF"
+showDiscountType BuyOneGetOne   = "BUY_ONE_GET_ONE"
+showDiscountType (Custom _ _)   = "CUSTOM"
 
--- Register functions --
+parseDiscountType :: Text -> Maybe Int -> DiscountType
+parseDiscountType "PERCENT_OFF"     (Just v) = PercentOff (fromIntegral v / 100)
+parseDiscountType "AMOUNT_OFF"      (Just v) = AmountOff v
+parseDiscountType "BUY_ONE_GET_ONE" _        = BuyOneGetOne
+parseDiscountType typ               (Just v) = Custom typ v
+parseDiscountType _                 _        = AmountOff 0
 
-getAllRegisters :: ConnectionPool -> IO [Register]
-getAllRegisters pool = withConnection pool $ \conn ->
-  Database.PostgreSQL.Simple.query_ conn [sql|
-    SELECT
-      id,
-      name,
-      location_id,
-      is_open,
-      current_drawer_amount,
-      expected_drawer_amount,
-      opened_at,
-      opened_by,
-      last_transaction_time
-    FROM register
-    ORDER BY name
-  |]
 
-instance FromRow Register where
-  fromRow =
-    Register
-      <$> field  -- registerId
-      <*> field  -- registerName  
-      <*> field  -- registerLocationId
-      <*> field  -- registerIsOpen
-      <*> field  -- registerCurrentDrawerAmount
-      <*> field  -- registerExpectedDrawerAmount
-      <*> field  -- registerOpenedAt
-      <*> field  -- registerOpenedBy
-      <*> field  -- registerLastTransactionTime
+getInventoryAvailability :: DBPool -> UUID -> IO (Maybe (Int, Int))
+getInventoryAvailability pool sku = do
+  totals <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    mi <- each menuItemSchema
+    where_ $ menuSku mi ==. lit sku
+    pure (menuQuantity mi)
+  reservedSums <- runSession pool $ Session.statement () $ run $ Rel8.select $
+    aggregate (sumOn resQuantity) $ do
+      r <- each reservationSchema
+      where_ $ resItemSku r ==. lit sku
+           &&. resStatus r ==. lit "Reserved"
+      pure r
+  case totals of
+    []        -> pure Nothing
+    (total:_) ->
+      let reserved = case reservedSums of { (r:_) -> r; _ -> 0 }
+      in  pure $ Just (fromIntegral total, fromIntegral reserved)
 
--- | Get register by ID
-getRegisterById :: ConnectionPool -> UUID -> IO (Maybe Register)
-getRegisterById pool registerId = withConnection pool $ \conn -> do
-  results <- Database.PostgreSQL.Simple.query conn [sql|
-    SELECT 
-      id, 
-      name, 
-      location_id, 
-      is_open, 
-      current_drawer_amount, 
-      expected_drawer_amount,
-      opened_at, 
-      opened_by, 
-      last_transaction_time
-    FROM register
-    WHERE id = ?
-  |] (Database.PostgreSQL.Simple.Only registerId)
+createInventoryReservation :: DBPool -> UUID -> UUID -> UUID -> Int -> UTCTime -> IO ()
+createInventoryReservation pool reservationId itemSku txId qty now =
+  runSession pool $ Session.statement () $ run_ $ Rel8.insert $ Insert
+    { into       = reservationSchema
+    , rows       = values
+        [ ReservationRow
+            { resId            = lit reservationId
+            , resItemSku       = lit itemSku
+            , resTransactionId = lit txId
+            , resQuantity      = lit (fromIntegral qty)
+            , resStatus        = lit "Reserved"
+            , resCreatedAt     = lit now
+            }
+        ]
+    , onConflict = Abort
+    , returning  = NoReturning
+    }
 
-  case results of
-    [register] -> pure $ Just register
-    _ -> pure Nothing
-
--- | Create a register
-createRegister :: ConnectionPool -> Register -> IO Register
-createRegister pool register = withConnection pool $ \conn -> do
-  let params = (
-        registerId register,
-        registerName register,
-        registerLocationId register,
-        registerIsOpen register,
-        registerCurrentDrawerAmount register,
-        registerExpectedDrawerAmount register,
-        registerOpenedAt register,
-        registerOpenedBy register,
-        registerLastTransactionTime register
-        )
-  rows <- Database.PostgreSQL.Simple.query conn [sql|
-    INSERT INTO register (
-      id, 
-      name, 
-      location_id, 
-      is_open, 
-      current_drawer_amount, 
-      expected_drawer_amount,
-      opened_at, 
-      opened_by, 
-      last_transaction_time
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    RETURNING 
-      id, 
-      name, 
-      location_id, 
-      is_open, 
-      current_drawer_amount, 
-      expected_drawer_amount,
-      opened_at, 
-      opened_by, 
-      last_transaction_time
-  |] params
+releaseInventoryReservation :: DBPool -> UUID -> IO Bool
+releaseInventoryReservation pool reservationId = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    r <- each reservationSchema
+    where_ $ DB.Schema.resId r ==. lit reservationId
+         &&. resStatus r ==. lit "Reserved"
+    pure r
   case rows of
-    (r:_) -> pure r
-    []    -> error "INSERT RETURNING produced no rows"
-
-updateRegister :: ConnectionPool -> UUID -> Register -> IO Register
-updateRegister pool registerId register = withConnection pool $ \conn -> do
-  let update_str = [sql|
-    UPDATE register SET
-      name = ?,
-      location_id = ?,
-      is_open = ?,
-      current_drawer_amount = ?,
-      expected_drawer_amount = ?,
-      opened_at = ?,
-      opened_by = ?,
-      last_transaction_time = ?
-    WHERE id = ?
-  |]
-
-  Database.PostgreSQL.Simple.execute conn update_str (
-    registerName register,
-    registerLocationId register,
-    registerIsOpen register,
-    registerCurrentDrawerAmount register,
-    registerExpectedDrawerAmount register,
-    registerOpenedAt register,
-    registerOpenedBy register,
-    registerLastTransactionTime register,
-    registerId
-   )
-
-  maybeRegister <- getRegisterById pool registerId
-  case maybeRegister of
-    Just updatedRegister -> pure updatedRegister
-    Nothing -> error $ "Register not found after update: " ++ show registerId
-
-
-openRegister :: ConnectionPool -> UUID -> OpenRegisterRequest -> IO Register
-openRegister pool registerId request = withConnection pool $ \conn -> do
-  now <- liftIO getCurrentTime
-
-  let update_str = [sql|
-    UPDATE register SET
-      is_open = TRUE,
-      current_drawer_amount = ?,
-      expected_drawer_amount = ?,
-      opened_at = ?,
-      opened_by = ?
-    WHERE id = ?
-  |]
-
-  Database.PostgreSQL.Simple.execute conn update_str (
-    openRegisterStartingCash request,
-    openRegisterStartingCash request,
-    now,
-    openRegisterEmployeeId request,
-    registerId
-    )
-
-  maybeRegister <- getRegisterById pool registerId
-  case maybeRegister of
-    Just updatedRegister -> pure updatedRegister
-    Nothing -> error $ "Register not found after opening: " ++ show registerId
-
-
--- | Close a register
-closeRegister :: ConnectionPool -> UUID -> CloseRegisterRequest -> IO CloseRegisterResult
-closeRegister pool registerId request = withConnection pool $ \conn -> do
-  now <- liftIO getCurrentTime
-
-  maybeRegister <- getRegisterById pool registerId
-  case maybeRegister of
-    Nothing -> error $ "Register not found: " ++ show registerId
-    Just register -> do
-
-      let variance = registerExpectedDrawerAmount register - closeRegisterCountedCash request
-
-      let update_str = [sql|
-        UPDATE register SET
-          is_open = FALSE,
-          current_drawer_amount = ?,
-          last_transaction_time = ?
-        WHERE id = ?
-      |]
-
-      Database.PostgreSQL.Simple.execute conn update_str (
-        closeRegisterCountedCash request,
-        now,
-        registerId
-        )
-
-      maybeUpdatedRegister <- getRegisterById pool registerId
-      case maybeUpdatedRegister of
-        Nothing -> error $ "Register not found after closing: " ++ show registerId
-        Just updatedRegister ->
-          pure $ CloseRegisterResult {
-            closeRegisterResultRegister = updatedRegister,
-            closeRegisterResultVariance = variance
-          }
-
-getTransactionIdByItemId :: ConnectionPool -> UUID -> IO (Maybe UUID)
-getTransactionIdByItemId pool itemId = withConnection pool $ \conn -> do
-  results <- query conn
-    "SELECT transaction_id FROM transaction_item WHERE id = ?"
-    (Only itemId)
-  case results of
-    [Only txId] -> pure (Just txId)
-    _           -> pure Nothing
-
-getTransactionIdByPaymentId :: ConnectionPool -> UUID -> IO (Maybe UUID)
-getTransactionIdByPaymentId pool paymentId = withConnection pool $ \conn -> do
-  results <- query conn
-    "SELECT transaction_id FROM payment_transaction WHERE id = ?"
-    (Only paymentId)
-  case results of
-    [Only txId] -> pure (Just txId)
-    _           -> pure Nothing
+    [] -> pure False
+    _  -> do
+      runSession pool $ Session.statement () $ run_ $ Rel8.update $ Update
+        { target      = reservationSchema
+        , from        = pure ()
+        , set         = \() row -> row { resStatus = lit "Released" }
+        , updateWhere = \() row -> DB.Schema.resId row ==. lit reservationId
+        , returning   = NoReturning
+        }
+      pure True

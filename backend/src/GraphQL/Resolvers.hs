@@ -19,23 +19,18 @@ import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import Data.Typeable (Typeable)
 import Data.Morpheus.Types
-import Data.Pool (Pool)
 import Data.Text (Text, pack)
 import qualified Data.UUID as UUID
 import qualified Data.Vector as V
-import Database.PostgreSQL.Simple (Connection)
 import GHC.Generics (Generic)
 import Servant.Server (runHandler)
 
 import Auth.Simple (lookupUser)
 import qualified DB.Database as DB
+import DB.Database (DBPool)
 import GraphQL.Schema
 import qualified Types.Inventory as TI
 import Types.Auth (capabilitiesForRole, auRole, UserCapabilities(..))
-
--- ---------------------------------------------------------------------------
--- Schema HKD wrappers
--- ---------------------------------------------------------------------------
 
 data Query (m :: * -> *) = Query
   { inventory :: m [MenuItemGql]
@@ -51,10 +46,6 @@ data Mutation (m :: * -> *) = Mutation
   } deriving Generic
 
 instance Typeable m => GQLType (Mutation m)
-
--- ---------------------------------------------------------------------------
--- Domain → GQL
--- ---------------------------------------------------------------------------
 
 menuItemToGql :: TI.MenuItem -> MenuItemGql
 menuItemToGql TI.MenuItem
@@ -96,10 +87,6 @@ strainLineageToGql TI.StrainLineage
   , leafly_url       = lu
   , img              = im
   }
-
--- ---------------------------------------------------------------------------
--- GQL input → domain
--- ---------------------------------------------------------------------------
 
 gqlInputToMenuItem :: MenuItemInputGql -> Either Text TI.MenuItem
 gqlInputToMenuItem MenuItemInputGql
@@ -145,23 +132,19 @@ gqlInputToStrainLineage StrainLineageInputGql
   , TI.img              = im
   }
 
--- ---------------------------------------------------------------------------
--- Resolvers
--- ---------------------------------------------------------------------------
-
-resolveInventory :: Pool Connection -> Maybe Text -> ResolverQ () IO [MenuItemGql]
+resolveInventory :: DBPool -> Maybe Text -> ResolverQ () IO [MenuItemGql]
 resolveInventory pool _userId = do
   TI.Inventory items <- liftIO $ DB.getAllMenuItems pool
   pure $ map menuItemToGql (V.toList items)
 
-resolveMenuItem :: Pool Connection -> Maybe Text -> MenuItemArgs -> ResolverQ () IO (Maybe MenuItemGql)
+resolveMenuItem :: DBPool -> Maybe Text -> MenuItemArgs -> ResolverQ () IO (Maybe MenuItemGql)
 resolveMenuItem pool _userId MenuItemArgs { sku = skuTxt } = do
   TI.Inventory items <- liftIO $ DB.getAllMenuItems pool
   pure $ case UUID.fromText skuTxt of
     Nothing -> Nothing
     Just u  -> menuItemToGql <$> V.find (\m -> TI.sku m == u) items
 
-resolveCreateMenuItem :: Pool Connection -> Maybe Text -> CreateMenuItemArgs -> ResolverM () IO MutationResponseGql
+resolveCreateMenuItem :: DBPool -> Maybe Text -> CreateMenuItemArgs -> ResolverM () IO MutationResponseGql
 resolveCreateMenuItem pool userId CreateMenuItemArgs { input = inp } = do
   let user = lookupUser userId
       caps = capabilitiesForRole (auRole user)
@@ -175,7 +158,7 @@ resolveCreateMenuItem pool userId CreateMenuItemArgs { input = inp } = do
           Right _ -> MutationResponseGql True "Item created successfully"
           Left e  -> MutationResponseGql False (pack $ show e)
 
-resolveUpdateMenuItem :: Pool Connection -> Maybe Text -> UpdateMenuItemArgs -> ResolverM () IO MutationResponseGql
+resolveUpdateMenuItem :: DBPool -> Maybe Text -> UpdateMenuItemArgs -> ResolverM () IO MutationResponseGql
 resolveUpdateMenuItem pool userId UpdateMenuItemArgs { input = inp } = do
   let user = lookupUser userId
       caps = capabilitiesForRole (auRole user)
@@ -189,7 +172,7 @@ resolveUpdateMenuItem pool userId UpdateMenuItemArgs { input = inp } = do
           Right _ -> MutationResponseGql True "Item updated successfully"
           Left e  -> MutationResponseGql False (pack $ show e)
 
-resolveDeleteMenuItem :: Pool Connection -> Maybe Text -> DeleteMenuItemArgs -> ResolverM () IO MutationResponseGql
+resolveDeleteMenuItem :: DBPool -> Maybe Text -> DeleteMenuItemArgs -> ResolverM () IO MutationResponseGql
 resolveDeleteMenuItem pool userId DeleteMenuItemArgs { sku = skuTxt } = do
   let user = lookupUser userId
       caps = capabilitiesForRole (auRole user)
@@ -207,11 +190,7 @@ resolveDeleteMenuItem pool userId DeleteMenuItemArgs { sku = skuTxt } = do
           Right mr -> MutationResponseGql (TI.success mr) (TI.message mr)
           Left e   -> MutationResponseGql False (pack $ show e)
 
--- ---------------------------------------------------------------------------
--- Root resolver
--- ---------------------------------------------------------------------------
-
-rootResolver :: Pool Connection -> Maybe Text -> RootResolver IO () Query Mutation Undefined
+rootResolver :: DBPool -> Maybe Text -> RootResolver IO () Query Mutation Undefined
 rootResolver pool userId = RootResolver
   { queryResolver = Query
       { inventory = resolveInventory pool userId

@@ -31,7 +31,9 @@ common shared-properties
                 , morpheus-graphql >= 0.27
                 , morpheus-graphql-core
                 , opaleye
-                , postgresql-simple
+                , rel8
+                , hasql-pool
+                , hasql
                 , postgresql-libpq
                 , singletons-th
                 , singletons-base
@@ -58,6 +60,7 @@ library
     exposed-modules: App
                    , DB.Database
                    , DB.Transaction
+                   , DB.Schema
                    , Server
                    , Server.Transaction
                    , Types.Inventory
