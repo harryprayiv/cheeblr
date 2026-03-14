@@ -9,6 +9,7 @@ import Data.Scientific (fromFloatDigits)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Types.Transaction
+import DB.Transaction (parseDiscountType)
 
 -- ──────────────────────────────────────────────
 -- Fixtures
