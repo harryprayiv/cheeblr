@@ -52,6 +52,7 @@ common shared-properties
                 , openapi3
                 , servant-openapi3
                 , lens
+                , rel8
 library
     import: shared-properties
     exposed-modules: App
