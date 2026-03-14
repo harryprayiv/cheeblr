@@ -5,6 +5,7 @@
 module Types.Inventory where
 
 import Data.Aeson (ToJSON(toJSON), FromJSON(parseJSON))
+import Data.OpenApi (ToSchema)
 import Data.Text (Text)
 import Data.UUID (UUID)
 import qualified Data.Vector as V
@@ -14,13 +15,14 @@ import Database.PostgreSQL.Simple.ToRow (ToRow (..))
 import Database.PostgreSQL.Simple.Types (PGArray (..))
 import GHC.Generics (Generic)
 
+
 data Species
   = Indica
   | IndicaDominantHybrid
   | Hybrid
   | SativaDominantHybrid
   | Sativa
-  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, Read)
+  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, ToSchema, Read)
 
 data ItemCategory
   = Flower
@@ -32,43 +34,40 @@ data ItemCategory
   | Topicals
   | Tinctures
   | Accessories
-  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, Read)
+  deriving (Show, Eq, Ord, Generic, FromJSON, ToJSON, ToSchema, Read)
 
 data StrainLineage = StrainLineage
-  { thc             :: Text
-  , cbg             :: Text
-  , strain          :: Text
-  , creator         :: Text
-  , species         :: Species
+  { thc              :: Text
+  , cbg              :: Text
+  , strain           :: Text
+  , creator          :: Text
+  , species          :: Species
   , dominant_terpene :: Text
-  , terpenes        :: V.Vector Text
-  , lineage         :: V.Vector Text
-  , leafly_url      :: Text
-  , img             :: Text
-  } deriving (Show, Eq, Generic)
+  , terpenes         :: V.Vector Text
+  , lineage          :: V.Vector Text
+  , leafly_url       :: Text
+  , img              :: Text
+  } deriving (Show, Eq, Generic, ToSchema)
 
 instance ToJSON StrainLineage
 instance FromJSON StrainLineage
 
 data MenuItem = MenuItem
-  { sort         :: Int
-  , sku          :: UUID
-  , brand        :: Text
-  , name         :: Text
-  , price        :: Int
-  , measure_unit :: Text
-  , per_package  :: Text
-  , quantity     :: Int
-  , category     :: ItemCategory
-  , subcategory  :: Text
-  , description  :: Text
-  , tags         :: V.Vector Text
-  , effects      :: V.Vector Text
+  { sort           :: Int
+  , sku            :: UUID
+  , brand          :: Text
+  , name           :: Text
+  , price          :: Int
+  , measure_unit   :: Text
+  , per_package    :: Text
+  , quantity       :: Int
+  , category       :: ItemCategory
+  , subcategory    :: Text
+  , description    :: Text
+  , tags           :: V.Vector Text
+  , effects        :: V.Vector Text
   , strain_lineage :: StrainLineage
-  } deriving (Show, Eq, Generic)
-
-instance ToJSON MenuItem
-instance FromJSON MenuItem
+  } deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
 instance ToRow MenuItem where
   toRow MenuItem {..} =
@@ -116,10 +115,10 @@ instance FromRow MenuItem where
               <*> field
           )
 
--- | GET /inventory — serialises as a plain JSON array.
+-- | GET /inventory -- serialises as a plain JSON array.
 newtype Inventory = Inventory
   { items :: V.Vector MenuItem
-  } deriving (Show, Eq, Generic)
+  } deriving (Show, Eq, Generic, ToSchema)
 
 instance ToJSON Inventory where
   toJSON (Inventory inv) = toJSON inv
@@ -131,7 +130,7 @@ instance FromJSON Inventory where
 data MutationResponse = MutationResponse
   { success :: Bool
   , message :: Text
-  } deriving (Show, Eq, Generic)
+  } deriving (Show, Eq, Generic, ToSchema)
 
 instance ToJSON MutationResponse
 instance FromJSON MutationResponse

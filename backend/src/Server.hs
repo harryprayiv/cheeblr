@@ -1,29 +1,37 @@
-{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Server where
 
 import API.Inventory
+import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
+import Auth.Simple (lookupUser)
 import Control.Exception (SomeException, try)
 import Control.Monad.IO.Class (liftIO)
 import Data.Morpheus (interpreter)
 import Data.Morpheus.Types (GQLRequest, GQLResponse)
-import Database.PostgreSQL.Simple
 import Data.Pool (Pool)
-import Data.Text (Text, pack)
-import Servant
-import DB.Database (getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
-import Types.Inventory
-import Types.Auth
-    ( capabilitiesForRole, auRole, auUserId, auUserName
-    , UserCapabilities(..), SessionResponse(..)
-    )
-import Auth.Simple (lookupUser)
-import Data.UUID (UUID)
-
 import qualified Data.Pool as Pool
+import Data.Text (Text, pack)
+import Data.UUID (UUID)
+import Database.PostgreSQL.Simple
+import DB.Database (getAllMenuItems, insertMenuItem, updateExistingMenuItem, deleteMenuItem)
 import GraphQL.Resolvers (rootResolver)
+import Servant
 import Server.Transaction (posServerImpl)
+import Types.Auth
+  ( capabilitiesForRole, auRole, auUserId, auUserName
+  , UserCapabilities (..), SessionResponse (..)
+  )
+import Types.Inventory
+
+combinedServer :: Pool Connection -> Server CheeblrAPI
+combinedServer pool
+  =    inventoryServer pool
+  :<|> posServerImpl pool
+  :<|> pure cheeblrOpenApi
 
 inventoryServer :: Pool.Pool Connection -> Server InventoryAPI
 inventoryServer pool =
@@ -51,9 +59,8 @@ inventoryServer pool =
         else do
           result <- liftIO $ try $ insertMenuItem pool item
           pure $ case result of
-            Right _             -> MutationResponse True "Item added successfully"
-            Left (e :: SomeException) ->
-              MutationResponse False (pack $ "Error inserting item: " <> show e)
+            Right _                   -> MutationResponse True "Item added successfully"
+            Left (e :: SomeException) -> MutationResponse False (pack $ "Error inserting item: " <> show e)
 
     updateMenuItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     updateMenuItem mUserId item = do
@@ -65,9 +72,8 @@ inventoryServer pool =
         else do
           result <- liftIO $ try $ updateExistingMenuItem pool item
           pure $ case result of
-            Right _             -> MutationResponse True "Item updated successfully"
-            Left (e :: SomeException) ->
-              MutationResponse False (pack $ "Error updating item: " <> show e)
+            Right _                   -> MutationResponse True "Item updated successfully"
+            Left (e :: SomeException) -> MutationResponse False (pack $ "Error updating item: " <> show e)
 
     deleteInventoryItem :: Maybe Text -> UUID -> Handler MutationResponse
     deleteInventoryItem mUserId uuid = do
@@ -90,16 +96,8 @@ inventoryServer pool =
         , sessionCapabilities = capabilitiesForRole (auRole user)
         }
 
-    -- | POST /graphql/inventory
-    -- | Accepts a standard GraphQL request and returns a GraphQL response.
-    -- | Auth is resolved the same way as the REST endpoints via X-User-Id.
     graphqlInventory :: Maybe Text -> GQLRequest -> Handler GQLResponse
     graphqlInventory mUserId req = do
       liftIO $ putStrLn $
         "POST /graphql/inventory - User: " ++ show (auRole (lookupUser mUserId))
       liftIO $ interpreter (rootResolver pool mUserId) req
-
-combinedServer :: Pool Connection -> Server API
-combinedServer pool =
-  inventoryServer pool
-    :<|> posServerImpl pool

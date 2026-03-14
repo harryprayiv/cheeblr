@@ -29,6 +29,7 @@ common shared-properties
                 , warp
                 , warp-tls
                 , morpheus-graphql >= 0.27
+                , morpheus-graphql-core
                 , opaleye
                 , postgresql-simple
                 , postgresql-libpq
@@ -48,7 +49,9 @@ common shared-properties
                 , http-types
                 , case-insensitive
                 , crem
-
+                , openapi3
+                , servant-openapi3
+                , lens
 library
     import: shared-properties
     exposed-modules: App
@@ -62,6 +65,7 @@ library
                    , Auth.Simple
                    , API.Inventory
                    , API.Transaction
+                   , API.OpenApi
                    , GraphQL.Resolvers
                    , GraphQL.Schema
                    , State.TransactionMachine
@@ -94,6 +98,7 @@ test-suite cheeblr-unit-tests
         Test.Types.InventorySpec
         Test.Auth.SimpleSpec
         Test.API.TransactionSpec
+        Test.API.OpenApiSpec
         Test.DB.PureFunctionsSpec
         Test.GraphQL.SchemaSpec
         Test.GraphQL.ResolversSpec

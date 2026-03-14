@@ -7,6 +7,7 @@ import qualified Test.Types.TransactionSpec
 import qualified Test.Types.InventorySpec
 import qualified Test.Auth.SimpleSpec
 import qualified Test.API.TransactionSpec
+import qualified Test.API.OpenApiSpec
 import qualified Test.DB.PureFunctionsSpec
 import qualified Test.GraphQL.SchemaSpec
 import qualified Test.GraphQL.ResolversSpec
@@ -21,6 +22,7 @@ main = hspec $ do
     Test.Types.InventorySpec.spec
     Test.Auth.SimpleSpec.spec
     Test.API.TransactionSpec.spec
+    Test.API.OpenApiSpec.spec
     Test.DB.PureFunctionsSpec.spec
     Test.GraphQL.SchemaSpec.spec
     Test.GraphQL.ResolversSpec.spec

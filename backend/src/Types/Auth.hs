@@ -1,13 +1,16 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Types.Auth where
 
 import Data.Aeson (ToJSON, FromJSON)
+import Data.OpenApi (ToSchema)
 import Data.Text (Text)
-import Data.UUID (UUID)
 import Data.Time (UTCTime)
+import Data.UUID (UUID)
 import GHC.Generics (Generic)
 
 data UserRole
@@ -64,6 +67,11 @@ data SessionResponse = SessionResponse
 
 instance ToJSON SessionResponse
 instance FromJSON SessionResponse
+
+-- OpenAPI3 instances
+deriving instance ToSchema UserRole
+deriving instance ToSchema UserCapabilities
+deriving instance ToSchema SessionResponse
 
 capabilitiesForRole :: UserRole -> UserCapabilities
 capabilitiesForRole Customer = UserCapabilities
