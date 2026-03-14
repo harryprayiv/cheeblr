@@ -1,6 +1,6 @@
 # Cheeblr: Cannabis Dispensary Management System
 
-A full-stack cannabis dispensary point-of-sale and inventory management system built with PureScript (frontend) and Haskell (backend) on PostgreSQL — emphasizing type safety, functional programming, and reproducible builds via Nix.
+A full-stack cannabis dispensary point-of-sale and inventory management system built with PureScript (frontend) and Haskell (backend) on PostgreSQL, emphasizing type safety, functional programming, and reproducible builds via Nix.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-yellowgreen.svg)](https://opensource.org/licenses/Apache-2.0) 
 
@@ -9,12 +9,13 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 
 ## Documentation
 
-- [Frontend Documentation](./Docs/FrontEnd.md) — PureScript/Deku SPA architecture, async loading pattern, page modules, services
-- [Backend Documentation](./Docs/BackEnd.md) — Haskell/Servant API, database layer, transaction processing, inventory reservations
-- [Nix Development Environment](./Docs/NixDevEnvironment.md) — Setup, TLS, sops secrets management, service scripts, and test suite
-- [Dependencies](./Docs/Dependencies.md) — Project dependency listing
-- [To Do list](./Docs/TODO.md) — Planned features and optimizations
-- [Security Recommendations](./Docs/SecurityStrategies.md) — Planned security and authentication upgrades
+- [Frontend Documentation](./Docs/FrontEnd.md) -- PureScript/Deku SPA architecture, async loading pattern, page modules, services
+- [Backend Documentation](./Docs/BackEnd.md) -- Haskell/Servant API, database layer, transaction processing, inventory reservations
+- [State Machine Design](./Docs/Crem.md) -- crem topology encoding, singleton witnesses, and tradeoffs vs. dependent types
+- [Nix Development Environment](./Docs/NixDevEnvironment.md) -- Setup, TLS, sops secrets management, service scripts, and test suite
+- [Dependencies](./Docs/Dependencies.md) -- Project dependency listing
+- [To Do list](./Docs/TODO.md) -- Planned features and optimizations
+- [Security Recommendations](./Docs/SecurityStrategies.md) -- Planned security and authentication upgrades
 
 ## Features
 
@@ -27,7 +28,8 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - **GraphQL Inventory API**: Inventory queries available via `/graphql/inventory` using `morpheus-graphql` (backend) and `purescript-graphql-client` (frontend), scoped to read-only inventory access
 
 ### Point-of-Sale System
-- **Full Transaction Lifecycle**: Create → add items (with reservation) → add payments → finalize (commits inventory) or clear (releases reservations)
+- **Full Transaction Lifecycle**: Create -> add items (with reservation) -> add payments -> finalize (commits inventory) or clear (releases reservations)
+- **Compile-Time State Machine Enforcement**: Transaction and register state transitions are validated at compile time via [crem](https://github.com/tweag/crem). The permitted topology is a type-level constraint; illegal transitions (e.g. finalizing a voided transaction) are rejected at the type checker, not at runtime. Invalid commands at runtime return `409 Conflict`.
 - **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a transaction concurrently using the frontend's `parSequence_` pattern; degrades gracefully to `TxPageDegraded` state on partial load failure
 - **Multiple Payment Methods**: Cash, credit, debit, ACH, gift card, stored value, mixed, and custom payment types with change calculation
 - **Tax Management**: Per-item tax records with category tracking (regular sales, excise, cannabis, local, medical)
@@ -35,39 +37,41 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - **Automatic Total Recalculation**: Server-side recalculation of subtotals, taxes, discounts, and totals on item/payment changes
 
 ### Financial Operations
-- **Cash Register Management**: Open registers with starting cash, close with counted cash and automatic variance calculation
+- **Cash Register Management**: Open registers with starting cash, close with counted cash and automatic variance calculation. Register open/close transitions are enforced by the same state machine layer as transactions.
 - **Register Persistence**: Register IDs stored in localStorage, auto-recovered on page load via get-or-create pattern
 - **Transaction Modifications**: Void (marks existing transaction) and refund (creates inverse transaction with negated amounts) operations with reason tracking
-- **Payment Status Tracking**: Transaction status auto-updates based on payment coverage (payments ≥ total → Completed)
+- **Payment Status Tracking**: Transaction status auto-updates based on payment coverage (payments >= total -> Completed)
 
 ### Compliance Infrastructure
 - **Customer Verification Types**: Age verification, medical card, ID scan, visual inspection, patient registration, purchase limit check
 - **Compliance Records**: Per-transaction compliance tracking with verification status, state reporting status, and reference IDs
-- **Reporting Stubs**: Compliance and daily financial report endpoints defined with types — implementation pending
+- **Reporting Stubs**: Compliance and daily financial report endpoints defined with types -- implementation pending
 
 ## Technology Stack
 
 ### Frontend
 | Concern | Technology |
 |---|---|
-| Language | **PureScript** — strongly-typed FP compiling to JavaScript |
-| UI | **Deku** — declarative, hooks-based rendering with `Nut` as the renderable type |
-| State | **FRP.Poll** — reactive streams with `create`/`push` for mutable cells |
-| Routing | **Routing.Duplex** + **Routing.Hash** — hash-based client-side routing |
+| Language | **PureScript** -- strongly-typed FP compiling to JavaScript |
+| UI | **Deku** -- declarative, hooks-based rendering with `Nut` as the renderable type |
+| State | **FRP.Poll** -- reactive streams with `create`/`push` for mutable cells |
+| Routing | **Routing.Duplex** + **Routing.Hash** -- hash-based client-side routing |
 | HTTP | **purescript-fetch** with **Yoga.JSON** for serialization |
-| GraphQL | **purescript-graphql-client** with `AffjaxWebClient` — inventory queries via `/graphql/inventory` |
-| Money | **Data.Finance.Money** — `Discrete USD` (integer cents) with formatting |
+| GraphQL | **purescript-graphql-client** with `AffjaxWebClient` -- inventory queries via `/graphql/inventory` |
+| Money | **Data.Finance.Money** -- `Discrete USD` (integer cents) with formatting |
 | Async | **Effect.Aff** with `run` helper, `parSequence_`, `killFiber` for route-driven loading |
-| Parallelism | **Control.Parallel** — concurrent data fetching within a single route |
+| Parallelism | **Control.Parallel** -- concurrent data fetching within a single route |
 
 ### Backend
 | Concern | Technology |
 |---|---|
 | Language | **Haskell** |
-| API | **Servant** — type-level REST API definitions |
-| GraphQL | **morpheus-graphql** — inventory-scoped GraphQL resolver at `/graphql/inventory` |
+| API | **Servant** -- type-level REST API definitions |
+| State Machines | **crem** -- topology-indexed state machines with compile-time transition enforcement |
+| Singleton Types | **singletons-base** -- bridges type-level and value-level for runtime vertex recovery |
+| GraphQL | **morpheus-graphql** -- inventory-scoped GraphQL resolver at `/graphql/inventory` |
 | Database | **postgresql-simple** with `sql` quasiquoter, **resource-pool** for connection management |
-| Server | **Warp** + **warp-tls** — HTTPS via TLS 1.2+ with mkcert certs in development |
+| Server | **Warp** + **warp-tls** -- HTTPS via TLS 1.2+ with mkcert certs in development |
 | JSON | **Aeson** (derived + manual instances) |
 | Auth | Dev-mode `X-User-Id` header lookup with role-based capabilities |
 
@@ -75,8 +79,8 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | Concern | Technology |
 |---|---|
 | Database | **PostgreSQL** with reservation-based inventory, cascading deletes, parameterized queries |
-| Dev Environment | **Nix** flakes — reproducible builds, per-machine dev shells |
-| Secrets | **sops** + **age** — encrypted `secrets/cheeblr.yaml`, key derived from SSH ed25519 key |
+| Dev Environment | **Nix** flakes -- reproducible builds, per-machine dev shells |
+| Secrets | **sops** + **age** -- encrypted `secrets/cheeblr.yaml`, key derived from SSH ed25519 key |
 | TLS | **mkcert** for local dev certs; **warp-tls** for HTTPS on the backend; **Vite** HTTPS config |
 | Build (Haskell) | **Cabal** via haskell.nix / CHaP |
 | Build (PureScript) | **Spago** |
@@ -126,7 +130,7 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 | GET | `/inventory/available/:sku` | Real-time availability (total, reserved, actual) |
 | POST | `/inventory/reserve` | Reserve inventory for a transaction |
 | DELETE | `/inventory/release/:id` | Release a reservation |
-| POST | `/graphql/inventory` | GraphQL endpoint — inventory queries (read-only) |
+| POST | `/graphql/inventory` | GraphQL endpoint -- inventory queries (read-only) |
 
 #### Transactions
 | Method | Endpoint | Description |
@@ -144,6 +148,8 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 | POST | `/transaction/finalize/:id` | Finalize (commits inventory, completes reservations) |
 | POST | `/transaction/clear/:id` | Clear all items/payments, release reservations |
 
+State machine validation applies to all item, payment, finalize, void, and refund operations. Illegal transitions return `409 Conflict`.
+
 #### Registers
 | Method | Endpoint | Description |
 |---|---|---|
@@ -153,6 +159,8 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 | POST | `/register/open/:id` | Open with starting cash |
 | POST | `/register/close/:id` | Close with counted cash, returns variance |
 
+Open and close operations pass through the register state machine. Attempting to open an already-open register or close an already-closed register returns `409 Conflict`.
+
 ## Architecture
 
 ### Frontend Architecture
@@ -160,7 +168,7 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 The frontend follows a centralized async loading pattern:
 
 - **`Main.purs`** owns all async data fetching, route matching, and fiber lifecycle management
-- **Pages** are pure renderers: `Poll Status → Nut` — no side effects, no `launchAff_`, no `Poll.create`
+- **Pages** are pure renderers: `Poll Status -> Nut` -- no side effects, no `launchAff_`, no `Poll.create`
 - **Route changes** cancel in-flight loading via `killFiber` on the previous fiber
 - **`parSequence_`** runs multiple loaders in parallel per route
 - **Status ADTs** per page (`Loading | Ready data | Error msg | Degraded partialData`) provide type-safe loading states
@@ -169,69 +177,86 @@ The frontend follows a centralized async loading pattern:
 
 ```
 Main.purs (orchestration)
-  ├── Route matcher → killFiber prev → parSequence_ loaders → build page Nut
-  ├── Loading functions: loadInventoryStatus, loadEditItem, loadDeleteItem, loadTxPageData
-  └── Callback-to-Aff wrappers (makeAff) for RegisterService integration
+  |- Route matcher -> killFiber prev -> parSequence_ loaders -> build page Nut
+  |- Loading functions: loadInventoryStatus, loadEditItem, loadDeleteItem, loadTxPageData
+  '- Callback-to-Aff wrappers (makeAff) for RegisterService integration
 
 Pages/ (pure renderers)
-  ├── LiveView:           Poll InventoryLoadStatus → Nut
-  ├── EditItem:           Poll EditItemStatus → Nut
-  ├── DeleteItem:         Poll DeleteItemStatus → Nut
-  ├── CreateTransaction:  Poll TxPageStatus → Nut  (parallel: inventory + register + tx; degrades gracefully)
-  ├── CreateItem:         UserId → String → Nut
-  └── TransactionHistory: Nut (placeholder)
+  |- LiveView:           Poll InventoryLoadStatus -> Nut
+  |- EditItem:           Poll EditItemStatus -> Nut
+  |- DeleteItem:         Poll DeleteItemStatus -> Nut
+  |- CreateTransaction:  Poll TxPageStatus -> Nut  (parallel: inventory + register + tx; degrades gracefully)
+  |- CreateItem:         UserId -> String -> Nut
+  '- TransactionHistory: Nut (placeholder)
 ```
 
 ### Backend Architecture
 
 ```
 App.hs (bootstrap, CORS, TLS middleware, warp-tls)
-  ├── Server.hs (inventory + session handlers with capability checks)
-  ├── Server/GraphQL.hs (morpheus-graphql resolver, /graphql/inventory)
-  ├── Server/Transaction.hs (POS: transactions, registers, ledger, compliance)
-  ├── Auth/Simple.hs (dev auth: X-User-Id → role → capabilities)
-  ├── DB/Database.hs (inventory CRUD, connection pooling)
-  ├── DB/Transaction.hs (transactions, reservations, registers, payments)
-  └── Types/ (domain models with Aeson + postgresql-simple instances)
+  |- Server.hs (inventory + session handlers with capability checks)
+  |- Server/GraphQL.hs (morpheus-graphql resolver, /graphql/inventory)
+  |- Server/Transaction.hs (POS: transactions, registers, ledger, compliance)
+  |- Service/Transaction.hs (load state, run TxMachine transition, call DB or reject 409)
+  |- Service/Register.hs (load state, run RegMachine transition, call DB or reject 409)
+  |- State/TransactionMachine.hs (TxTopology, TxState GADT, TxCommand, TxEvent, txAction)
+  |- State/RegisterMachine.hs (RegTopology, RegState GADT, RegCommand, RegEvent, regAction)
+  |- Auth/Simple.hs (dev auth: X-User-Id -> role -> capabilities)
+  |- DB/Database.hs (inventory CRUD, connection pooling)
+  |- DB/Transaction.hs (transactions, reservations, registers, payments)
+  '- Types/ (domain models with Aeson + postgresql-simple instances)
 ```
+
+### State Machine Layer
+
+Transaction and register lifecycle transitions are enforced at compile time via crem. The permitted graph of states is a promoted type-level topology; every clause of the transition function must produce a successor vertex that is provably reachable in that topology, or the project will not build.
+
+The five transaction vertices are `TxCreated`, `TxInProgress`, `TxCompleted`, `TxVoided`, and `TxRefunded`. Terminal states (`TxVoided`, `TxRefunded`) only list themselves as successors, making it impossible at the type level to transition out of them. The register machine has two vertices, `RegClosed` and `RegOpen`, with symmetric bidirectional transitions.
+
+The service layer (`Service/Transaction.hs`, `Service/Register.hs`) is the integration point between server handlers and state machines. Its pattern is: load the entity from the database, promote the DB row to a `SomeTxState` or `SomeRegState` existential via `fromTransaction`/`fromRegister`, run the transition function, inspect the emitted event, and either proceed to the database write or return `409 Conflict` if the transition was rejected.
+
+The state machine layer contains no IO, no database access, and no Servant types -- pure transition logic only.
+
+For a detailed treatment of the crem design, the singletons machinery, and how the approach compares to full dependent types, see [Crem.md](./Docs/Crem.md).
 
 ### Response Types
 
-- **`InventoryResponse`** — plain array newtype of inventory items (capabilities separated)
-- **`MutationResponse`** — uniform wrapper for all write operations (success/failure + message)
-- **Session endpoint** — user capabilities delivered independently of inventory data
+- **`InventoryResponse`** -- plain array newtype of inventory items (capabilities separated)
+- **`MutationResponse`** -- uniform wrapper for all write operations (success/failure + message)
+- **Session endpoint** -- user capabilities delivered independently of inventory data
 
 ### Data Flow
 
-1. **Item Selection**: User adds item → backend checks `quantity - reserved` → creates reservation → returns item
-2. **Cart Management**: Items tracked via transaction items table → server recalculates totals on each change
-3. **Payment Processing**: Payments added → server checks if payments ≥ total → auto-updates status
-4. **Finalization**: `menu_items.quantity` decremented → reservations marked `Completed` → transaction `COMPLETED`
-5. **Cancellation**: `POST /transaction/clear/:id` → reservations `Released` → items/payments deleted → totals zeroed
+1. **Item Selection**: User adds item -> backend checks `quantity - reserved` -> creates reservation -> returns item
+2. **Cart Management**: Items tracked via transaction items table -> server recalculates totals on each change
+3. **Payment Processing**: Payments added -> server checks if payments >= total -> auto-updates status
+4. **Finalization**: `menu_items.quantity` decremented -> reservations marked `Completed` -> transaction `COMPLETED`
+5. **Cancellation**: `POST /transaction/clear/:id` -> reservations `Released` -> items/payments deleted -> totals zeroed
 
 ### Database Schema
 
 | Table | Purpose |
 |---|---|
 | `menu_items` | Product catalog with stock quantities |
-| `strain_lineage` | Cannabis-specific attributes (THC, terpenes, lineage) — FK to `menu_items` |
+| `strain_lineage` | Cannabis-specific attributes (THC, terpenes, lineage) -- FK to `menu_items` |
 | `transaction` | Transaction records with status, totals, void/refund tracking |
-| `transaction_item` | Line items — FK to `transaction` with CASCADE |
-| `transaction_tax` | Per-item tax records — FK to `transaction_item` with CASCADE |
-| `discount` | Discounts on items or transactions — FK with CASCADE |
-| `payment_transaction` | Payment records — FK to `transaction` with CASCADE |
-| `inventory_reservation` | Reservation tracking (Reserved → Completed/Released) |
+| `transaction_item` | Line items -- FK to `transaction` with CASCADE |
+| `transaction_tax` | Per-item tax records -- FK to `transaction_item` with CASCADE |
+| `discount` | Discounts on items or transactions -- FK with CASCADE |
+| `payment_transaction` | Payment records -- FK to `transaction` with CASCADE |
+| `inventory_reservation` | Reservation tracking (Reserved -> Completed/Released) |
 | `register` | Cash register state and history |
 
 ## Security
 
 - **TLS everywhere**: backend runs warp-tls; frontend Vite dev server configured for HTTPS; all service scripts inject `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE` from sops
-- **Parameterized queries** throughout — no string interpolation in SQL
-- **Type safety** across the full stack — shared domain types between PureScript and Haskell enforce JSON contract at compile time (contract tests catch serialization divergence)
-- **Role-based capabilities** — 15 granular permissions mapped to 4 roles, enforced on inventory writes
-- **Input validation** — frontend (ValidationRule combinators) and backend (type-level constraints via Servant)
-- **Secrets management** — database password and TLS cert/key stored in sops-encrypted `secrets/cheeblr.yaml`; never in plaintext on disk
-- **Audit trail** — transactions track void/refund reasons, reference transactions, and modification timestamps
+- **Parameterized queries** throughout -- no string interpolation in SQL
+- **Type safety** across the full stack -- shared domain types between PureScript and Haskell enforce JSON contract at compile time (contract tests catch serialization divergence)
+- **Compile-time state machine invariants** -- transaction and register topologies are type-level constraints enforced by crem; illegal transitions cannot be written, not merely tested against
+- **Role-based capabilities** -- 15 granular permissions mapped to 4 roles, enforced on inventory writes
+- **Input validation** -- frontend (ValidationRule combinators) and backend (type-level constraints via Servant)
+- **Secrets management** -- database password and TLS cert/key stored in sops-encrypted `secrets/cheeblr.yaml`; never in plaintext on disk
+- **Audit trail** -- transactions track void/refund reasons, reference transactions, and modification timestamps
 
 **Current limitation**: Authentication is dev-mode only (`X-User-Id` header with fixed users). See [Security Recommendations](./Docs/SecurityStrategies.md) for the planned upgrade path to libsodium public-key challenge-response.
 
@@ -250,43 +275,44 @@ Integration tests spin up and tear down their own isolated PostgreSQL instance s
 ## Development Status
 
 ### Implemented
--  Full inventory CRUD with strain lineage
--  Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
--  Complete transaction lifecycle (create → items → payments → finalize/void/refund/clear)
--  Multiple payment methods with change calculation
--  Cash register open/close with variance tracking
--  Tax and discount record management
--  Role-based capability system (4 roles, 15 capabilities)
--  Dev auth with `X-User-Id` header and user switcher widget
--  Centralized async loading with fiber cancellation on route change
--  Parallel data loading for POS page (inventory + register + transaction)
--  `TxPageDegraded` state for resilient POS page loading
--  `MutationResponse` uniform write response type
--  `/session` endpoint — user capabilities separated from inventory payload
--  TLS/HTTPS via warp-tls + mkcert; all service scripts TLS-aware
--  sops secrets management (DB password + TLS certs)
--  GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
--  Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
--  JSON contract tests between PureScript and Haskell catching serialization divergence
+- Full inventory CRUD with strain lineage
+- Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
+- Complete transaction lifecycle (create -> items -> payments -> finalize/void/refund/clear)
+- Compile-time state machine enforcement for transactions and registers via crem; illegal transitions rejected at the type checker
+- Multiple payment methods with change calculation
+- Cash register open/close with variance tracking and state machine validation
+- Tax and discount record management
+- Role-based capability system (4 roles, 15 capabilities)
+- Dev auth with `X-User-Id` header and user switcher widget
+- Centralized async loading with fiber cancellation on route change
+- Parallel data loading for POS page (inventory + register + transaction)
+- `TxPageDegraded` state for resilient POS page loading
+- `MutationResponse` uniform write response type
+- `/session` endpoint -- user capabilities separated from inventory payload
+- TLS/HTTPS via warp-tls + mkcert; all service scripts TLS-aware
+- sops secrets management (DB password + TLS certs)
+- GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
+- Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
+- JSON contract tests between PureScript and Haskell catching serialization divergence
 
 ### In Progress
--  Daily financial reporting (endpoints exist, implementation pending)
--  Compliance verification system (types and stubs defined)
--  GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
+- Daily financial reporting (endpoints exist, implementation pending)
+- Compliance verification system (types and stubs defined)
+- GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
 
 ### Planned
--  Real authentication (libsodium public-key challenge-response, replacing dev `X-User-Id`)
--  Capability enforcement on transaction/register endpoints
--  Inventory reservation expiry (cleanup of abandoned reservations)
--  Transaction history page (currently a placeholder)
--  Advanced reporting and analytics
--  Multi-location support
--  Third-party integrations (Metrc, Leafly)
+- Real authentication (libsodium public-key challenge-response, replacing dev `X-User-Id`)
+- Capability enforcement on transaction/register endpoints
+- Inventory reservation expiry (cleanup of abandoned reservations)
+- Transaction history page (currently a placeholder)
+- Advanced reporting and analytics
+- Multi-location support
+- Third-party integrations (Metrc, Leafly)
 
-## 📜 License
+## License
 
-This project is licensed under the Apache License Version 2.0, January 2004 — see the LICENSE file for details.
+This project is licensed under the Apache License Version 2.0, January 2004 -- see the LICENSE file for details.
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome. Please feel free to submit a Pull Request.
