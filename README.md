@@ -2,7 +2,7 @@
 
 A full-stack cannabis dispensary point-of-sale and inventory management system built with PureScript (frontend) and Haskell (backend) on PostgreSQL, emphasizing type safety, functional programming, and reproducible builds via Nix.
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-yellowgreen.svg)](https://opensource.org/licenses/Apache-2.0) 
+[![License](https://img.shields.io/badge/License-Apache%202.0-yellowgreen.svg)](https://opensource.org/licenses/Apache-2.0)
 
 [![Nix Environment](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml)
 [![CI & Unit Tests](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml)
@@ -20,16 +20,19 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 ## Features
 
 ### Inventory Management
+
 - **Comprehensive Product Tracking**: Detailed cannabis product data including strain lineage, THC/CBD content, terpene profiles, species classification, and Leafly integration
 - **Real-Time Inventory Reservations**: Items are reserved when added to a transaction cart, preventing overselling during concurrent sessions. Reservations are released on item removal or transaction cancellation, and committed on finalization
 - **Role-Based Access Control**: Dev-mode auth system with four roles (Customer, Cashier, Manager, Admin) and 15 granular capabilities governing inventory CRUD, transaction processing, register management, and reporting access
-- **Flexible Sorting & Filtering**: Multi-field priority sorting (quantity, category, species) with configurable sort order and optional out-of-stock hiding
+- **Flexible Sorting and Filtering**: Multi-field priority sorting (quantity, category, species) with configurable sort order and optional out-of-stock hiding
 - **Complete CRUD Operations**: Create, read, update, and delete inventory items with full strain lineage data
 - **GraphQL Inventory API**: Inventory queries available via `/graphql/inventory` using `morpheus-graphql` (backend) and `purescript-graphql-client` (frontend), scoped to read-only inventory access
+- **OpenAPI3 Schema**: Machine-readable API schema served at `/openapi.json`, generated at runtime via `servant-openapi3`
 
 ### Point-of-Sale System
+
 - **Full Transaction Lifecycle**: Create -> add items (with reservation) -> add payments -> finalize (commits inventory) or clear (releases reservations)
-- **Compile-Time State Machine Enforcement**: Transaction and register state transitions are validated at compile time via [crem](https://github.com/tweag/crem). The permitted topology is a type-level constraint; illegal transitions (e.g. finalizing a voided transaction) are rejected at the type checker, not at runtime. Invalid commands at runtime return `409 Conflict`.
+- **Compile-Time State Machine Enforcement**: Transaction and register state transitions are validated at compile time via [crem](https://github.com/tweag/crem). The permitted topology is a type-level constraint; illegal transitions are rejected at the type checker, not at runtime. Invalid commands at runtime return `409 Conflict`.
 - **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a transaction concurrently using the frontend's `parSequence_` pattern; degrades gracefully to `TxPageDegraded` state on partial load failure
 - **Multiple Payment Methods**: Cash, credit, debit, ACH, gift card, stored value, mixed, and custom payment types with change calculation
 - **Tax Management**: Per-item tax records with category tracking (regular sales, excise, cannabis, local, medical)
@@ -37,12 +40,14 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - **Automatic Total Recalculation**: Server-side recalculation of subtotals, taxes, discounts, and totals on item/payment changes
 
 ### Financial Operations
+
 - **Cash Register Management**: Open registers with starting cash, close with counted cash and automatic variance calculation. Register open/close transitions are enforced by the same state machine layer as transactions.
 - **Register Persistence**: Register IDs stored in localStorage, auto-recovered on page load via get-or-create pattern
 - **Transaction Modifications**: Void (marks existing transaction) and refund (creates inverse transaction with negated amounts) operations with reason tracking
 - **Payment Status Tracking**: Transaction status auto-updates based on payment coverage (payments >= total -> Completed)
 
 ### Compliance Infrastructure
+
 - **Customer Verification Types**: Age verification, medical card, ID scan, visual inspection, patient registration, purchase limit check
 - **Compliance Records**: Per-transaction compliance tracking with verification status, state reporting status, and reference IDs
 - **Reporting Stubs**: Compliance and daily financial report endpoints defined with types -- implementation pending
@@ -50,6 +55,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 ## Technology Stack
 
 ### Frontend
+
 | Concern | Technology |
 |---|---|
 | Language | **PureScript** -- strongly-typed FP compiling to JavaScript |
@@ -63,19 +69,25 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | Parallelism | **Control.Parallel** -- concurrent data fetching within a single route |
 
 ### Backend
+
 | Concern | Technology |
 |---|---|
 | Language | **Haskell** |
 | API | **Servant** -- type-level REST API definitions |
+| OpenAPI3 | **servant-openapi3** -- schema generated at runtime, served at `/openapi.json` |
 | State Machines | **crem** -- topology-indexed state machines with compile-time transition enforcement |
 | Singleton Types | **singletons-base** -- bridges type-level and value-level for runtime vertex recovery |
 | GraphQL | **morpheus-graphql** -- inventory-scoped GraphQL resolver at `/graphql/inventory` |
-| Database | **postgresql-simple** with `sql` quasiquoter, **resource-pool** for connection management |
+| Database queries | **rel8** -- type-safe, composable Haskell queries over `Rel8able` table schemas |
+| Database driver | **hasql** -- high-performance PostgreSQL driver with typed sessions and statements |
+| Connection pooling | **hasql-pool** -- connection pool over hasql connections |
+| Schema definitions | **DB.Schema** -- `Rel8able` row types and `TableSchema` values for every table |
 | Server | **Warp** + **warp-tls** -- HTTPS via TLS 1.2+ with mkcert certs in development |
 | JSON | **Aeson** (derived + manual instances) |
 | Auth | Dev-mode `X-User-Id` header lookup with role-based capabilities |
 
 ### Infrastructure
+
 | Concern | Technology |
 |---|---|
 | Database | **PostgreSQL** with reservation-based inventory, cascading deletes, parameterized queries |
@@ -116,11 +128,13 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 ### API Overview
 
 #### Session
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/session` | Current user capabilities (separated from inventory payload) |
 
 #### Inventory
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/inventory` | All items with available quantities |
@@ -131,8 +145,10 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 | POST | `/inventory/reserve` | Reserve inventory for a transaction |
 | DELETE | `/inventory/release/:id` | Release a reservation |
 | POST | `/graphql/inventory` | GraphQL endpoint -- inventory queries (read-only) |
+| GET | `/openapi.json` | OpenAPI3 schema for the full API |
 
 #### Transactions
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/transaction` | List all transactions |
@@ -151,6 +167,7 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 State machine validation applies to all item, payment, finalize, void, and refund operations. Illegal transitions return `409 Conflict`.
 
 #### Registers
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/register` | List registers |
@@ -185,7 +202,7 @@ Pages/ (pure renderers)
   |- LiveView:           Poll InventoryLoadStatus -> Nut
   |- EditItem:           Poll EditItemStatus -> Nut
   |- DeleteItem:         Poll DeleteItemStatus -> Nut
-  |- CreateTransaction:  Poll TxPageStatus -> Nut  (parallel: inventory + register + tx; degrades gracefully)
+  |- CreateTransaction:  Poll TxPageStatus -> Nut  (parallel: inventory + register + tx)
   |- CreateItem:         UserId -> String -> Nut
   '- TransactionHistory: Nut (placeholder)
 ```
@@ -195,17 +212,24 @@ Pages/ (pure renderers)
 ```
 App.hs (bootstrap, CORS, TLS middleware, warp-tls)
   |- Server.hs (inventory + session handlers with capability checks)
-  |- Server/GraphQL.hs (morpheus-graphql resolver, /graphql/inventory)
   |- Server/Transaction.hs (POS: transactions, registers, ledger, compliance)
   |- Service/Transaction.hs (load state, run TxMachine transition, call DB or reject 409)
   |- Service/Register.hs (load state, run RegMachine transition, call DB or reject 409)
   |- State/TransactionMachine.hs (TxTopology, TxState GADT, TxCommand, TxEvent, txAction)
   |- State/RegisterMachine.hs (RegTopology, RegState GADT, RegCommand, RegEvent, regAction)
   |- Auth/Simple.hs (dev auth: X-User-Id -> role -> capabilities)
-  |- DB/Database.hs (inventory CRUD, connection pooling)
-  |- DB/Transaction.hs (transactions, reservations, registers, payments)
-  '- Types/ (domain models with Aeson + postgresql-simple instances)
+  |- API/OpenApi.hs (CheeblrAPI composition, servant-openapi3 schema, /openapi.json handler)
+  |- DB/Schema.hs (Rel8able row types and TableSchema values for every table)
+  |- DB/Database.hs (inventory CRUD via rel8 queries and hasql sessions)
+  |- DB/Transaction.hs (transactions, reservations, registers, payments via rel8/hasql)
+  '- Types/ (domain models with Aeson instances; no database-layer instances)
 ```
+
+### Database Layer
+
+The database layer uses **rel8** for query construction and **hasql** as the PostgreSQL driver, with **hasql-pool** for connection management. All table schemas are defined as `Rel8able` record types in `DB.Schema`, alongside a `TableSchema` value for each table. Queries are built as composable rel8 `Query` values and executed inside hasql `Session` values via `runSession`. The unparameterized pool type `DBPool` (an alias for `Hasql.Pool.Pool`) is threaded through all handlers and service functions in place of the old `Pool Connection`.
+
+Domain types (`MenuItem`, `Transaction`, etc.) carry only Aeson instances. All database serialization is handled by explicit row-to-domain and domain-to-row conversion functions in `DB.Database` and `DB.Transaction` that operate on the `Rel8able` row types from `DB.Schema`. There are no `FromRow` or `ToRow` instances on domain types.
 
 ### State Machine Layer
 
@@ -213,7 +237,7 @@ Transaction and register lifecycle transitions are enforced at compile time via 
 
 The five transaction vertices are `TxCreated`, `TxInProgress`, `TxCompleted`, `TxVoided`, and `TxRefunded`. Terminal states (`TxVoided`, `TxRefunded`) only list themselves as successors, making it impossible at the type level to transition out of them. The register machine has two vertices, `RegClosed` and `RegOpen`, with symmetric bidirectional transitions.
 
-The service layer (`Service/Transaction.hs`, `Service/Register.hs`) is the integration point between server handlers and state machines. Its pattern is: load the entity from the database, promote the DB row to a `SomeTxState` or `SomeRegState` existential via `fromTransaction`/`fromRegister`, run the transition function, inspect the emitted event, and either proceed to the database write or return `409 Conflict` if the transition was rejected.
+The service layer (`Service/Transaction.hs`, `Service/Register.hs`) is the integration point between server handlers and state machines. Its pattern is: load the entity from the database, promote the domain record to a `SomeTxState` or `SomeRegState` existential via `fromTransaction`/`fromRegister`, run the transition function, inspect the emitted event, and either proceed to the database write or return `409 Conflict` if the transition was rejected.
 
 The state machine layer contains no IO, no database access, and no Servant types -- pure transition logic only.
 
@@ -221,13 +245,14 @@ For a detailed treatment of the crem design, the singletons machinery, and how t
 
 ### Response Types
 
-- **`InventoryResponse`** -- plain array newtype of inventory items (capabilities separated)
+- **`Inventory`** -- plain array newtype of inventory items (capabilities separated into `/session`)
 - **`MutationResponse`** -- uniform wrapper for all write operations (success/failure + message)
 - **Session endpoint** -- user capabilities delivered independently of inventory data
+- **`/openapi.json`** -- full OpenAPI3 schema for the combined API, generated by `servant-openapi3`
 
 ### Data Flow
 
-1. **Item Selection**: User adds item -> backend checks `quantity - reserved` -> creates reservation -> returns item
+1. **Item Selection**: User adds item -> backend checks `quantity - reserved` via rel8 aggregate query -> creates reservation -> returns item
 2. **Cart Management**: Items tracked via transaction items table -> server recalculates totals on each change
 3. **Payment Processing**: Payments added -> server checks if payments >= total -> auto-updates status
 4. **Finalization**: `menu_items.quantity` decremented -> reservations marked `Completed` -> transaction `COMPLETED`
@@ -250,7 +275,7 @@ For a detailed treatment of the crem design, the singletons machinery, and how t
 ## Security
 
 - **TLS everywhere**: backend runs warp-tls; frontend Vite dev server configured for HTTPS; all service scripts inject `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE` from sops
-- **Parameterized queries** throughout -- no string interpolation in SQL
+- **Parameterized queries** throughout -- rel8 and hasql never interpolate values into SQL strings
 - **Type safety** across the full stack -- shared domain types between PureScript and Haskell enforce JSON contract at compile time (contract tests catch serialization divergence)
 - **Compile-time state machine invariants** -- transaction and register topologies are type-level constraints enforced by crem; illegal transitions cannot be written, not merely tested against
 - **Role-based capabilities** -- 15 granular permissions mapped to 4 roles, enforced on inventory writes
@@ -275,10 +300,11 @@ Integration tests spin up and tear down their own isolated PostgreSQL instance s
 ## Development Status
 
 ### Implemented
+
 - Full inventory CRUD with strain lineage
 - Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
 - Complete transaction lifecycle (create -> items -> payments -> finalize/void/refund/clear)
-- Compile-time state machine enforcement for transactions and registers via crem; illegal transitions rejected at the type checker
+- Compile-time state machine enforcement for transactions and registers via crem
 - Multiple payment methods with change calculation
 - Cash register open/close with variance tracking and state machine validation
 - Tax and discount record management
@@ -292,15 +318,19 @@ Integration tests spin up and tear down their own isolated PostgreSQL instance s
 - TLS/HTTPS via warp-tls + mkcert; all service scripts TLS-aware
 - sops secrets management (DB password + TLS certs)
 - GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
+- OpenAPI3 schema at `/openapi.json` via servant-openapi3
+- Database layer on rel8 + hasql + hasql-pool; `DB.Schema` holds all `Rel8able` row types; domain types carry only Aeson instances
 - Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
 - JSON contract tests between PureScript and Haskell catching serialization divergence
 
 ### In Progress
+
 - Daily financial reporting (endpoints exist, implementation pending)
 - Compliance verification system (types and stubs defined)
 - GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
 
 ### Planned
+
 - Real authentication (libsodium public-key challenge-response, replacing dev `X-User-Id`)
 - Capability enforcement on transaction/register endpoints
 - Inventory reservation expiry (cleanup of abandoned reservations)
