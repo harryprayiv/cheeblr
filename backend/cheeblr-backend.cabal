@@ -77,6 +77,11 @@ library
                    , State.RegisterMachine
                    , Service.Transaction
                    , Service.Register
+                   , Effect.TransactionDb
+                   , Effect.InventoryDb
+                   , Effect.RegisterDb
+                   , Effect.Clock
+                   , Effect.GenUUID
     build-depends: refined
                  , string-conversions
                  , filepath
@@ -108,7 +113,10 @@ test-suite cheeblr-unit-tests
         Test.GraphQL.SchemaSpec
         Test.GraphQL.ResolversSpec
         Test.State.TransactionMachineSpec
+        Test.Effect.InventoryDbSpec
         Test.State.RegisterMachineSpec
+        Test.Service.TransactionSpec
+        Test.Service.RegisterSpec
     build-depends:
         cheeblr-backend
         , hspec

@@ -1,4 +1,3 @@
--- {-# LANGUAGE DisambiguateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -7,7 +6,6 @@
 module DB.Database where
 
 import Control.Exception (SomeException, throwIO, try)
-import Control.Monad.IO.Class (liftIO)
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant (contramap)
 import Data.Int (Int32)
@@ -27,7 +25,6 @@ import qualified Hasql.Connection.Setting.Connection as ConnSetting.Conn
 import qualified Hasql.Connection.Setting.Connection.Param as ConnSetting.Param
 import qualified Data.Text.Encoding as TE
 import Rel8
-import Servant (Handler, throwError, err404)
 
 import DB.Schema
 import qualified Types.Inventory as TI
@@ -112,8 +109,6 @@ createTables pool = runSession pool $ do
     \  img               TEXT NOT NULL\
     \)"
 
--- asc :: DBOrd a => Order (Expr a) — a value, not a function.
--- Use contramap to produce an Order over a larger type.
 menuItemsQuery :: Query (MenuItemRow Expr, StrainLineageRow Expr)
 menuItemsQuery =
   orderBy (contramap (\(mi, _) -> menuSort mi) asc) $ do
@@ -122,8 +117,6 @@ menuItemsQuery =
     where_ $ menuSku mi ==. slSku sl
     pure (mi, sl)
 
--- aggregate1 :: Aggregator' fold i a -> Query i -> Query a
--- groupByOn / sumOn are Aggregator values; combine with Applicative.
 reservedBySkuQuery :: Query (Expr UUID, Expr Int32)
 reservedBySkuQuery =
   aggregate1
@@ -136,8 +129,6 @@ reservedBySkuQuery =
 
 getAllMenuItems :: DBPool -> IO Inventory
 getAllMenuItems pool = do
-  -- Rel8.select :: Query a -> Statement (Query a)
-  -- run :: Statement (Query exprs) -> Hasql.Statement () [a]
   rows     <- runSession pool $ Session.statement () $ run $ Rel8.select menuItemsQuery
   reserved <- runSession pool $ Session.statement () $ run $ Rel8.select reservedBySkuQuery
   let reservedMap :: Map UUID Int32 =
@@ -205,16 +196,17 @@ updateExistingMenuItem pool item = runSession pool $ do
     , returning   = NoReturning
     }
 
-deleteMenuItem :: DBPool -> UUID -> Handler MutationResponse
+-- No longer returns Handler; the caller (Effect.InventoryDb) decides what to
+-- do with a not-found result.
+deleteMenuItem :: DBPool -> UUID -> IO MutationResponse
 deleteMenuItem pool uuid = do
-  result <- liftIO $ try @SomeException $ runSession pool $ do
+  result <- try @SomeException $ runSession pool $ do
     Session.statement () $ run_ $ Rel8.delete $ Delete
       { from        = strainLineageSchema
       , using       = pure ()
       , deleteWhere = \() row -> slSku row ==. lit uuid
       , returning   = NoReturning
       }
-    -- runN :: Statement () -> Hasql.Statement () Int64
     Session.statement () $ runN $ Rel8.delete $ Delete
       { from        = menuItemSchema
       , using       = pure ()
@@ -222,12 +214,11 @@ deleteMenuItem pool uuid = do
       , returning   = NoReturning
       }
   case result of
-    Left e ->
-      pure $ MutationResponse False (pack $ "Error deleting item: " <> show e)
+    Left e  -> pure $ MutationResponse False (pack $ "Error deleting item: " <> show e)
     Right n ->
       if n > 0
         then pure $ MutationResponse True "Item deleted successfully"
-        else throwError err404
+        else pure $ MutationResponse False "Item not found"
 
 withConnection :: DBPool -> (DBPool -> IO a) -> IO a
 withConnection pool f = f pool

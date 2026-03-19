@@ -17,19 +17,16 @@
 {-# OPTIONS_GHC -Wno-star-is-type -Wno-unused-top-binds #-}
 
 module State.TransactionMachine
-  (
-    TxVertex (..)
+  ( TxVertex (..)
   , STxVertex (..)
   , TxTopology
-
   , TxState (..)
   , SomeTxState (..)
   , fromTransaction
   , toSomeTxState
-
+  , someTxStatus
   , TxCommand (..)
   , TxEvent (..)
-
   , runTxCommand
   ) where
 
@@ -190,3 +187,11 @@ cmdLabel = \case
   FinalizeCmd        -> "Finalize"
   VoidCmd          _ -> "Void"
   RefundCmd        _ _ -> "Refund"
+
+someTxStatus :: SomeTxState -> T.TransactionStatus
+someTxStatus (SomeTxState sv _) = case sv of
+  STxCreated    -> T.Created
+  STxInProgress -> T.InProgress
+  STxCompleted  -> T.Completed
+  STxVoided     -> T.Voided
+  STxRefunded   -> T.Refunded

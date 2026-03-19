@@ -181,11 +181,7 @@ resolveDeleteMenuItem pool userId DeleteMenuItemArgs { sku = skuTxt } = do
     else case UUID.fromText skuTxt of
       Nothing   -> pure $ MutationResponseGql False "Invalid UUID"
       Just uuid -> do
-        result <- liftIO $ try $ do
-          r <- runHandler (DB.deleteMenuItem pool uuid)
-          case r of
-            Right mr -> pure mr
-            Left err -> ioError $ userError $ show err
+        result <- liftIO $ try (DB.deleteMenuItem pool uuid)
         pure $ case (result :: Either SomeException TI.MutationResponse) of
           Right mr -> MutationResponseGql (TI.success mr) (TI.message mr)
           Left e   -> MutationResponseGql False (pack $ show e)

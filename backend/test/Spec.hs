@@ -13,6 +13,9 @@ import qualified Test.GraphQL.SchemaSpec
 import qualified Test.GraphQL.ResolversSpec
 import qualified Test.State.TransactionMachineSpec
 import qualified Test.State.RegisterMachineSpec
+import qualified Test.Effect.InventoryDbSpec
+import qualified Test.Service.TransactionSpec
+import qualified Test.Service.RegisterSpec
 
 main :: IO ()
 main = hspec $ do
@@ -28,3 +31,6 @@ main = hspec $ do
     Test.GraphQL.ResolversSpec.spec
     Test.State.TransactionMachineSpec.spec
     Test.State.RegisterMachineSpec.spec
+    Test.Effect.InventoryDbSpec.spec
+    Test.Service.TransactionSpec.spec
+    Test.Service.RegisterSpec.spec

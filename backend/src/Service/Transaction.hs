@@ -1,6 +1,7 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Service.Transaction
   ( addItem
@@ -12,99 +13,142 @@ module Service.Transaction
   , refundTx
   ) where
 
-import Control.Exception (SomeException, try)
-import Control.Monad.IO.Class (liftIO)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text, pack)
 import qualified Data.Text.Encoding as TE
 import Data.UUID (UUID)
-import Data.UUID.V4 (nextRandom)
-import qualified Data.ByteString.Lazy as LBS
-import Servant
-
-import DB.Database (DBPool)
-import qualified DB.Transaction as DB
+import Effectful
+import Effectful.Error.Static
+import Servant (ServerError(..), err400, err404, err409)
+import Control.Monad (void)
+import DB.Transaction (InventoryException (..))
+import Effect.GenUUID
+import Effect.TransactionDb
 import State.TransactionMachine
 import Types.Transaction
 
-loadTx :: DBPool -> UUID -> Handler (Transaction, SomeTxState)
-loadTx pool txId = do
-  maybeTx <- liftIO $ DB.getTransactionById pool txId
+loadTx
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => UUID
+  -> Eff es (Transaction, SomeTxState)
+loadTx txId = do
+  maybeTx <- getTransactionById txId
   case maybeTx of
     Nothing -> throwError err404 { errBody = "Transaction not found" }
     Just tx -> pure (tx, fromTransaction tx)
 
-guardEvent :: TxEvent -> Handler ()
-guardEvent (InvalidTxCommand msg) =
+guardTxEvent :: Error ServerError :> es => TxEvent -> Eff es ()
+guardTxEvent (InvalidTxCommand msg) =
   throwError err409 { errBody = LBS.fromStrict (TE.encodeUtf8 msg) }
-guardEvent _ = pure ()
+guardTxEvent _ = pure ()
 
-addItem :: DBPool -> TransactionItem -> Handler TransactionItem
-addItem pool item = do
-  let txId = transactionItemTransactionId item
-  (_, someState) <- loadTx pool txId
-  let (evt, _) = runTxCommand someState (AddItemCmd item)
-  guardEvent evt
-  result <- liftIO $ try (DB.addTransactionItem pool item)
+requireTxId
+  :: Error ServerError :> es
+  => (UUID -> Eff es (Maybe UUID))
+  -> LBS.ByteString
+  -> UUID
+  -> Eff es UUID
+requireTxId lookupFn notFoundMsg entityId = do
+  mTxId <- lookupFn entityId
+  case mTxId of
+    Nothing   -> throwError err404 { errBody = notFoundMsg }
+    Just txId -> pure txId
+
+-- Persist any status change produced by the state machine transition so that
+-- subsequent operations see the correct state when they call loadTx.
+persistStatusChange
+  :: (TransactionDb :> es)
+  => Transaction
+  -> SomeTxState
+  -> Eff es ()
+persistStatusChange tx nextState = do
+  let nextStatus = someTxStatus nextState
+  if transactionStatus tx == nextStatus
+    then pure ()
+    else void $ updateTransaction (transactionId tx) tx { transactionStatus = nextStatus }
+
+addItem
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => TransactionItem
+  -> Eff es TransactionItem
+addItem item = do
+  (tx, someState) <- loadTx (transactionItemTransactionId item)
+  let (evt, nextState) = runTxCommand someState (AddItemCmd item)
+  guardTxEvent evt
+  persistStatusChange tx nextState
+  result <- addTransactionItem item
   case result of
-    Right added           -> pure added
-    Left (e :: SomeException) ->
+    Right ti -> pure ti
+    Left (ItemNotFound sku) ->
+      throwError err404 { errBody = LBS.fromStrict . TE.encodeUtf8 $
+        "Item not found: " <> pack (show sku) }
+    Left (InsufficientInventory sku requested available) ->
       throwError err400 { errBody = LBS.fromStrict . TE.encodeUtf8 $
-        "Inventory error: " <> pack (Prelude.show e) }
+        "Insufficient inventory for " <> pack (show sku)
+        <> ": " <> pack (show available) <> " available, "
+        <> pack (show requested) <> " requested" }
 
-removeItem :: DBPool -> UUID -> Handler NoContent
-removeItem pool itemId = do
-  txId <- lookupTxIdByItemId pool itemId
-  (_, someState) <- loadTx pool txId
+removeItem
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => UUID
+  -> Eff es ()
+removeItem itemId = do
+  txId <- requireTxId getTxIdByItemId "Item not found" itemId
+  (_, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState (RemoveItemCmd itemId)
-  guardEvent evt
-  liftIO $ DB.deleteTransactionItem pool itemId
-  pure NoContent
+  guardTxEvent evt
+  deleteTransactionItem itemId
 
-addPayment :: DBPool -> PaymentTransaction -> Handler PaymentTransaction
-addPayment pool payment = do
-  let txId = paymentTransactionId payment
-  (_, someState) <- loadTx pool txId
+addPayment
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => PaymentTransaction
+  -> Eff es PaymentTransaction
+addPayment payment = do
+  (_, someState) <- loadTx (paymentTransactionId payment)
   let (evt, _) = runTxCommand someState (AddPaymentCmd payment)
-  guardEvent evt
-  liftIO $ DB.addPaymentTransaction pool payment
+  guardTxEvent evt
+  addPaymentTransaction payment
 
-removePayment :: DBPool -> UUID -> Handler NoContent
-removePayment pool paymentId = do
-  txId <- lookupTxIdByPaymentId pool paymentId
-  (_, someState) <- loadTx pool txId
-  let (evt, _) = runTxCommand someState (RemovePaymentCmd paymentId)
-  guardEvent evt
-  liftIO $ DB.deletePaymentTransaction pool paymentId
-  pure NoContent
+removePayment
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => UUID
+  -> Eff es ()
+removePayment pymtId = do
+  txId <- requireTxId getTxIdByPaymentId "Payment not found" pymtId
+  (_, someState) <- loadTx txId
+  let (evt, _) = runTxCommand someState (RemovePaymentCmd pymtId)
+  guardTxEvent evt
+  deletePaymentTransaction pymtId
 
-finalizeTx :: DBPool -> UUID -> Handler Transaction
-finalizeTx pool txId = do
-  (_, someState) <- loadTx pool txId
+finalizeTx
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => UUID
+  -> Eff es Transaction
+finalizeTx txId = do
+  (_, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState FinalizeCmd
-  guardEvent evt
-  liftIO $ DB.finalizeTransaction pool txId
+  guardTxEvent evt
+  finalizeTransaction txId
 
-voidTx :: DBPool -> UUID -> Text -> Handler Transaction
-voidTx pool txId reason = do
-  (_, someState) <- loadTx pool txId
+voidTx
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => UUID
+  -> Text
+  -> Eff es Transaction
+voidTx txId reason = do
+  (_, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState (VoidCmd reason)
-  guardEvent evt
-  liftIO $ DB.voidTransaction pool txId reason
+  guardTxEvent evt
+  voidTransaction txId reason
 
-refundTx :: DBPool -> UUID -> Text -> Handler Transaction
-refundTx pool txId reason = do
-  (_, someState) <- loadTx pool txId
-  refundId <- liftIO nextRandom
+refundTx
+  :: (TransactionDb :> es, Error ServerError :> es, GenUUID :> es)
+  => UUID
+  -> Text
+  -> Eff es Transaction
+refundTx txId reason = do
+  (_, someState) <- loadTx txId
+  refundId <- nextUUID
   let (evt, _) = runTxCommand someState (RefundCmd reason refundId)
-  guardEvent evt
-  liftIO $ DB.refundTransaction pool txId reason
-
-lookupTxIdByItemId :: DBPool -> UUID -> Handler UUID
-lookupTxIdByItemId pool itemId = do
-  mTxId <- liftIO $ DB.getTransactionIdByItemId pool itemId
-  maybe (throwError err404 { errBody = "Item not found" }) pure mTxId
-
-lookupTxIdByPaymentId :: DBPool -> UUID -> Handler UUID
-lookupTxIdByPaymentId pool paymentId = do
-  mTxId <- liftIO $ DB.getTransactionIdByPaymentId pool paymentId
-  maybe (throwError err404 { errBody = "Payment not found" }) pure mTxId
+  guardTxEvent evt
+  refundTransaction txId reason
