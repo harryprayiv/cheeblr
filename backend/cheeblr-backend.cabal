@@ -55,6 +55,7 @@ common shared-properties
                 , servant-openapi3
                 , lens
                 , rel8
+                , effectful
 library
     import: shared-properties
     exposed-modules: App
