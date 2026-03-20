@@ -11,7 +11,7 @@ source-repository-package
   type: git
   location: https://github.com/harryprayiv/crem
   tag: 4a9a1ee353e6790267c10c96d5372efc522e9d1a
-  -- sha256: 036aj6wlr73wyzsp9cvrdb8ca8a39cb9h2n2r29bc40qzhxzqnlj
+  --sha256: 0rlmmkylg0mzhxjbmhlb1vjkkfbyb7w40l43hln30lgfc1khldzv
 
 -- Add these repositories if needed
 -- repository head.hackage
