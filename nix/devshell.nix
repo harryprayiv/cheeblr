@@ -243,6 +243,7 @@ let
     manifestModule.generateScript
     devScripts.compile-manifest
     devScripts.compile-archive
+    devScripts.llm-context
 
     # testing
     testSuiteModule.test-unit

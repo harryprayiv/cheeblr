@@ -58,7 +58,7 @@ let
 
 in {
 
-  inherit (devScriptsModule) compile-manifest compile-archive run-codegen;
+  inherit (devScriptsModule) compile-manifest compile-archive run-codegen llm-context ;
 
 
   generate-manifest = manifestModule.generateScript;
@@ -68,6 +68,7 @@ in {
     devScriptsModule.compile-manifest
     devScriptsModule.compile-archive
     devScriptsModule.run-codegen
+    devScriptsModule.llm-context 
     manifestModule.generateScript
   ];
 
