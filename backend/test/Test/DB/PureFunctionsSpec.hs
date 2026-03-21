@@ -5,7 +5,6 @@ module Test.DB.PureFunctionsSpec (spec) where
 import Test.Hspec
 import Data.Scientific (fromFloatDigits)
 import Data.UUID (UUID)
-import qualified Data.Text as T
 import Types.Transaction
 import DB.Transaction
 
@@ -74,30 +73,6 @@ spec = describe "DB.Transaction pure functions" $ do
     it "shows Voided"     $ showStatus Voided `shouldBe` "VOIDED"
     it "shows Refunded"   $ showStatus Refunded `shouldBe` "REFUNDED"
 
-  -- showStatus/parseTransactionStatus roundtrip
-  describe "showStatus/parseTransactionStatus roundtrip" $ do
-    it "roundtrips all statuses" $ do
-      let statuses = [Created, InProgress, Completed, Voided, Refunded]
-      mapM_ (\s -> parseTransactionStatus (T.unpack $ showStatus s) `shouldBe` s) statuses
-
-  -- showTransactionType/parseTransactionType roundtrip
-  describe "showTransactionType/parseTransactionType roundtrip" $ do
-    it "roundtrips all types" $ do
-      let types = [Sale, Return, Exchange, InventoryAdjustment, ManagerComp, Administrative]
-      mapM_ (\t -> parseTransactionType (T.unpack $ showTransactionType t) `shouldBe` t) types
-
-  -- showPaymentMethod/parsePaymentMethod roundtrip
-  describe "showPaymentMethod/parsePaymentMethod roundtrip" $ do
-    it "roundtrips standard methods" $ do
-      let methods = [Cash, Debit, Credit, ACH, GiftCard, StoredValue, Mixed]
-      mapM_ (\m -> parsePaymentMethod (T.unpack $ showPaymentMethod m) `shouldBe` m) methods
-
-  -- showTaxCategory/parseTaxCategory roundtrip
-  describe "showTaxCategory/parseTaxCategory roundtrip" $ do
-    it "roundtrips all categories" $ do
-      let cats = [RegularSalesTax, ExciseTax, CannabisTax, LocalTax, MedicalTax, NoTax]
-      mapM_ (\c -> parseTaxCategory (T.unpack $ showTaxCategory c) `shouldBe` c) cats
-
   -- ──────────────────────────────────────────────
   -- showTransactionType
   -- ──────────────────────────────────────────────
@@ -165,26 +140,8 @@ spec = describe "DB.Transaction pure functions" $ do
   describe "negateTransactionItem" $ do
     let negated = negateTransactionItem mkItem
 
-    it "preserves id" $
-      transactionItemId negated `shouldBe` transactionItemId mkItem
-
-    it "preserves transaction id" $
-      transactionItemTransactionId negated `shouldBe` transactionItemTransactionId mkItem
-
     it "preserves sku" $
       transactionItemMenuItemSku negated `shouldBe` transactionItemMenuItemSku mkItem
-
-    it "preserves quantity (not negated)" $
-      transactionItemQuantity negated `shouldBe` transactionItemQuantity mkItem
-
-    it "preserves price per unit (not negated)" $
-      transactionItemPricePerUnit negated `shouldBe` transactionItemPricePerUnit mkItem
-
-    it "negates subtotal" $
-      transactionItemSubtotal negated `shouldBe` negate (transactionItemSubtotal mkItem)
-
-    it "negates total" $
-      transactionItemTotal negated `shouldBe` negate (transactionItemTotal mkItem)
 
     it "negates nested discounts" $ do
       case (transactionItemDiscounts mkItem, transactionItemDiscounts negated) of
@@ -204,15 +161,6 @@ spec = describe "DB.Transaction pure functions" $ do
   describe "negateDiscountRecord" $ do
     let negated = negateDiscountRecord mkDiscount
 
-    it "negates amount" $
-      discountAmount negated `shouldBe` -200
-
-    it "preserves type" $
-      discountType negated `shouldBe` discountType mkDiscount
-
-    it "preserves reason" $
-      discountReason negated `shouldBe` discountReason mkDiscount
-
     it "preserves approved_by" $
       discountApprovedBy negated `shouldBe` discountApprovedBy mkDiscount
 
@@ -221,15 +169,6 @@ spec = describe "DB.Transaction pure functions" $ do
   -- ──────────────────────────────────────────────
   describe "negateTaxRecord" $ do
     let negated = negateTaxRecord mkTax
-
-    it "negates amount" $
-      taxAmount negated `shouldBe` -80
-
-    it "preserves category" $
-      taxCategory negated `shouldBe` taxCategory mkTax
-
-    it "preserves rate" $
-      taxRate negated `shouldBe` taxRate mkTax
 
     it "preserves description" $
       taxDescription negated `shouldBe` taxDescription mkTax
@@ -243,32 +182,12 @@ spec = describe "DB.Transaction pure functions" $ do
     it "preserves id" $
       paymentId negated `shouldBe` paymentId mkPayment
 
-    it "negates amount" $
-      paymentAmount negated `shouldBe` -5000
-
-    it "negates tendered" $
-      paymentTendered negated `shouldBe` -6000
-
-    it "negates change" $
-      paymentChange negated `shouldBe` -1000
-
-    it "preserves method" $
-      paymentMethod negated `shouldBe` paymentMethod mkPayment
-
     it "preserves reference" $
       paymentReference negated `shouldBe` paymentReference mkPayment
-
-    it "preserves approved flag" $
-      paymentApproved negated `shouldBe` paymentApproved mkPayment
 
   -- ──────────────────────────────────────────────
   -- Double negate is identity (for amounts)
   -- ──────────────────────────────────────────────
-  describe "double negate is identity" $ do
-    it "transaction item subtotal" $ do
-      let item = negateTransactionItem (negateTransactionItem mkItem)
-      transactionItemSubtotal item `shouldBe` transactionItemSubtotal mkItem
-
     it "transaction item total" $ do
       let item = negateTransactionItem (negateTransactionItem mkItem)
       transactionItemTotal item `shouldBe` transactionItemTotal mkItem

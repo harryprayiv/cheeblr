@@ -16,6 +16,10 @@ import qualified Test.State.RegisterMachineSpec
 import qualified Test.Effect.InventoryDbSpec
 import qualified Test.Service.TransactionSpec
 import qualified Test.Service.RegisterSpec
+import qualified Test.Props.JsonRoundtripSpec
+import qualified Test.Props.ParseShowSpec
+import qualified Test.Props.NegateSpec
+import qualified Test.Props.StateMachineSpec
 
 main :: IO ()
 main = hspec $ do
@@ -34,3 +38,7 @@ main = hspec $ do
     Test.Effect.InventoryDbSpec.spec
     Test.Service.TransactionSpec.spec
     Test.Service.RegisterSpec.spec
+    Test.Props.JsonRoundtripSpec.spec
+    Test.Props.ParseShowSpec.spec
+    Test.Props.NegateSpec.spec
+    Test.Props.StateMachineSpec.spec

@@ -3,10 +3,11 @@
 module App where
 
 import Control.Exception (fromException)
-import Data.Maybe (fromMaybe)
+import Data.Maybe        (fromMaybe)
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Char8 as B8
 import qualified Data.CaseInsensitive as CI
+import qualified Data.Text as T
 import Network.HTTP.Types.Header (hContentType, hAccept, hAuthorization, hOrigin, hContentLength)
 import Network.HTTP.Types.Method (methodGet, methodPost, methodPut, methodDelete, methodOptions)
 import Network.HTTP.Types.Status (status200)
@@ -19,9 +20,11 @@ import Servant
 import System.Directory (doesFileExist)
 import System.Environment (lookupEnv)
 import System.Posix.User (getEffectiveUserName)
+
 import API.OpenApi (cheeblrAPI)
 import DB.Database (DBConfig (..), initializeDB, createTables)
 import DB.Transaction (createTransactionTables)
+import Logging
 import Server (combinedServer)
 
 data AppConfig = AppConfig
@@ -45,6 +48,9 @@ run = do
   useTLS   <- lookupEnv "USE_TLS"
   certFile <- lookupEnv "TLS_CERT_FILE"
   keyFile  <- lookupEnv "TLS_KEY_FILE"
+  logFile  <- fromMaybe "./cheeblr-compliance.log" <$> lookupEnv "LOG_FILE"
+
+  let tlsEnabled = useTLS == Just "true"
 
   let config = AppConfig
         { dbConfig = DBConfig
@@ -64,6 +70,12 @@ run = do
   createTables pool
   createTransactionTables pool
 
+  -- Katip initialisation.  closeLogging is called after the server exits.
+  -- For production you may want to wrap the server launch in `bracket` if you
+  -- need guaranteed cleanup on asynchronous exceptions.
+  logEnv <- initLogging logFile
+  logAppStartup logEnv (serverPort config) tlsEnabled
+
   let
     hXRequestedWith = CI.mk (B8.pack "x-requested-with")
     hXUserId        = CI.mk (B8.pack "x-user-id")
@@ -71,7 +83,9 @@ run = do
     corsPolicy = simpleCorsResourcePolicy
       { corsOrigins        = Nothing
       , corsRequestHeaders =
-          [hContentType, hAccept, hAuthorization, hOrigin, hContentLength, hXRequestedWith, hXUserId]
+          [ hContentType, hAccept, hAuthorization, hOrigin
+          , hContentLength, hXRequestedWith, hXUserId
+          ]
       , corsMethods        = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
       , corsMaxAge         = Just 86400
       , corsVaryOrigin     = False
@@ -81,7 +95,7 @@ run = do
       }
 
     app = cors (const $ Just corsPolicy) $
-            serve cheeblrAPI (combinedServer pool)
+            serve cheeblrAPI (combinedServer pool logEnv)
 
     appWithOptions = handleOptionsMiddleware app
 
@@ -94,31 +108,23 @@ run = do
           Just _  -> pure ()
           Nothing -> Warp.defaultOnException Nothing e
 
-  case (useTLS, tlsCertFile config, tlsKeyFile config) of
-    (Just "true", Just cert, Just key) -> do
+  case (tlsEnabled, tlsCertFile config, tlsKeyFile config) of
+    (True, Just cert, Just key) -> do
       certExists <- doesFileExist cert
       keyExists  <- doesFileExist key
       if certExists && keyExists
         then do
-          let tls = tlsSettings cert key
-          putStrLn $ "Starting HTTPS server on port " ++ show (serverPort config)
-          putStrLn $ "  Cert: " ++ cert
-          putStrLn $ "  Key:  " ++ key
-          putStrLn "=================================="
-          putStrLn $ "https://YOUR_MACHINE_IP:" ++ show (serverPort config)
-          putStrLn "=================================="
-          runTLS tls warpSettings appWithOptions
+          logAppInfo logEnv $ "TLS enabled cert=" <> T.pack cert
+          runTLS (tlsSettings cert key) warpSettings appWithOptions
         else do
-          putStrLn "WARNING: USE_TLS=true but cert/key files not found, falling back to HTTP"
-          putStrLn $ "  Cert exists: " ++ show certExists ++ " (" ++ cert ++ ")"
-          putStrLn $ "  Key exists:  " ++ show keyExists  ++ " (" ++ key  ++ ")"
+          logAppWarn logEnv
+            "USE_TLS=true but cert/key files not found — falling back to HTTP"
           Warp.runSettings warpSettings appWithOptions
-    _ -> do
-      putStrLn $ "Starting HTTP server on port " ++ show (serverPort config)
-      putStrLn "=================================="
-      putStrLn $ "http://YOUR_MACHINE_IP:" ++ show (serverPort config)
-      putStrLn "=================================="
+    _ ->
       Warp.runSettings warpSettings appWithOptions
+
+  logAppShutdown logEnv
+  closeLogging logEnv
 
 handleOptionsMiddleware :: Application -> Application
 handleOptionsMiddleware app req responder =

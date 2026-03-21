@@ -125,7 +125,12 @@ initLocalRegister userId locationId employeeId onSuccess onError = do
     getResult <- API.getRegister userId registerId
     case getResult of
       Right register ->
-        liftEffect $ openExistingRegister userId employeeId register onSuccess onError
+        liftEffect $
+          if register.registerIsOpen
+            then do
+              Console.log $ "Register already open: " <> register.registerName
+              onSuccess register
+            else openExistingRegister userId employeeId register onSuccess onError
       Left _ ->
         liftEffect $ createAndOpenRegister userId registerId locationId employeeId onSuccess onError
 

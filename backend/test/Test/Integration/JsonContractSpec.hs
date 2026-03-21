@@ -422,15 +422,6 @@ spec = describe "Integration: JSON Contract Tests" $ do
           Success other -> expectationFailure $ "Got wrong constructor: " ++ show other
           Error err -> expectationFailure $ "Failed to parse: " ++ err
 
-      it "DiscountType roundtrips through JSON (mismatch is resolved)" $ do
-        let types =
-              [ PercentOff (fromFloatDigits (10.0 :: Double))
-              , AmountOff 500
-              , BuyOneGetOne
-              , Custom "Employee" 250
-              ]
-        mapM_ (\dt -> fromJSON (toJSON dt) `shouldBe` Success dt) types
-
     describe "Register JSON structure" $ do
       it "has field names matching PureScript Register type" $ do
         let reg = Register

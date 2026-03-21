@@ -56,12 +56,14 @@ common shared-properties
                 , lens
                 , rel8
                 , effectful
+                , katip
 library
     import: shared-properties
     exposed-modules: App
                    , DB.Database
                    , DB.Transaction
                    , DB.Schema
+                   , Logging
                    , Server
                    , Server.Transaction
                    , Types.Inventory
@@ -116,11 +118,18 @@ test-suite cheeblr-unit-tests
         Test.Effect.InventoryDbSpec
         Test.State.RegisterMachineSpec
         Test.Service.TransactionSpec
+        Test.Gen
         Test.Service.RegisterSpec
+        Test.Props.JsonRoundtripSpec
+        Test.Props.NegateSpec
+        Test.Props.ParseShowSpec
+        Test.Props.StateMachineSpec
     build-depends:
         cheeblr-backend
         , hspec
-
+        , hedgehog
+        , hspec-hedgehog
+        
 test-suite cheeblr-integration-tests
     import:         shared-properties
     type:           exitcode-stdio-1.0
@@ -132,3 +141,5 @@ test-suite cheeblr-integration-tests
     build-depends:
         cheeblr-backend
         , hspec
+        , hedgehog
+        , hspec-hedgehog

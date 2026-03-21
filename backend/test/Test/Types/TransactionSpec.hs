@@ -205,20 +205,6 @@ spec = describe "Types.Transaction" $ do
   -- DiscountType
   -- ──────────────────────────────────────────────
   describe "DiscountType" $ do
-    it "roundtrips PercentOff through JSON" $ do
-      let dt = PercentOff (fromFloatDigits (15.0 :: Double))
-      fromJSON (toJSON dt) `shouldBe` Success dt
-
-    it "roundtrips AmountOff through JSON" $ do
-      let dt = AmountOff 500
-      fromJSON (toJSON dt) `shouldBe` Success dt
-
-    it "roundtrips BuyOneGetOne through JSON" $
-      fromJSON (toJSON BuyOneGetOne) `shouldBe` Success BuyOneGetOne
-
-    it "roundtrips Custom through JSON" $ do
-      let dt = Custom "Employee" 250
-      fromJSON (toJSON dt) `shouldBe` Success dt
 
   describe "parseDiscountType" $ do
     it "parses PERCENT_OFF with value" $
@@ -243,10 +229,6 @@ spec = describe "Types.Transaction" $ do
   -- TaxRecord JSON
   -- ──────────────────────────────────────────────
   describe "TaxRecord JSON" $ do
-    it "roundtrips through JSON" $ do
-      let tax = mkTestTaxRecord
-      decode (encode tax) `shouldBe` Just tax
-
     it "preserves category" $ do
       case decode (encode mkTestTaxRecord) of
         Just t  -> taxCategory t `shouldBe` RegularSalesTax
@@ -261,9 +243,6 @@ spec = describe "Types.Transaction" $ do
   -- DiscountRecord JSON
   -- ──────────────────────────────────────────────
   describe "DiscountRecord JSON" $ do
-    it "roundtrips through JSON" $
-      decode (encode mkTestDiscount) `shouldBe` Just mkTestDiscount
-
     it "preserves approved_by" $ do
       case decode (encode mkTestDiscount) of
         Just d  -> discountApprovedBy d `shouldBe` Just testUUID
@@ -279,9 +258,6 @@ spec = describe "Types.Transaction" $ do
   -- TransactionItem JSON
   -- ──────────────────────────────────────────────
   describe "TransactionItem JSON" $ do
-    it "roundtrips through JSON" $
-      decode (encode mkTestTransactionItem) `shouldBe` Just mkTestTransactionItem
-
     it "preserves quantity" $ do
       case decode (encode mkTestTransactionItem) of
         Just ti -> transactionItemQuantity ti `shouldBe` 2
@@ -301,21 +277,6 @@ spec = describe "Types.Transaction" $ do
   -- PaymentTransaction JSON
   -- ──────────────────────────────────────────────
   describe "PaymentTransaction JSON" $ do
-    it "roundtrips Cash payment" $
-      decode (encode mkTestPayment) `shouldBe` Just mkTestPayment
-
-    it "roundtrips Debit payment" $ do
-      let p = mkTestPayment { paymentMethod = Debit, paymentReference = Just "REF123" }
-      decode (encode p) `shouldBe` Just p
-
-    it "roundtrips Credit payment with auth code" $ do
-      let p = mkTestPayment
-            { paymentMethod = Credit
-            , paymentReference = Just "VISA-1234"
-            , paymentAuthorizationCode = Just "AUTH456"
-            }
-      decode (encode p) `shouldBe` Just p
-
     it "preserves amount fields" $ do
       case decode (encode mkTestPayment) of
         Just p -> do
@@ -328,9 +289,6 @@ spec = describe "Types.Transaction" $ do
   -- Transaction JSON
   -- ──────────────────────────────────────────────
   describe "Transaction JSON" $ do
-    it "roundtrips full transaction" $
-      decode (encode mkTestTransaction) `shouldBe` Just mkTestTransaction
-
     it "preserves status" $ do
       case decode (encode mkTestTransaction) of
         Just t  -> transactionStatus t `shouldBe` InProgress

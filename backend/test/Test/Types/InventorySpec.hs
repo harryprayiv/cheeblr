@@ -130,9 +130,6 @@ spec = describe "Types.Inventory" $ do
   -- StrainLineage JSON
   -- ──────────────────────────────────────────────
   describe "StrainLineage JSON" $ do
-    it "roundtrips through JSON" $
-      decode (encode testStrainLineage) `shouldBe` Just testStrainLineage
-
     it "preserves species" $ do
       case decode (encode testStrainLineage) of
         Just sl -> species sl `shouldBe` Indica
@@ -152,9 +149,6 @@ spec = describe "Types.Inventory" $ do
   -- MenuItem JSON
   -- ──────────────────────────────────────────────
   describe "MenuItem JSON" $ do
-    it "roundtrips through JSON" $
-      decode (encode testMenuItem) `shouldBe` Just testMenuItem
-
     it "preserves sku" $ do
       case decode (encode testMenuItem) of
         Just mi -> sku mi `shouldBe` testSku
@@ -192,10 +186,6 @@ spec = describe "Types.Inventory" $ do
     it "serializes as array" $ do
       let inv = Inventory (V.fromList [testMenuItem])
       decode (encode inv) `shouldSatisfy` (Data.Maybe.isJust :: Maybe Inventory -> Bool)
-
-    it "roundtrips through JSON" $ do
-      let inv = Inventory (V.fromList [testMenuItem])
-      decode (encode inv) `shouldBe` Just inv
 
     it "handles empty inventory" $ do
       let inv = Inventory V.empty
