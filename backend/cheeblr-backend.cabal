@@ -30,7 +30,6 @@ common shared-properties
                 , warp-tls
                 , morpheus-graphql >= 0.27
                 , morpheus-graphql-core
-                , opaleye
                 , rel8
                 , hasql-pool
                 , hasql
@@ -40,11 +39,8 @@ common shared-properties
                 , text
                 , uuid
                 , time
-                , mtl
-                , split
                 , scientific
                 , vector
-                , resource-pool
                 , wai-cors
                 , bytestring
                 , unix
@@ -54,7 +50,6 @@ common shared-properties
                 , openapi3
                 , servant-openapi3
                 , lens
-                , rel8
                 , effectful
                 , katip
 library
@@ -84,9 +79,7 @@ library
                    , Effect.RegisterDb
                    , Effect.Clock
                    , Effect.GenUUID
-    build-depends: refined
-                 , string-conversions
-                 , filepath
+    build-depends: filepath
                  , directory
     hs-source-dirs: src
 

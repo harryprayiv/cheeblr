@@ -10,7 +10,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 ## Documentation
 
 - [Frontend Documentation](./Docs/FrontEnd.md) -- PureScript/Deku SPA architecture, async loading pattern, page modules, services
-- [Backend Documentation](./Docs/BackEnd.md) -- Haskell/Servant API, database layer, transaction processing, inventory reservations
+- [Backend Documentation](./Docs/BackEnd.md) -- Haskell/Servant API, effect layer, database layer, transaction processing, inventory reservations
 - [State Machine Design](./Docs/Crem.md) -- crem topology encoding, singleton witnesses, and tradeoffs vs. dependent types
 - [Nix Development Environment](./Docs/NixDevEnvironment.md) -- Setup, TLS, sops secrets management, service scripts, and test suite
 - [Dependencies](./Docs/Dependencies.md) -- Project dependency listing
@@ -75,6 +75,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | Language | **Haskell** |
 | API | **Servant** -- type-level REST API definitions |
 | OpenAPI3 | **servant-openapi3** -- schema generated at runtime, served at `/openapi.json` |
+| Effects | **effectful** -- algebraic effects mediating all service-to-database communication; IO and pure in-memory interpreters per effect |
 | State Machines | **crem** -- topology-indexed state machines with compile-time transition enforcement |
 | Singleton Types | **singletons-base** -- bridges type-level and value-level for runtime vertex recovery |
 | GraphQL | **morpheus-graphql** -- inventory-scoped GraphQL resolver at `/graphql/inventory` |
@@ -96,7 +97,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | TLS | **mkcert** for local dev certs; **warp-tls** for HTTPS on the backend; **Vite** HTTPS config |
 | Build (Haskell) | **Cabal** via haskell.nix / CHaP |
 | Build (PureScript) | **Spago** |
-| Testing | Haskell unit + integration tests; 484 PureScript tests; ephemeral-PostgreSQL integration harness |
+| Testing | Haskell unit + integration tests (pure in-memory interpreters for service-layer unit tests, ephemeral-PostgreSQL for integration); 484 PureScript tests |
 
 ## Getting Started
 
@@ -211,10 +212,15 @@ Pages/ (pure renderers)
 
 ```
 App.hs (bootstrap, CORS, TLS middleware, warp-tls)
-  |- Server.hs (inventory + session handlers with capability checks)
-  |- Server/Transaction.hs (POS: transactions, registers, ledger, compliance)
-  |- Service/Transaction.hs (load state, run TxMachine transition, call DB or reject 409)
-  |- Service/Register.hs (load state, run RegMachine transition, call DB or reject 409)
+  |- Server.hs (inventory + session handlers; runs InventoryDb effect stack via runInvEff)
+  |- Server/Transaction.hs (POS: runs TxEffs/RegEffs stacks via runTxEff/runRegEff)
+  |- Service/Transaction.hs (load state via TransactionDb effect, run TxMachine, call effect or reject 409)
+  |- Service/Register.hs (load state via RegisterDb effect, run RegMachine, call effect or reject 409)
+  |- Effect/InventoryDb.hs (InventoryDb effect: IO interpreter -> DB.Database; pure interpreter -> Map)
+  |- Effect/TransactionDb.hs (TransactionDb effect: IO interpreter -> DB.Transaction; pure interpreter -> TxStore)
+  |- Effect/RegisterDb.hs (RegisterDb effect: IO interpreter -> DB.Transaction; pure interpreter -> RegStore)
+  |- Effect/GenUUID.hs (GenUUID effect: IO interpreter -> nextRandom; pure interpreter -> supply list)
+  |- Effect/Clock.hs (Clock effect: IO interpreter -> getCurrentTime; pure interpreter -> fixed time)
   |- State/TransactionMachine.hs (TxTopology, TxState GADT, TxCommand, TxEvent, txAction)
   |- State/RegisterMachine.hs (RegTopology, RegState GADT, RegCommand, RegEvent, regAction)
   |- Auth/Simple.hs (dev auth: X-User-Id -> role -> capabilities)
@@ -225,9 +231,20 @@ App.hs (bootstrap, CORS, TLS middleware, warp-tls)
   '- Types/ (domain models with Aeson instances; no database-layer instances)
 ```
 
+### Effect Layer
+
+All communication between the service layer and the database passes through algebraic effects defined in `Effect/`. Each effect has two interpreters:
+
+- **IO interpreter** (`runXxxIO pool`) -- delegates to the corresponding `DB.*` function and is used in production
+- **Pure interpreter** (`runXxxPure initialState`) -- backed by in-memory state (`Map`, `TxStore`, `RegStore`) and used in unit tests
+
+`DBPool` appears only at the interpreter call sites in `runInvEff`, `runTxEff`, and `runRegEff`. Everything above those call sites -- all service functions and state machine code -- is entirely pool-free and parameterized over an effect row.
+
+The pure interpreters make the entire service layer testable without a running database. Tests in `Test.Service.TransactionSpec` and `Test.Service.RegisterSpec` run state machine guards, inventory accounting, and multi-step sequencing against in-memory state, while integration tests cover the real database path.
+
 ### Database Layer
 
-The database layer uses **rel8** for query construction and **hasql** as the PostgreSQL driver, with **hasql-pool** for connection management. All table schemas are defined as `Rel8able` record types in `DB.Schema`, alongside a `TableSchema` value for each table. Queries are built as composable rel8 `Query` values and executed inside hasql `Session` values via `runSession`. The unparameterized pool type `DBPool` (an alias for `Hasql.Pool.Pool`) is threaded through all handlers and service functions in place of the old `Pool Connection`.
+The database layer uses **rel8** for query construction and **hasql** as the PostgreSQL driver, with **hasql-pool** for connection management. All table schemas are defined as `Rel8able` record types in `DB.Schema`, alongside a `TableSchema` value for each table. Queries are built as composable rel8 `Query` values and executed inside hasql `Session` values via `runSession`.
 
 Domain types (`MenuItem`, `Transaction`, etc.) carry only Aeson instances. All database serialization is handled by explicit row-to-domain and domain-to-row conversion functions in `DB.Database` and `DB.Transaction` that operate on the `Rel8able` row types from `DB.Schema`. There are no `FromRow` or `ToRow` instances on domain types.
 
@@ -237,9 +254,9 @@ Transaction and register lifecycle transitions are enforced at compile time via 
 
 The five transaction vertices are `TxCreated`, `TxInProgress`, `TxCompleted`, `TxVoided`, and `TxRefunded`. Terminal states (`TxVoided`, `TxRefunded`) only list themselves as successors, making it impossible at the type level to transition out of them. The register machine has two vertices, `RegClosed` and `RegOpen`, with symmetric bidirectional transitions.
 
-The service layer (`Service/Transaction.hs`, `Service/Register.hs`) is the integration point between server handlers and state machines. Its pattern is: load the entity from the database, promote the domain record to a `SomeTxState` or `SomeRegState` existential via `fromTransaction`/`fromRegister`, run the transition function, inspect the emitted event, and either proceed to the database write or return `409 Conflict` if the transition was rejected.
+The service layer (`Service/Transaction.hs`, `Service/Register.hs`) is the integration point between server handlers and state machines. Its pattern is: load the entity via the database effect, promote the domain record to a `SomeTxState` or `SomeRegState` existential via `fromTransaction`/`fromRegister`, run the transition function, inspect the emitted event, and either proceed to the database effect write or return `409 Conflict` if the transition was rejected.
 
-The state machine layer contains no IO, no database access, and no Servant types -- pure transition logic only.
+The state machine layer contains no IO, no effects, and no Servant types -- pure transition logic only.
 
 For a detailed treatment of the crem design, the singletons machinery, and how the approach compares to full dependent types, see [Crem.md](./Docs/Crem.md).
 
@@ -295,7 +312,7 @@ test-suite            # all three phases in sequence
 test-smoke            # hit live backend on :8080, check endpoint and JSON contract health
 ```
 
-Integration tests spin up and tear down their own isolated PostgreSQL instance so they can run independently of `pg-start`.
+Haskell unit tests run the full service layer -- state machine guards, inventory accounting, multi-step transaction and register sequencing -- against pure in-memory interpreters with no database required. Integration tests spin up and tear down their own isolated PostgreSQL instance.
 
 ## Development Status
 
@@ -305,6 +322,7 @@ Integration tests spin up and tear down their own isolated PostgreSQL instance s
 - Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
 - Complete transaction lifecycle (create -> items -> payments -> finalize/void/refund/clear)
 - Compile-time state machine enforcement for transactions and registers via crem
+- Algebraic effect layer (`Effect/`) with IO and pure in-memory interpreters for all database operations; service layer is pool-free and testable without PostgreSQL
 - Multiple payment methods with change calculation
 - Cash register open/close with variance tracking and state machine validation
 - Tax and discount record management
@@ -320,8 +338,7 @@ Integration tests spin up and tear down their own isolated PostgreSQL instance s
 - GraphQL inventory API (`/graphql/inventory`) via morpheus-graphql + purescript-graphql-client
 - OpenAPI3 schema at `/openapi.json` via servant-openapi3
 - Database layer on rel8 + hasql + hasql-pool; `DB.Schema` holds all `Rel8able` row types; domain types carry only Aeson instances
-- Comprehensive test suite (Haskell unit + integration, 484 PureScript tests, ephemeral-DB harness, TLS wire checks)
-- JSON contract tests between PureScript and Haskell catching serialization divergence
+- Comprehensive test suite (Haskell unit tests via pure interpreters, integration tests via ephemeral PostgreSQL, 484 PureScript tests, TLS wire checks, JSON contract tests)
 
 ### In Progress
 

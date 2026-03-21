@@ -5,6 +5,7 @@
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Core Components](#core-components)
+- [Effect Layer](#effect-layer)
 - [State Machine Layer](#state-machine-layer)
 - [Authentication and Authorization](#authentication-and-authorization)
 - [API Reference](#api-reference)
@@ -19,9 +20,7 @@
 
 The Cheeblr backend is a Haskell-based API server built for inventory and transaction management in cannabis dispensary retail operations. It provides inventory tracking with reservation-based availability, point-of-sale transaction processing, cash register operations, compliance verification, financial reporting stubs, and a machine-readable OpenAPI3 schema.
 
-The system uses a layered architecture with Servant for type-safe API definitions and PostgreSQL for persistence. The database layer uses **rel8** for type-safe query construction and **hasql** as the PostgreSQL driver, with **hasql-pool** for connection management. All table schemas are defined as `Rel8able` record types in `DB.Schema`. State machine transitions for transactions and registers are enforced at compile time via [crem](https://github.com/tweag/crem), a library that encodes state machine topologies as type-level constraints. All monetary values are stored as integer cents to avoid floating-point rounding.
-
-For a detailed treatment of what crem adds to the codebase and how it compares to full dependent types, see [Crem.md](./Crem.md).
+The system uses a layered architecture with Servant for type-safe API definitions and PostgreSQL for persistence. The database layer uses **rel8** for type-safe query construction and **hasql** as the PostgreSQL driver, with **hasql-pool** for connection management. All table schemas are defined as `Rel8able` record types in `DB.Schema`. Side effects are mediated through **effectful** algebraic effect types defined in the `Effect/` hierarchy, which decouples the service and server layers from IO and enables pure in-memory interpreters for unit testing. State machine transitions for transactions and registers are enforced at compile time via [crem](https://github.com/tweag/crem), a library that encodes state machine topologies as type-level constraints. All monetary values are stored as integer cents to avoid floating-point rounding.
 
 ## Architecture
 
@@ -29,19 +28,21 @@ For a detailed treatment of what crem adds to the codebase and how it compares t
 
 1. **API Layer** (`API/`): Type-level API definitions using Servant's DSL. `API.Inventory` defines the inventory CRUD endpoints with auth headers. `API.Transaction` defines the POS, register, ledger, and compliance endpoints plus all request/response types that are not domain models. `API.OpenApi` composes the full `CheeblrAPI` type, derives the OpenAPI3 schema via `servant-openapi3`, and exposes the `/openapi.json` endpoint.
 
-2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`): Request handlers. `Server` handles inventory endpoints with capability checks. `Server.Transaction` implements all POS subsystem handlers (transactions, registers, ledger, compliance).
+2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`): Request handlers. `Server` handles inventory endpoints with capability checks, running effectful stacks via `runInvEff`. `Server.Transaction` implements all POS subsystem handlers (transactions, registers, ledger, compliance), running stacks via `runTxEff` and `runRegEff`.
 
-3. **Service Layer** (`Service/`): Business logic that sits between the server and database layers for state-machine-backed operations. `Service.Transaction` and `Service.Register` load domain state, run the relevant state machine transition to validate the command, and only proceed to the database if the transition is legal.
+3. **Service Layer** (`Service/`): Business logic combining state machine validation with effectful database operations. `Service.Transaction` and `Service.Register` load domain state via the `TransactionDb` and `RegisterDb` effects, run the relevant state machine transition to validate the command, and only proceed to the database effect if the transition is legal. No `DBPool` references appear here.
 
-4. **State Machine Layer** (`State/`): Compile-time-enforced state machine definitions built on crem. `State.TransactionMachine` and `State.RegisterMachine` define the vertex types, GADT-indexed state types, topologies, commands, events, and transition functions. No IO. No database access. Pure transition logic only.
+4. **Effect Layer** (`Effect/`): Algebraic effect definitions and their interpreters. Each effect (`InventoryDb`, `TransactionDb`, `RegisterDb`, `GenUUID`, `Clock`) has an IO interpreter that delegates to the corresponding `DB.*` module, and a pure in-memory interpreter backed by `runState` for unit testing. This layer is the boundary between service logic and IO.
 
-5. **Database Layer** (`DB/`): `DB.Schema` defines all `Rel8able` row types and `TableSchema` values. `DB.Database` handles inventory CRUD using rel8 queries executed inside hasql sessions via `runSession`. `DB.Transaction` handles all transaction, register, reservation, and payment database operations using the same pattern. Domain types carry no database instances; all serialization passes through the `Rel8able` row types in `DB.Schema` via explicit conversion functions.
+5. **State Machine Layer** (`State/`): Compile-time-enforced state machine definitions built on crem. `State.TransactionMachine` and `State.RegisterMachine` define the vertex types, GADT-indexed state types, topologies, commands, events, and transition functions. No IO. No effects. Pure transition logic only.
 
-6. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
+6. **Database Layer** (`DB/`): `DB.Schema` defines all `Rel8able` row types and `TableSchema` values. `DB.Database` handles inventory CRUD using rel8 queries executed inside hasql sessions via `runSession`. `DB.Transaction` handles all transaction, register, reservation, and payment database operations using the same pattern. Domain types carry no database instances; all serialization passes through the `Rel8able` row types in `DB.Schema` via explicit conversion functions.
 
-7. **Types Layer** (`Types/`): Domain models -- `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities). These types carry only Aeson instances.
+7. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
 
-8. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, TLS configuration, middleware setup.
+8. **Types Layer** (`Types/`): Domain models -- `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities). These types carry only Aeson instances.
+
+9. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, TLS configuration, middleware setup.
 
 ### Key Technologies
 
@@ -49,6 +50,7 @@ For a detailed treatment of what crem adds to the codebase and how it compares t
 |---|---|
 | API definition | **Servant** -- type-level web DSL |
 | OpenAPI3 schema | **servant-openapi3** -- derives OpenAPI3 from the Servant API type at runtime |
+| Effects | **effectful** -- algebraic effects with IO and pure interpreters |
 | State machine enforcement | **crem** -- topology-indexed state machines |
 | Singleton types | **singletons-base** -- bridges type-level and value-level universe |
 | Database queries | **rel8** -- type-safe, composable Haskell-to-SQL query builder over `Rel8able` schemas |
@@ -57,7 +59,8 @@ For a detailed treatment of what crem adds to the codebase and how it compares t
 | HTTP server | **Warp** / **warp-tls** |
 | JSON | **Aeson** (derived + manual instances) |
 | CORS | **wai-cors** with custom OPTIONS middleware |
-| UUID generation | **uuid** + **uuid-v4** (`Data.UUID.V4.nextRandom`) |
+| UUID generation | **uuid** + **uuid-v4** (`Data.UUID.V4.nextRandom`), also abstracted as a `GenUUID` effect |
+| Logging | **katip** -- structured JSON log output with namespaces and severity |
 
 ### System Flow
 
@@ -67,18 +70,19 @@ For a detailed treatment of what crem adds to the codebase and how it compares t
 2. `wai-cors` applies CORS headers
 3. Servant routes to handler in `Server` (inventory) or `Server.Transaction` (POS subsystem)
 4. Inventory handlers extract user from `X-User-Id` header via `Auth.Simple.lookupUser` and check capabilities
-5. Handlers call `DB.Database` functions which build rel8 queries and execute them inside hasql sessions via `runSession`
-6. Results serialized as JSON and returned
+5. `runInvEff` runs the `[InventoryDb, Error ServerError, IOE]` stack, delegating `InventoryDb` operations to `DB.Database` via `runInventoryDbIO`
+6. `DB.Database` functions build rel8 queries and execute them inside hasql sessions via `runSession`
+7. Results serialized as JSON and returned
 
 **State-machine-backed operations (transactions, registers):**
 
 1. Steps 1-3 above
-2. Server handler delegates to the appropriate `Service` function
-3. Service layer loads the current entity from the database via `DB.Transaction`
+2. Server handler runs the appropriate effect stack via `runTxEff` or `runRegEff`
+3. Service function loads the current entity via the `TransactionDb` or `RegisterDb` effect
 4. `fromTransaction` or `fromRegister` promotes the domain record into a `SomeTxState` or `SomeRegState` existential
 5. `runTxCommand` or `runRegCommand` runs the transition function, returning an event and a next state
-6. If the event is `InvalidTxCommand` or `InvalidRegCommand`, the service throws `err409` immediately -- no database write occurs
-7. If the transition is valid, the service calls the corresponding `DB.Transaction` function to persist the change
+6. If the event is `InvalidTxCommand` or `InvalidRegCommand`, the service throws `err409` via `throwError` -- no database write occurs
+7. If the transition is valid, the service calls the corresponding database effect operation to persist the change
 8. Result serialized as JSON and returned
 
 ## Core Components
@@ -105,7 +109,7 @@ data DBConfig = DBConfig
   }
 ```
 
-`DBConfig` fields use `ByteString` for host, name, user, and password, and `Word` for the port, matching the hasql connection parameter API. `initializeDB` builds a `hasql-pool` pool using `Hasql.Pool.Config` settings and runs a smoke-test statement on startup to verify connectivity. The resulting `DBPool` (an alias for `Hasql.Pool.Pool`) is threaded through all handlers and service functions.
+`DBConfig` fields use `ByteString` for host, name, user, and password, and `Word` for the port, matching the hasql connection parameter API. `initializeDB` builds a `hasql-pool` pool using `Hasql.Pool.Config` settings and runs a smoke-test statement on startup to verify connectivity. The resulting `DBPool` (an alias for `Hasql.Pool.Pool`) is threaded through the effect interpreters.
 
 Environment variables: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PORT`, `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE`. All have defaults. When `USE_TLS=true` and both cert/key files exist on disk, the server starts with `runTLS`; otherwise it falls back to plain HTTP.
 
@@ -133,14 +137,56 @@ Manual `ToSchema` instances are provided for `GQLRequest`, `GQLResponse`, and `O
 ### Combined Server (`Server.hs`)
 
 ```haskell
-combinedServer :: DBPool -> Server CheeblrAPI
-combinedServer pool
-  =    inventoryServer pool
-  :<|> posServerImpl pool
-  :<|> pure cheeblrOpenApi
+combinedServer :: DBPool -> LogEnv -> Server CheeblrAPI
+combinedServer pool logEnv =
+  inventoryServer pool logEnv
+    :<|> posServerImpl pool logEnv
+    :<|> pure cheeblrOpenApi
 ```
 
 `inventoryServer` handles the six inventory endpoints (four CRUD, `/session`, `/graphql/inventory`). Each handler extracts the user from the `X-User-Id` header via `lookupUser`, derives capabilities from the user's role, and gates write operations behind capability checks. Read (GET) is allowed for all authenticated users.
+
+Handlers that require database access run the effectful stack via `runInvEff`:
+
+```haskell
+runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
+runInvEff pool action =
+  liftIO . runEff . runErrorNoCallStack @ServerError . runInventoryDbIO pool $ action
+  >>= either throwError pure
+```
+
+### Effect Stacks (`Server/Transaction.hs`)
+
+The two effect stacks used by the POS subsystem:
+
+```haskell
+type TxEffs  = '[GenUUID, Clock, TransactionDb, Error ServerError, IOE]
+type RegEffs = '[GenUUID, Clock, RegisterDb,    Error ServerError, IOE]
+```
+
+```haskell
+runTxEff :: DBPool -> Eff TxEffs a -> Handler a
+runTxEff pool action =
+  liftIO . runEff
+         . runErrorNoCallStack @ServerError
+         . runTransactionDbIO pool
+         . runClockIO
+         . runGenUUIDIO
+         $ action
+  >>= either throwError pure
+
+runRegEff :: DBPool -> Eff RegEffs a -> Handler a
+runRegEff pool action =
+  liftIO . runEff
+         . runErrorNoCallStack @ServerError
+         . runRegisterDbIO pool
+         . runClockIO
+         . runGenUUIDIO
+         $ action
+  >>= either throwError pure
+```
+
+These are the only points in the codebase where `DBPool` is passed into an interpreter. Everything above this level -- service functions, state machine code -- is entirely pool-free.
 
 ### Database Layer (`DB/Schema.hs`, `DB/Database.hs`, `DB/Transaction.hs`)
 
@@ -166,44 +212,113 @@ menuItemSchema = TableSchema
 
 `DB.Transaction` follows the same pattern for all transaction-related tables. Pure conversion functions (`txDomainToRow`, `txRowToDomain`, `paymentDomainToRow`, etc.) handle all mapping between the `Rel8able` row types and the domain types in `Types.Transaction`.
 
-The three new helper functions added for the server layer are:
-
-- `getInventoryAvailability :: DBPool -> UUID -> IO (Maybe (Int, Int))` -- returns total and reserved quantities for a SKU via rel8 aggregate queries
-- `createInventoryReservation :: DBPool -> UUID -> UUID -> UUID -> Int -> UTCTime -> IO ()` -- inserts a reservation row
-- `releaseInventoryReservation :: DBPool -> UUID -> IO Bool` -- sets a reservation to `Released`, returning whether a matching row was found
-
 ### POS Server (`Server/Transaction.hs`)
 
 ```haskell
-posServerImpl :: DBPool -> Server PosAPI
-posServerImpl pool =
-  transactionServer pool
-    :<|> registerServer pool
-    :<|> ledgerServer pool
+posServerImpl :: DBPool -> LogEnv -> Server PosAPI
+posServerImpl pool logEnv =
+  transactionServer pool logEnv
+    :<|> registerServer  pool logEnv
+    :<|> ledgerServer    pool
     :<|> complianceServer pool
 ```
 
-All four sub-servers accept `DBPool` rather than `Pool Connection`. The inventory availability, reservation, and release handlers now call `DB.Transaction.getInventoryAvailability`, `DB.Transaction.createInventoryReservation`, and `DB.Transaction.releaseInventoryReservation` respectively, replacing the inline raw SQL that previously appeared in these handlers.
+Transaction and register handlers delegate business logic to `Service.Transaction` and `Service.Register`, running the appropriate effect stack. Ledger and compliance handlers remain stubs.
 
 ### Service Layer (`Service/Transaction.hs`, `Service/Register.hs`)
 
-Both service modules accept `DBPool` throughout. The common pattern is unchanged:
+Service functions are fully polymorphic over their effect row. They carry no `DBPool` references. The common pattern:
 
 ```haskell
-loadTx :: DBPool -> UUID -> Handler (Transaction, SomeTxState)
-loadTx pool txId = do
-  maybeTx <- liftIO $ DB.getTransactionById pool txId
+loadTx
+  :: (TransactionDb :> es, Error ServerError :> es)
+  => UUID
+  -> Eff es (Transaction, SomeTxState)
+loadTx txId = do
+  maybeTx <- getTransactionById txId
   case maybeTx of
     Nothing -> throwError err404 { errBody = "Transaction not found" }
     Just tx -> pure (tx, fromTransaction tx)
 
-guardEvent :: TxEvent -> Handler ()
-guardEvent (InvalidTxCommand msg) =
+guardTxEvent :: Error ServerError :> es => TxEvent -> Eff es ()
+guardTxEvent (InvalidTxCommand msg) =
   throwError err409 { errBody = LBS.fromStrict (TE.encodeUtf8 msg) }
-guardEvent _ = pure ()
+guardTxEvent _ = pure ()
 ```
 
-`loadTx` hydrates the `SomeTxState` from the database. `guardEvent` inspects the event emitted by the state machine and short-circuits with `409 Conflict` if the transition was rejected. Only after `guardEvent` passes does the service call the database write function.
+`loadTx` promotes the database record into a `SomeTxState`. `guardTxEvent` short-circuits with `409 Conflict` if the state machine rejected the command. Only after `guardTxEvent` passes does the service call the database effect operation.
+
+## Effect Layer
+
+The `Effect/` modules define the algebraic effects used throughout the service and server layers. Each module exports the effect GADT, smart constructor functions for sending operations, an IO interpreter that delegates to the corresponding `DB.*` module, and a pure in-memory interpreter for testing.
+
+### `Effect.Clock`
+
+Provides `currentTime :: Clock :> es => Eff es UTCTime`, abstracting over `Data.Time.getCurrentTime`. Interpreters:
+
+- `runClockIO` -- delegates to `getCurrentTime`
+- `runClockPure t` -- always returns the fixed time `t`
+- `runClockPureSequence ts` -- consumes a supply of times in order, failing if exhausted
+
+### `Effect.GenUUID`
+
+Provides `nextUUID :: GenUUID :> es => Eff es UUID`, abstracting over `Data.UUID.V4.nextRandom`. Interpreters:
+
+- `runGenUUIDIO` -- delegates to `nextRandom`
+- `runGenUUIDPure supply` -- consumes a pre-supplied list of UUIDs, failing if exhausted
+
+### `Effect.InventoryDb`
+
+Operations: `getAllMenuItems`, `insertMenuItem`, `updateMenuItem`, `deleteMenuItem`. Interpreters:
+
+- `runInventoryDbIO pool` -- delegates to `DB.Database`
+- `runInventoryDbPure initial` -- backed by a `Map UUID MenuItem`; returns the final store state alongside the result
+
+### `Effect.RegisterDb`
+
+Operations: `getAllRegisters`, `getRegisterById`, `createRegister`, `updateRegister`, `openRegisterDb`, `closeRegisterDb`. Interpreters:
+
+- `runRegisterDbIO pool` -- delegates to `DB.Transaction`
+- `runRegisterDbPure initial` -- backed by `RegStore`, a newtype over `Map UUID Register`
+
+### `Effect.TransactionDb`
+
+The largest effect. Operations cover the full transaction lifecycle: `getAllTransactions`, `getTransactionById`, `createTransaction`, `updateTransaction`, `voidTransaction`, `refundTransaction`, `clearTransaction`, `finalizeTransaction`, `addTransactionItem`, `deleteTransactionItem`, `addPaymentTransaction`, `deletePaymentTransaction`, `getTxIdByItemId`, `getTxIdByPaymentId`, `getInventoryAvailability`, `createReservation`, `releaseReservation`. Interpreters:
+
+- `runTransactionDbIO pool` -- delegates to `DB.Transaction`
+- `runTransactionDbPure initial` -- backed by `TxStore`, which carries maps for transactions, item-to-transaction lookups, payment-to-transaction lookups, reservations, and an in-memory inventory count. Requires `GenUUID :> es` and `Clock :> es` in its constraint row because the pure refund implementation needs fresh UUIDs and timestamps.
+
+The `TxStore` type:
+
+```haskell
+data TxStore = TxStore
+  { tsTxs          :: Map UUID Transaction
+  , tsItemToTx     :: Map UUID UUID
+  , tsPaymentToTx  :: Map UUID UUID
+  , tsReservations :: Map UUID ReservationEntry
+  , tsInventory    :: Map UUID Int
+  }
+```
+
+### Testing with Pure Interpreters
+
+The pure interpreters make the unit test suite independent of PostgreSQL. Tests in `Test.Service.TransactionSpec` and `Test.Service.RegisterSpec` run full service-layer logic -- including state machine guards, inventory reservation, and round-trip sequencing -- against in-memory state:
+
+```haskell
+type TestEffs = '[TransactionDb, Clock, GenUUID, Error ServerError, IOE]
+
+runTest :: TxStore -> Eff TestEffs a -> IO (Either ServerError a)
+runTest store action =
+  fmap (fmap (fst . fst)) $
+  runEff
+  . runErrorNoCallStack @ServerError
+  . runGenUUIDPure uuidSupply
+  . runClockPure testTime
+  . runTransactionDbPure store
+  $ action
+```
+
+This means state machine invariants, HTTP error codes, and inventory accounting can all be verified without a running database, while `Test.Integration.JsonContractSpec` and `Test.GraphQL.IntegrationSpec` provide the serialization boundary coverage.
 
 ## State Machine Layer
 
@@ -284,11 +399,6 @@ regAction (OpenState reg) (CloseRegCmd _ countedCash) =
 
 ```haskell
 runRegCommand :: SomeRegState -> RegCommand -> (RegEvent, SomeRegState)
-runRegCommand (SomeRegState _ st) cmd =
-  case regAction st cmd of
-    ActionResult m ->
-      let (evt, nextSt) = runIdentity m
-      in  (evt, toSomeRegState nextSt)
 ```
 
 ### `State.TransactionMachine`
@@ -370,26 +480,28 @@ txAction (RefundedState tx) _ =
   pureResult (InvalidTxCommand "Transaction is refunded") (RefundedState tx)
 ```
 
+`someTxStatus` extracts the domain `TransactionStatus` from a `SomeTxState` by casing on the singleton, allowing the service layer to persist status changes without pattern-matching on the full existential:
+
+```haskell
+someTxStatus :: SomeTxState -> T.TransactionStatus
+someTxStatus (SomeTxState sv _) = case sv of
+  STxCreated    -> T.Created
+  STxInProgress -> T.InProgress
+  STxCompleted  -> T.Completed
+  STxVoided     -> T.Voided
+  STxRefunded   -> T.Refunded
+```
+
 ### `fromTransaction` and `fromRegister`
 
-These functions bridge the database layer into the state machine layer:
+These functions bridge the database layer into the state machine layer and are total functions:
 
 ```haskell
 fromTransaction :: T.Transaction -> SomeTxState
-fromTransaction tx = case T.transactionStatus tx of
-  T.Created    -> SomeTxState STxCreated    (CreatedState    tx)
-  T.InProgress -> SomeTxState STxInProgress (InProgressState tx)
-  T.Completed  -> SomeTxState STxCompleted  (CompletedState  tx)
-  T.Voided     -> SomeTxState STxVoided     (VoidedState     tx)
-  T.Refunded   -> SomeTxState STxRefunded   (RefundedState   tx)
-
-fromRegister :: Register -> SomeRegState
-fromRegister reg
-  | registerIsOpen reg = SomeRegState SRegOpen   (OpenState   reg)
-  | otherwise          = SomeRegState SRegClosed (ClosedState reg)
+fromRegister    :: Register      -> SomeRegState
 ```
 
-These are total functions. Every possible database state maps to exactly one vertex.
+Every possible database state maps to exactly one vertex.
 
 ## Authentication and Authorization
 
@@ -458,7 +570,7 @@ data UserRole = Customer | Cashier | Manager | Admin
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/transaction` | List all transactions (newest first) |
+| GET | `/transaction` | List all transactions |
 | GET | `/transaction/:id` | Get transaction with items and payments |
 | POST | `/transaction` | Create a new transaction |
 | PUT | `/transaction/:id` | Update a transaction |
@@ -548,8 +660,8 @@ data StrainLineage = StrainLineage
 
 #### Enums
 
-- **Species**: `Indica | IndicaDominantHybrid | Hybrid | SativaDominantHybrid | Sativa` -- derived `FromJSON`/`ToJSON`/`ToSchema`
-- **ItemCategory**: `Flower | PreRolls | Vaporizers | Edibles | Drinks | Concentrates | Topicals | Tinctures | Accessories` -- derived `FromJSON`/`ToJSON`/`ToSchema`
+- **Species**: `Indica | IndicaDominantHybrid | Hybrid | SativaDominantHybrid | Sativa`
+- **ItemCategory**: `Flower | PreRolls | Vaporizers | Edibles | Drinks | Concentrates | Topicals | Tinctures | Accessories`
 
 #### Inventory
 
@@ -595,7 +707,7 @@ data Transaction = Transaction
 
 | Type | Values | DB format |
 |---|---|---|
-| `TransactionStatus` | `Created | InProgress | Completed | Voided | Refunded` | SCREAMING_SNAKE (`CREATED`, `IN_PROGRESS`, etc.) |
+| `TransactionStatus` | `Created | InProgress | Completed | Voided | Refunded` | SCREAMING_SNAKE |
 | `TransactionType` | `Sale | Return | Exchange | InventoryAdjustment | ManagerComp | Administrative` | SCREAMING_SNAKE |
 | `PaymentMethod` | `Cash | Debit | Credit | ACH | GiftCard | StoredValue | Mixed | Other Text` | SCREAMING_SNAKE |
 | `TaxCategory` | `RegularSalesTax | ExciseTax | CannabisTax | LocalTax | MedicalTax | NoTax` | SCREAMING_SNAKE |
@@ -604,8 +716,6 @@ data Transaction = Transaction
 JSON serialization uses PascalCase via Aeson's generic deriving. `FromJSON` instances accept both forms for interop with the frontend. DB parsing uses SCREAMING_SNAKE exclusively via the `show*` and `parse*` functions in `DB.Transaction`.
 
 ### Request/Response Types (`API/Transaction.hs`)
-
-These types live in the API module and carry `ToJSON`/`FromJSON`/`ToSchema` instances:
 
 ```haskell
 data Register = Register
@@ -624,14 +734,6 @@ data ReservationRequest = ReservationRequest
 data OpenRegisterRequest  = OpenRegisterRequest  { openRegisterEmployeeId :: UUID, openRegisterStartingCash :: Int }
 data CloseRegisterRequest = CloseRegisterRequest { closeRegisterEmployeeId :: UUID, closeRegisterCountedCash :: Int }
 data CloseRegisterResult  = CloseRegisterResult  { closeRegisterResultRegister :: Register, closeRegisterResultVariance :: Int }
-
-data DailyReportRequest = DailyReportRequest { dailyReportDate :: UTCTime, dailyReportLocationId :: UUID }
-data DailyReportResult  = DailyReportResult  { dailyReportCash :: Int, dailyReportCard :: Int, dailyReportOther :: Int, dailyReportTotal :: Int, dailyReportTransactions :: Int }
-
-data ComplianceReportRequest = ComplianceReportRequest
-  { complianceReportStartDate :: UTCTime, complianceReportEndDate :: UTCTime, complianceReportLocationId :: UUID }
-
-newtype ComplianceReportResult = ComplianceReportResult { complianceReportContent :: Text }
 ```
 
 ## Database Schema
@@ -674,7 +776,7 @@ CREATE TABLE IF NOT EXISTS strain_lineage (
 
 ### Transaction Tables
 
-All transaction tables are created by `createTransactionTables` using `CREATE TABLE IF NOT EXISTS` DDL statements executed as hasql sessions.
+All transaction tables are created by `createTransactionTables` using `CREATE TABLE IF NOT EXISTS` DDL executed as hasql sessions via the `ddl` helper.
 
 ```sql
 CREATE TABLE IF NOT EXISTS transaction (
@@ -780,15 +882,15 @@ CREATE TABLE IF NOT EXISTS inventory_reservation (
 ### Transaction Lifecycle
 
 1. **Creation** (`POST /transaction`): Transaction inserted with status `CREATED` and zero totals.
-2. **Item Addition** (`POST /transaction/item`): `Service.Transaction.addItem` loads the transaction, calls `runTxCommand` with `AddItemCmd`. The state machine validates the transition (only `Created` and `InProgress` states accept items). If valid, `DB.Transaction.addTransactionItem` checks availability via a rel8 aggregate query over `inventory_reservation`, creates a reservation row, and inserts the transaction item.
-3. **Payment Addition** (`POST /transaction/payment`): `Service.Transaction.addPayment` validates via `AddPaymentCmd`, inserts the payment, and auto-updates transaction status -- if total payments >= transaction total, status becomes `COMPLETED`, otherwise `IN_PROGRESS`.
-4. **Finalization** (`POST /transaction/finalize/:id`): `Service.Transaction.finalizeTx` validates via `FinalizeCmd` (only `InProgress` transactions can be finalized). Decrements `menu_items.quantity`, changes reservation status to `"Completed"`, sets transaction status to `COMPLETED`.
+2. **Item Addition** (`POST /transaction/item`): `Service.Transaction.addItem` loads the transaction via the `TransactionDb` effect, calls `runTxCommand` with `AddItemCmd`. The state machine validates the transition (only `Created` and `InProgress` states accept items). If valid, the `AddTransactionItem` effect operation checks availability via a rel8 aggregate query, creates a reservation row, and inserts the transaction item.
+3. **Payment Addition** (`POST /transaction/payment`): `Service.Transaction.addPayment` validates via `AddPaymentCmd`, then calls the `AddPayment` effect operation. The DB layer auto-updates transaction status -- if total payments >= transaction total, status becomes `COMPLETED`, otherwise `IN_PROGRESS`.
+4. **Finalization** (`POST /transaction/finalize/:id`): `Service.Transaction.finalizeTx` validates via `FinalizeCmd` (only `InProgress` transactions can be finalized). The `FinalizeTransaction` effect operation decrements `menu_items.quantity`, changes reservation status to `"Completed"`, and sets transaction status to `COMPLETED`.
 
 ### Transaction Reversal Operations
 
-**Void** (`POST /transaction/void/:id`): `Service.Transaction.voidTx` validates via `VoidCmd`. Permitted from `Created`, `InProgress`, and `Completed`. Terminal states reject the command at the machine level. Sets status to `VOIDED`, marks `is_voided = TRUE`, records reason. Does not reverse inventory.
+**Void** (`POST /transaction/void/:id`): `Service.Transaction.voidTx` validates via `VoidCmd`. Permitted from `Created`, `InProgress`, and `Completed`. Terminal states reject the command at the machine level. Sets `is_voided = TRUE`, records reason.
 
-**Refund** (`POST /transaction/refund/:id`): `Service.Transaction.refundTx` validates via `RefundCmd`. Only `Completed` transactions can be refunded -- the topology enforces this. Creates a new inverse transaction with negated monetary amounts, type `Return`, referencing the original. Marks the original as `is_refunded = TRUE`.
+**Refund** (`POST /transaction/refund/:id`): `Service.Transaction.refundTx` validates via `RefundCmd`. Only `Completed` transactions can be refunded -- the topology enforces this. Creates a new inverse transaction with negated monetary amounts, type `Return`, referencing the original. The `nextUUID` effect call in the service is satisfied by whichever `GenUUID` interpreter is in the stack at the call site.
 
 ### Clear Transaction (`POST /transaction/clear/:id`)
 
@@ -802,10 +904,6 @@ Resets a transaction to empty state without passing through the state machine:
 ### Automatic Total Recalculation
 
 `updateTransactionTotals` is called after item removal. It recalculates subtotal, discount total, tax total, and grand total from the database using rel8 aggregate queries. `updateTransactionPaymentStatus` checks if payments cover the total and updates status accordingly.
-
-### Data Assembly Pattern
-
-`hydrateTx` fetches the base transaction row then separately fetches items (which themselves fetch their discounts and taxes via `hydrateItem`) and payments. This multi-query assembly pattern matches the rel8 style where each query is a typed `Session` value executed independently.
 
 ## Inventory Reservation System
 
@@ -829,7 +927,7 @@ data InventoryException
   | InsufficientInventory UUID Int Int
 ```
 
-`addTransactionItemHandler` catches these and returns structured JSON error responses with `err400`.
+The `AddTransactionItem` effect operation returns `Either InventoryException TransactionItem`. `Service.Transaction.addItem` pattern-matches on this and converts inventory errors to `err404` and `err400` responses respectively.
 
 ## Security and Configuration
 
@@ -863,12 +961,22 @@ When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, 
 
 - `API/` -- Servant type definitions and request/response types. No business logic. `API.OpenApi` owns the combined type and schema.
 - `Auth/` -- Authentication/authorization. Currently dev-only.
-- `State/` -- State machine definitions. Pure functions only. No IO, no database access, no Servant.
-- `Service/` -- Business logic combining state machine validation with database effects. No SQL lives here.
-- `Server/` and `Server.hs` -- Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`. State-machine-backed operations delegate to `Service/`.
+- `Effect/` -- Algebraic effect GADTs, smart constructors, IO interpreters, and pure in-memory interpreters. Adding a new DB operation means adding it here before touching `Service/` or `Server/`.
+- `State/` -- State machine definitions. Pure functions only. No IO, no effects, no Servant.
+- `Service/` -- Business logic parameterized over an effect row. No `DBPool`. No SQL. No `Handler`. State machine validation and effect calls only.
+- `Server/` and `Server.hs` -- Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`. `DBPool` appears only in `runTxEff`/`runRegEff`/`runInvEff`.
 - `DB/Schema.hs` -- The single source of truth for table structure. Adding or modifying a table means updating the `Rel8able` row type and `TableSchema` here first.
 - `DB/Database.hs` and `DB/Transaction.hs` -- Database operations. All rel8 queries and hasql sessions live here. All domain-to-row and row-to-domain conversion functions live here.
 - `Types/` -- Domain models with Aeson and `ToSchema` instances. No effects. No database instances.
+
+### Adding a New Database Operation
+
+1. Add the operation to the relevant `Rel8able` row type and `TableSchema` in `DB.Schema` if a schema change is needed
+2. Implement the function in `DB.Database` or `DB.Transaction` using rel8 and `runSession`
+3. Add a constructor to the relevant effect GADT in `Effect/`
+4. Add a smart constructor and update both the IO interpreter and the pure interpreter
+5. Call the smart constructor from `Service/` or `Server/`, not the `DB.*` function directly
+6. Add unit tests against the pure interpreter in `test/Test/Effect/` or `test/Test/Service/`
 
 ### Database Patterns
 
@@ -879,30 +987,25 @@ When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, 
 
 ### Enum Serialization Convention
 
-Enums are stored as SCREAMING_SNAKE_CASE text in the database via explicit `show*` functions in `DB.Transaction` (`showStatus`, `showTransactionType`, `showPaymentMethod`, etc.). JSON serialization uses PascalCase via Aeson's generic deriving. `FromJSON` instances accept both forms. `parse*` functions in `DB.Transaction` and `Types.Transaction` handle SCREAMING_SNAKE on read.
+Enums are stored as SCREAMING_SNAKE_CASE text in the database via explicit `show*` functions in `DB.Transaction`. JSON serialization uses PascalCase via Aeson's generic deriving. `FromJSON` instances accept both forms. `parse*` functions in `DB.Transaction` and `Types.Transaction` handle SCREAMING_SNAKE on read.
 
 ### Error Handling
 
 - Database operations use `try @SomeException` with descriptive error messages
-- State machine validation uses `guardEvent` in service functions, returning `err409` with the rejection message
-- Transaction item addition uses custom `InventoryException` types caught and converted to `err400` with JSON error bodies
+- State machine validation uses `guardTxEvent`/`guardRegEvent` in service functions, returning `err409` with the rejection message as the body
+- Transaction item addition returns `Either InventoryException TransactionItem`; the service converts `ItemNotFound` to `err404` and `InsufficientInventory` to `err400`
 - Missing resources return `err404`
 - Unimplemented endpoints return `err501`
 - Capability violations return `err403`
-- Server logging goes to stdout (handler activity) and stderr (database operations, table creation)
 
 ### Known Issues and Tech Debt
 
 - **No real authentication**: `X-User-Id` header is trusted without verification. Default user is cashier, not admin.
 - **Capability enforcement incomplete**: Only inventory write endpoints check capabilities. Transaction and register endpoints do not enforce role-based access.
 - **Ledger and compliance are stubs**: Endpoints exist and types are defined, but no database tables or real logic back them.
-- **`PaymentMethod.Other` text dropped on DB write**: `showPaymentMethod (Other text) = "OTHER"` -- the custom text payload is lost in the database.
-- **`DiscountType` round-trip lossy**: `parseDiscountType` reconstructs from a `(Text, Maybe Int)` tuple; `PercentOff` stores `Scientific` in Haskell while the DB stores a nullable `NUMERIC`.
-- **No inventory reservation expiry**: Reservations with status `"Reserved"` persist indefinitely if a transaction is abandoned.
+- **`PaymentMethod.Other` text dropped on DB write**: `showPaymentMethod (Other text) = "OTHER:" <> text` serializes correctly, but `parsePaymentMethod` in the DB layer may not reconstruct it identically on all paths -- verify the round-trip if this constructor matters in production.
+- **`DiscountType` round-trip lossy**: `parseDiscountType` reconstructs from a `(Text, Maybe Int)` tuple; `PercentOff` stores `Scientific` in Haskell while the DB stores a nullable `NUMERIC`. Fractional percent values may lose precision.
+- **No inventory reservation expiry**: Reservations with status `"Reserved"` persist indefinitely if a transaction is abandoned without being cleared.
 - **`error` calls in DB layer**: Several functions use `error` for "impossible" post-write states, which would crash the server thread rather than returning an HTTP error.
 - **State machine and DB status can diverge**: `fromTransaction` trusts `transactionStatus` as stored. If a DB write partially fails after a state machine transition was validated, the two can fall out of sync.
-- **`clear` bypasses the state machine**: `clearTransaction` resets a transaction to `CREATED` directly in the database without going through `runTxCommand`. This is intentional as an operational escape hatch.
-
----
-
-For a deeper look at the design tradeoffs in the state machine layer, including why singletons exist, what the GHC warnings mean, and how dependent types would change the picture, see [Crem.md](./Crem.md).
+- **`clear` bypasses the state machine**: `clearTransaction` resets a transaction to `CREATED` directly in the database without going through `runTxCommand`. This is intentional as an operational escape hatch, but means `clearTransaction` can be called on a `VOIDED` or `REFUNDED` transaction if called directly.
