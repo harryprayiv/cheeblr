@@ -22,6 +22,7 @@ import System.Environment (lookupEnv)
 import System.Posix.User (getEffectiveUserName)
 
 import API.OpenApi (cheeblrAPI)
+import DB.Auth (createAuthTables)
 import DB.Database (DBConfig (..), initializeDB, createTables)
 import DB.Transaction (createTransactionTables)
 import Logging
@@ -45,12 +46,14 @@ run = do
   envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
   envPassword <- fromMaybe "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS" <$> lookupEnv "PGPASSWORD"
 
-  useTLS   <- lookupEnv "USE_TLS"
-  certFile <- lookupEnv "TLS_CERT_FILE"
-  keyFile  <- lookupEnv "TLS_KEY_FILE"
-  logFile  <- fromMaybe "./cheeblr-compliance.log" <$> lookupEnv "LOG_FILE"
+  useTLS      <- lookupEnv "USE_TLS"
+  certFile    <- lookupEnv "TLS_CERT_FILE"
+  keyFile     <- lookupEnv "TLS_KEY_FILE"
+  logFile     <- fromMaybe "./cheeblr-compliance.log" <$> lookupEnv "LOG_FILE"
+  useRealAuth <- lookupEnv "USE_REAL_AUTH"
 
-  let tlsEnabled = useTLS == Just "true"
+  let tlsEnabled   = useTLS      == Just "true"
+      realAuthMode = useRealAuth == Just "true"
 
   let config = AppConfig
         { dbConfig = DBConfig
@@ -69,12 +72,12 @@ run = do
   pool <- initializeDB (dbConfig config)
   createTables pool
   createTransactionTables pool
+  createAuthTables pool
 
-  -- Katip initialisation.  closeLogging is called after the server exits.
-  -- For production you may want to wrap the server launch in `bracket` if you
-  -- need guaranteed cleanup on asynchronous exceptions.
   logEnv <- initLogging logFile
   logAppStartup logEnv (serverPort config) tlsEnabled
+  logAppInfo logEnv $
+    "Auth mode: " <> if realAuthMode then "real (session tokens)" else "dev (Auth.Simple)"
 
   let
     hXRequestedWith = CI.mk (B8.pack "x-requested-with")
@@ -95,7 +98,7 @@ run = do
       }
 
     app = cors (const $ Just corsPolicy) $
-            serve cheeblrAPI (combinedServer pool logEnv)
+            serve cheeblrAPI (combinedServer pool logEnv realAuthMode)
 
     appWithOptions = handleOptionsMiddleware app
 

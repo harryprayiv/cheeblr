@@ -5,6 +5,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
+-- {-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -16,10 +17,6 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import GHC.Generics (Generic)
 import Rel8
-
--- ---------------------------------------------------------------------------
--- menu_items
--- ---------------------------------------------------------------------------
 
 data MenuItemRow f = MenuItemRow
   { menuSort        :: Column f Int32
@@ -60,10 +57,6 @@ menuItemSchema = TableSchema
       }
   }
 
--- ---------------------------------------------------------------------------
--- strain_lineage
--- ---------------------------------------------------------------------------
-
 data StrainLineageRow f = StrainLineageRow
   { slSku             :: Column f UUID
   , slThc             :: Column f Text
@@ -98,10 +91,6 @@ strainLineageSchema = TableSchema
       , slImg             = "img"
       }
   }
-
--- ---------------------------------------------------------------------------
--- transaction
--- ---------------------------------------------------------------------------
 
 data TransactionRow f = TransactionRow
   { txId                     :: Column f UUID
@@ -154,10 +143,6 @@ transactionSchema = TableSchema
       }
   }
 
--- ---------------------------------------------------------------------------
--- transaction_item
--- ---------------------------------------------------------------------------
-
 data TransactionItemRow f = TransactionItemRow
   { tiId            :: Column f UUID
   , tiTransactionId :: Column f UUID
@@ -185,10 +170,6 @@ transactionItemSchema = TableSchema
       }
   }
 
--- ---------------------------------------------------------------------------
--- transaction_tax
--- ---------------------------------------------------------------------------
-
 data TaxRow f = TaxRow
   { taxRowId                :: Column f UUID
   , taxRowTransactionItemId :: Column f UUID
@@ -213,10 +194,6 @@ taxSchema = TableSchema
       , taxRowDescription       = "description"
       }
   }
-
--- ---------------------------------------------------------------------------
--- discount
--- ---------------------------------------------------------------------------
 
 data DiscountRow f = DiscountRow
   { discRowId                :: Column f UUID
@@ -246,10 +223,6 @@ discountSchema = TableSchema
       , discRowApprovedBy        = "approved_by"
       }
   }
-
--- ---------------------------------------------------------------------------
--- payment_transaction
--- ---------------------------------------------------------------------------
 
 data PaymentRow f = PaymentRow
   { pymtId                :: Column f UUID
@@ -282,10 +255,6 @@ paymentSchema = TableSchema
       }
   }
 
--- ---------------------------------------------------------------------------
--- inventory_reservation
--- ---------------------------------------------------------------------------
-
 data ReservationRow f = ReservationRow
   { resId            :: Column f UUID
   , resItemSku       :: Column f UUID
@@ -310,10 +279,6 @@ reservationSchema = TableSchema
       , resCreatedAt     = "created_at"
       }
   }
-
--- ---------------------------------------------------------------------------
--- register
--- ---------------------------------------------------------------------------
 
 data RegisterRow f = RegisterRow
   { regId                   :: Column f UUID
@@ -343,5 +308,98 @@ registerSchema = TableSchema
       , regOpenedAt             = "opened_at"
       , regOpenedBy             = "opened_by"
       , regLastTransactionTime  = "last_transaction_time"
+      }
+  }
+
+data UserRow f = UserRow
+  { userId         :: Column f UUID
+  , userName       :: Column f Text       -- login username (unique)
+  , displayName    :: Column f Text       -- shown in UI, maps to auUserName
+  , email          :: Column f (Maybe Text)
+  , userRole       :: Column f Text       -- "Customer" | "Cashier" | "Manager" | "Admin"
+  , userLocationId :: Column f (Maybe UUID)
+  , passwordHash   :: Column f Text       -- Argon2id encoded string including salt
+  , isActive       :: Column f Bool
+  , userCreatedAt  :: Column f UTCTime
+  , userUpdatedAt  :: Column f UTCTime
+  } deriving stock (Generic)
+    deriving anyclass (Rel8able)
+
+deriving stock instance f ~ Result => Show (UserRow f)
+
+userSchema :: TableSchema (UserRow Name)
+userSchema = TableSchema
+  { name    = "users"
+  , columns = UserRow
+      { userId         = "id"
+      , userName       = "username"
+      , displayName    = "display_name"
+      , email          = "email"
+      , userRole       = "role"
+      , userLocationId = "location_id"
+      , passwordHash   = "password_hash"
+      , isActive       = "is_active"
+      , userCreatedAt  = "created_at"
+      , userUpdatedAt  = "updated_at"
+      }
+  }
+
+data SessionRow f = SessionRow
+  { sessId         :: Column f UUID
+  , sessUserId     :: Column f UUID
+  , sessTokenHash  :: Column f Text       -- hex(SHA256(raw_token_bytes))
+  , sessRegisterId :: Column f (Maybe UUID)
+  , sessCreatedAt  :: Column f UTCTime
+  , sessLastSeenAt :: Column f UTCTime
+  , sessExpiresAt  :: Column f UTCTime
+  , sessRevoked    :: Column f Bool
+  , sessRevokedAt  :: Column f (Maybe UTCTime)
+  , sessRevokedBy  :: Column f (Maybe UUID)
+  , sessUserAgent  :: Column f (Maybe Text)
+  , sessIpAddress  :: Column f (Maybe Text)
+  } deriving stock (Generic)
+    deriving anyclass (Rel8able)
+
+deriving stock instance f ~ Result => Show (SessionRow f)
+
+sessionSchema :: TableSchema (SessionRow Name)
+sessionSchema = TableSchema
+  { name    = "sessions"
+  , columns = SessionRow
+      { sessId         = "id"
+      , sessUserId     = "user_id"
+      , sessTokenHash  = "token_hash"
+      , sessRegisterId = "register_id"
+      , sessCreatedAt  = "created_at"
+      , sessLastSeenAt = "last_seen_at"
+      , sessExpiresAt  = "expires_at"
+      , sessRevoked    = "revoked"
+      , sessRevokedAt  = "revoked_at"
+      , sessRevokedBy  = "revoked_by"
+      , sessUserAgent  = "user_agent"
+      , sessIpAddress  = "ip_address"
+      }
+  }
+
+data LoginAttemptRow f = LoginAttemptRow
+  { attemptId        :: Column f UUID
+  , attemptUsername  :: Column f Text
+  , attemptIpAddress :: Column f Text
+  , attemptSuccess   :: Column f Bool
+  , attemptedAt      :: Column f UTCTime
+  } deriving stock (Generic)
+    deriving anyclass (Rel8able)
+
+deriving stock instance f ~ Result => Show (LoginAttemptRow f)
+
+loginAttemptSchema :: TableSchema (LoginAttemptRow Name)
+loginAttemptSchema = TableSchema
+  { name    = "login_attempts"
+  , columns = LoginAttemptRow
+      { attemptId        = "id"
+      , attemptUsername  = "username"
+      , attemptIpAddress = "ip_address"
+      , attemptSuccess   = "success"
+      , attemptedAt      = "attempted_at"
       }
   }

@@ -1,7 +1,7 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds         #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeOperators     #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module API.OpenApi where
@@ -13,6 +13,7 @@ import qualified Data.OpenApi as OpenApi
 import Servant (Get, JSON, Proxy (..), (:<|>), (:>))
 import Servant.OpenApi (toOpenApi)
 
+import API.Auth     (AuthAPI)
 import API.Inventory (InventoryAPI)
 import API.Transaction (PosAPI)
 
@@ -28,6 +29,7 @@ instance ToSchema OpenApi where
 type CheeblrAPI =
        InventoryAPI
   :<|> PosAPI
+  :<|> AuthAPI
   :<|> "openapi.json" :> Get '[JSON] OpenApi
 
 cheeblrAPI :: Proxy CheeblrAPI

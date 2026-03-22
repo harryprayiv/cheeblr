@@ -52,19 +52,27 @@ common shared-properties
                 , lens
                 , effectful
                 , katip
+                , crypton
+                , memory
+                , entropy
+                , base64-bytestring
 library
     import: shared-properties
     exposed-modules: App
                    , DB.Database
                    , DB.Transaction
+                   , DB.Auth
                    , DB.Schema
                    , Logging
                    , Server
                    , Server.Transaction
+                   , Server.Auth
+                   , Auth.Session
                    , Types.Inventory
                    , Types.Transaction
                    , Types.Auth
                    , Auth.Simple
+                   , API.Auth
                    , API.Inventory
                    , API.Transaction
                    , API.OpenApi

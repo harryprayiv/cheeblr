@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds     #-}
 {-# LANGUAGE TypeOperators #-}
 
 module API.Inventory where
@@ -11,7 +11,10 @@ import Types.Inventory
 import Types.Auth (SessionResponse)
 import API.Transaction (PosAPI)
 
-type AuthHeader = Header "X-User-Id" Text
+-- Changed from "X-User-Id" to "Authorization" for the Bearer token path.
+-- In dev mode (USE_REAL_AUTH=false) the header is optional and ignored by
+-- lookupUser, which returns the default dev user for Nothing.
+type AuthHeader = Header "Authorization" Text
 
 type InventoryAPI =
        "inventory" :> AuthHeader :> Get    '[JSON] Inventory
