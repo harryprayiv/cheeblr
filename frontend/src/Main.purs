@@ -2,8 +2,10 @@ module Main where
 
 import Prelude
 
+import API.Auth (validateSession)
 import API.Inventory (fetchInventory, fetchSession, readInventory)
 import GraphQL.API.Inventory (readInventoryGql)
+import Config.Auth (defaultDevUser, findDevUserByRole)
 import Config.Entity (dummyEmployeeId, dummyLocationId)
 import Config.LiveView (defaultViewConfig)
 import Control.Alt ((<|>))
@@ -19,7 +21,7 @@ import Deku.DOM as D
 import Deku.Hooks (cycle)
 import Deku.Toplevel (runInBody)
 import Effect (Effect)
-import Effect.Aff (Aff, killFiber, launchAff, makeAff, nonCanceler)
+import Effect.Aff (Aff, killFiber, launchAff, launchAff_, makeAff, nonCanceler)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Effect.Exception (error)
@@ -30,11 +32,12 @@ import Pages.CreateTransaction as Pages.CreateTransaction
 import Pages.DeleteItem as Pages.DeleteItem
 import Pages.EditItem as Pages.EditItem
 import Pages.LiveView as Pages.LiveView
+import Pages.Login as Pages.Login
 import Pages.TransactionHistory as Pages.TransactionHistory
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
-import Services.AuthService (defaultAuthState, userIdFromAuth)
+import Services.AuthService (AuthState(..), clearToken, defaultAuthState, devModeAuthState, loadToken, userIdFromAuth)
 import Services.RegisterService as RegisterService
 import Services.TransactionService as TransactionService
 import Types.Auth (UserCapabilities)
@@ -42,6 +45,40 @@ import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register)
 import Types.Transaction (Transaction)
 import Types.UUID (UUID, genUUID)
+
+------------------------------------------------------------------------
+-- Dev mode flag
+-- Flip to false to require real login via Pages.Login.
+------------------------------------------------------------------------
+
+devMode :: Boolean
+devMode = true
+
+------------------------------------------------------------------------
+-- Session restore on startup
+------------------------------------------------------------------------
+
+restoreSession :: (AuthState -> Effect Unit) -> Effect Unit
+restoreSession pushAuth = launchAff_ do
+  mToken <- liftEffect loadToken
+  case mToken of
+    Nothing    -> pure unit
+    Just token -> do
+      result <- validateSession token
+      liftEffect $ case result of
+        Left err -> do
+          Console.warn $ "Session restore failed: " <> err
+          clearToken
+        Right sessionResp -> do
+          let devUser = case findDevUserByRole sessionResp.sessionRole of
+                Just u  -> u
+                Nothing -> defaultDevUser
+          pushAuth (SignedIn devUser)
+          Console.log $ "Session restored for " <> sessionResp.sessionUserName
+
+------------------------------------------------------------------------
+-- Data loaders
+------------------------------------------------------------------------
 
 run :: forall a r. Aff a -> { push :: a -> Effect Unit | r } -> Aff Unit
 run aff { push } = aff >>= liftEffect <<< push
@@ -51,21 +88,11 @@ getOrInitRegisterAff userId locationId employeeId =
   makeAff \cb -> do
     RegisterService.getOrInitLocalRegister userId locationId employeeId
       (\register -> cb (Right (Right register)))
-      (\err -> cb (Right (Left err)))
+      (\err      -> cb (Right (Left err)))
     pure nonCanceler
 
 testItemUUID :: String
 testItemUUID = "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
-
--- | Load inventory status for LiveView — no capabilities bundled in.
--- loadInventory :: String -> Aff Pages.LiveView.InventoryLoadStatus
--- loadInventory userId = do
---   result <- fetchInventory userId
---     defaultViewConfig.fetchConfig
---     defaultViewConfig.mode
---   pure $ case result of
---     Right inv -> Pages.LiveView.InventoryLoaded inv
---     Left err  -> Pages.LiveView.InventoryError err
 
 loadInventory :: String -> Aff Pages.LiveView.InventoryLoadStatus
 loadInventory userId = do
@@ -74,8 +101,6 @@ loadInventory userId = do
     Right inv -> Pages.LiveView.InventoryLoaded inv
     Left err  -> Pages.LiveView.InventoryError err
 
--- | Fetch capabilities from the dedicated /session endpoint.
---   Falls back gracefully to Nothing (local role derivation) on failure.
 loadSession :: String -> Aff (Maybe UserCapabilities)
 loadSession userId = do
   result <- fetchSession userId
@@ -91,7 +116,7 @@ loadEditItem userId rawUuid = do
     Right (Inventory items) ->
       case find (\(MenuItem item) -> show item.sku == uuid) items of
         Just menuItem -> Pages.EditItem.EditReady menuItem
-        Nothing -> Pages.EditItem.EditNotFound uuid
+        Nothing       -> Pages.EditItem.EditNotFound uuid
     Left err ->
       Pages.EditItem.EditError ("Failed to fetch inventory: " <> err)
 
@@ -103,14 +128,10 @@ loadDeleteItem userId rawUuid = do
     Right (Inventory items) ->
       case find (\(MenuItem item) -> show item.sku == uuid) items of
         Just (MenuItem item) -> Pages.DeleteItem.DeleteReady uuid item.name
-        Nothing -> Pages.DeleteItem.DeleteNotFound uuid
+        Nothing              -> Pages.DeleteItem.DeleteNotFound uuid
     Left err ->
       Pages.DeleteItem.DeleteError ("Failed to fetch inventory: " <> err)
 
--- | Load all data needed for the CreateTransaction page in parallel.
---   Register/transaction failure is fatal — you cannot process a transaction
---   without them.  Inventory failure is degraded — the UI still works with
---   an empty item list.
 loadTxPageData :: String -> Aff Pages.CreateTransaction.TxPageStatus
 loadTxPageData userId = do
   Tuple invResult regTxResult <- sequential $
@@ -122,19 +143,15 @@ loadTxPageData userId = do
       Pages.CreateTransaction.TxPageError err
     Right { register, transaction } ->
       case invResult of
-        Right inv ->
-          Pages.CreateTransaction.TxPageReady inv register transaction
-        Left err ->
-          Pages.CreateTransaction.TxPageDegraded err register transaction
+        Right inv -> Pages.CreateTransaction.TxPageReady inv register transaction
+        Left err  -> Pages.CreateTransaction.TxPageDegraded err register transaction
   where
   loadInventoryResult :: String -> Aff (Either String Inventory)
   loadInventoryResult uid = do
-    result <- fetchInventory uid
-      defaultViewConfig.fetchConfig
-      defaultViewConfig.mode
+    result <- fetchInventory uid defaultViewConfig.fetchConfig defaultViewConfig.mode
     pure $ case result of
-      Right inv  -> Right inv
-      Left err   -> Left err
+      Right inv -> Right inv
+      Left err  -> Left err
 
   loadRegisterAndStartTx
     :: String
@@ -142,7 +159,7 @@ loadTxPageData userId = do
   loadRegisterAndStartTx uid = do
     regResult <- getOrInitRegisterAff uid dummyLocationId dummyEmployeeId
     case regResult of
-      Left err -> pure $ Left err
+      Left err     -> pure $ Left err
       Right register -> do
         txResult <- TransactionService.startTransaction uid
           { employeeId: fromMaybe register.registerId register.registerOpenedBy
@@ -153,28 +170,38 @@ loadTxPageData userId = do
           Right transaction -> Right { register, transaction }
           Left err          -> Left ("Failed to create transaction: " <> err)
 
+------------------------------------------------------------------------
+-- Main
+------------------------------------------------------------------------
+
 main :: Effect Unit
 main = do
   authState <- liftST Poll.create
-  authState.push defaultAuthState
-  let authPoll = pure defaultAuthState <|> authState.poll
+
+  let initialAuth = if devMode then devModeAuthState else defaultAuthState
+  authState.push initialAuth
+  let authPoll = pure initialAuth <|> authState.poll
 
   currentRoute <- liftST Poll.create
   backendCaps  <- liftST Poll.create
-
-  let userId = userIdFromAuth defaultAuthState
 
   inventory  <- liftST Poll.create
   editItem   <- liftST Poll.create
   deleteItem <- liftST Poll.create
   txPage     <- liftST Poll.create
 
+  unless devMode $ restoreSession authState.push
+
+  -- userId is reactive in real-auth mode but we snapshot initialAuth here
+  -- for data loaders; step 5 will make this fully reactive.
+  let userId = userIdFromAuth initialAuth
+
   RegisterService.initLocalRegister
     userId
     dummyLocationId
     dummyEmployeeId
     (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
-    (\err -> Console.error $ "Register pre-init failed: " <> err)
+    (\err      -> Console.error $ "Register pre-init failed: " <> err)
 
   prevAction <- Ref.new (pure unit)
 
@@ -193,7 +220,6 @@ main = do
                 mcaps <- loadSession userId
                 liftEffect $ for_ mcaps backendCaps.push
             ]
-
           Edit uuid ->
             [ run (loadEditItem userId uuid) editItem ]
           Delete uuid ->
@@ -205,6 +231,12 @@ main = do
       Ref.write newAction prevAction
 
       nut <- case r of
+        Login ->
+          -- Pass pushAuth and a navigate-to-LiveView action.
+          pure $ Pages.Login.page
+            authState.push
+            (pure unit)  -- hash navigation to /#/ will fire matcher again
+
         LiveView ->
           pure $ Pages.LiveView.page authPoll
             (pure Pages.LiveView.InventoryLoading <|> inventory.poll)
@@ -235,7 +267,7 @@ main = do
 
   void $ runInBody
     ( fixed
-        [ nav (fst <$> currentRoute.poll)
+        [ nav (fst <$> currentRoute.poll) authPoll authState.push
         , D.div_ [ cycle (snd <$> currentRoute.poll) ]
         ]
     )

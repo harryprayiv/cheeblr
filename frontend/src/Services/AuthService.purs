@@ -2,126 +2,166 @@ module Services.AuthService where
 
 import Prelude
 
-import Config.Auth (DevUser, allDevUsers, defaultDevUser, devUserCapabilities, toAuthenticatedUser, findDevUserById)
+import Config.Auth (DevUser, allDevUsers, defaultDevUser, devUserCapabilities,
+                    toAuthenticatedUser, findDevUserById)
 import Data.Filterable (filterMap)
 import Data.Maybe (Maybe(..))
+import Effect (Effect)
+import Effect.Aff (Aff)
 import FRP.Poll (Poll)
 import Types.Auth (AuthenticatedUser, UserCapabilities, UserRole, emptyCapabilities)
 import Types.UUID (UUID)
+import Web.HTML (window)
+import Web.HTML.Window (localStorage)
+import Web.Storage.Storage (getItem, removeItem, setItem)
 
--- | Core auth state ADT — mirrors the realworld pattern.
--- | Components receive `Poll AuthState` and react to changes.
+------------------------------------------------------------------------
+-- Core auth state
+------------------------------------------------------------------------
+
 data AuthState = SignedIn DevUser | SignedOut
 
 derive instance eqAuthState :: Eq AuthState
 
--- | UserId type alias for API layer
+-- In real-auth mode this carries the opaque Bearer token.
+-- In dev mode it carries the dev user UUID string (legacy behaviour).
 type UserId = String
 
--- | Extract the current user from a poll (drops SignedOut events)
+------------------------------------------------------------------------
+-- Session token persistence (localStorage)
+--
+-- The token is the raw base64url string returned by POST /auth/login.
+-- Storing it in localStorage is appropriate for a dedicated POS terminal
+-- where HttpOnly cookies are impractical across different origins.
+------------------------------------------------------------------------
+
+tokenKey :: String
+tokenKey = "cheeblr_session_token"
+
+persistToken :: String -> Effect Unit
+persistToken token = do
+  w <- window
+  storage <- localStorage w
+  setItem tokenKey token storage
+
+loadToken :: Effect (Maybe String)
+loadToken = do
+  w <- window
+  storage <- localStorage w
+  getItem tokenKey storage
+
+clearToken :: Effect Unit
+clearToken = do
+  w <- window
+  storage <- localStorage w
+  removeItem tokenKey storage
+
+------------------------------------------------------------------------
+-- Poll / state helpers (unchanged from dev version)
+------------------------------------------------------------------------
+
 mostRecentUser :: Poll AuthState -> Poll DevUser
 mostRecentUser = filterMap case _ of
   SignedIn user -> Just user
-  SignedOut -> Nothing
+  SignedOut     -> Nothing
 
--- | Extract userId string from AuthState (for API calls)
 getUserId :: AuthState -> Maybe String
 getUserId (SignedIn user) = Just (show user.userId)
-getUserId SignedOut = Nothing
+getUserId SignedOut       = Nothing
 
--- | Extract userId string, with fallback — used in Main for initial loads
 userIdFromAuth :: AuthState -> String
 userIdFromAuth (SignedIn user) = show user.userId
-userIdFromAuth SignedOut = ""
+userIdFromAuth SignedOut       = ""
 
--- | Get capabilities from auth state
 getCapabilities :: AuthState -> Maybe UserCapabilities
 getCapabilities (SignedIn user) = Just (devUserCapabilities user)
-getCapabilities SignedOut = Nothing
+getCapabilities SignedOut       = Nothing
 
--- | Get role from auth state
 getRole :: AuthState -> Maybe UserRole
 getRole (SignedIn user) = Just user.role
-getRole SignedOut = Nothing
+getRole SignedOut       = Nothing
 
--- | Check a capability against auth state
 checkCapability :: (UserCapabilities -> Boolean) -> AuthState -> Boolean
 checkCapability capFn (SignedIn user) = capFn (devUserCapabilities user)
-checkCapability _ SignedOut = false
+checkCapability _     SignedOut       = false
 
--- | For use in components: run an action only when signed in
 whenSignedIn :: forall m. Applicative m => AuthState -> (DevUser -> m Unit) -> m Unit
 whenSignedIn (SignedIn user) f = f user
-whenSignedIn SignedOut _ = pure unit
+whenSignedIn SignedOut       _ = pure unit
 
 isSignedIn :: AuthState -> Boolean
 isSignedIn (SignedIn _) = true
-isSignedIn SignedOut = false
+isSignedIn SignedOut    = false
 
--- | Initial auth state for dev mode
+-- Default to SignedOut in production; Main.purs will restore from
+-- localStorage on startup when USE_REAL_AUTH is true on the backend.
+-- Dev builds keep SignedIn defaultDevUser by calling devModeAuthState.
 defaultAuthState :: AuthState
-defaultAuthState = SignedIn defaultDevUser
+defaultAuthState = SignedOut
 
--- | Set user by ID (for dev user selector)
+devModeAuthState :: AuthState
+devModeAuthState = SignedIn defaultDevUser
+
 authStateForUserId :: UUID -> Maybe AuthState
 authStateForUserId userId = SignedIn <$> findDevUserById userId
 
--- | All available dev users (for user selector UI)
 getAvailableUsers :: Array DevUser
 getAvailableUsers = allDevUsers
 
--- | Get AuthenticatedUser from state
 getAuthenticatedUser :: AuthState -> Maybe AuthenticatedUser
 getAuthenticatedUser (SignedIn user) = Just (toAuthenticatedUser user)
-getAuthenticatedUser SignedOut = Nothing
+getAuthenticatedUser SignedOut       = Nothing
 
--- Capability checks as predicates on AuthState
-canViewInventory :: AuthState -> Boolean
-canViewInventory = checkCapability _.capCanViewInventory
+------------------------------------------------------------------------
+-- Capability shortcuts (unchanged)
+------------------------------------------------------------------------
 
-canCreateItem :: AuthState -> Boolean
-canCreateItem = checkCapability _.capCanCreateItem
+resolveCapabilities :: Maybe UserCapabilities -> AuthState -> UserCapabilities
+resolveCapabilities (Just backendCaps) _            = backendCaps
+resolveCapabilities Nothing            (SignedIn u)  = devUserCapabilities u
+resolveCapabilities Nothing            SignedOut      = emptyCapabilities
 
-canEditItem :: AuthState -> Boolean
-canEditItem = checkCapability _.capCanEditItem
+canViewInventory      :: AuthState -> Boolean
+canViewInventory      = checkCapability _.capCanViewInventory
 
-canDeleteItem :: AuthState -> Boolean
-canDeleteItem = checkCapability _.capCanDeleteItem
+canCreateItem         :: AuthState -> Boolean
+canCreateItem         = checkCapability _.capCanCreateItem
+
+canEditItem           :: AuthState -> Boolean
+canEditItem           = checkCapability _.capCanEditItem
+
+canDeleteItem         :: AuthState -> Boolean
+canDeleteItem         = checkCapability _.capCanDeleteItem
 
 canProcessTransaction :: AuthState -> Boolean
 canProcessTransaction = checkCapability _.capCanProcessTransaction
 
-canVoidTransaction :: AuthState -> Boolean
-canVoidTransaction = checkCapability _.capCanVoidTransaction
+canVoidTransaction    :: AuthState -> Boolean
+canVoidTransaction    = checkCapability _.capCanVoidTransaction
 
-canRefundTransaction :: AuthState -> Boolean
-canRefundTransaction = checkCapability _.capCanRefundTransaction
+canRefundTransaction  :: AuthState -> Boolean
+canRefundTransaction  = checkCapability _.capCanRefundTransaction
 
-canApplyDiscount :: AuthState -> Boolean
-canApplyDiscount = checkCapability _.capCanApplyDiscount
+canApplyDiscount      :: AuthState -> Boolean
+canApplyDiscount      = checkCapability _.capCanApplyDiscount
 
-canManageRegisters :: AuthState -> Boolean
-canManageRegisters = checkCapability _.capCanManageRegisters
+canManageRegisters    :: AuthState -> Boolean
+canManageRegisters    = checkCapability _.capCanManageRegisters
 
-canOpenRegister :: AuthState -> Boolean
-canOpenRegister = checkCapability _.capCanOpenRegister
+canOpenRegister       :: AuthState -> Boolean
+canOpenRegister       = checkCapability _.capCanOpenRegister
 
-canCloseRegister :: AuthState -> Boolean
-canCloseRegister = checkCapability _.capCanCloseRegister
+canCloseRegister      :: AuthState -> Boolean
+canCloseRegister      = checkCapability _.capCanCloseRegister
 
-canViewReports :: AuthState -> Boolean
-canViewReports = checkCapability _.capCanViewReports
+canViewReports        :: AuthState -> Boolean
+canViewReports        = checkCapability _.capCanViewReports
 
-canViewAllLocations :: AuthState -> Boolean
-canViewAllLocations = checkCapability _.capCanViewAllLocations
+canViewAllLocations   :: AuthState -> Boolean
+canViewAllLocations   = checkCapability _.capCanViewAllLocations
 
-canManageUsers :: AuthState -> Boolean
-canManageUsers = checkCapability _.capCanManageUsers
+canManageUsers        :: AuthState -> Boolean
+canManageUsers        = checkCapability _.capCanManageUsers
 
-canViewCompliance :: AuthState -> Boolean
-canViewCompliance = checkCapability _.capCanViewCompliance
-
-resolveCapabilities :: Maybe UserCapabilities -> AuthState -> UserCapabilities
-resolveCapabilities (Just backendCaps) _ = backendCaps
-resolveCapabilities Nothing (SignedIn user) = devUserCapabilities user
-resolveCapabilities Nothing SignedOut = emptyCapabilities
+canViewCompliance     :: AuthState -> Boolean
+canViewCompliance     = checkCapability _.capCanViewCompliance

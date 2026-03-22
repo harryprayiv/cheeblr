@@ -199,7 +199,7 @@ createAuthTables pool = runSession pool $ do
     \)"
   Session.statement () $ ddl
     "CREATE INDEX IF NOT EXISTS sessions_token_hash_idx ON sessions (token_hash)\
-    \ WHERE NOT revoked AND expires_at > NOW()"
+    \ WHERE NOT revoked"
   Session.statement () $ ddl
     "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions (user_id)"
   Session.statement () $ ddl
