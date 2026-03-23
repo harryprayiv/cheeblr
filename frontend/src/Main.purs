@@ -46,18 +46,16 @@ import Types.Register (Register)
 import Types.Transaction (Transaction)
 import Types.UUID (UUID, genUUID)
 
-------------------------------------------------------------------------
--- Dev mode flag
--- Flip to false to require real login via Pages.Login.
-------------------------------------------------------------------------
-
+-- | Set to true to bypass the login page and use a hardcoded dev user.
+-- | Must be false when the backend has USE_REAL_AUTH=true.
 devMode :: Boolean
-devMode = true
+devMode = false
 
-------------------------------------------------------------------------
--- Session restore on startup
-------------------------------------------------------------------------
-
+-- | Attempt to restore a session from localStorage on page load.
+-- | If the token is valid the backend returns a SessionResponse and we
+-- | push SignedIn carrying the real token so all subsequent API calls
+-- | use the correct Authorization header. If invalid we clear storage
+-- | and leave auth at SignedOut so the login page shows.
 restoreSession :: (AuthState -> Effect Unit) -> Effect Unit
 restoreSession pushAuth = launchAff_ do
   mToken <- liftEffect loadToken
@@ -73,12 +71,8 @@ restoreSession pushAuth = launchAff_ do
           let devUser = case findDevUserByRole sessionResp.sessionRole of
                 Just u  -> u
                 Nothing -> defaultDevUser
-          pushAuth (SignedIn devUser)
+          pushAuth (SignedIn devUser token)
           Console.log $ "Session restored for " <> sessionResp.sessionUserName
-
-------------------------------------------------------------------------
--- Data loaders
-------------------------------------------------------------------------
 
 run :: forall a r. Aff a -> { push :: a -> Effect Unit | r } -> Aff Unit
 run aff { push } = aff >>= liftEffect <<< push
@@ -170,16 +164,25 @@ loadTxPageData userId = do
           Right transaction -> Right { register, transaction }
           Left err          -> Left ("Failed to create transaction: " <> err)
 
-------------------------------------------------------------------------
--- Main
-------------------------------------------------------------------------
-
 main :: Effect Unit
 main = do
   authState <- liftST Poll.create
 
   let initialAuth = if devMode then devModeAuthState else defaultAuthState
-  authState.push initialAuth
+
+  -- tokenRef holds the current userId/token so route handlers read the
+  -- latest value at navigation time rather than the value captured at startup.
+  tokenRef <- Ref.new (userIdFromAuth initialAuth)
+
+  -- Every call site that changes auth state goes through pushAuth so the
+  -- ref and the poll stay in sync.
+  let
+    pushAuth :: AuthState -> Effect Unit
+    pushAuth st = do
+      Ref.write (userIdFromAuth st) tokenRef
+      authState.push st
+
+  pushAuth initialAuth
   let authPoll = pure initialAuth <|> authState.poll
 
   currentRoute <- liftST Poll.create
@@ -190,14 +193,11 @@ main = do
   deleteItem <- liftST Poll.create
   txPage     <- liftST Poll.create
 
-  unless devMode $ restoreSession authState.push
-
-  -- userId is reactive in real-auth mode but we snapshot initialAuth here
-  -- for data loaders; step 5 will make this fully reactive.
-  let userId = userIdFromAuth initialAuth
+  -- Restore session on page load (real-auth mode only).
+  unless devMode $ restoreSession pushAuth
 
   RegisterService.initLocalRegister
-    userId
+    (userIdFromAuth initialAuth)
     dummyLocationId
     dummyEmployeeId
     (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
@@ -208,6 +208,9 @@ main = do
   let
     matcher _ r = do
       Console.log $ "Route changed to: " <> show r
+
+      -- Read the current token at navigation time, not at startup.
+      userId <- Ref.read tokenRef
 
       pa <- Ref.read prevAction
       newAction <- launchAff $ killFiber (error "route changed") pa *>
@@ -232,10 +235,7 @@ main = do
 
       nut <- case r of
         Login ->
-          -- Pass pushAuth and a navigate-to-LiveView action.
-          pure $ Pages.Login.page
-            authState.push
-            (pure unit)  -- hash navigation to /#/ will fire matcher again
+          pure $ Pages.Login.page pushAuth (pure unit)
 
         LiveView ->
           pure $ Pages.LiveView.page authPoll
@@ -267,7 +267,7 @@ main = do
 
   void $ runInBody
     ( fixed
-        [ nav (fst <$> currentRoute.poll) authPoll authState.push
+        [ nav (fst <$> currentRoute.poll) authPoll pushAuth
         , D.div_ [ cycle (snd <$> currentRoute.poll) ]
         ]
     )

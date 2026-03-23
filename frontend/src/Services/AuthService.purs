@@ -7,7 +7,6 @@ import Config.Auth (DevUser, allDevUsers, defaultDevUser, devUserCapabilities,
 import Data.Filterable (filterMap)
 import Data.Maybe (Maybe(..))
 import Effect (Effect)
-import Effect.Aff (Aff)
 import FRP.Poll (Poll)
 import Types.Auth (AuthenticatedUser, UserCapabilities, UserRole, emptyCapabilities)
 import Types.UUID (UUID)
@@ -15,25 +14,15 @@ import Web.HTML (window)
 import Web.HTML.Window (localStorage)
 import Web.Storage.Storage (getItem, removeItem, setItem)
 
-------------------------------------------------------------------------
--- Core auth state
-------------------------------------------------------------------------
-
-data AuthState = SignedIn DevUser | SignedOut
+-- | The session token carried inside SignedIn is what gets sent as the
+-- | Authorization: Bearer header. In dev mode it is the UUID string of the
+-- | selected dev user. In real-auth mode it is the opaque token returned by
+-- | POST /auth/login.
+data AuthState = SignedIn DevUser String | SignedOut
 
 derive instance eqAuthState :: Eq AuthState
 
--- In real-auth mode this carries the opaque Bearer token.
--- In dev mode it carries the dev user UUID string (legacy behaviour).
 type UserId = String
-
-------------------------------------------------------------------------
--- Session token persistence (localStorage)
---
--- The token is the raw base64url string returned by POST /auth/login.
--- Storing it in localStorage is appropriate for a dedicated POS terminal
--- where HttpOnly cookies are impractical across different origins.
-------------------------------------------------------------------------
 
 tokenKey :: String
 tokenKey = "cheeblr_session_token"
@@ -56,70 +45,65 @@ clearToken = do
   storage <- localStorage w
   removeItem tokenKey storage
 
-------------------------------------------------------------------------
--- Poll / state helpers (unchanged from dev version)
-------------------------------------------------------------------------
-
 mostRecentUser :: Poll AuthState -> Poll DevUser
 mostRecentUser = filterMap case _ of
-  SignedIn user -> Just user
-  SignedOut     -> Nothing
+  SignedIn user _ -> Just user
+  SignedOut       -> Nothing
 
 getUserId :: AuthState -> Maybe String
-getUserId (SignedIn user) = Just (show user.userId)
-getUserId SignedOut       = Nothing
+getUserId (SignedIn _ token) = Just token
+getUserId SignedOut           = Nothing
 
+-- | Returns the token/userId to use in Authorization: Bearer headers.
+-- | Dev mode: UUID string. Real mode: opaque session token.
 userIdFromAuth :: AuthState -> String
-userIdFromAuth (SignedIn user) = show user.userId
-userIdFromAuth SignedOut       = ""
+userIdFromAuth (SignedIn _ token) = token
+userIdFromAuth SignedOut           = ""
 
 getCapabilities :: AuthState -> Maybe UserCapabilities
-getCapabilities (SignedIn user) = Just (devUserCapabilities user)
-getCapabilities SignedOut       = Nothing
+getCapabilities (SignedIn user _) = Just (devUserCapabilities user)
+getCapabilities SignedOut          = Nothing
 
 getRole :: AuthState -> Maybe UserRole
-getRole (SignedIn user) = Just user.role
-getRole SignedOut       = Nothing
+getRole (SignedIn user _) = Just user.role
+getRole SignedOut           = Nothing
 
 checkCapability :: (UserCapabilities -> Boolean) -> AuthState -> Boolean
-checkCapability capFn (SignedIn user) = capFn (devUserCapabilities user)
-checkCapability _     SignedOut       = false
+checkCapability capFn (SignedIn user _) = capFn (devUserCapabilities user)
+checkCapability _     SignedOut          = false
 
 whenSignedIn :: forall m. Applicative m => AuthState -> (DevUser -> m Unit) -> m Unit
-whenSignedIn (SignedIn user) f = f user
-whenSignedIn SignedOut       _ = pure unit
+whenSignedIn (SignedIn user _) f = f user
+whenSignedIn SignedOut          _ = pure unit
 
 isSignedIn :: AuthState -> Boolean
-isSignedIn (SignedIn _) = true
-isSignedIn SignedOut    = false
+isSignedIn (SignedIn _ _) = true
+isSignedIn SignedOut       = false
 
--- Default to SignedOut in production; Main.purs will restore from
--- localStorage on startup when USE_REAL_AUTH is true on the backend.
--- Dev builds keep SignedIn defaultDevUser by calling devModeAuthState.
 defaultAuthState :: AuthState
 defaultAuthState = SignedOut
 
+-- | In dev mode the "token" is the UUID string of the default dev user.
+-- | The backend's Auth.Simple.lookupUser accepts UUIDs as auth values, so
+-- | this round-trips correctly when USE_REAL_AUTH=false.
 devModeAuthState :: AuthState
-devModeAuthState = SignedIn defaultDevUser
+devModeAuthState = SignedIn defaultDevUser (show defaultDevUser.userId)
 
 authStateForUserId :: UUID -> Maybe AuthState
-authStateForUserId userId = SignedIn <$> findDevUserById userId
+authStateForUserId uuid =
+  findDevUserById uuid <#> \u -> SignedIn u (show u.userId)
 
 getAvailableUsers :: Array DevUser
 getAvailableUsers = allDevUsers
 
 getAuthenticatedUser :: AuthState -> Maybe AuthenticatedUser
-getAuthenticatedUser (SignedIn user) = Just (toAuthenticatedUser user)
-getAuthenticatedUser SignedOut       = Nothing
-
-------------------------------------------------------------------------
--- Capability shortcuts (unchanged)
-------------------------------------------------------------------------
+getAuthenticatedUser (SignedIn user _) = Just (toAuthenticatedUser user)
+getAuthenticatedUser SignedOut          = Nothing
 
 resolveCapabilities :: Maybe UserCapabilities -> AuthState -> UserCapabilities
-resolveCapabilities (Just backendCaps) _            = backendCaps
-resolveCapabilities Nothing            (SignedIn u)  = devUserCapabilities u
-resolveCapabilities Nothing            SignedOut      = emptyCapabilities
+resolveCapabilities (Just backendCaps) _             = backendCaps
+resolveCapabilities Nothing            (SignedIn u _) = devUserCapabilities u
+resolveCapabilities Nothing            SignedOut       = emptyCapabilities
 
 canViewInventory      :: AuthState -> Boolean
 canViewInventory      = checkCapability _.capCanViewInventory

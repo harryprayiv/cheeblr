@@ -32,18 +32,19 @@ import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 import Types.Auth (UserRole(..), capabilitiesForRole)
 
--- All five auth states we need to test against
+-- In tests the token is the UUID string of the dev user, matching what
+-- devModeAuthState uses and what Auth.Simple.lookupUser accepts.
 customerState :: AuthState
-customerState = SignedIn devCustomer
+customerState = SignedIn devCustomer (show devCustomer.userId)
 
 cashierState :: AuthState
-cashierState = SignedIn devCashier
+cashierState = SignedIn devCashier (show devCashier.userId)
 
 managerState :: AuthState
-managerState = SignedIn devManager
+managerState = SignedIn devManager (show devManager.userId)
 
 adminState :: AuthState
-adminState = SignedIn devAdmin
+adminState = SignedIn devAdmin (show devAdmin.userId)
 
 signedOut :: AuthState
 signedOut = SignedOut
@@ -196,10 +197,6 @@ spec = describe "Auth" do
     it "can view compliance" do
       caps.capCanViewCompliance `shouldEqual` true
 
-  -- These tests verify the SERVICE LAYER wiring: each can* function must
-  -- point at the correct capability field. A bug where canEditItem
-  -- accidentally reads capCanDeleteItem would only show up when tested
-  -- against a role where those two differ (Cashier: edit=true, delete=false).
   describe "canViewInventory wiring" do
     it "customer can" do
       canViewInventory customerState `shouldEqual` true
@@ -404,8 +401,10 @@ spec = describe "Auth" do
     it "getRole returns Nothing when signed out" do
       getRole signedOut `shouldEqual` Nothing
 
-    it "defaultAuthState is signed in" do
-      isSignedIn defaultAuthState `shouldEqual` true
+    -- defaultAuthState is SignedOut in production mode so the login page
+    -- is shown on first load. devModeAuthState is SignedIn.
+    it "defaultAuthState is signed out" do
+      isSignedIn defaultAuthState `shouldEqual` false
 
   describe "Dev user lookup" do
     it "allDevUsers has 4 users" do

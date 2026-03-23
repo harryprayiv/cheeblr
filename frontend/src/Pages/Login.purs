@@ -25,18 +25,9 @@ import Web.HTML.HTMLInputElement (fromEventTarget, value) as Input
 import Web.HTML.Location (setHref)
 import Web.HTML.Window (location)
 
-------------------------------------------------------------------------
--- Login page
---
--- On success:
---   1. Persist the token to localStorage.
---   2. Push SignedIn to the auth poll.
---   3. Navigate to /#/ which triggers the LiveView route via matchesWith.
-------------------------------------------------------------------------
-
 page
-  :: (AuthState -> Effect Unit)  -- push to authState poll
-  -> Effect Unit                 -- ignored; navigation done via hash
+  :: (AuthState -> Effect Unit)
+  -> Effect Unit
   -> Nut
 page pushAuth _ = Deku.do
   setUsername     /\ usernameValue     <- useState ""
@@ -105,15 +96,16 @@ page pushAuth _ = Deku.do
                                 setErrorMessage $ "Login failed: " <> err
                                 setSubmitting false
                               Right resp -> do
-                                persistToken resp.loginToken
+                                let token = resp.loginToken
+                                persistToken token
                                 let devUser = case findDevUserByRole resp.loginUser.sessionRole of
                                       Just u  -> u
                                       Nothing -> defaultDevUser
-                                pushAuth (SignedIn devUser)
+                                -- The token is the real opaque session token.
+                                -- userIdFromAuth will return it for all API calls.
+                                pushAuth (SignedIn devUser token)
                                 Console.log $ "Logged in as: " <> resp.loginUser.sessionUserName
                                 setSubmitting false
-                                -- Navigate to LiveView via hash change.
-                                -- matchesWith in Main.purs picks this up.
                                 w <- window
                                 loc <- location w
                                 setHref "/#/" loc

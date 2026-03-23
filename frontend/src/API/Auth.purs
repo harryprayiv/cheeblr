@@ -4,18 +4,14 @@ import Prelude
 
 import Data.Either (Either(..))
 import Data.Maybe (Maybe)
-import Effect.Aff (Aff, attempt)
+import Effect.Aff (Aff, attempt, throwError)
+import Effect.Exception (error)
 import Fetch (Method(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import Config.Network (currentConfig)
-import Types.Auth (UserCapabilities, UserRole)
 import Types.Session (SessionResponse)
 import Types.UUID (UUID)
 import Yoga.JSON (writeJSON)
-
-------------------------------------------------------------------------
--- Request / response types (mirrors Haskell API.Auth)
-------------------------------------------------------------------------
 
 type LoginRequest =
   { loginUsername   :: String
@@ -29,15 +25,10 @@ type LoginResponse =
   , loginUser      :: SessionResponse
   }
 
-------------------------------------------------------------------------
--- API calls
--- These bypass authGet/authPost because they do not carry a session yet.
-------------------------------------------------------------------------
-
 login
-  :: String        -- username
-  -> String        -- password
-  -> Maybe UUID    -- optional register binding
+  :: String
+  -> String
+  -> Maybe UUID
   -> Aff (Either String LoginResponse)
 login username password mRegisterId = do
   result <- attempt do
@@ -53,7 +44,11 @@ login username password mRegisterId = do
           , "Accept":       "application/json"
           }
       }
-    fromJSON response.json :: Aff LoginResponse
+    if response.status >= 200 && response.status < 300
+      then fromJSON response.json :: Aff LoginResponse
+      else do
+        body <- response.text
+        throwError $ error $ "HTTP " <> show response.status <> ": " <> body
   pure $ case result of
     Left err -> Left (show err)
     Right r  -> Right r
@@ -64,18 +59,20 @@ logout token = do
     _ <- fetch (currentConfig.apiBaseUrl <> "/auth/logout")
       { method: POST
       , headers:
-          { "Content-Type": "application/json"
-          , "Accept":       "application/json"
+          { "Content-Type":  "application/json"
+          , "Accept":        "application/json"
           , "Authorization": "Bearer " <> token
           }
       }
+    -- Logout is best-effort; the session is cleared client-side regardless.
     pure unit
   pure $ case result of
     Left err -> Left (show err)
     Right _  -> Right unit
 
--- Validate a stored token and return the current session info.
--- Used on startup to restore sessions across page refreshes.
+-- | Validates a stored session token by calling GET /auth/me.
+-- | Returns Left for any non-2xx response (including 401 expired/invalid)
+-- | without attempting to parse the plain-text error body as JSON.
 validateSession :: String -> Aff (Either String SessionResponse)
 validateSession token = do
   result <- attempt do
@@ -86,7 +83,11 @@ validateSession token = do
           , "Authorization": "Bearer " <> token
           }
       }
-    fromJSON response.json :: Aff SessionResponse
+    if response.status >= 200 && response.status < 300
+      then fromJSON response.json :: Aff SessionResponse
+      else do
+        body <- response.text
+        throwError $ error $ "HTTP " <> show response.status <> ": " <> body
   pure $ case result of
     Left err -> Left (show err)
     Right r  -> Right r

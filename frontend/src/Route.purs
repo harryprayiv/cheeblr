@@ -48,11 +48,10 @@ route = root $ G.sum
   , "TransactionHistory": "transaction" / "history" / G.noArgs
   }
 
--- nav now takes the auth poll and a callback for signing out.
 nav
   :: Poll Route
   -> Poll AuthState
-  -> (AuthState -> Effect Unit)   -- push to authState poll
+  -> (AuthState -> Effect Unit)
   -> Nut
 nav currentRoute authPoll pushAuth =
   D.nav [ DA.klass_ "navbar" ]
@@ -67,7 +66,6 @@ nav currentRoute authPoll pushAuth =
         ]
     ]
   where
-  -- Render a Login link when signed out, a Logout button when signed in.
   authButton :: AuthState -> Nut
   authButton SignedOut =
     D.a
@@ -75,13 +73,11 @@ nav currentRoute authPoll pushAuth =
       , DA.klass_ "nav-link nav-auth-link"
       ]
       [ text_ "Login" ]
-  authButton (SignedIn _) =
+  -- The second field is the session token; we don't need it here.
+  authButton (SignedIn _ _) =
     D.button
       [ DA.klass_ "nav-link nav-auth-link nav-logout-btn"
       , DL.click_ \_ ->
-          -- Read the stored token, call /auth/logout, then clear locally.
-          -- We clear locally regardless of the server response so the user
-          -- is never stuck signed in if the server is unreachable.
           launchAff_ do
             mToken <- liftEffect loadToken
             case mToken of
