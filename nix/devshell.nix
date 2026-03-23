@@ -35,14 +35,11 @@ let
     };
   };
 
-  deployModule = import ./deploy.nix { inherit pkgs name; };
-  tlsModule    = import ./tls.nix    { inherit pkgs name; };
-
-  testSuiteModule = import ./test-suite.nix { inherit pkgs name; };
-
-  # ── sops ──────────────────────────────────────────────────────────────
-  sopsModule = import ./sops-dev.nix { inherit pkgs lib name; };
-  # ──────────────────────────────────────────────────────────────────────
+  deployModule    = import ./deploy.nix            { inherit pkgs name; };
+  tlsModule       = import ./tls.nix               { inherit pkgs name; };
+  testSuiteModule = import ./test-suite.nix        { inherit pkgs name; };
+  sopsModule      = import ./sops-dev.nix          { inherit pkgs lib name; };
+  bootstrapModule = import ./bootstrap-admin-tool.nix { inherit pkgs lib name; };
 
   manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
@@ -218,7 +215,11 @@ let
     pkgs.sops
     pkgs.age
     pkgs.ssh-to-age
-    # ──────────────────────────────────────────────────────────────────
+
+    # Admin bootstrap — creates the initial admin user in the DB and stores
+    # the generated password in sops secrets.  Run once after first pg-start.
+    bootstrapModule.bootstrap-admin
+    bootstrapModule.admin-password-info
 
     open-firewall
 
@@ -309,6 +310,11 @@ let
       echo "    tls-sops-extract       - Extract sops certs to local cert path"
       echo "    tls-info               - Show certificate details"
       echo "    sops secrets/${name}.yaml - Edit secrets directly"
+      echo ""
+      echo "  Auth Bootstrap (run once after first pg-start):"
+      echo "    bootstrap-admin        - Create admin user, store password in sops"
+      echo "    admin-password-info    - Check whether admin_password is in sops"
+      echo "    sops-get admin_password - Reveal stored admin password"
       echo ""
       echo "  Database:"
       echo "    pg-start               - Start PostgreSQL"

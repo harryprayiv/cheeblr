@@ -100,6 +100,17 @@ executable cheeblr-backend
     build-depends: cheeblr-backend
     pkgconfig-depends: libpq
 
+executable cheeblr-bootstrap-admin
+    import: shared-properties
+    ghc-options: -rtsopts
+                "-with-rtsopts=-N"
+    main-is: Bootstrap.hs
+    hs-source-dirs: app
+    build-depends: cheeblr-backend
+                 , entropy
+                 , memory
+    pkgconfig-depends: libpq
+
 test-suite cheeblr-unit-tests
     import:         shared-properties
     type:           exitcode-stdio-1.0

@@ -6,11 +6,6 @@ let
   tlsCfg      = config.tls;
   secretsFile = "secrets/${name}.yaml";
 
-  # ── sops-init-key ──────────────────────────────────────────────────────────
-  # Derive an age key from the user's ed25519 SSH key and write it to the
-  # standard sops-nix location.  This means the same key that authenticates
-  # you to git/servers also decrypts your local secrets — no separate keygen.
-
   sops-init-key = pkgs.writeShellApplication {
     name = "sops-init-key";
     runtimeInputs = [ pkgs.ssh-to-age pkgs.age ];
@@ -37,11 +32,9 @@ let
       fi
 
       echo "Deriving age key from $SSH_KEY ..."
-      # ssh-to-age -private-key outputs the age private key
       ssh-to-age -private-key -i "$SSH_KEY" > "$AGE_KEYS"
       chmod 600 "$AGE_KEYS"
 
-      # Append a comment line with the public key so other tools can read it
       PUBKEY=$(ssh-to-age -i "$SSH_KEY.pub")
       echo "# public key: $PUBKEY" >> "$AGE_KEYS"
 
@@ -51,9 +44,6 @@ let
       echo "Next: run 'sops-bootstrap' to create ${secretsFile}"
     '';
   };
-
-  # ── sops-pubkey ────────────────────────────────────────────────────────────
-  # Print the age public key for this machine (derived from SSH key).
 
   sops-pubkey = pkgs.writeShellApplication {
     name = "sops-pubkey";
@@ -74,10 +64,6 @@ let
     '';
   };
 
-  # ── sops-bootstrap ─────────────────────────────────────────────────────────
-  # First-time setup: write .sops.yaml and create an encrypted secrets file
-  # with a randomly-generated database password.
-
   sops-bootstrap = pkgs.writeShellApplication {
     name = "sops-bootstrap";
     runtimeInputs = [ pkgs.sops pkgs.ssh-to-age pkgs.openssl pkgs.jq ];
@@ -90,13 +76,11 @@ let
       AGE_KEYS="$HOME/.config/sops/age/keys.txt"
       SSH_PUB="$HOME/.ssh/id_ed25519.pub"
 
-      # Ensure age key exists
       if [ ! -f "$AGE_KEYS" ]; then
         echo "Age key not found — running sops-init-key first..."
         sops-init-key
       fi
 
-      # Derive public key preferring live SSH pub key
       if [ -f "$SSH_PUB" ]; then
         PUBKEY=$(ssh-to-age -i "$SSH_PUB")
       else
@@ -105,7 +89,6 @@ let
       echo "Using age public key: $PUBKEY"
       echo ""
 
-      # .sops.yaml
       if [ ! -f "$SOPS_CONFIG" ]; then
         cat > "$SOPS_CONFIG" <<EOF
 keys:
@@ -122,7 +105,6 @@ EOF
         echo "✓ .sops.yaml already present"
       fi
 
-      # Secrets file
       if [ -f "$SECRETS_FILE" ]; then
         echo "✓ $SECRETS_FILE already exists — skipping"
         echo "  Use 'sops ${secretsFile}' to edit."
@@ -138,6 +120,7 @@ EOF
 db_password: $DB_PASS
 tls_cert: ""
 tls_key: ""
+admin_password: ""
 EOF
 
       SOPS_AGE_KEY_FILE="$AGE_KEYS" sops --encrypt \
@@ -151,16 +134,13 @@ EOF
       echo "  Next steps:"
       echo "    tls-setup           generate mkcert dev certs"
       echo "    tls-sops-update     encrypt them into $SECRETS_FILE"
+      echo "    bootstrap-admin     create initial admin user"
       echo "    sops-status         verify everything is working"
       echo ""
       echo "  Commit: .sops.yaml  secrets/${name}.yaml"
       echo "  NEVER commit: ~/.config/sops/age/keys.txt"
     '';
   };
-
-  # ── sops-get ───────────────────────────────────────────────────────────────
-  # Print a single decrypted secret value to stdout.
-  # Usage: sops-get db_password
 
   sops-get = pkgs.writeShellApplication {
     name = "sops-get";
@@ -182,12 +162,6 @@ EOF
     '';
   };
 
-  # ── sops-exec ──────────────────────────────────────────────────────────────
-  # Decrypt all secrets, inject them as env vars, then exec the given command.
-  # TLS cert/key are written to a chmod-700 tmpdir that is trap-removed on exit.
-  # Usage: sops-exec cabal run cheeblr-backend
-  #        sops-exec deploy
-
   sops-exec = pkgs.writeShellApplication {
     name = "sops-exec";
     runtimeInputs = [ pkgs.sops pkgs.jq pkgs.gettext ];
@@ -204,17 +178,14 @@ EOF
         exec "$@"
       fi
 
-      # Decrypt once into a shell variable — never touches disk as plaintext
       DECRYPTED=$(sops --decrypt --output-type json "$SECRETS_FILE")
 
-      # ── database ────────────────────────────────────────────────────────
       DB_PASS=$(echo "$DECRYPTED" | jq -r '.db_password // empty')
       if [ -n "$DB_PASS" ]; then
         export PGPASSWORD="$DB_PASS"
         export DB_PASSWORD="$DB_PASS"
       fi
 
-      # ── TLS ─────────────────────────────────────────────────────────────
       CERT=$(echo "$DECRYPTED" | jq -r '.tls_cert // empty')
       TKEY=$(echo "$DECRYPTED" | jq -r '.tls_key // empty')
 
@@ -233,7 +204,6 @@ EOF
         export TLS_KEY_FILE="$SECRETS_TMPDIR/tls.key"
         export USE_TLS="true"
       else
-        # Fall back to mkcert-managed certs if sops TLS not yet populated
         CERT_DIR="$(echo "${certDir}" | envsubst)"
         LOCAL_CERT="$CERT_DIR/${tlsCfg.certFile}"
         LOCAL_KEY="$CERT_DIR/${tlsCfg.keyFile}"
@@ -247,8 +217,6 @@ EOF
       exec "$@"
     '';
   };
-
-  # ── sops-status ────────────────────────────────────────────────────────────
 
   sops-status = pkgs.writeShellApplication {
     name = "sops-status";
@@ -312,6 +280,14 @@ EOF
           else
             echo "  tls_key      : ✗ empty — run: tls-setup && tls-sops-update"
           fi
+
+          APASS=$(echo "$DECRYPTED" | jq -r '.admin_password // empty')
+          if [ -n "$APASS" ] && [ "$APASS" != '""' ]; then
+            echo "  admin_password: ✓ set (length: ''${#APASS})"
+            echo "                  reveal with: sops-get admin_password"
+          else
+            echo "  admin_password: ✗ not set — run 'bootstrap-admin' after pg-start"
+          fi
         else
           echo "  decryptable  : ✗ wrong key or corrupted file"
         fi
@@ -322,11 +298,6 @@ EOF
       echo "────────────────────────────────────────────"
     '';
   };
-
-  # ── loadSecretsHook ────────────────────────────────────────────────────────
-  # A Nix string inlined directly into the devshell shellHook.
-  # Loads PGPASSWORD from sops at shell-entry time.
-  # Fails silently/gracefully if sops isn't bootstrapped yet.
 
   loadSecretsHook = ''
     _SOPS_FILE="$(pwd)/${secretsFile}"
