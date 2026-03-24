@@ -221,7 +221,8 @@ The `login_attempts_ip_idx` index on `(ip_address, attempted_at DESC)` and `logi
 ⬜ CORS `ALLOWED_ORIGIN` set to production frontend URL in sops  
 ⬜ mkcert dev cert replaced with CA-issued certificate  
 ⬜ `pg-rotate-credentials` run before production deployment  
-⬜ Capability enforcement extended to transaction and register endpoints  
+✅ All transaction and register endpoints gated behind `resolveSession` — unauthenticated requests return 401  
+⬜ Fine-grained capability enforcement on transaction and register endpoints (currently auth-only, no role checks)  
 ⬜ Request throttling middleware on all endpoints  
 ⬜ WebSocket connections authenticated before use (required before enabling GraphQL subscriptions)  
 ⬜ OCSP stapling (requires CA-issued cert)  
@@ -246,10 +247,11 @@ Before deploying Cheeblr to a public network, conduct a security audit covering:
    - Verify cert SAN covers all hostnames in use
 
 3. **API Security**
-   - Confirm all endpoints return 401 with no `Authorization` header
+   - Confirm all endpoints return 401 with no `Authorization` header — verified by smoke test (17/17)
    - Confirm all endpoints return 401 with an expired or revoked token
    - Verify capability enforcement on inventory write endpoints
-   - Extend capability enforcement to transaction and register endpoints before production
+   - Verify transaction and register endpoints return 401 without a token (implemented)
+   - Add fine-grained role/capability checks to transaction and register endpoints before production
    - Test rate limiting: confirm 429 after 5 failed logins from same username+IP, and after 20 from same IP across any usernames
 
 4. **WebSocket Security**
