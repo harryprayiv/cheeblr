@@ -8,8 +8,7 @@ module Server where
 
 import API.Inventory
 import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
-import Auth.Session (SessionContext (..), resolveSession, extractBearer)
-import Auth.Simple (lookupUser)
+import Auth.Session (SessionContext (..), resolveSession)
 import Control.Monad.IO.Class (liftIO)
 import Data.Morpheus (interpreter)
 import Data.Morpheus.Types (GQLRequest, GQLResponse)
@@ -38,56 +37,21 @@ import Types.Auth
   , SessionResponse (..)
   )
 import Types.Inventory
-import Control.Applicative ((<|>))
-
-------------------------------------------------------------------------
--- Auth resolution helper
---
--- The two paths share the same handler signatures — only this function
--- changes behaviour.  With USE_REAL_AUTH=false the Authorization header
--- value is passed directly to lookupUser (which ignores it and returns
--- the default dev user when Nothing or unrecognised).  With
--- USE_REAL_AUTH=true the full header is forwarded to resolveSession,
--- which expects "Bearer <token>" and throws 401 on any failure.
-------------------------------------------------------------------------
-
-resolveUser
-  :: DBPool
-  -> Bool         -- True = real auth, False = dev mode
-  -> Maybe Text   -- Authorization header value
-  -> Handler AuthenticatedUser
-resolveUser pool True  mHeader = scUser <$> resolveSession pool mHeader
-resolveUser _    False mHeader =
-  -- Strip "Bearer " prefix if present so UUID-style dev tokens still
-  -- resolve correctly, then fall through to lookupUser's defaults.
-  pure $ lookupUser (extractBearer mHeader <|> mHeader)
-
-------------------------------------------------------------------------
--- Effect runner
-------------------------------------------------------------------------
 
 runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
 runInvEff pool action = do
   result <- liftIO . runEff . runErrorNoCallStack @ServerError . runInventoryDbIO pool $ action
   either Servant.throwError pure result
 
-------------------------------------------------------------------------
--- Top-level server
-------------------------------------------------------------------------
-
-combinedServer :: DBPool -> LogEnv -> Bool -> Server CheeblrAPI
-combinedServer pool logEnv realAuth =
-  inventoryServer pool logEnv realAuth
+combinedServer :: DBPool -> LogEnv -> Server CheeblrAPI
+combinedServer pool logEnv =
+  inventoryServer pool logEnv
     :<|> posServerImpl pool logEnv
     :<|> authServerImpl pool logEnv
     :<|> pure cheeblrOpenApi
 
-------------------------------------------------------------------------
--- Inventory server
-------------------------------------------------------------------------
-
-inventoryServer :: DBPool -> LogEnv -> Bool -> Server InventoryAPI
-inventoryServer pool logEnv realAuth =
+inventoryServer :: DBPool -> LogEnv -> Server InventoryAPI
+inventoryServer pool logEnv =
   getInventory
     :<|> addInventoryItem
     :<|> updateInventoryItem
@@ -95,9 +59,9 @@ inventoryServer pool logEnv realAuth =
     :<|> getSession
     :<|> graphqlInventory
   where
-    -- Shared auth resolution for every handler in this server.
+
     auth :: Maybe Text -> Handler AuthenticatedUser
-    auth = resolveUser pool realAuth
+    auth mHeader = scUser <$> resolveSession pool mHeader
 
     getInventory :: Maybe Text -> Handler Inventory
     getInventory mHeader = do
@@ -189,7 +153,4 @@ inventoryServer pool logEnv realAuth =
     graphqlInventory mHeader req = do
       user <- auth mHeader
       liftIO $ logHttpRequest logEnv "POST" "/graphql/inventory" (T.pack (show (auUserId user)))
-      -- rootResolver still takes Maybe Text (the raw header) for its own
-      -- dev-mode lookup; pass the stripped bearer or raw value.
-      let mUserId = Just (T.pack (show (auUserId user)))
-      liftIO $ interpreter (rootResolver pool mUserId) req
+      liftIO $ interpreter (rootResolver pool user) req

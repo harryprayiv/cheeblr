@@ -24,12 +24,11 @@ import qualified Data.UUID as UUID
 import qualified Data.Vector as V
 import GHC.Generics (Generic)
 
-import Auth.Simple (lookupUser)
 import qualified DB.Database as DB
 import DB.Database (DBPool)
 import GraphQL.Schema
 import qualified Types.Inventory as TI
-import Types.Auth (capabilitiesForRole, auRole, UserCapabilities(..))
+import Types.Auth (AuthenticatedUser (..), capabilitiesForRole, auRole, UserCapabilities (..))
 
 data Query (m :: * -> *) = Query
   { inventory :: m [MenuItemGql]
@@ -131,22 +130,20 @@ gqlInputToStrainLineage StrainLineageInputGql
   , TI.img              = im
   }
 
-resolveInventory :: DBPool -> Maybe Text -> ResolverQ () IO [MenuItemGql]
-resolveInventory pool _userId = do
+resolveInventory :: DBPool -> UserCapabilities -> ResolverQ () IO [MenuItemGql]
+resolveInventory pool _caps = do
   TI.Inventory items <- liftIO $ DB.getAllMenuItems pool
   pure $ map menuItemToGql (V.toList items)
 
-resolveMenuItem :: DBPool -> Maybe Text -> MenuItemArgs -> ResolverQ () IO (Maybe MenuItemGql)
-resolveMenuItem pool _userId MenuItemArgs { sku = skuTxt } = do
+resolveMenuItem :: DBPool -> UserCapabilities -> MenuItemArgs -> ResolverQ () IO (Maybe MenuItemGql)
+resolveMenuItem pool _caps MenuItemArgs { sku = skuTxt } = do
   TI.Inventory items <- liftIO $ DB.getAllMenuItems pool
   pure $ case UUID.fromText skuTxt of
     Nothing -> Nothing
     Just u  -> menuItemToGql <$> V.find (\m -> TI.sku m == u) items
 
-resolveCreateMenuItem :: DBPool -> Maybe Text -> CreateMenuItemArgs -> ResolverM () IO MutationResponseGql
-resolveCreateMenuItem pool userId CreateMenuItemArgs { input = inp } = do
-  let user = lookupUser userId
-      caps = capabilitiesForRole (auRole user)
+resolveCreateMenuItem :: DBPool -> UserCapabilities -> CreateMenuItemArgs -> ResolverM () IO MutationResponseGql
+resolveCreateMenuItem pool caps CreateMenuItemArgs { input = inp } =
   if not (capCanCreateItem caps)
     then pure $ MutationResponseGql False "Forbidden: cannot create items"
     else case gqlInputToMenuItem inp of
@@ -157,10 +154,8 @@ resolveCreateMenuItem pool userId CreateMenuItemArgs { input = inp } = do
           Right _ -> MutationResponseGql True "Item created successfully"
           Left e  -> MutationResponseGql False (pack $ show e)
 
-resolveUpdateMenuItem :: DBPool -> Maybe Text -> UpdateMenuItemArgs -> ResolverM () IO MutationResponseGql
-resolveUpdateMenuItem pool userId UpdateMenuItemArgs { input = inp } = do
-  let user = lookupUser userId
-      caps = capabilitiesForRole (auRole user)
+resolveUpdateMenuItem :: DBPool -> UserCapabilities -> UpdateMenuItemArgs -> ResolverM () IO MutationResponseGql
+resolveUpdateMenuItem pool caps UpdateMenuItemArgs { input = inp } =
   if not (capCanEditItem caps)
     then pure $ MutationResponseGql False "Forbidden: cannot edit items"
     else case gqlInputToMenuItem inp of
@@ -171,10 +166,8 @@ resolveUpdateMenuItem pool userId UpdateMenuItemArgs { input = inp } = do
           Right _ -> MutationResponseGql True "Item updated successfully"
           Left e  -> MutationResponseGql False (pack $ show e)
 
-resolveDeleteMenuItem :: DBPool -> Maybe Text -> DeleteMenuItemArgs -> ResolverM () IO MutationResponseGql
-resolveDeleteMenuItem pool userId DeleteMenuItemArgs { sku = skuTxt } = do
-  let user = lookupUser userId
-      caps = capabilitiesForRole (auRole user)
+resolveDeleteMenuItem :: DBPool -> UserCapabilities -> DeleteMenuItemArgs -> ResolverM () IO MutationResponseGql
+resolveDeleteMenuItem pool caps DeleteMenuItemArgs { sku = skuTxt } =
   if not (capCanDeleteItem caps)
     then pure $ MutationResponseGql False "Forbidden: cannot delete items"
     else case UUID.fromText skuTxt of
@@ -185,16 +178,18 @@ resolveDeleteMenuItem pool userId DeleteMenuItemArgs { sku = skuTxt } = do
           Right mr -> MutationResponseGql (TI.success mr) (TI.message mr)
           Left e   -> MutationResponseGql False (pack $ show e)
 
-rootResolver :: DBPool -> Maybe Text -> RootResolver IO () Query Mutation Undefined
-rootResolver pool userId = RootResolver
-  { queryResolver = Query
-      { inventory = resolveInventory pool userId
-      , menuItem  = resolveMenuItem pool userId
-      }
-  , mutationResolver = Mutation
-      { createMenuItem = resolveCreateMenuItem pool userId
-      , updateMenuItem = resolveUpdateMenuItem pool userId
-      , deleteMenuItem = resolveDeleteMenuItem pool userId
-      }
-  , subscriptionResolver = undefined
-  }
+rootResolver :: DBPool -> AuthenticatedUser -> RootResolver IO () Query Mutation Undefined
+rootResolver pool user =
+  let caps = capabilitiesForRole (auRole user)
+  in RootResolver
+    { queryResolver = Query
+        { inventory = resolveInventory pool caps
+        , menuItem  = resolveMenuItem pool caps
+        }
+    , mutationResolver = Mutation
+        { createMenuItem = resolveCreateMenuItem pool caps
+        , updateMenuItem = resolveUpdateMenuItem pool caps
+        , deleteMenuItem = resolveDeleteMenuItem pool caps
+        }
+    , subscriptionResolver = undefined
+    }

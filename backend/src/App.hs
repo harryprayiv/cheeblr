@@ -72,13 +72,11 @@ run = do
   certFile       <- lookupEnv "TLS_CERT_FILE"
   keyFile        <- lookupEnv "TLS_KEY_FILE"
   logFile        <- fromMaybe "./cheeblr-compliance.log" <$> lookupEnv "LOG_FILE"
-  useRealAuth    <- lookupEnv "USE_REAL_AUTH"
   -- Empty string is treated the same as absent: CORS stays open.
   -- Set to a non-empty origin (e.g. "https://pos.example.com") in production.
   allowedOriginE <- lookupEnv "ALLOWED_ORIGIN"
 
-  let tlsEnabled    = useTLS      == Just "true"
-      realAuthMode  = useRealAuth == Just "true"
+  let tlsEnabled     = useTLS == Just "true"
       mAllowedOrigin = allowedOriginE >>= \s ->
         if null s then Nothing else Just s
 
@@ -103,8 +101,6 @@ run = do
 
   logEnv <- initLogging logFile
   logAppStartup logEnv (serverPort config) tlsEnabled
-  logAppInfo logEnv $
-    "Auth mode: " <> if realAuthMode then "real (session tokens)" else "dev (Auth.Simple)"
   logAppInfo logEnv $
     "CORS mode: " <> case mAllowedOrigin of
       Just origin -> "locked to " <> T.pack origin
@@ -134,7 +130,7 @@ run = do
       }
 
     coreApp = cors (const $ Just corsPolicy) $
-                serve cheeblrAPI (combinedServer pool logEnv realAuthMode)
+                serve cheeblrAPI (combinedServer pool logEnv)
 
     app = securityHeadersMiddleware
         . handleOptionsMiddleware

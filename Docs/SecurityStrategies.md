@@ -5,13 +5,12 @@ This document outlines the security architecture, best practices, and implementa
 ## Table of Contents
 
 1. [Security Principles](#security-principles)
-2. [Authentication Methods](#authentication-methods)
+2. [Authentication Architecture](#authentication-architecture)
 3. [Transport Layer Security](#transport-layer-security)
 4. [WebSocket Security](#websocket-security)
-5. [Libsodium Implementation](#libsodium-implementation)
-6. [Rate Limiting and Protection](#rate-limiting-and-protection)
-7. [Deployment Checklist](#deployment-checklist)
-8. [Security Audit Guidelines](#security-audit-guidelines)
+5. [Rate Limiting and Protection](#rate-limiting-and-protection)
+6. [Deployment Checklist](#deployment-checklist)
+7. [Security Audit Guidelines](#security-audit-guidelines)
 
 ## Security Principles
 
@@ -19,437 +18,253 @@ This document outlines the security architecture, best practices, and implementa
 
 | Principle | Description | Security Level | Implementation Difficulty |
 |-----------|-------------|---------------|---------------------------|
-| End-to-End Encryption | All communications are encrypted using TLS (HTTPS and WebSockets over WSS) | Very High | Low |
-| Zero Trust Authentication | Never trust the client; require cryptographic proof of identity | Very High | Medium |
-| Replay Attack Protection | Use one-time challenges (nonces) to prevent replay attacks | Very High | Medium |
-| Tamper-Resistant Storage | Securely store secrets on both client and server | High | Medium |
-| Rate Limiting | Detect and block brute-force attempts | High | Low |
-| Anomaly Detection | Monitor and alert on unusual authentication patterns | High | Medium |
+| End-to-End Encryption | All communications are encrypted using TLS (HTTPS) | Very High | Low |
+| Server-side Session Auth | Opaque tokens stored in PostgreSQL; revocable instantly | Very High | Medium |
+| Replay Attack Protection | Tokens are 32 bytes of CSPRNG entropy; SHA-256 hash stored in DB | Very High | Low |
+| Argon2id Password Hashing | Passwords hashed with Argon2id (3 iterations, 64 MB memory) | Very High | Low |
+| Rate Limiting | Per-credential and per-IP limits enforced at DB level | High | Low |
+| Security Headers | HSTS, CSP, X-Frame-Options, X-Content-Type-Options on all responses | High | Low |
 
-## Authentication Methods
+## Authentication Architecture
 
-### Comparison of Authentication Methods
+### Why Server-Side Sessions Over JWT
 
-| Authentication Method | Security Level | Ease of Use | Privacy | Implementation Complexity | Recommended Use Case |
-|----------------------|----------------|-------------|---------|---------------------------|---------------------|
-| Libsodium Public-Key Authentication | ★★★★★ | ★★★☆☆ | ★★★★★ | ★★★★☆ | Highest security needs, self-contained systems |
-| OAuth 2.0 / OpenID Connect | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★★★☆☆ | Applications needing social login integration |
-| JWT with Secure Signatures | ★★★★☆ | ★★★★☆ | ★★★★☆ | ★★★☆☆ | Services with distributed microservices |
-| HMAC-based Authentication | ★★★★☆ | ★★★☆☆ | ★★★★☆ | ★★★☆☆ | API authentication |
-| Password + Argon2id Hashing | ★★★☆☆ | ★★★★☆ | ★★★★☆ | ★★☆☆☆ | Traditional user authentication |
-| Machine ID (LAN-only) | ★★☆☆☆ | ★★★★★ | ★★★☆☆ | ★★☆☆☆ | Controlled LAN environments only |
+For a cannabis dispensary POS the compliance requirements drive the architecture:
 
-### Recommended Primary Authentication Method: Libsodium Public-Key Authentication
+- **Immediate revocation.** Sessions can be terminated the instant an employee's shift ends or access is revoked. JWT expiry cannot be shortened below the token lifespan without a blacklist, which defeats the stateless argument anyway.
+- **Auditability.** The `sessions` table is a first-class compliance record: who logged in, from which terminal, at what time, and when the session ended.
+- **Register binding.** A session row carries a `register_id` column so the register state machine can enforce that a cashier's session only creates transactions on the register they logged into.
+- **Simplicity.** A single indexed lookup of a SHA-256 hash against the `sessions` table is one query and zero cryptography at request time.
 
-Based on objective security assessment, a Libsodium-based challenge-response with public-key cryptography offers the highest security level while maintaining reasonable usability for a specialized application like Cheeblr.
+### Current Implementation
 
-#### Key advantages:
+**Status**: Fully implemented. The dev-mode `X-User-Id` header and `Auth.Simple` module have been deleted. All endpoints require a valid `Authorization: Bearer <token>` header resolved through `Auth.Session.resolveSession`.
 
-1. Provides cryptographic security without requiring passwords
-2. Prevents credential theft even if the server database is compromised
-3. Creates an unforgeable link between the user and their device
-4. Resists sophisticated attack vectors including replay attacks
-5. Maintains full privacy without relying on third-party providers
+#### Token Lifecycle
 
-**Current status**: Authentication is dev-mode only (`X-User-Id` header with fixed UUIDs mapped to roles). Libsodium public-key auth is the planned upgrade path. See the [Deployment Checklist](#deployment-checklist) for what is already implemented.
+1. Client `POST /auth/login` with username and password.
+2. Server checks per-credential and per-IP rate limits before touching the password.
+3. Server looks up user by username, verifies Argon2id hash with `verifyPassword`.
+4. On success: 32 bytes from `/dev/urandom` are base64url-encoded as the raw token. The SHA-256 of the raw bytes is stored in `sessions.token_hash`. Only the raw token is returned to the client — the DB never holds anything usable if breached.
+5. Client stores the raw token in `localStorage` and sends it as `Authorization: Bearer <token>` on every request.
+6. Server hashes the incoming token and does a single indexed lookup. A miss, expired row, or revoked row all return 401.
+7. Each successful lookup updates `sessions.last_seen_at` for inactivity tracking.
+8. Logout calls `revokeSession`, setting `sessions.revoked = true` immediately.
+
+#### Session Expiry and Inactivity
+
+- Hard expiry: 8 hours from login (`sessions.expires_at`).
+- Inactivity: controlled by `CHECK_INACTIVITY_MINUTES` env var (default 30). Sessions where `last_seen_at < NOW() - interval` are treated as expired by `lookupSession`.
+- No refresh tokens. Re-login on expiry is correct behavior for a POS terminal.
+
+#### Database Schema
+
+```sql
+CREATE TABLE users (
+  id            UUID PRIMARY KEY,
+  username      TEXT NOT NULL UNIQUE,
+  display_name  TEXT NOT NULL,
+  email         TEXT,
+  role          TEXT NOT NULL,         -- Customer | Cashier | Manager | Admin
+  location_id   UUID,
+  password_hash TEXT NOT NULL,         -- Argon2id PHC string, includes salt
+  is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE sessions (
+  id            UUID PRIMARY KEY,
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash    TEXT NOT NULL UNIQUE,  -- SHA-256(raw_token), hex-encoded
+  register_id   UUID,                  -- optional: binds session to a register
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at    TIMESTAMPTZ NOT NULL,
+  revoked       BOOLEAN NOT NULL DEFAULT FALSE,
+  revoked_at    TIMESTAMPTZ,
+  revoked_by    UUID REFERENCES users(id),
+  user_agent    TEXT,
+  ip_address    TEXT
+);
+
+CREATE TABLE login_attempts (
+  id           UUID PRIMARY KEY,
+  username     TEXT NOT NULL,
+  ip_address   TEXT NOT NULL,
+  success      BOOLEAN NOT NULL,
+  attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+#### Frontend Token Handling
+
+The raw token is stored in `localStorage` under the key `cheeblr_session_token`. On startup `Main.purs` calls `loadToken`; if a token is present it validates it against `GET /auth/me` before restoring the session. A 401 response clears the stored token and redirects to the login page. All API request functions in `API.Request` send `Authorization: Bearer <token>` on every call.
+
+#### Admin Bootstrap
+
+The `bootstrap-admin` devshell command generates a random password, creates the initial admin user, and stores the password encrypted in sops. It is a no-op if any users already exist. Run once after the first `pg-start`.
+
+### Authentication Method Comparison
+
+| Authentication Method | Security Level | Ease of Use | Privacy | Implementation Complexity | Notes |
+|----------------------|----------------|-------------|---------|---------------------------|-------|
+| Server-side opaque sessions (current) | ★★★★☆ | ★★★★★ | ★★★★☆ | ★★☆☆☆ | Instant revocation, compliance-friendly |
+| Libsodium public-key challenge-response | ★★★★★ | ★★★☆☆ | ★★★★★ | ★★★★☆ | Upgrade path for highest-security deployments |
+| JWT with secure signatures | ★★★★☆ | ★★★★☆ | ★★★★☆ | ★★★☆☆ | Unsuitable here: no instant revocation without a blacklist |
+| OAuth 2.0 / OpenID Connect | ★★★★☆ | ★★★★★ | ★★☆☆☆ | ★★★☆☆ | Not suitable for air-gapped POS terminals |
+| Dev-mode X-User-Id header | ★☆☆☆☆ | ★★★★★ | ☆☆☆☆☆ | ★☆☆☆☆ | Deleted. Never use in any deployed environment. |
 
 ## Transport Layer Security
 
 ### TLS Configuration Guidelines
 
-All Cheeblr communications should use TLS 1.2+ with the following configuration:
+All Cheeblr communications use TLS 1.2+ with the following configuration:
 
 | Setting | Recommendation | Security Level |
 |---------|---------------|----------------|
 | Minimum TLS Version | TLS 1.2 (TLS 1.3 preferred) | ★★★★★ |
-| Cipher Suites | Strong AEAD ciphers only (e.g., AES-GCM, ChaCha20-Poly1305) | ★★★★★ |
-| Certificate Type | OV or EV certificate from trusted CA | ★★★★☆ |
+| Cipher Suites | Strong AEAD ciphers only (AES-GCM, ChaCha20-Poly1305) | ★★★★★ |
+| Certificate Type | OV or EV from trusted CA (mkcert for dev) | ★★★★☆ |
 | Key Length | RSA 2048+ or ECC P-256+ | ★★★★★ |
-| HSTS | Enabled with includeSubDomains and preload | ★★★★☆ |
+| HSTS | Enabled — `max-age=31536000; includeSubDomains` | ★★★★★ |
 | Certificate Renewal | Automatic via Let's Encrypt or similar | ★★★★☆ |
-| OCSP Stapling | Enabled | ★★★★☆ |
+| OCSP Stapling | Enabled (requires CA-issued cert) | ★★★★☆ |
 
-**Implementation status**: TLS is fully implemented for local and LAN development using `warp-tls` on the Haskell backend and a Vite HTTPS config on the frontend. Certificates are generated by `mkcert` and stored encrypted in `secrets/cheeblr.yaml` via sops. All dev service scripts (`backend-start`, `deploy`, `launch-dev`, etc.) inject `USE_TLS`, `TLS_CERT_FILE`, and `TLS_KEY_FILE` from sops at launch time. For production, replace the mkcert cert with a CA-issued certificate and update the sops secrets accordingly.
+**Implementation status**: Fully implemented. `warp-tls` handles TLS termination on the backend. Certificates are generated by `mkcert` for dev/LAN use and stored encrypted in `secrets/cheeblr.yaml` via sops. All service scripts (`backend-start`, `deploy`, `launch-dev`, etc.) inject `USE_TLS`, `TLS_CERT_FILE`, and `TLS_KEY_FILE` from sops at launch time. For production, replace the mkcert cert with a CA-issued certificate and update the sops secrets accordingly.
 
-### Implementation in Haskell Backend
+### Security Headers
 
-```haskell
--- TLS configuration for Warp in Haskell (already used in your Cheeblr backend)
-import Network.Wai.Handler.Warp
-import Network.Wai.Handler.WarpTLS
+All responses carry the following headers, applied by `securityHeadersMiddleware` in `App.hs` before any other middleware:
 
-tlsSettings :: TLSSettings
-tlsSettings = tlsSettingsChain
-    "/path/to/certificate.pem"        -- Your certificate
-    ["/path/to/intermediate-cert.pem"] -- Chain certificates if needed
-    "/path/to/private-key.pem"        -- Private key
-    
-secureApp :: Application -> IO ()
-secureApp app = do
-    let settings = setPort 8443 defaultSettings
-    runTLS tlsSettings settings app
-```
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` | Prevents protocol downgrade attacks |
+| `X-Content-Type-Options` | `nosniff` | Prevents MIME-type sniffing |
+| `X-Frame-Options` | `DENY` | Prevents clickjacking |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | Limits referrer leakage |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:` | Limits injection attack surface |
 
-The backend reads `TLS_CERT_FILE` and `TLS_KEY_FILE` from the environment at startup (injected by `sops-exec` or the dev service scripts). `USE_TLS=false` falls back to plain HTTP for test environments that manage TLS separately.
+The `unsafe-inline` on `style-src` is a concession to Tailwind's inline styles. Tighten this when CSS is extracted at build time.
 
-### Implementation in PureScript Frontend
+### CORS Policy
 
-In the PureScript frontend, ensure all endpoints use HTTPS and WSS protocols:
+CORS is controlled by the `ALLOWED_ORIGIN` environment variable sourced from sops:
 
-```purescript
-baseUrl :: String
-baseUrl = "https://api.cheeblr.com"
+- **Empty or absent** (default for dev/staging): `corsOrigins = Nothing` — all origins accepted.
+- **Non-empty** (production): `corsOrigins = Just ([origin], True)` — locked to that single origin.
 
-wsUrl :: String
-wsUrl = "wss://api.cheeblr.com/ws"
-```
+Set `allowed_origin` in `secrets/cheeblr.yaml` to the production frontend URL before going live.
 
 ## WebSocket Security
 
-### Secure WebSocket Implementation
+**Planned**: GraphQL WebSocket subscriptions over WSS for live inventory updates via PostgreSQL `LISTEN/NOTIFY`. When implemented:
 
-| Security Measure | Description | Security Level |
-|-----------------|-------------|----------------|
-| WSS Protocol | Use wss:// instead of ws:// | ★★★★★ |
-| Authentication Handshake | Require authentication before establishing persistent connection | ★★★★☆ |
-| Message Authentication | Sign individual messages | ★★★★☆ |
-| Heartbeat Pings | Implement heartbeat mechanism to prevent connection hijacking | ★★★☆☆ |
-| Connection Timeouts | Set reasonable timeouts to limit exposure | ★★★☆☆ |
-| Message Validation | Strictly validate all incoming messages | ★★★★☆ |
+- Connections will require a valid session token in the initial handshake before any subscription data is sent.
+- Messages will be validated against the same capability model used by the HTTP API.
+- The same `resolveSession` path used for HTTP requests will gate WebSocket upgrades.
 
-**Planned**: GraphQL WebSocket subscriptions over WSS for live inventory updates via PostgreSQL `LISTEN/NOTIFY`. Authentication handshake requirements will be defined when this is implemented.
-
-## Libsodium Implementation
-
-### Client-Side Key Generation and Storage in PureScript
-
-```purescript
--- PureScript FFI to libsodium
-foreign import generateKeyPair :: Effect (Promise KeyPair)
-foreign import signChallenge :: String -> String -> Effect (Promise String)
-foreign import storeKeys :: KeyPair -> Effect (Promise Unit)
-foreign import retrieveKeys :: Effect (Promise (Maybe KeyPair))
-
--- PureScript implementation
-generateAndStoreClientKeys :: Aff (Either String String)
-generateAndStoreClientKeys = do
-  keyPairResult <- attempt $ liftEffect $ toAffE generateKeyPair
-  case keyPairResult of
-    Left err -> pure $ Left $ "Failed to generate key pair: " <> show err
-    Right keyPair -> do
-      storeResult <- attempt $ liftEffect $ toAffE $ storeKeys keyPair
-      case storeResult of
-        Left err -> pure $ Left $ "Failed to store keys: " <> show err
-        Right _ -> pure $ Right keyPair.publicKey
-
--- Type definitions
-type KeyPair = 
-  { publicKey :: String
-  , privateKey :: String
-  , created :: String
-  }
-```
-
-### WebSocket Authentication Flow
-
-1. **Client Authentication in PureScript**
-
-```purescript
--- WebSocket authentication in PureScript
-authenticateWebSocket :: String -> Aff (Either String WebSocket)
-authenticateWebSocket url = do
-  wsResult <- attempt $ liftEffect $ newWebSocket url {}
-  
-  case wsResult of
-    Left err -> 
-      pure $ Left $ "Failed to connect: " <> show err
-    
-    Right ws -> do
-      -- Set up message handler
-      _ <- liftEffect $ ws.onOpen $ \_ -> do
-        retrieveKeys >>= case _ of
-          Just keys -> do
-            let authRequest = 
-                  writeJSON { type: "auth_request"
-                            , publicKey: keys.publicKey 
-                            }
-            ws.send authRequest
-          Nothing ->
-            Console.error "No keys found for authentication"
-      
-      -- Handle authentication messages
-      _ <- liftEffect $ ws.onMessage $ \event -> do
-        case readJSON event.data of
-          Right msg -> case msg.type of
-            "challenge" -> do
-              retrieveKeys >>= case _ of
-                Just keys -> do
-                  signatureResult <- signChallenge keys.privateKey msg.challenge
-                  let authResponse = 
-                        writeJSON { type: "auth_response"
-                                  , signature: signatureResult 
-                                  }
-                  ws.send authResponse
-                Nothing ->
-                  Console.error "No keys found to sign challenge"
-                  
-            "auth_success" ->
-              Console.log "Authentication successful"
-              
-            "auth_failure" ->
-              Console.error "Authentication failed"
-              
-            _ -> pure unit
-              
-          Left _ ->
-            Console.error "Invalid message format"
-              
-      pure $ Right ws
-```
-
-2. **Server Handles Authentication (Haskell Implementation)**
-
-```haskell
--- Server-side WebSocket authentication in Haskell for Cheeblr
-import qualified Data.Aeson as A
-import qualified Crypto.Sign.Ed25519 as Ed25519
-import qualified Data.ByteString.Base64 as B64
-import Data.Time.Clock (getCurrentTime, addUTCTime)
-import Database.PostgreSQL.Simple (Connection, execute, query)
-
--- Authentication message types
-data AuthMessage 
-  = AuthRequest { clientPubKey :: Text }
-  | AuthChallenge { challenge :: Text }
-  | AuthResponse { signature :: Text }
-  | AuthSuccess { sessionToken :: Text }
-  | AuthFailure { reason :: Text }
-  deriving (Show, Generic)
-
-instance A.ToJSON AuthMessage
-instance A.FromJSON AuthMessage
-
--- Authentication handler for WebSockets
-handleWSAuth :: Pool Connection -> WS.Connection -> IO ()
-handleWSAuth pool wsConn = do
-    -- Receive auth request
-    msg <- WS.receiveData wsConn
-    case A.decode msg of
-        Just (AuthRequest clientPubKey) -> do
-            -- Generate random challenge (nonce)
-            challenge <- generateSecureRandomBS 32 >>= return . B64.encode
-            
-            -- Store challenge with timestamp for expiration (5 minute validity)
-            now <- getCurrentTime
-            let expiry = addUTCTime 300 now
-            withResource pool $ \conn ->
-                execute conn 
-                    "INSERT INTO auth_challenges (public_key, challenge, expires_at) VALUES (?, ?, ?)"
-                    (clientPubKey, challenge, expiry)
-            
-            -- Send challenge to client
-            WS.sendTextData wsConn $ A.encode $ AuthChallenge 
-                { challenge = decodeUtf8 challenge }
-            
-            -- Receive client's signed challenge
-            signedMsg <- WS.receiveData wsConn
-            case A.decode signedMsg of
-                Just (AuthResponse signature) -> do
-                    -- Verify challenge is valid and not expired
-                    validChallenge <- withResource pool $ \conn -> do
-                        results <- query conn 
-                            "SELECT 1 FROM auth_challenges WHERE public_key = ? AND challenge = ? AND expires_at > NOW()"
-                            (clientPubKey, challenge) :: IO [Only Int]
-                        return $ not $ null results
-                    
-                    -- Verify signature
-                    let pubKeyBS = B64.decodeLenient $ encodeUtf8 clientPubKey
-                        signatureBS = B64.decodeLenient $ encodeUtf8 signature
-                        challengeBS = B64.decodeLenient challenge
-                        
-                    let signatureValid = case Ed25519.signature signatureBS of
-                            Nothing -> False
-                            Just sig -> case Ed25519.publicKey pubKeyBS of
-                                Nothing -> False
-                                Just pk -> Ed25519.verify pk challengeBS sig
-                    
-                    if validChallenge && signatureValid
-                        then do
-                            -- Generate session token
-                            sessionToken <- generateSecureRandomBS 32 >>= return . decodeUtf8 . B64.encode
-                            
-                            -- Store session
-                            withResource pool $ \conn ->
-                                execute conn 
-                                    "INSERT INTO sessions (token, public_key, created_at) VALUES (?, ?, NOW())"
-                                    (sessionToken, clientPubKey)
-                                    
-                            -- Send success response
-                            WS.sendTextData wsConn $ A.encode $ AuthSuccess 
-                                { sessionToken = sessionToken }
-                        else do
-                            -- Send failure response
-                            WS.sendTextData wsConn $ A.encode $ AuthFailure 
-                                { reason = "Authentication failed" }
-                
-                _ -> WS.sendTextData wsConn $ A.encode $ AuthFailure 
-                        { reason = "Invalid response format" }
-        
-        _ -> WS.sendTextData wsConn $ A.encode $ AuthFailure 
-                { reason = "Invalid request format" }
-```
+Authentication handshake requirements will be defined when this feature is implemented.
 
 ## Rate Limiting and Protection
 
-### Recommended Protection Measures
+### Implementation
 
-| Measure | Implementation | Security Level |
-|---------|---------------|----------------|
-| IP-based Rate Limiting | Limit auth attempts per IP address (e.g., 5 attempts per minute) | ★★★★☆ |
-| Exponential Backoff | Increase delay after failed attempts | ★★★★☆ |
-| Request Throttling | Limit overall API requests per client | ★★★☆☆ |
-| CAPTCHA for Suspicious Activity | Require CAPTCHA after multiple failures | ★★★☆☆ |
-| IP Reputation | Block known malicious IP addresses | ★★★☆☆ |
-| Anomaly Detection | Monitor for unusual patterns of authentication | ★★★★☆ |
+Rate limiting is enforced in `Server.Auth.checkLoginRateLimit` using the `login_attempts` table. Storing state in PostgreSQL rather than in-process memory means limits survive server restarts and work correctly across multiple instances.
 
-### Rate Limiting Implementation for Cheeblr
+Two independent checks run before any password work on every login attempt:
 
-```haskell
--- Rate limiting middleware for Haskell Servant backend
-import Control.Concurrent.STM
-import Control.Concurrent.STM.TVar
-import Data.Time
-import qualified Data.Map.Strict as Map
-import Network.Wai
-import Network.HTTP.Types
+| Check | Threshold | Window | Purpose |
+|-------|-----------|--------|---------|
+| Per credential (username + IP) | 5 failures | 10 minutes | Locks out repeated attempts against a single account |
+| Per IP (all usernames) | 20 failures | 10 minutes | Catches credential-stuffing attacks that rotate across usernames to evade the per-credential limit |
 
--- Rate limit configuration
-data RateLimiter = RateLimiter
-  { rlMaxAttempts :: Int             -- Max attempts per window
-  , rlWindowSeconds :: Int           -- Time window in seconds
-  , rlBackoffFactor :: Double        -- Exponential backoff factor
-  , rlCache :: TVar (Map.Map String [UTCTime]) -- IP -> timestamps map
-  }
+Both return `429 Too Many Requests` with a `Retry-After: 600` header. The response body distinguishes the two cases for compliance log clarity.
 
--- Create a new rate limiter
-newRateLimiter :: Int -> Int -> Double -> IO RateLimiter
-newRateLimiter maxAttempts windowSeconds backoffFactor = do
-  cache <- newTVarIO Map.empty
-  return RateLimiter
-    { rlMaxAttempts = maxAttempts
-    , rlWindowSeconds = windowSeconds
-    , rlBackoffFactor = backoffFactor
-    , rlCache = cache
-    }
+The `login_attempts_ip_idx` index on `(ip_address, attempted_at DESC)` and `login_attempts_username_idx` on `(username, attempted_at DESC)` keep both queries fast under load.
 
--- Check if a request should be rate limited
-checkRateLimit :: RateLimiter -> String -> IO Bool
-checkRateLimit limiter clientIP = do
-  now <- getCurrentTime
-  let windowStart = addUTCTime (fromIntegral $ negate $ rlWindowSeconds limiter) now
-  
-  atomically $ do
-    cache <- readTVar (rlCache limiter)
-    let attempts = Map.findWithDefault [] clientIP cache
-    
-    -- Filter out attempts outside the current window
-    let recentAttempts = filter (>= windowStart) attempts
-    
-    -- Add the current attempt 
-    let newAttempts = now : recentAttempts
-    
-    -- Update the cache
-    writeTVar (rlCache limiter) $ Map.insert clientIP newAttempts cache
-    
-    -- Check if we're over the limit
-    if length recentAttempts >= rlMaxAttempts limiter
-      then do
-        -- Calculate backoff time based on excess attempts
-        let excessAttempts = length recentAttempts - rlMaxAttempts limiter + 1
-        let backoffSeconds = (rlBackoffFactor limiter) ^ excessAttempts
-        let lastAttempt = maximum recentAttempts
-        let earliestAllowed = addUTCTime (realToFrac backoffSeconds) lastAttempt
-        
-        -- Compare with current time
-        return (now < earliestAllowed)
-      else return False
+### Recommended Additional Measures
 
--- Rate limiting middleware for WAI applications
-rateLimitMiddleware :: RateLimiter -> Middleware
-rateLimitMiddleware limiter app req respond = do
-  -- Get client IP from request
-  let clientIP = show $ remoteHost req
-  
-  -- Check rate limit
-  limited <- checkRateLimit limiter clientIP
-  
-  if limited
-    then do
-      -- Respond with 429 Too Many Requests
-      respond $ responseLBS
-        status429
-        [("Content-Type", "application/json"), ("Retry-After", "60")]
-        "{\"error\":\"Too many requests. Please try again later.\"}"
-    else
-      -- Continue with the application
-      app req respond
-```
+| Measure | Status | Notes |
+|---------|--------|-------|
+| IP-based rate limiting on login | ✅ Implemented | Per-IP across all usernames |
+| Per-credential rate limiting | ✅ Implemented | Per username+IP pair |
+| Request throttling (all endpoints) | ⬜ Planned | WAI middleware; not yet needed at POS scale |
+| CAPTCHA after repeated failures | ⬜ Not planned | POS terminals are not public-facing web forms |
+| IP reputation blocking | ⬜ Planned | Appropriate when moving to public network |
 
 ## Deployment Checklist
 
 ### Security Configuration Checklist
 
-✅ TLS 1.2+ configured with strong ciphers (warp-tls, mkcert for dev; replace with CA cert for production)  
-✅ All endpoints use HTTPS (plain HTTP rejected by warp-tls when `USE_TLS=true`)  
+✅ TLS 1.2+ configured with strong ciphers (`warp-tls`, `mkcert` for dev; replace with CA cert for production)  
+✅ All endpoints use HTTPS (plain HTTP rejected by `warp-tls` when `USE_TLS=true`)  
 ✅ TLS cert and private key stored encrypted via sops — never in plaintext on disk  
 ✅ All service scripts inject TLS env vars from sops at runtime  
 ✅ Parameterized queries throughout — no SQL string interpolation  
-✅ Role-based capabilities enforced on inventory write endpoints  
+✅ Argon2id password hashing (3 iterations, 64 MB memory, Argon2id variant)  
+✅ Opaque session tokens — raw token never stored in DB, only SHA-256 hash  
+✅ Session table with hard expiry, inactivity timeout, and instant revocation  
+✅ Session binding to register ID for cashier terminal enforcement  
+✅ `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` endpoints  
+✅ `POST /auth/users` (admin only) for user creation  
+✅ `bootstrap-admin` command for secure first-run credential generation  
+✅ Admin password stored encrypted in sops after bootstrap  
+✅ Dev-mode `X-User-Id` auth and `Auth.Simple` module fully deleted  
+✅ Role-based capabilities enforced on all inventory endpoints  
+✅ Rate limiting: per-credential (5/10 min) and per-IP (20/10 min) on login  
+✅ Login attempts logged to DB for compliance and rate limit state  
+✅ CORS locked to `ALLOWED_ORIGIN` env var (open in dev, locked in production)  
+✅ HTTP security headers: HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy  
 ✅ JSON contract tests between PureScript and Haskell catch serialization divergence  
 ✅ Integration tests include TLS wire checks (cert SAN validation, plain-HTTP rejection)  
-⬜ Public key authentication — planned (currently dev-mode `X-User-Id` header)  
-⬜ Challenge-response mechanism with nonces — planned  
-⬜ Rate limiting and brute-force protection — planned  
-⬜ CORS policy locked down for production origins  
-⬜ HTTP security headers (HSTS, CSP, etc.)  
-⬜ WebSocket connections authenticated before use  
-⬜ Session management and timeouts  
-⬜ Centralized logging and monitoring for security events  
+⬜ CORS `ALLOWED_ORIGIN` set to production frontend URL in sops  
+⬜ mkcert dev cert replaced with CA-issued certificate  
+⬜ `pg-rotate-credentials` run before production deployment  
+⬜ Capability enforcement extended to transaction and register endpoints  
+⬜ Request throttling middleware on all endpoints  
+⬜ WebSocket connections authenticated before use (required before enabling GraphQL subscriptions)  
 ⬜ OCSP stapling (requires CA-issued cert)  
+⬜ Libsodium public-key challenge-response (upgrade path for highest-security deployments)  
 
 ## Security Audit Guidelines
 
 Before deploying Cheeblr to a public network, conduct a security audit covering:
 
 1. **Authentication Implementation**
-   - Verify the cryptographic implementation is correct
-   - Ensure nonces are truly random and used only once
-   - Check key storage mechanisms for vulnerabilities
-   - Replace dev-mode `X-User-Id` auth before any public exposure
+   - Verify Argon2id parameters are appropriate for the deployment hardware
+   - Confirm token entropy: 32 bytes from `System.Entropy.getEntropy` via `/dev/urandom`
+   - Confirm the DB stores only SHA-256 hashes, never raw tokens
+   - Verify `lookupSession` correctly rejects expired and revoked sessions
+   - Test that `revokeAllUserSessions` fires when `closeRegister` is called
 
 2. **Transport Security**
    - Replace mkcert dev cert with a CA-issued certificate
-   - Verify TLS configuration using tools like SSL Labs
-   - Ensure no mixed content issues exist
-   - Test certificate validation and SAN coverage
+   - Verify TLS configuration using SSL Labs or equivalent
+   - Confirm `Strict-Transport-Security` header is present on all responses
+   - Test that plain HTTP requests are rejected when `USE_TLS=true`
+   - Verify cert SAN covers all hostnames in use
 
 3. **API Security**
-   - Verify all endpoints require authentication (currently only inventory writes are gated)
-   - Extend capability enforcement to transaction and register endpoints
-   - Check for proper input validation
-   - Test rate limiting effectiveness once implemented
+   - Confirm all endpoints return 401 with no `Authorization` header
+   - Confirm all endpoints return 401 with an expired or revoked token
+   - Verify capability enforcement on inventory write endpoints
+   - Extend capability enforcement to transaction and register endpoints before production
+   - Test rate limiting: confirm 429 after 5 failed logins from same username+IP, and after 20 from same IP across any usernames
 
 4. **WebSocket Security**
-   - Verify authentication before session establishment (required before enabling GraphQL subscriptions)
-   - Test timeouts and disconnection handling
-   - Ensure message validation is thorough
+   - Define and implement authentication handshake before enabling GraphQL subscriptions
+   - Verify WSS is used exclusively (no plain `ws://`)
 
 5. **Secrets Management**
    - Verify sops age keys are not committed to the repository
+   - Confirm `secrets/cheeblr.yaml` is committed (encrypted) and `~/.config/sops/age/keys.txt` is not
    - Rotate database password before production deployment (`pg-rotate-credentials`)
-   - Ensure `/run/secrets/cheeblr/` permissions are correct on NixOS deployments
+   - Set `allowed_origin` in sops to the production frontend URL
+   - Verify `/run/secrets/cheeblr/` permissions are correct on NixOS deployments (`0750`, owned by service user)
 
-6. **Threat Modeling**
-   - Identify sensitive data and protection mechanisms
-   - Model potential attack vectors
-   - Develop mitigation strategies for identified threats
+6. **Compliance Audit Trail**
+   - Verify `sessions` table captures login time, terminal IP, user agent, and register binding
+   - Confirm Katip compliance log receives `logTransactionFinalize`, `logRegisterOpen`, `logRegisterClose` events
+   - Confirm `login_attempts` table records both successes and failures
+   - Verify `logAuthDenied` fires on every 401 from `loginHandler`

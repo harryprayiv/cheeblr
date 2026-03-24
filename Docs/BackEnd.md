@@ -26,9 +26,9 @@ The system uses a layered architecture with Servant for type-safe API definition
 
 ### Architectural Layers
 
-1. **API Layer** (`API/`): Type-level API definitions using Servant's DSL. `API.Inventory` defines the inventory CRUD endpoints with auth headers. `API.Transaction` defines the POS, register, ledger, and compliance endpoints plus all request/response types that are not domain models. `API.OpenApi` composes the full `CheeblrAPI` type, derives the OpenAPI3 schema via `servant-openapi3`, and exposes the `/openapi.json` endpoint.
+1. **API Layer** (`API/`): Type-level API definitions using Servant's DSL. `API.Inventory` defines the inventory CRUD endpoints with auth headers. `API.Transaction` defines the POS, register, ledger, and compliance endpoints plus all request/response types that are not domain models. `API.Auth` defines the login, logout, me, and user management endpoints. `API.OpenApi` composes the full `CheeblrAPI` type, derives the OpenAPI3 schema via `servant-openapi3`, and exposes the `/openapi.json` endpoint.
 
-2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`): Request handlers. `Server` handles inventory endpoints with capability checks, running effectful stacks via `runInvEff`. `Server.Transaction` implements all POS subsystem handlers (transactions, registers, ledger, compliance), running stacks via `runTxEff` and `runRegEff`.
+2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`, `Server/Auth.hs`): Request handlers. `Server` handles inventory endpoints with capability checks, running effectful stacks via `runInvEff`. `Server.Transaction` implements all POS subsystem handlers. `Server.Auth` implements the login, logout, me, and user management handlers including rate limit enforcement.
 
 3. **Service Layer** (`Service/`): Business logic combining state machine validation with effectful database operations. `Service.Transaction` and `Service.Register` load domain state via the `TransactionDb` and `RegisterDb` effects, run the relevant state machine transition to validate the command, and only proceed to the database effect if the transition is legal. No `DBPool` references appear here.
 
@@ -36,13 +36,13 @@ The system uses a layered architecture with Servant for type-safe API definition
 
 5. **State Machine Layer** (`State/`): Compile-time-enforced state machine definitions built on crem. `State.TransactionMachine` and `State.RegisterMachine` define the vertex types, GADT-indexed state types, topologies, commands, events, and transition functions. No IO. No effects. Pure transition logic only.
 
-6. **Database Layer** (`DB/`): `DB.Schema` defines all `Rel8able` row types and `TableSchema` values. `DB.Database` handles inventory CRUD using rel8 queries executed inside hasql sessions via `runSession`. `DB.Transaction` handles all transaction, register, reservation, and payment database operations using the same pattern. Domain types carry no database instances; all serialization passes through the `Rel8able` row types in `DB.Schema` via explicit conversion functions.
+6. **Database Layer** (`DB/`): `DB.Schema` defines all `Rel8able` row types and `TableSchema` values. `DB.Database` handles inventory CRUD. `DB.Transaction` handles all transaction, register, reservation, and payment operations. `DB.Auth` handles all auth operations: user creation, password hashing/verification, session lifecycle, and login attempt recording. All use rel8 queries executed inside hasql sessions via `runSession`. Domain types carry no database instances; all serialization passes through the `Rel8able` row types in `DB.Schema`.
 
-7. **Auth Layer** (`Auth/Simple.hs`): Dev-mode authentication via `X-User-Id` header lookup against a fixed set of dev users, with role-based capability gating.
+7. **Auth Layer** (`Auth/Session.hs`): Production session authentication. `resolveSession` extracts the `Bearer` token from the `Authorization` header, hashes it with SHA-256, looks up the matching non-revoked non-expired session row joined to the user row, updates `last_seen_at`, and returns a `SessionContext` or throws `err401`. All endpoints call this. There is no dev-mode bypass.
 
-8. **Types Layer** (`Types/`): Domain models -- `Types.Inventory` (menu items, strain lineage, inventory response), `Types.Transaction` (transactions, payments, taxes, discounts, compliance, ledger), `Types.Auth` (roles, capabilities). These types carry only Aeson instances.
+8. **Types Layer** (`Types/`): Domain models -- `Types.Inventory`, `Types.Transaction`, `Types.Auth`. These types carry only Aeson instances.
 
-9. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, TLS configuration, middleware setup.
+9. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, security headers middleware, TLS configuration, Warp startup.
 
 ### Key Technologies
 
@@ -61,27 +61,39 @@ The system uses a layered architecture with Servant for type-safe API definition
 | CORS | **wai-cors** with custom OPTIONS middleware |
 | UUID generation | **uuid** + **uuid-v4** (`Data.UUID.V4.nextRandom`), also abstracted as a `GenUUID` effect |
 | Logging | **katip** -- structured JSON log output with namespaces and severity |
+| Password hashing | **argon2** -- Argon2id with 3 iterations, 64 MB memory, 4 parallelism |
+| Cryptography | **crypton** -- SHA-256 for token hashing; **entropy** -- CSPRNG for token generation |
 
 ### System Flow
 
 **Inventory operations:**
 
-1. Warp receives request; custom OPTIONS middleware handles preflight
-2. `wai-cors` applies CORS headers
-3. Servant routes to handler in `Server` (inventory) or `Server.Transaction` (POS subsystem)
-4. Inventory handlers extract user from `X-User-Id` header via `Auth.Simple.lookupUser` and check capabilities
-5. `runInvEff` runs the `[InventoryDb, Error ServerError, IOE]` stack, delegating `InventoryDb` operations to `DB.Database` via `runInventoryDbIO`
-6. `DB.Database` functions build rel8 queries and execute them inside hasql sessions via `runSession`
-7. Results serialized as JSON and returned
+1. Warp receives request; `securityHeadersMiddleware` appends security headers to the response
+2. Custom OPTIONS middleware handles preflight
+3. `wai-cors` applies CORS headers
+4. Servant routes to handler in `Server`
+5. Inventory handlers call `resolveSession pool mAuthHeader` which extracts the Bearer token, hashes it, and looks up the session; returns `SessionContext { scUser, scSessionId }` or throws `err401`
+6. Capability check on `scUser`
+7. `runInvEff` runs the `[InventoryDb, Error ServerError, IOE]` stack, delegating `InventoryDb` operations to `DB.Database` via `runInventoryDbIO`
+8. Results serialized as JSON and returned
+
+**Auth operations:**
+
+1. Steps 1-3 above
+2. Servant routes to `Server.Auth`
+3. `loginHandler` checks per-credential and per-IP rate limits via `DB.Auth.recentFailedAttempts` and `recentFailedAttemptsByIp`
+4. Looks up user by username, verifies Argon2id hash
+5. On success: generates 32-byte CSPRNG token, stores SHA-256 hash in `sessions`, returns raw token
+6. Records outcome in `login_attempts`
 
 **State-machine-backed operations (transactions, registers):**
 
-1. Steps 1-3 above
+1. Steps 1-4 above
 2. Server handler runs the appropriate effect stack via `runTxEff` or `runRegEff`
 3. Service function loads the current entity via the `TransactionDb` or `RegisterDb` effect
 4. `fromTransaction` or `fromRegister` promotes the domain record into a `SomeTxState` or `SomeRegState` existential
 5. `runTxCommand` or `runRegCommand` runs the transition function, returning an event and a next state
-6. If the event is `InvalidTxCommand` or `InvalidRegCommand`, the service throws `err409` via `throwError` -- no database write occurs
+6. If the event is `InvalidTxCommand` or `InvalidRegCommand`, the service throws `err409` -- no database write occurs
 7. If the transition is valid, the service calls the corresponding database effect operation to persist the change
 8. Result serialized as JSON and returned
 
@@ -89,7 +101,7 @@ The system uses a layered architecture with Servant for type-safe API definition
 
 ### Main Application (`App.hs`)
 
-Bootstraps the server: reads environment variables for DB and server config, initializes the hasql-pool connection pool, creates all tables, configures CORS, conditionally enables TLS, and starts Warp.
+Bootstraps the server: reads environment variables, initializes the connection pool, creates all tables, applies middleware, conditionally enables TLS, and starts Warp.
 
 ```haskell
 data AppConfig = AppConfig
@@ -98,41 +110,27 @@ data AppConfig = AppConfig
   , tlsCertFile :: Maybe FilePath
   , tlsKeyFile  :: Maybe FilePath
   }
-
-data DBConfig = DBConfig
-  { dbHost     :: ByteString
-  , dbPort     :: Word
-  , dbName     :: ByteString
-  , dbUser     :: ByteString
-  , dbPassword :: ByteString
-  , poolSize   :: Int
-  }
 ```
 
-`DBConfig` fields use `ByteString` for host, name, user, and password, and `Word` for the port, matching the hasql connection parameter API. `initializeDB` builds a `hasql-pool` pool using `Hasql.Pool.Config` settings and runs a smoke-test statement on startup to verify connectivity. The resulting `DBPool` (an alias for `Hasql.Pool.Pool`) is threaded through the effect interpreters.
+Environment variables: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PORT`, `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE`, `ALLOWED_ORIGIN`. All have defaults. `ALLOWED_ORIGIN` controls the CORS policy -- empty or absent means all origins accepted (dev), non-empty locks CORS to that single origin (production).
 
-Environment variables: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `PORT`, `USE_TLS`, `TLS_CERT_FILE`, `TLS_KEY_FILE`. All have defaults. When `USE_TLS=true` and both cert/key files exist on disk, the server starts with `runTLS`; otherwise it falls back to plain HTTP.
+#### Middleware Stack
 
-CORS is configured to allow any origin (`corsOrigins = Nothing`) with all standard methods and custom headers (`x-requested-with`, `x-user-id`). A separate `handleOptionsMiddleware` intercepts `OPTIONS` requests directly to handle preflight before Servant routing.
+Middleware is composed in order, outermost first:
+
+1. **`securityHeadersMiddleware`** -- appends HSTS, CSP, X-Frame-Options, X-Content-Type-Options, and Referrer-Policy to every response
+2. **`handleOptionsMiddleware`** -- intercepts `OPTIONS` requests before Servant routing
+3. **`wai-cors`** -- applies CORS headers based on `ALLOWED_ORIGIN`
+
+```haskell
+app = securityHeadersMiddleware
+    . handleOptionsMiddleware
+    $ cors (const $ Just corsPolicy) (serve cheeblrAPI (combinedServer pool logEnv))
+```
 
 ### OpenAPI3 Schema (`API/OpenApi.hs`)
 
-`API.OpenApi` composes `InventoryAPI` and `PosAPI` into `CheeblrAPI`, appends a `GET /openapi.json` endpoint, and derives the schema using `servant-openapi3`:
-
-```haskell
-type CheeblrAPI =
-       InventoryAPI
-  :<|> PosAPI
-  :<|> "openapi.json" :> Get '[JSON] OpenApi
-
-cheeblrOpenApi :: OpenApi
-cheeblrOpenApi = toOpenApi cheeblrAPI
-  & info . title       .~ "Cheeblr API"
-  & info . version     .~ "1.0"
-  & info . description ?~ "Cannabis dispensary POS and inventory management API"
-```
-
-Manual `ToSchema` instances are provided for `GQLRequest`, `GQLResponse`, and `OpenApi` itself (each returning an opaque named schema) so that `toOpenApi` can traverse the full API type without errors. All domain types in `Types.Inventory`, `Types.Transaction`, and `Types.Auth` derive `ToSchema` via `DeriveAnyClass`.
+`CheeblrAPI` composes `InventoryAPI`, `PosAPI`, and `AuthAPI`, appends `GET /openapi.json`, and derives the schema via `servant-openapi3`. Manual `ToSchema` instances are provided for `GQLRequest`, `GQLResponse`, and `OpenApi` itself.
 
 ### Combined Server (`Server.hs`)
 
@@ -141,154 +139,112 @@ combinedServer :: DBPool -> LogEnv -> Server CheeblrAPI
 combinedServer pool logEnv =
   inventoryServer pool logEnv
     :<|> posServerImpl pool logEnv
+    :<|> authServerImpl pool logEnv
     :<|> pure cheeblrOpenApi
 ```
 
-`inventoryServer` handles the six inventory endpoints (four CRUD, `/session`, `/graphql/inventory`). Each handler extracts the user from the `X-User-Id` header via `lookupUser`, derives capabilities from the user's role, and gates write operations behind capability checks. Read (GET) is allowed for all authenticated users.
-
-Handlers that require database access run the effectful stack via `runInvEff`:
+All inventory handlers resolve the session unconditionally:
 
 ```haskell
-runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
-runInvEff pool action =
-  liftIO . runEff . runErrorNoCallStack @ServerError . runInventoryDbIO pool $ action
-  >>= either throwError pure
+auth :: Maybe Text -> Handler AuthenticatedUser
+auth mHeader = scUser <$> resolveSession pool mHeader
 ```
 
-### Effect Stacks (`Server/Transaction.hs`)
+`resolveSession` is the single authentication entry point for all non-auth endpoints.
 
-The two effect stacks used by the POS subsystem:
+### Auth Server (`Server/Auth.hs`)
+
+`authServerImpl` wires the five auth handlers:
+
+```haskell
+authServerImpl :: DBPool -> LogEnv -> Server AuthAPI
+authServerImpl pool logEnv =
+       loginHandler    pool logEnv
+  :<|> logoutHandler   pool logEnv
+  :<|> meHandler       pool
+  :<|> listUsersHandler pool logEnv
+  :<|> createUserHandler pool logEnv
+```
+
+`checkLoginRateLimit` runs two independent checks before any password work:
+
+```haskell
+perCredentialLimit = 5   -- failures per username+IP in 10 minutes
+perIpLimit         = 20  -- failures per IP across all usernames in 10 minutes
+```
+
+Both return `429 Too Many Requests` with `Retry-After: 600`.
+
+### Effect Stacks (`Server/Transaction.hs`)
 
 ```haskell
 type TxEffs  = '[GenUUID, Clock, TransactionDb, Error ServerError, IOE]
 type RegEffs = '[GenUUID, Clock, RegisterDb,    Error ServerError, IOE]
 ```
 
-```haskell
-runTxEff :: DBPool -> Eff TxEffs a -> Handler a
-runTxEff pool action =
-  liftIO . runEff
-         . runErrorNoCallStack @ServerError
-         . runTransactionDbIO pool
-         . runClockIO
-         . runGenUUIDIO
-         $ action
-  >>= either throwError pure
+These are the only points where `DBPool` enters the effect stack. Everything above -- service functions, state machine code -- is pool-free.
 
-runRegEff :: DBPool -> Eff RegEffs a -> Handler a
-runRegEff pool action =
-  liftIO . runEff
-         . runErrorNoCallStack @ServerError
-         . runRegisterDbIO pool
-         . runClockIO
-         . runGenUUIDIO
-         $ action
-  >>= either throwError pure
-```
+### Database Layer (`DB/Schema.hs`, `DB/Database.hs`, `DB/Transaction.hs`, `DB/Auth.hs`)
 
-These are the only points in the codebase where `DBPool` is passed into an interpreter. Everything above this level -- service functions, state machine code -- is entirely pool-free.
-
-### Database Layer (`DB/Schema.hs`, `DB/Database.hs`, `DB/Transaction.hs`)
-
-`DB.Schema` holds the full set of `Rel8able` row types and corresponding `TableSchema` values:
+`DB.Schema` holds the full set of `Rel8able` row types including the auth tables:
 
 ```haskell
-data MenuItemRow f = MenuItemRow
-  { menuSort        :: Column f Int32
-  , menuSku         :: Column f UUID
-  , menuBrand       :: Column f Text
-  , ...
-  } deriving stock Generic
-    deriving anyclass Rel8able
+data UserRow f = UserRow
+  { userId :: Column f UUID, userName :: Column f Text
+  , displayName :: Column f Text, email :: Column f (Maybe Text)
+  , userRole :: Column f Text, userLocationId :: Column f (Maybe UUID)
+  , passwordHash :: Column f Text, isActive :: Column f Bool
+  , userCreatedAt :: Column f UTCTime, userUpdatedAt :: Column f UTCTime
+  } deriving stock Generic deriving anyclass Rel8able
 
-menuItemSchema :: TableSchema (MenuItemRow Name)
-menuItemSchema = TableSchema
-  { name    = "menu_items"
-  , columns = MenuItemRow { menuSort = "sort", menuSku = "sku", ... }
-  }
+data SessionRow f = SessionRow
+  { sessId :: Column f UUID, sessUserId :: Column f UUID
+  , sessTokenHash :: Column f Text  -- SHA-256(raw_token), hex-encoded
+  , sessRegisterId :: Column f (Maybe UUID)
+  , sessCreatedAt :: Column f UTCTime, sessLastSeenAt :: Column f UTCTime
+  , sessExpiresAt :: Column f UTCTime, sessRevoked :: Column f Bool
+  , sessRevokedAt :: Column f (Maybe UTCTime), sessRevokedBy :: Column f (Maybe UUID)
+  , sessUserAgent :: Column f (Maybe Text), sessIpAddress :: Column f (Maybe Text)
+  } deriving stock Generic deriving anyclass Rel8able
 ```
 
-`DB.Database` builds queries as rel8 `Query` values, executes them with `runSession`, and converts between row types and domain types via explicit functions (`rowsToMenuItem`, `menuItemToRow`, `strainLineageToRow`, etc.). There are no `FromRow` or `ToRow` instances on domain types.
+`DB.Auth` provides:
 
-`DB.Transaction` follows the same pattern for all transaction-related tables. Pure conversion functions (`txDomainToRow`, `txRowToDomain`, `paymentDomainToRow`, etc.) handle all mapping between the `Rel8able` row types and the domain types in `Types.Transaction`.
-
-### POS Server (`Server/Transaction.hs`)
-
-```haskell
-posServerImpl :: DBPool -> LogEnv -> Server PosAPI
-posServerImpl pool logEnv =
-  transactionServer pool logEnv
-    :<|> registerServer  pool logEnv
-    :<|> ledgerServer    pool
-    :<|> complianceServer pool
-```
-
-Transaction and register handlers delegate business logic to `Service.Transaction` and `Service.Register`, running the appropriate effect stack. Ledger and compliance handlers remain stubs.
-
-### Service Layer (`Service/Transaction.hs`, `Service/Register.hs`)
-
-Service functions are fully polymorphic over their effect row. They carry no `DBPool` references. The common pattern:
-
-```haskell
-loadTx
-  :: (TransactionDb :> es, Error ServerError :> es)
-  => UUID
-  -> Eff es (Transaction, SomeTxState)
-loadTx txId = do
-  maybeTx <- getTransactionById txId
-  case maybeTx of
-    Nothing -> throwError err404 { errBody = "Transaction not found" }
-    Just tx -> pure (tx, fromTransaction tx)
-
-guardTxEvent :: Error ServerError :> es => TxEvent -> Eff es ()
-guardTxEvent (InvalidTxCommand msg) =
-  throwError err409 { errBody = LBS.fromStrict (TE.encodeUtf8 msg) }
-guardTxEvent _ = pure ()
-```
-
-`loadTx` promotes the database record into a `SomeTxState`. `guardTxEvent` short-circuits with `409 Conflict` if the state machine rejected the command. Only after `guardTxEvent` passes does the service call the database effect operation.
+- `hashPassword :: Text -> IO Text` -- Argon2id PHC string (includes salt, parameters, hash)
+- `verifyPassword :: Text -> Text -> Bool` -- constant-time comparison via Argon2id
+- `createUser :: DBPool -> NewUser -> IO UUID`
+- `lookupUserByUsername :: DBPool -> Text -> IO (Maybe (UserRow Result))`
+- `createSession :: DBPool -> UUID -> Maybe UUID -> Text -> Text -> IO (SessionToken, UTCTime)` -- generates 32-byte raw token, stores SHA-256 hash
+- `lookupSession :: DBPool -> Text -> IO (Maybe (SessionRow Result, UserRow Result))` -- hashes incoming token, queries, updates `last_seen_at`
+- `revokeSession :: DBPool -> UUID -> Maybe UUID -> IO ()`
+- `revokeAllUserSessions :: DBPool -> UUID -> IO ()`
+- `recordLoginAttempt :: DBPool -> Text -> Text -> Bool -> IO ()`
+- `recentFailedAttempts :: DBPool -> Text -> Text -> NominalDiffTime -> IO Int` -- per credential
+- `recentFailedAttemptsByIp :: DBPool -> Text -> NominalDiffTime -> IO Int` -- per IP across all usernames
 
 ## Effect Layer
 
-The `Effect/` modules define the algebraic effects used throughout the service and server layers. Each module exports the effect GADT, smart constructor functions for sending operations, an IO interpreter that delegates to the corresponding `DB.*` module, and a pure in-memory interpreter for testing.
+The `Effect/` modules define algebraic effects used throughout the service and server layers. Each module exports the effect GADT, smart constructors, an IO interpreter delegating to the corresponding `DB.*` module, and a pure in-memory interpreter for testing.
 
 ### `Effect.Clock`
 
-Provides `currentTime :: Clock :> es => Eff es UTCTime`, abstracting over `Data.Time.getCurrentTime`. Interpreters:
-
-- `runClockIO` -- delegates to `getCurrentTime`
-- `runClockPure t` -- always returns the fixed time `t`
-- `runClockPureSequence ts` -- consumes a supply of times in order, failing if exhausted
+`currentTime :: Clock :> es => Eff es UTCTime`. Interpreters: `runClockIO`, `runClockPure t`, `runClockPureSequence ts`.
 
 ### `Effect.GenUUID`
 
-Provides `nextUUID :: GenUUID :> es => Eff es UUID`, abstracting over `Data.UUID.V4.nextRandom`. Interpreters:
-
-- `runGenUUIDIO` -- delegates to `nextRandom`
-- `runGenUUIDPure supply` -- consumes a pre-supplied list of UUIDs, failing if exhausted
+`nextUUID :: GenUUID :> es => Eff es UUID`. Interpreters: `runGenUUIDIO`, `runGenUUIDPure supply`.
 
 ### `Effect.InventoryDb`
 
-Operations: `getAllMenuItems`, `insertMenuItem`, `updateMenuItem`, `deleteMenuItem`. Interpreters:
-
-- `runInventoryDbIO pool` -- delegates to `DB.Database`
-- `runInventoryDbPure initial` -- backed by a `Map UUID MenuItem`; returns the final store state alongside the result
+Operations: `getAllMenuItems`, `insertMenuItem`, `updateMenuItem`, `deleteMenuItem`. Interpreters: `runInventoryDbIO pool`, `runInventoryDbPure initial`.
 
 ### `Effect.RegisterDb`
 
-Operations: `getAllRegisters`, `getRegisterById`, `createRegister`, `updateRegister`, `openRegisterDb`, `closeRegisterDb`. Interpreters:
-
-- `runRegisterDbIO pool` -- delegates to `DB.Transaction`
-- `runRegisterDbPure initial` -- backed by `RegStore`, a newtype over `Map UUID Register`
+Operations: `getAllRegisters`, `getRegisterById`, `createRegister`, `updateRegister`, `openRegisterDb`, `closeRegisterDb`. Interpreters: `runRegisterDbIO pool`, `runRegisterDbPure initial`.
 
 ### `Effect.TransactionDb`
 
-The largest effect. Operations cover the full transaction lifecycle: `getAllTransactions`, `getTransactionById`, `createTransaction`, `updateTransaction`, `voidTransaction`, `refundTransaction`, `clearTransaction`, `finalizeTransaction`, `addTransactionItem`, `deleteTransactionItem`, `addPaymentTransaction`, `deletePaymentTransaction`, `getTxIdByItemId`, `getTxIdByPaymentId`, `getInventoryAvailability`, `createReservation`, `releaseReservation`. Interpreters:
-
-- `runTransactionDbIO pool` -- delegates to `DB.Transaction`
-- `runTransactionDbPure initial` -- backed by `TxStore`, which carries maps for transactions, item-to-transaction lookups, payment-to-transaction lookups, reservations, and an in-memory inventory count. Requires `GenUUID :> es` and `Clock :> es` in its constraint row because the pure refund implementation needs fresh UUIDs and timestamps.
-
-The `TxStore` type:
+Full transaction lifecycle operations. The pure interpreter `runTransactionDbPure` is backed by `TxStore`:
 
 ```haskell
 data TxStore = TxStore
@@ -300,9 +256,9 @@ data TxStore = TxStore
   }
 ```
 
-### Testing with Pure Interpreters
+Requires `GenUUID :> es` and `Clock :> es` because the pure refund implementation needs fresh UUIDs and timestamps.
 
-The pure interpreters make the unit test suite independent of PostgreSQL. Tests in `Test.Service.TransactionSpec` and `Test.Service.RegisterSpec` run full service-layer logic -- including state machine guards, inventory reservation, and round-trip sequencing -- against in-memory state:
+### Testing with Pure Interpreters
 
 ```haskell
 type TestEffs = '[TransactionDb, Clock, GenUUID, Error ServerError, IOE]
@@ -318,25 +274,15 @@ runTest store action =
   $ action
 ```
 
-This means state machine invariants, HTTP error codes, and inventory accounting can all be verified without a running database, while `Test.Integration.JsonContractSpec` and `Test.GraphQL.IntegrationSpec` provide the serialization boundary coverage.
+State machine invariants, HTTP error codes, and inventory accounting are all verified without a running database. `Test.Integration` provides serialization boundary and real database coverage.
 
 ## State Machine Layer
 
 ### Design Philosophy
 
-The state machine layer promotes transaction and register lifecycle invariants into compile-time proof obligations. The topology of each machine is a type, not a comment, and every transition clause must satisfy it or the project will not build.
-
-### Key Technologies Used
-
-- **`DataKinds`**: Promotes value-level constructors to type-level inhabitants, allowing them to appear as type indices
-- **`GADTs`**: Enables state types indexed by vertex, giving GHC local type equality witnesses at each pattern match branch
-- **`TypeFamilies`** and **`singletons-base`**: Bridge the types-versus-values gap; the `singletons` machinery generates a parallel `SRegVertex` / `STxVertex` type whose constructors live at both levels simultaneously
+The state machine layer promotes transaction and register lifecycle invariants into compile-time proof obligations. The topology is a type, not a comment. Every transition clause must satisfy it or the project will not build.
 
 ### `State.RegisterMachine`
-
-Manages the `Closed / Open` lifecycle of a cash register.
-
-#### Topology
 
 ```haskell
 $(singletons [d|
@@ -349,63 +295,7 @@ type RegTopology = 'Topology
    ]
 ```
 
-`RegClosed` can transition to itself or to `RegOpen`. `RegOpen` can transition to itself or to `RegClosed`. Any `regAction` clause that attempts to return a state at a vertex not in the successor list will fail to compile.
-
-#### State Type
-
-```haskell
-data RegState (v :: RegVertex) where
-  ClosedState :: Register -> RegState 'RegClosed
-  OpenState   :: Register -> RegState 'RegOpen
-```
-
-#### Existential Wrapper
-
-```haskell
-data SomeRegState = forall v. SomeRegState (SRegVertex v) (RegState v)
-```
-
-The existential is necessary because `fromRegister` determines the vertex at runtime by inspecting `registerIsOpen`. The singleton `SRegVertex v` travels alongside the state so that callers can recover vertex information by pattern-matching on it.
-
-#### Commands and Events
-
-```haskell
-data RegCommand
-  = OpenRegCmd  UUID Int
-  | CloseRegCmd UUID Int
-
-data RegEvent
-  = RegOpened         Register
-  | RegWasClosed      Register Int
-  | InvalidRegCommand Text
-```
-
-#### Transition Function
-
-```haskell
-regAction :: RegState v -> RegCommand -> ActionResult Identity RegTopology RegState v RegEvent
-```
-
-Variance is computed purely inside `regAction`:
-
-```haskell
-regAction (OpenState reg) (CloseRegCmd _ countedCash) =
-  let variance = registerExpectedDrawerAmount reg - countedCash
-      closed   = reg { registerIsOpen = False, registerCurrentDrawerAmount = countedCash }
-  in pureResult (RegWasClosed closed variance) (ClosedState closed)
-```
-
-#### Entry Point
-
-```haskell
-runRegCommand :: SomeRegState -> RegCommand -> (RegEvent, SomeRegState)
-```
-
 ### `State.TransactionMachine`
-
-Manages the full transaction lifecycle.
-
-#### Topology
 
 ```haskell
 $(singletons [d|
@@ -423,106 +313,62 @@ type TxTopology = 'Topology
    ]
 ```
 
-Terminal states (`TxVoided`, `TxRefunded`) only list themselves as successors. Any attempt to transition out of them produces a compile error.
+Terminal states only list themselves as successors. Any attempt to transition out of them produces a compile error.
 
-#### State Type
+`someTxStatus` extracts the domain `TransactionStatus` from a `SomeTxState` by casing on the singleton, allowing the service layer to persist status changes without pattern-matching on the full existential.
 
-```haskell
-data TxState (v :: TxVertex) where
-  CreatedState    :: T.Transaction -> TxState 'TxCreated
-  InProgressState :: T.Transaction -> TxState 'TxInProgress
-  CompletedState  :: T.Transaction -> TxState 'TxCompleted
-  VoidedState     :: T.Transaction -> TxState 'TxVoided
-  RefundedState   :: T.Transaction -> TxState 'TxRefunded
-```
-
-#### Commands and Events
-
-```haskell
-data TxCommand
-  = AddItemCmd       T.TransactionItem
-  | RemoveItemCmd    UUID
-  | AddPaymentCmd    T.PaymentTransaction
-  | RemovePaymentCmd UUID
-  | FinalizeCmd
-  | VoidCmd          Text
-  | RefundCmd        Text UUID
-
-data TxEvent
-  = ItemAdded        T.TransactionItem
-  | ItemRemoved      UUID
-  | PaymentAdded     T.PaymentTransaction
-  | PaymentRemoved   UUID
-  | TxFinalized
-  | TxWasVoided      Text
-  | TxWasRefunded    Text UUID
-  | InvalidTxCommand Text
-```
-
-#### Selected Transition Clauses
-
-```haskell
-txAction (CreatedState tx) (AddItemCmd item) =
-  pureResult (ItemAdded item)
-    (InProgressState tx { T.transactionStatus = T.InProgress })
-
-txAction (InProgressState tx) FinalizeCmd =
-  pureResult TxFinalized
-    (CompletedState tx { T.transactionStatus = T.Completed })
-
-txAction (CompletedState tx) (RefundCmd reason refundId) =
-  pureResult (TxWasRefunded reason refundId)
-    (RefundedState tx { T.transactionStatus = T.Refunded, ... })
-
-txAction (VoidedState   tx) _ =
-  pureResult (InvalidTxCommand "Transaction is voided")   (VoidedState   tx)
-txAction (RefundedState tx) _ =
-  pureResult (InvalidTxCommand "Transaction is refunded") (RefundedState tx)
-```
-
-`someTxStatus` extracts the domain `TransactionStatus` from a `SomeTxState` by casing on the singleton, allowing the service layer to persist status changes without pattern-matching on the full existential:
-
-```haskell
-someTxStatus :: SomeTxState -> T.TransactionStatus
-someTxStatus (SomeTxState sv _) = case sv of
-  STxCreated    -> T.Created
-  STxInProgress -> T.InProgress
-  STxCompleted  -> T.Completed
-  STxVoided     -> T.Voided
-  STxRefunded   -> T.Refunded
-```
-
-### `fromTransaction` and `fromRegister`
-
-These functions bridge the database layer into the state machine layer and are total functions:
-
-```haskell
-fromTransaction :: T.Transaction -> SomeTxState
-fromRegister    :: Register      -> SomeRegState
-```
-
-Every possible database state maps to exactly one vertex.
+`fromTransaction` and `fromRegister` are total functions that bridge the database layer into the state machine layer.
 
 ## Authentication and Authorization
 
-### Dev Auth Model (`Auth/Simple.hs`)
+### Session Authentication (`Auth/Session.hs`)
 
-Authentication uses a fixed map of dev users, looked up by the `X-User-Id` request header. The header is trusted without verification.
+All non-auth endpoints resolve identity through `resolveSession`:
 
 ```haskell
-lookupUser :: Maybe Text -> AuthenticatedUser
+data SessionContext = SessionContext
+  { scUser      :: AuthenticatedUser
+  , scSessionId :: UUID
+  }
+
+resolveSession :: DBPool -> Maybe Text -> Handler SessionContext
 ```
 
-`lookupUser` tries two maps in sequence: by key name (`"cashier-1"`, etc., case-insensitive), then by UUID string. If no header is provided or no match is found, defaults to `cashier-1`.
+`resolveSession` extracts `Bearer <token>` from the header, base64url-decodes the raw token, hashes it with SHA-256, and queries `sessions JOIN users` with conditions `NOT revoked AND expires_at > NOW() AND is_active`. On a hit, it updates `last_seen_at` and returns the `SessionContext`. Any miss throws `err401`.
 
-### Dev Users
+### Token Design
 
-| Key | Role | UUID |
+- 32 bytes from `System.Entropy.getEntropy` (reads `/dev/urandom`)
+- base64url-encoded without padding as the client-facing token
+- SHA-256 of the raw bytes stored in `sessions.token_hash` as lowercase hex
+- The database never holds anything usable if breached
+
+### Password Hashing (`DB/Auth.hs`)
+
+Argon2id with parameters matching OWASP minimum recommendations:
+
+```haskell
+argonOpts = Argon2.Options
+  { iterations  = 3
+  , memory      = 65536   -- 64 MB
+  , parallelism = 4
+  , variant     = Argon2.Argon2id
+  , version     = Argon2.Version13
+  }
+```
+
+`hashPassword` generates a fresh 16-byte salt per call and returns a PHC-format string (includes parameters and salt). `verifyPassword` re-derives and compares; constant-time by construction.
+
+### Rate Limiting (`Server/Auth.hs`)
+
+Two independent checks on every login attempt, using the `login_attempts` table (DB-backed, survives restarts):
+
+| Check | Threshold | Window |
 |---|---|---|
-| `customer-1` | Customer | `8244082f-a6bc-4d6c-9427-64a0ecdc10db` |
-| `cashier-1` | Cashier | `0a6f2deb-892b-4411-8025-08c1a4d61229` |
-| `manager-1` | Manager | `8b75ea4a-00a4-4a2a-a5d5-a1bab8883802` |
-| `admin-1` | Admin | `d3a1f4f0-c518-4db3-aa43-e80b428d6304` |
+| Per credential (username + IP) | 5 failures | 10 minutes |
+| Per IP (all usernames) | 20 failures | 10 minutes |
+
+The per-IP check catches credential-stuffing attacks that rotate across multiple usernames to evade the per-credential limit.
 
 ### Roles and Capabilities (`Types/Auth.hs`)
 
@@ -550,7 +396,23 @@ data UserRole = Customer | Cashier | Manager | Admin
 | `capCanManageUsers` | N | N | N | Y |
 | `capCanViewCompliance` | N | Y | Y | Y |
 
+### Admin Bootstrap
+
+The `bootstrap-admin` devshell command connects to the DB, checks whether any users exist, and if not generates a random password and creates an admin user. The password is printed once to stdout and stored encrypted in sops. It is a no-op if any users already exist.
+
 ## API Reference
+
+### Auth Endpoints
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/login` | None | Username/password -> session token |
+| POST | `/auth/logout` | Bearer token | Revoke current session |
+| GET | `/auth/me` | Bearer token | Current user role and capabilities |
+| GET | `/auth/users` | Admin only | List all users |
+| POST | `/auth/users` | Admin only | Create a new user |
+
+`POST /auth/login` accepts `{ loginUsername, loginPassword, loginRegisterId? }` and returns `{ loginToken, loginExpiresAt, loginUser }`. The token is an opaque base64url string. All subsequent requests send it as `Authorization: Bearer <token>`.
 
 ### Inventory Endpoints
 
@@ -563,8 +425,6 @@ data UserRole = Customer | Cashier | Manager | Admin
 | GET | `/session` | Any role | Returns user role and capabilities |
 | POST | `/graphql/inventory` | Any role | GraphQL endpoint for inventory queries and mutations |
 | GET | `/openapi.json` | None | OpenAPI3 schema for the full API |
-
-`GET /inventory` returns available quantity (stock minus active reservations) rather than raw quantity, via a rel8 left-join aggregate over `inventory_reservation`.
 
 ### Transaction Endpoints
 
@@ -585,14 +445,6 @@ data UserRole = Customer | Cashier | Manager | Admin
 
 State machine validation applies to all item, payment, finalize, void, and refund operations. Illegal transitions return `409 Conflict`.
 
-### Inventory Availability Endpoints
-
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/inventory/available/:sku` | Get total, reserved, and available quantity for a SKU |
-| POST | `/inventory/reserve` | Create an inventory reservation |
-| DELETE | `/inventory/release/:id` | Release a reservation |
-
 ### Register Endpoints
 
 | Method | Endpoint | Description |
@@ -604,276 +456,168 @@ State machine validation applies to all item, payment, finalize, void, and refun
 | POST | `/register/open/:id` | Open register with starting cash |
 | POST | `/register/close/:id` | Close register, report variance |
 
-Open and close operations pass through `Service.Register`. Attempting to open an already-open register or close an already-closed register returns `409 Conflict`.
+### Inventory Availability Endpoints
 
-### Ledger Endpoints (stubs)
-
-| Method | Endpoint | Status |
+| Method | Endpoint | Description |
 |---|---|---|
-| GET | `/ledger/entry` | Returns `[]` |
-| GET | `/ledger/entry/:id` | Returns `501` |
-| GET | `/ledger/account` | Returns `[]` |
-| GET | `/ledger/account/:id` | Returns `501` |
-| POST | `/ledger/account` | Returns `501` |
-| POST | `/ledger/report/daily` | Returns zeroed `DailyReportResult` |
+| GET | `/inventory/available/:sku` | Total, reserved, and available quantity for a SKU |
+| POST | `/inventory/reserve` | Create an inventory reservation |
+| DELETE | `/inventory/release/:id` | Release a reservation |
 
-### Compliance Endpoints (stubs)
+### Ledger and Compliance Endpoints (stubs)
 
-| Method | Endpoint | Status |
-|---|---|---|
-| POST | `/compliance/verification` | Echoes back the input |
-| GET | `/compliance/record/:transaction_id` | Returns `501` |
-| POST | `/compliance/report` | Returns placeholder text |
+Ledger endpoints return `[]` or `501`. Compliance endpoints echo input or return placeholder text.
 
 ## Data Models
 
+### Auth Tables (`DB/Schema.hs`)
+
+Three tables managed by `createAuthTables` in `DB.Auth`:
+
+- `users` -- credentials, role, active flag
+- `sessions` -- token hashes, register binding, expiry, revocation
+- `login_attempts` -- audit trail for rate limiting and compliance
+
+See [Database Schema](#database-schema) for full DDL.
+
 ### Inventory Models (`Types/Inventory.hs`)
 
-Domain types carry only Aeson instances. All database mapping is handled by conversion functions in `DB.Database` operating on the `Rel8able` row types from `DB.Schema`.
-
-#### MenuItem
-
-```haskell
-data MenuItem = MenuItem
-  { sort :: Int, sku :: UUID, brand :: Text, name :: Text
-  , price :: Int
-  , measure_unit :: Text, per_package :: Text, quantity :: Int
-  , category :: ItemCategory, subcategory :: Text
-  , description :: Text
-  , tags :: V.Vector Text, effects :: V.Vector Text
-  , strain_lineage :: StrainLineage
-  }
-```
-
-Enums (`category`, `species`) are stored as `TEXT` in the database and round-tripped via `show`/`read` inside the conversion functions.
-
-#### StrainLineage
-
-```haskell
-data StrainLineage = StrainLineage
-  { thc :: Text, cbg :: Text, strain :: Text, creator :: Text
-  , species :: Species, dominant_terpene :: Text
-  , terpenes :: V.Vector Text, lineage :: V.Vector Text
-  , leafly_url :: Text, img :: Text
-  }
-```
-
-#### Enums
-
-- **Species**: `Indica | IndicaDominantHybrid | Hybrid | SativaDominantHybrid | Sativa`
-- **ItemCategory**: `Flower | PreRolls | Vaporizers | Edibles | Drinks | Concentrates | Topicals | Tinctures | Accessories`
-
-#### Inventory
-
-```haskell
-newtype Inventory = Inventory { items :: V.Vector MenuItem }
-```
-
-`Inventory` serializes as a bare JSON array (custom `ToJSON`/`FromJSON`).
+`MenuItem`, `StrainLineage`, `Inventory`, `MutationResponse`. Domain types carry only Aeson instances. All database mapping is handled by conversion functions in `DB.Database`.
 
 ### Transaction Models (`Types/Transaction.hs`)
 
-#### Transaction
+`Transaction`, `TransactionItem`, `PaymentTransaction`, `TaxRecord`, `DiscountRecord` and associated enums. `transactionItems` and `transactionPayments` are populated by `hydrateTx`/`hydrateItem` passes after the main query.
 
-```haskell
-data Transaction = Transaction
-  { transactionId                     :: UUID
-  , transactionStatus                 :: TransactionStatus
-  , transactionCreated                :: UTCTime
-  , transactionCompleted              :: Maybe UTCTime
-  , transactionCustomerId             :: Maybe UUID
-  , transactionEmployeeId             :: UUID
-  , transactionRegisterId             :: UUID
-  , transactionLocationId             :: UUID
-  , transactionItems                  :: [TransactionItem]
-  , transactionPayments               :: [PaymentTransaction]
-  , transactionSubtotal               :: Int
-  , transactionDiscountTotal          :: Int
-  , transactionTaxTotal               :: Int
-  , transactionTotal                  :: Int
-  , transactionType                   :: TransactionType
-  , transactionIsVoided               :: Bool
-  , transactionVoidReason             :: Maybe Text
-  , transactionIsRefunded             :: Bool
-  , transactionRefundReason           :: Maybe Text
-  , transactionReferenceTransactionId :: Maybe UUID
-  , transactionNotes                  :: Maybe Text
-  }
-```
+### Enum Serialization Convention
 
-`transactionItems` and `transactionPayments` are populated by `getTransactionById` after the main query, via separate `hydrateTx`/`hydrateItem` passes.
-
-#### Enums
-
-| Type | Values | DB format |
-|---|---|---|
-| `TransactionStatus` | `Created | InProgress | Completed | Voided | Refunded` | SCREAMING_SNAKE |
-| `TransactionType` | `Sale | Return | Exchange | InventoryAdjustment | ManagerComp | Administrative` | SCREAMING_SNAKE |
-| `PaymentMethod` | `Cash | Debit | Credit | ACH | GiftCard | StoredValue | Mixed | Other Text` | SCREAMING_SNAKE |
-| `TaxCategory` | `RegularSalesTax | ExciseTax | CannabisTax | LocalTax | MedicalTax | NoTax` | SCREAMING_SNAKE |
-| `DiscountType` | `PercentOff Scientific | AmountOff Int | BuyOneGetOne | Custom Text Int` | String discriminator + nullable percent column |
-
-JSON serialization uses PascalCase via Aeson's generic deriving. `FromJSON` instances accept both forms for interop with the frontend. DB parsing uses SCREAMING_SNAKE exclusively via the `show*` and `parse*` functions in `DB.Transaction`.
-
-### Request/Response Types (`API/Transaction.hs`)
-
-```haskell
-data Register = Register
-  { registerId :: UUID, registerName :: Text, registerLocationId :: UUID
-  , registerIsOpen :: Bool
-  , registerCurrentDrawerAmount :: Int, registerExpectedDrawerAmount :: Int
-  , registerOpenedAt :: Maybe UTCTime, registerOpenedBy :: Maybe UUID
-  , registerLastTransactionTime :: Maybe UTCTime }
-
-data AvailableInventory = AvailableInventory
-  { availableTotal :: Int, availableReserved :: Int, availableActual :: Int }
-
-data ReservationRequest = ReservationRequest
-  { reserveItemSku :: UUID, reserveTransactionId :: UUID, reserveQuantity :: Int }
-
-data OpenRegisterRequest  = OpenRegisterRequest  { openRegisterEmployeeId :: UUID, openRegisterStartingCash :: Int }
-data CloseRegisterRequest = CloseRegisterRequest { closeRegisterEmployeeId :: UUID, closeRegisterCountedCash :: Int }
-data CloseRegisterResult  = CloseRegisterResult  { closeRegisterResultRegister :: Register, closeRegisterResultVariance :: Int }
-```
+Enums are stored as SCREAMING_SNAKE_CASE in the database. JSON uses PascalCase via Aeson's generic deriving. `FromJSON` instances accept both forms for frontend interop.
 
 ## Database Schema
+
+### Auth Tables
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+    id            UUID PRIMARY KEY,
+    username      TEXT NOT NULL UNIQUE,
+    display_name  TEXT NOT NULL,
+    email         TEXT,
+    role          TEXT NOT NULL,
+    location_id   UUID,
+    password_hash TEXT NOT NULL,    -- Argon2id PHC string, includes salt
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id            UUID PRIMARY KEY,
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash    TEXT NOT NULL UNIQUE,  -- SHA-256(raw_token), hex
+    register_id   UUID,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at    TIMESTAMPTZ NOT NULL,
+    revoked       BOOLEAN NOT NULL DEFAULT FALSE,
+    revoked_at    TIMESTAMPTZ,
+    revoked_by    UUID REFERENCES users(id),
+    user_agent    TEXT,
+    ip_address    TEXT
+)
+
+CREATE INDEX sessions_token_hash_idx ON sessions (token_hash) WHERE NOT revoked
+
+CREATE TABLE IF NOT EXISTS login_attempts (
+    id           UUID PRIMARY KEY,
+    username     TEXT NOT NULL,
+    ip_address   TEXT NOT NULL,
+    success      BOOLEAN NOT NULL,
+    attempted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+
+CREATE INDEX login_attempts_ip_idx ON login_attempts (ip_address, attempted_at DESC)
+CREATE INDEX login_attempts_username_idx ON login_attempts (username, attempted_at DESC)
+```
 
 ### Inventory Tables
 
 ```sql
 CREATE TABLE IF NOT EXISTS menu_items (
-    sort INT NOT NULL,
-    sku UUID PRIMARY KEY,
-    brand TEXT NOT NULL,
-    name TEXT NOT NULL,
-    price INTEGER NOT NULL,
-    measure_unit TEXT NOT NULL,
-    per_package TEXT NOT NULL,
-    quantity INT NOT NULL,
-    category TEXT NOT NULL,
-    subcategory TEXT NOT NULL,
-    description TEXT NOT NULL,
-    tags TEXT[] NOT NULL,
-    effects TEXT[] NOT NULL
+    sort INT NOT NULL, sku UUID PRIMARY KEY, brand TEXT NOT NULL,
+    name TEXT NOT NULL, price INTEGER NOT NULL, measure_unit TEXT NOT NULL,
+    per_package TEXT NOT NULL, quantity INT NOT NULL, category TEXT NOT NULL,
+    subcategory TEXT NOT NULL, description TEXT NOT NULL,
+    tags TEXT[] NOT NULL, effects TEXT[] NOT NULL
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS strain_lineage (
     sku UUID PRIMARY KEY REFERENCES menu_items(sku),
-    thc TEXT NOT NULL,
-    cbg TEXT NOT NULL,
-    strain TEXT NOT NULL,
-    creator TEXT NOT NULL,
-    species TEXT NOT NULL,
-    dominant_terpene TEXT NOT NULL,
-    terpenes TEXT[] NOT NULL,
-    lineage TEXT[] NOT NULL,
-    leafly_url TEXT NOT NULL,
-    img TEXT NOT NULL
+    thc TEXT NOT NULL, cbg TEXT NOT NULL, strain TEXT NOT NULL,
+    creator TEXT NOT NULL, species TEXT NOT NULL,
+    dominant_terpene TEXT NOT NULL, terpenes TEXT[] NOT NULL,
+    lineage TEXT[] NOT NULL, leafly_url TEXT NOT NULL, img TEXT NOT NULL
 )
 ```
 
 ### Transaction Tables
 
-All transaction tables are created by `createTransactionTables` using `CREATE TABLE IF NOT EXISTS` DDL executed as hasql sessions via the `ddl` helper.
-
 ```sql
 CREATE TABLE IF NOT EXISTS transaction (
-    id UUID PRIMARY KEY,
-    status TEXT NOT NULL,
-    created TIMESTAMP WITH TIME ZONE NOT NULL,
-    completed TIMESTAMP WITH TIME ZONE,
-    customer_id UUID,
-    employee_id UUID NOT NULL,
-    register_id UUID NOT NULL,
-    location_id UUID NOT NULL,
-    subtotal INTEGER NOT NULL,
-    discount_total INTEGER NOT NULL,
-    tax_total INTEGER NOT NULL,
-    total INTEGER NOT NULL,
+    id UUID PRIMARY KEY, status TEXT NOT NULL,
+    created TIMESTAMPTZ NOT NULL, completed TIMESTAMPTZ,
+    customer_id UUID, employee_id UUID NOT NULL,
+    register_id UUID NOT NULL, location_id UUID NOT NULL,
+    subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL,
+    tax_total INTEGER NOT NULL, total INTEGER NOT NULL,
     transaction_type TEXT NOT NULL,
-    is_voided BOOLEAN NOT NULL DEFAULT FALSE,
-    void_reason TEXT,
-    is_refunded BOOLEAN NOT NULL DEFAULT FALSE,
-    refund_reason TEXT,
-    reference_transaction_id UUID,
-    notes TEXT
+    is_voided BOOLEAN NOT NULL DEFAULT FALSE, void_reason TEXT,
+    is_refunded BOOLEAN NOT NULL DEFAULT FALSE, refund_reason TEXT,
+    reference_transaction_id UUID, notes TEXT
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS transaction_item (
     id UUID PRIMARY KEY,
     transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
-    menu_item_sku UUID NOT NULL,
-    quantity INTEGER NOT NULL,
-    price_per_unit INTEGER NOT NULL,
-    subtotal INTEGER NOT NULL,
-    total INTEGER NOT NULL
+    menu_item_sku UUID NOT NULL, quantity INTEGER NOT NULL,
+    price_per_unit INTEGER NOT NULL, subtotal INTEGER NOT NULL, total INTEGER NOT NULL
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS transaction_tax (
     id UUID PRIMARY KEY,
     transaction_item_id UUID NOT NULL REFERENCES transaction_item(id) ON DELETE CASCADE,
-    category TEXT NOT NULL,
-    rate NUMERIC NOT NULL,
-    amount INTEGER NOT NULL,
-    description TEXT NOT NULL
+    category TEXT NOT NULL, rate NUMERIC NOT NULL,
+    amount INTEGER NOT NULL, description TEXT NOT NULL
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS discount (
     id UUID PRIMARY KEY,
     transaction_item_id UUID REFERENCES transaction_item(id) ON DELETE CASCADE,
     transaction_id UUID REFERENCES transaction(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    percent NUMERIC,
-    reason TEXT NOT NULL,
-    approved_by UUID
+    type TEXT NOT NULL, amount INTEGER NOT NULL, percent NUMERIC,
+    reason TEXT NOT NULL, approved_by UUID
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS payment_transaction (
     id UUID PRIMARY KEY,
     transaction_id UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,
-    method TEXT NOT NULL,
-    amount INTEGER NOT NULL,
-    tendered INTEGER NOT NULL,
-    change_amount INTEGER NOT NULL,
-    reference TEXT,
-    approved BOOLEAN NOT NULL DEFAULT FALSE,
+    method TEXT NOT NULL, amount INTEGER NOT NULL,
+    tendered INTEGER NOT NULL, change_amount INTEGER NOT NULL,
+    reference TEXT, approved BOOLEAN NOT NULL DEFAULT FALSE,
     authorization_code TEXT
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS register (
-    id UUID PRIMARY KEY,
-    name TEXT NOT NULL,
-    location_id UUID NOT NULL,
+    id UUID PRIMARY KEY, name TEXT NOT NULL, location_id UUID NOT NULL,
     is_open BOOLEAN NOT NULL DEFAULT FALSE,
     current_drawer_amount INTEGER NOT NULL DEFAULT 0,
     expected_drawer_amount INTEGER NOT NULL DEFAULT 0,
-    opened_at TIMESTAMP WITH TIME ZONE,
-    opened_by UUID,
-    last_transaction_time TIMESTAMP WITH TIME ZONE
+    opened_at TIMESTAMPTZ, opened_by UUID, last_transaction_time TIMESTAMPTZ
 )
-```
 
-```sql
 CREATE TABLE IF NOT EXISTS inventory_reservation (
-    id UUID PRIMARY KEY,
-    item_sku UUID NOT NULL,
-    transaction_id UUID NOT NULL,
-    quantity INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    id UUID PRIMARY KEY, item_sku UUID NOT NULL,
+    transaction_id UUID NOT NULL, quantity INTEGER NOT NULL,
+    status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 ```
 
@@ -881,131 +625,105 @@ CREATE TABLE IF NOT EXISTS inventory_reservation (
 
 ### Transaction Lifecycle
 
-1. **Creation** (`POST /transaction`): Transaction inserted with status `CREATED` and zero totals.
-2. **Item Addition** (`POST /transaction/item`): `Service.Transaction.addItem` loads the transaction via the `TransactionDb` effect, calls `runTxCommand` with `AddItemCmd`. The state machine validates the transition (only `Created` and `InProgress` states accept items). If valid, the `AddTransactionItem` effect operation checks availability via a rel8 aggregate query, creates a reservation row, and inserts the transaction item.
-3. **Payment Addition** (`POST /transaction/payment`): `Service.Transaction.addPayment` validates via `AddPaymentCmd`, then calls the `AddPayment` effect operation. The DB layer auto-updates transaction status -- if total payments >= transaction total, status becomes `COMPLETED`, otherwise `IN_PROGRESS`.
-4. **Finalization** (`POST /transaction/finalize/:id`): `Service.Transaction.finalizeTx` validates via `FinalizeCmd` (only `InProgress` transactions can be finalized). The `FinalizeTransaction` effect operation decrements `menu_items.quantity`, changes reservation status to `"Completed"`, and sets transaction status to `COMPLETED`.
+1. **Creation**: Transaction inserted with status `CREATED` and zero totals.
+2. **Item Addition**: `Service.Transaction.addItem` loads the transaction, calls `runTxCommand AddItemCmd`. State machine validates (`Created` and `InProgress` accept items). If valid, `AddTransactionItem` effect checks availability, creates reservation, inserts item.
+3. **Payment Addition**: `addPaymentCmd` validates, then `AddPayment` effect inserts. DB layer auto-updates status -- payments >= total -> `COMPLETED`, else `IN_PROGRESS`.
+4. **Finalization**: `finalizeTx` validates via `FinalizeCmd` (only `InProgress`). `FinalizeTransaction` decrements `menu_items.quantity`, marks reservations `Completed`, sets status `COMPLETED`.
 
-### Transaction Reversal Operations
+### Reversal Operations
 
-**Void** (`POST /transaction/void/:id`): `Service.Transaction.voidTx` validates via `VoidCmd`. Permitted from `Created`, `InProgress`, and `Completed`. Terminal states reject the command at the machine level. Sets `is_voided = TRUE`, records reason.
+**Void**: Permitted from `Created`, `InProgress`, `Completed`. Terminal states reject at the machine level.
 
-**Refund** (`POST /transaction/refund/:id`): `Service.Transaction.refundTx` validates via `RefundCmd`. Only `Completed` transactions can be refunded -- the topology enforces this. Creates a new inverse transaction with negated monetary amounts, type `Return`, referencing the original. The `nextUUID` effect call in the service is satisfied by whichever `GenUUID` interpreter is in the stack at the call site.
+**Refund**: Only `Completed` transactions -- the topology enforces this. Creates inverse transaction with negated monetary amounts, type `Return`.
 
-### Clear Transaction (`POST /transaction/clear/:id`)
+### Clear Transaction
 
-Resets a transaction to empty state without passing through the state machine:
-
-1. Releases all active reservations (status to `"Released"`)
-2. Deletes payments and transaction items (taxes and discounts cascade)
-3. Resets monetary totals to 0
-4. Sets status back to `CREATED`
-
-### Automatic Total Recalculation
-
-`updateTransactionTotals` is called after item removal. It recalculates subtotal, discount total, tax total, and grand total from the database using rel8 aggregate queries. `updateTransactionPaymentStatus` checks if payments cover the total and updates status accordingly.
+Resets to empty state without the state machine (operational escape hatch): releases reservations, deletes items/payments, zeroes totals, sets status to `CREATED`. Can be called on a voided or refunded transaction if needed.
 
 ## Inventory Reservation System
 
-The reservation system prevents overselling by tracking inventory commitments before finalization.
+1. **Check availability**: aggregate query for `menu_items.quantity - SUM(reserved)`
+2. **Reserve**: insert reservation row with status `"Reserved"`
+3. **Item removal**: reservation set to `"Released"`
+4. **Finalization**: stock decremented, reservation set to `"Completed"`
+5. **Clear**: all reservations for the transaction set to `"Released"`
 
-### Flow
-
-1. **Check availability**: `addTransactionItem` runs a rel8 aggregate query for `menu_items.quantity` minus `SUM(inventory_reservation.quantity)` where status is `"Reserved"`
-2. **Reserve**: Creates a reservation row with status `"Reserved"`
-3. **On item removal**: Reservation status set to `"Released"`
-4. **On finalization**: Actual `menu_items.quantity` decremented, reservation status set to `"Completed"`
-5. **On clear**: All reservations for the transaction set to `"Released"`
-
-### Error Handling
-
-Custom exceptions for inventory operations:
-
-```haskell
-data InventoryException
-  = ItemNotFound UUID
-  | InsufficientInventory UUID Int Int
-```
-
-The `AddTransactionItem` effect operation returns `Either InventoryException TransactionItem`. `Service.Transaction.addItem` pattern-matches on this and converts inventory errors to `err404` and `err400` responses respectively.
+Inventory exceptions (`ItemNotFound`, `InsufficientInventory`) are returned as `Either` values by the effect operation and converted to `err404`/`err400` in the service layer.
 
 ## Security and Configuration
 
-### CORS Configuration
+### Security Headers
 
-Two layers:
+`securityHeadersMiddleware` in `App.hs` appends these headers to every response:
 
-1. **`handleOptionsMiddleware`**: Intercepts all `OPTIONS` requests before Servant, returning `200` with permissive CORS headers.
-2. **`wai-cors` middleware**: Applied to all other requests with `corsOrigins = Nothing` (any origin), all standard methods, and custom headers (`x-requested-with`, `x-user-id`). `corsMaxAge = 86400`. `corsIgnoreFailures = True`.
+| Header | Value |
+|---|---|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Content-Security-Policy` | `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:` |
 
-### TLS Configuration
+### CORS
 
-When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, the server starts with `warp-tls`. If files are missing, it logs a warning and falls back to plain HTTP. The `onException` handler suppresses `TLSException` noise from client disconnects.
+Controlled by `ALLOWED_ORIGIN` env var sourced from sops. Empty/absent: all origins accepted (dev). Non-empty: locked to that origin (production). A separate `handleOptionsMiddleware` handles preflight `OPTIONS` requests before Servant routing.
+
+### TLS
+
+When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, the server starts with `warp-tls`. Falls back to plain HTTP with a log warning if files are missing.
 
 ### Server Configuration
 
-| Setting | Value |
-|---|---|
-| Port | `PORT` env var, default 8080 |
-| DB host | `PGHOST` env var, default `localhost` |
-| DB port | `PGPORT` env var, default 5432 |
-| DB name | `PGDATABASE` env var, default `cheeblr` |
-| DB user | `PGUSER` env var, default current system user |
-| DB password | `PGPASSWORD` env var, default bootstrap fallback string |
-| Pool size | 10 |
-| Pool acquisition timeout | 30 seconds |
+| Setting | Env var | Default |
+|---|---|---|
+| Port | `PORT` | 8080 |
+| DB host | `PGHOST` | `localhost` |
+| DB port | `PGPORT` | 5432 |
+| DB name | `PGDATABASE` | `cheeblr` |
+| DB user | `PGUSER` | current system user |
+| DB password | `PGPASSWORD` | bootstrap fallback string |
+| CORS origin lock | `ALLOWED_ORIGIN` | (empty -- open) |
+| Pool size | (hardcoded) | 10 |
+| Pool acquisition timeout | (hardcoded) | 30 seconds |
 
 ## Development Guidelines
 
 ### Project Structure Convention
 
-- `API/` -- Servant type definitions and request/response types. No business logic. `API.OpenApi` owns the combined type and schema.
-- `Auth/` -- Authentication/authorization. Currently dev-only.
-- `Effect/` -- Algebraic effect GADTs, smart constructors, IO interpreters, and pure in-memory interpreters. Adding a new DB operation means adding it here before touching `Service/` or `Server/`.
-- `State/` -- State machine definitions. Pure functions only. No IO, no effects, no Servant.
-- `Service/` -- Business logic parameterized over an effect row. No `DBPool`. No SQL. No `Handler`. State machine validation and effect calls only.
-- `Server/` and `Server.hs` -- Request handlers. Inventory handlers in `Server.hs`, POS handlers in `Server/Transaction.hs`. `DBPool` appears only in `runTxEff`/`runRegEff`/`runInvEff`.
-- `DB/Schema.hs` -- The single source of truth for table structure. Adding or modifying a table means updating the `Rel8able` row type and `TableSchema` here first.
-- `DB/Database.hs` and `DB/Transaction.hs` -- Database operations. All rel8 queries and hasql sessions live here. All domain-to-row and row-to-domain conversion functions live here.
+- `API/` -- Servant type definitions. No business logic. `API.OpenApi` owns the combined type.
+- `Auth/Session.hs` -- Session resolution. `resolveSession` is the single auth entry point for all non-auth endpoints.
+- `Effect/` -- Effect GADTs, smart constructors, IO and pure interpreters. Add operations here first before touching `Service/`.
+- `State/` -- State machine definitions. Pure functions only.
+- `Service/` -- Business logic over effect rows. No `DBPool`, no SQL, no `Handler`.
+- `Server/` and `Server.hs` -- Request handlers. `DBPool` appears only in `runTxEff`/`runRegEff`/`runInvEff`.
+- `DB/Schema.hs` -- Single source of truth for table structure.
+- `DB/Database.hs`, `DB/Transaction.hs`, `DB/Auth.hs` -- Database operations and row conversion functions.
 - `Types/` -- Domain models with Aeson and `ToSchema` instances. No effects. No database instances.
 
 ### Adding a New Database Operation
 
-1. Add the operation to the relevant `Rel8able` row type and `TableSchema` in `DB.Schema` if a schema change is needed
-2. Implement the function in `DB.Database` or `DB.Transaction` using rel8 and `runSession`
+1. Add the `Rel8able` row type and `TableSchema` to `DB.Schema` if a schema change is needed
+2. Implement in the appropriate `DB.*` module using rel8 and `runSession`
 3. Add a constructor to the relevant effect GADT in `Effect/`
-4. Add a smart constructor and update both the IO interpreter and the pure interpreter
-5. Call the smart constructor from `Service/` or `Server/`, not the `DB.*` function directly
-6. Add unit tests against the pure interpreter in `test/Test/Effect/` or `test/Test/Service/`
-
-### Database Patterns
-
-- **Pool access**: All database operations call `runSession pool session` where `session` is a hasql `Session` value built from rel8 `select`, `insert`, `update`, or `delete` expressions
-- **DDL**: `createTables` and `createTransactionTables` execute raw DDL as `Statement () ()` values via the `ddl` helper in `DB.Database`
-- **Aggregates**: Reservation counts use rel8's `aggregate`/`sumOn`/`groupByOn` combinators
-- **Returning counts**: Delete operations that need row counts use `runN` (returns `Int64`) rather than `run_`
-
-### Enum Serialization Convention
-
-Enums are stored as SCREAMING_SNAKE_CASE text in the database via explicit `show*` functions in `DB.Transaction`. JSON serialization uses PascalCase via Aeson's generic deriving. `FromJSON` instances accept both forms. `parse*` functions in `DB.Transaction` and `Types.Transaction` handle SCREAMING_SNAKE on read.
+4. Add a smart constructor; update both IO and pure interpreters
+5. Call the smart constructor from `Service/`, not the `DB.*` function directly
+6. Add unit tests against the pure interpreter
 
 ### Error Handling
 
-- Database operations use `try @SomeException` with descriptive error messages
-- State machine validation uses `guardTxEvent`/`guardRegEvent` in service functions, returning `err409` with the rejection message as the body
-- Transaction item addition returns `Either InventoryException TransactionItem`; the service converts `ItemNotFound` to `err404` and `InsufficientInventory` to `err400`
-- Missing resources return `err404`
-- Unimplemented endpoints return `err501`
-- Capability violations return `err403`
+- Database operations use `try @SomeException`
+- State machine validation via `guardTxEvent`/`guardRegEvent` returns `err409`
+- `ItemNotFound` -> `err404`; `InsufficientInventory` -> `err400`
+- Missing resources -> `err404`; unimplemented -> `err501`; capability violations -> `err403`
+- Auth failures -> `err401`; rate limit -> `err429` with `Retry-After: 600`
 
 ### Known Issues and Tech Debt
 
-- **No real authentication**: `X-User-Id` header is trusted without verification. Default user is cashier, not admin.
 - **Capability enforcement incomplete**: Only inventory write endpoints check capabilities. Transaction and register endpoints do not enforce role-based access.
 - **Ledger and compliance are stubs**: Endpoints exist and types are defined, but no database tables or real logic back them.
-- **`PaymentMethod.Other` text dropped on DB write**: `showPaymentMethod (Other text) = "OTHER:" <> text` serializes correctly, but `parsePaymentMethod` in the DB layer may not reconstruct it identically on all paths -- verify the round-trip if this constructor matters in production.
-- **`DiscountType` round-trip lossy**: `parseDiscountType` reconstructs from a `(Text, Maybe Int)` tuple; `PercentOff` stores `Scientific` in Haskell while the DB stores a nullable `NUMERIC`. Fractional percent values may lose precision.
+- **`PaymentMethod.Other` text round-trip**: Verify `showPaymentMethod (Other text)` / `parsePaymentMethod` round-trips correctly on all DB paths if this constructor matters in production.
+- **`DiscountType` round-trip lossy**: `PercentOff` stores `Scientific` while the DB stores nullable `NUMERIC`. Fractional percent values may lose precision.
 - **No inventory reservation expiry**: Reservations with status `"Reserved"` persist indefinitely if a transaction is abandoned without being cleared.
-- **`error` calls in DB layer**: Several functions use `error` for "impossible" post-write states, which would crash the server thread rather than returning an HTTP error.
-- **State machine and DB status can diverge**: `fromTransaction` trusts `transactionStatus` as stored. If a DB write partially fails after a state machine transition was validated, the two can fall out of sync.
-- **`clear` bypasses the state machine**: `clearTransaction` resets a transaction to `CREATED` directly in the database without going through `runTxCommand`. This is intentional as an operational escape hatch, but means `clearTransaction` can be called on a `VOIDED` or `REFUNDED` transaction if called directly.
+- **`error` calls in DB layer**: Several post-write "impossible" states use `error` rather than returning an HTTP error.
+- **State machine and DB status can diverge**: `fromTransaction` trusts `transactionStatus` as stored. A partial DB write after a validated transition can cause divergence.
+- **`clear` bypasses the state machine**: Intentional escape hatch, but means `clearTransaction` can be called on `VOIDED` or `REFUNDED` transactions.
