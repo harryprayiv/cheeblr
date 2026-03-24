@@ -15,6 +15,7 @@ module DB.Auth
   , revokeAllUserSessions
   , recordLoginAttempt
   , recentFailedAttempts
+  , recentFailedAttemptsByIp
   , hashPassword
   , verifyPassword
   , userRowToAuthUser
@@ -45,10 +46,6 @@ import           DB.Schema
 import           Types.Auth                     (AuthenticatedUser (..),
                                                  UserRole (..))
 
-------------------------------------------------------------------------
--- Types
-------------------------------------------------------------------------
-
 data NewUser = NewUser
   { newUserName    :: Text
   , newDisplayName :: Text
@@ -59,19 +56,6 @@ data NewUser = NewUser
   }
 
 type SessionToken = Text
-
-------------------------------------------------------------------------
--- Argon2id password hashing (crypton 1.x)
---
--- In crypton 1.x the signature is:
---   hash :: Options -> ByteString -> ByteString -> Int -> CryptoFailable out
--- The fourth argument is the output length in bytes at runtime.
--- CryptoFailable has constructors CryptoPassed a | CryptoFailed CryptoError.
---
--- Stored format:
---   $argon2id$v=19$m=65536,t=3,p=4$<b64salt>$<b64hash>
--- Base64 uses the standard alphabet, no padding.
-------------------------------------------------------------------------
 
 argonOpts :: Argon2.Options
 argonOpts = Argon2.Options
@@ -124,10 +108,6 @@ verifyPassword stored plaintext =
         _ -> False
     _ -> False
 
-------------------------------------------------------------------------
--- Session token helpers
-------------------------------------------------------------------------
-
 hashTokenBytes :: ByteString -> Text
 hashTokenBytes raw =
   let digest = CH.hash raw :: CH.Digest CH.SHA256
@@ -141,10 +121,6 @@ decodeTokenText :: Text -> Either String ByteString
 decodeTokenText t =
   let padded = T.unpack t <> replicate ((4 - T.length t `mod` 4) `mod` 4) '='
   in B64U.decode (TE.encodeUtf8 (T.pack padded))
-
-------------------------------------------------------------------------
--- Row to domain conversion
-------------------------------------------------------------------------
 
 parseRole :: Text -> UserRole
 parseRole "Customer" = Customer
@@ -162,10 +138,6 @@ userRowToAuthUser row = AuthenticatedUser
   , auLocationId = userLocationId row
   , auCreatedAt  = userCreatedAt row
   }
-
-------------------------------------------------------------------------
--- Schema migration
-------------------------------------------------------------------------
 
 createAuthTables :: DBPool -> IO ()
 createAuthTables pool = runSession pool $ do
@@ -217,10 +189,6 @@ createAuthTables pool = runSession pool $ do
     "CREATE INDEX IF NOT EXISTS login_attempts_username_idx\
     \ ON login_attempts (username, attempted_at DESC)"
 
-------------------------------------------------------------------------
--- DB operations
-------------------------------------------------------------------------
-
 createUser :: DBPool -> NewUser -> IO UUID
 createUser pool nu = do
   uid    <- nextRandom
@@ -260,10 +228,10 @@ lookupUserByUsername pool username = do
 
 createSession
   :: DBPool
-  -> UUID        -- user id
-  -> Maybe UUID  -- optional register binding
-  -> Text        -- User-Agent header
-  -> Text        -- remote IP
+  -> UUID
+  -> Maybe UUID
+  -> Text
+  -> Text
   -> IO (SessionToken, UTCTime)
 createSession pool uid mRegisterId ua ip = do
   sid    <- nextRandom
@@ -376,6 +344,8 @@ recordLoginAttempt pool username ip success = do
     , returning  = NoReturning
     }
 
+-- | Count recent failed logins for a specific username+IP pair.
+-- Used to lock out a single credential pair after repeated failures.
 recentFailedAttempts :: DBPool -> Text -> Text -> NominalDiffTime -> IO Int
 recentFailedAttempts pool username ip windowSecs = do
   now <- getCurrentTime
@@ -384,6 +354,21 @@ recentFailedAttempts pool username ip windowSecs = do
     a <- each loginAttemptSchema
     where_ $ attemptUsername a ==. lit username
           &&. attemptIpAddress a ==. lit ip
+          &&. Rel8.not_ (attemptSuccess a)
+          &&. attemptedAt a >. lit cutoff
+    pure a
+  pure (length attemptRows)
+
+-- | Count recent failed logins from an IP across all usernames.
+-- Used to catch distributed credential-stuffing from a single IP that
+-- rotates across multiple usernames to evade per-credential limits.
+recentFailedAttemptsByIp :: DBPool -> Text -> NominalDiffTime -> IO Int
+recentFailedAttemptsByIp pool ip windowSecs = do
+  now <- getCurrentTime
+  let cutoff = addUTCTime (negate windowSecs) now
+  attemptRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    a <- each loginAttemptSchema
+    where_ $ attemptIpAddress a ==. lit ip
           &&. Rel8.not_ (attemptSuccess a)
           &&. attemptedAt a >. lit cutoff
     pure a
