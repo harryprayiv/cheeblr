@@ -428,6 +428,8 @@ The `bootstrap-admin` devshell command connects to the DB, checks whether any us
 
 ### Transaction Endpoints
 
+All transaction endpoints require a valid `Authorization: Bearer <token>` header.
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/transaction` | List all transactions |
@@ -447,6 +449,8 @@ State machine validation applies to all item, payment, finalize, void, and refun
 
 ### Register Endpoints
 
+All register endpoints require a valid `Authorization: Bearer <token>` header.
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/register` | List all registers |
@@ -458,6 +462,8 @@ State machine validation applies to all item, payment, finalize, void, and refun
 
 ### Inventory Availability Endpoints
 
+All availability endpoints require a valid `Authorization: Bearer <token>` header.
+
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/inventory/available/:sku` | Total, reserved, and available quantity for a SKU |
@@ -466,7 +472,7 @@ State machine validation applies to all item, payment, finalize, void, and refun
 
 ### Ledger and Compliance Endpoints (stubs)
 
-Ledger endpoints return `[]` or `501`. Compliance endpoints echo input or return placeholder text.
+All ledger and compliance endpoints require a valid `Authorization: Bearer <token>` header. Ledger endpoints return `[]` or `501`. Compliance endpoints echo input or return placeholder text.
 
 ## Data Models
 
@@ -719,7 +725,7 @@ When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, 
 
 ### Known Issues and Tech Debt
 
-- **Capability enforcement incomplete**: Only inventory write endpoints check capabilities. Transaction and register endpoints do not enforce role-based access.
+- **Fine-grained capability enforcement incomplete**: All endpoints require a valid session token. Inventory write endpoints additionally enforce role-based capabilities (`capCanCreateItem`, `capCanEditItem`, `capCanDeleteItem`). Transaction and register endpoints are auth-gated but do not yet check fine-grained capabilities beyond authentication.
 - **Ledger and compliance are stubs**: Endpoints exist and types are defined, but no database tables or real logic back them.
 - **`PaymentMethod.Other` text round-trip**: Verify `showPaymentMethod (Other text)` / `parsePaymentMethod` round-trips correctly on all DB paths if this constructor matters in production.
 - **`DiscountType` round-trip lossy**: `PercentOff` stores `Scientific` while the DB stores nullable `NUMERIC`. Fractional percent values may lose precision.
