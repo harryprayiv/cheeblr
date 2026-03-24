@@ -7,25 +7,27 @@
 module Server.Transaction where
 
 import API.Transaction
-import Control.Monad.IO.Class (liftIO)
-import Data.Text (Text, pack)
-import qualified Data.Text as T
-import Data.UUID (UUID)
+import Auth.Session               (resolveSession)
+import Control.Monad.IO.Class     (liftIO)
+import Control.Monad              (void, when)
+import Data.Text                  (Text, pack)
+import qualified Data.Text        as T
+import Data.UUID                  (UUID)
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import Effectful (Eff, IOE, runEff)
-import Effectful.Error.Static (Error, runErrorNoCallStack, throwError)
-import Katip (LogEnv)
-import Servant hiding (throwError)
-import qualified Servant as Servant (throwError)
+import Effectful                  (Eff, IOE, runEff)
+import Effectful.Error.Static     (Error, runErrorNoCallStack, throwError)
+import Katip                      (LogEnv)
+import Servant                    hiding (throwError)
+import qualified Servant          as Servant (throwError)
 import Types.Transaction
 
-import DB.Database (DBPool)
+import DB.Database                (DBPool)
 import Effect.Clock
 import Effect.GenUUID
 import Effect.RegisterDb
 import Effect.TransactionDb
 import Logging
-import qualified Service.Register as SvcReg
+import qualified Service.Register    as SvcReg
 import qualified Service.Transaction as SvcTx
 
 type TxEffs =
@@ -68,10 +70,6 @@ runRegEff pool action = do
       $ action
   either Servant.throwError pure result
 
--- | Run a Handler and fire the compliance log callback on both success and
--- failure.  On failure the error is re-thrown unchanged so the HTTP response
--- is unaffected; the compliance file gets a failure entry with the HTTP status
--- code recorded in the outcome field.
 withComplianceLog
   :: (LogOutcome -> IO ())
   -> Handler a
@@ -88,8 +86,6 @@ withComplianceLog logIt action = do
 
 stringToLBS :: String -> LBS.ByteString
 stringToLBS = LBS.pack
-
--- ─────────────────────────────────────────────────────────────────────────────
 
 transactionServer :: DBPool -> LogEnv -> Server TransactionAPI
 transactionServer pool logEnv =
@@ -109,15 +105,18 @@ transactionServer pool logEnv =
     :<|> reserveInventoryHandler
     :<|> releaseInventoryHandler
   where
-    -- ── Read-only ────────────────────────────────────────────────────────────
+    requireAuth :: Maybe Text -> Handler ()
+    requireAuth mHeader = void $ resolveSession pool mHeader
 
-    getAllTransactionsHandler :: Handler [Transaction]
-    getAllTransactionsHandler = do
+    getAllTransactionsHandler :: Maybe Text -> Handler [Transaction]
+    getAllTransactionsHandler mHeader = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "GET" "/transaction" "system"
       runTxEff pool getAllTransactions
 
-    getTransactionHandler :: UUID -> Handler Transaction
-    getTransactionHandler txId = do
+    getTransactionHandler :: Maybe Text -> UUID -> Handler Transaction
+    getTransactionHandler mHeader txId = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "GET" ("/transaction/" <> showT txId) "system"
       runTxEff pool $ do
         maybeTx <- getTransactionById txId
@@ -125,44 +124,89 @@ transactionServer pool logEnv =
           Just tx -> pure tx
           Nothing -> throwError err404 { errBody = "Transaction not found" }
 
-    -- ── Lifecycle ─────────────────────────────────────────────────────────────
-
-    createTransactionHandler :: Transaction -> Handler Transaction
-    createTransactionHandler tx = do
+    createTransactionHandler :: Maybe Text -> Transaction -> Handler Transaction
+    createTransactionHandler mHeader tx = do
+      requireAuth mHeader
       let empId = transactionEmployeeId tx
           lctx  = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" "/transaction" (showT empId)
       withComplianceLog (logTransactionCreate lctx (transactionId tx)) $
         runTxEff pool (createTransaction tx)
 
-    updateTransactionHandler :: UUID -> Transaction -> Handler Transaction
-    updateTransactionHandler txId tx = do
+    updateTransactionHandler :: Maybe Text -> UUID -> Transaction -> Handler Transaction
+    updateTransactionHandler mHeader txId tx = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "PUT" ("/transaction/" <> showT txId) "system"
       runTxEff pool (updateTransaction txId tx)
 
-    voidTransactionHandler :: UUID -> Text -> Handler Transaction
-    voidTransactionHandler txId reason = do
+    voidTransactionHandler :: Maybe Text -> UUID -> Text -> Handler Transaction
+    voidTransactionHandler mHeader txId reason = do
+      requireAuth mHeader
       let lctx = LogCtx logEnv "system" "system"
       liftIO $ logHttpRequest logEnv "POST" ("/transaction/void/" <> showT txId) "system"
       withComplianceLog
         (\outcome -> logTransactionVoid lctx txId reason outcome) $
         runTxEff pool (SvcTx.voidTx txId reason)
 
-    refundTransactionHandler :: UUID -> Text -> Handler Transaction
-    refundTransactionHandler txId reason = do
+    refundTransactionHandler :: Maybe Text -> UUID -> Text -> Handler Transaction
+    refundTransactionHandler mHeader txId reason = do
+      requireAuth mHeader
       let lctx = LogCtx logEnv "system" "system"
       liftIO $ logHttpRequest logEnv "POST" ("/transaction/refund/" <> showT txId) "system"
       withComplianceLog
         (\outcome -> logTransactionRefund lctx txId reason outcome) $
         runTxEff pool (SvcTx.refundTx txId reason)
 
-    finalizeTransactionHandler :: UUID -> Handler Transaction
-    finalizeTransactionHandler txId = do
+    addTransactionItemHandler :: Maybe Text -> TransactionItem -> Handler TransactionItem
+    addTransactionItemHandler mHeader item = do
+      requireAuth mHeader
+      let txId  = transactionItemTransactionId item
+          skuId = transactionItemMenuItemSku item
+          qty   = transactionItemQuantity item
+      liftIO $ logHttpRequest logEnv "POST" "/transaction/item" "system"
+      mEmpId <- runTxEff pool $ do
+        mTx <- getTransactionById txId
+        pure $ fmap (showT . transactionEmployeeId) mTx
+      let lctx = case mEmpId of
+            Just empIdT -> LogCtx logEnv empIdT "employee"
+            Nothing     -> LogCtx logEnv "system" "system"
+      withComplianceLog
+        (\outcome -> logTransactionAddItem lctx txId skuId qty outcome) $
+        runTxEff pool (SvcTx.addItem item)
+
+    removeTransactionItemHandler :: Maybe Text -> UUID -> Handler NoContent
+    removeTransactionItemHandler mHeader itemId = do
+      requireAuth mHeader
+      liftIO $ logHttpRequest logEnv "DELETE" ("/transaction/item/" <> showT itemId) "system"
+      runTxEff pool (SvcTx.removeItem itemId) >> pure NoContent
+
+    addPaymentTransactionHandler :: Maybe Text -> PaymentTransaction -> Handler PaymentTransaction
+    addPaymentTransactionHandler mHeader payment = do
+      requireAuth mHeader
+      let txId   = paymentTransactionId payment
+          amt    = paymentAmount payment
+          method = T.pack (show (paymentMethod payment))
+      liftIO $ logHttpRequest logEnv "POST" "/transaction/payment" "system"
+      mEmpId <- runTxEff pool $ do
+        mTx <- getTransactionById txId
+        pure $ fmap (showT . transactionEmployeeId) mTx
+      let lctx = case mEmpId of
+            Just empIdT -> LogCtx logEnv empIdT "employee"
+            Nothing     -> LogCtx logEnv "system" "system"
+      withComplianceLog
+        (\outcome -> logTransactionAddPayment lctx txId amt method outcome) $
+        runTxEff pool (SvcTx.addPayment payment)
+
+    removePaymentTransactionHandler :: Maybe Text -> UUID -> Handler NoContent
+    removePaymentTransactionHandler mHeader pymtId = do
+      requireAuth mHeader
+      liftIO $ logHttpRequest logEnv "DELETE" ("/transaction/payment/" <> showT pymtId) "system"
+      runTxEff pool (SvcTx.removePayment pymtId) >> pure NoContent
+
+    finalizeTransactionHandler :: Maybe Text -> UUID -> Handler Transaction
+    finalizeTransactionHandler mHeader txId = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "POST" ("/transaction/finalize/" <> showT txId) "system"
-      -- withComplianceLog catches any failure and records it.  On success we
-      -- have the real totals so we emit a second richer compliance entry;
-      -- the placeholder 0/0 entry from withComplianceLog is suppressed by
-      -- only firing it on failure (we handle success ourselves below).
       result <- liftIO (runHandler (runTxEff pool (SvcTx.finalizeTx txId)))
       case result of
         Left err -> do
@@ -179,8 +223,9 @@ transactionServer pool logEnv =
             LogSuccess
           pure tx
 
-    clearTransactionHandler :: UUID -> Handler NoContent
-    clearTransactionHandler txId = do
+    clearTransactionHandler :: Maybe Text -> UUID -> Handler NoContent
+    clearTransactionHandler mHeader txId = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "POST" ("/transaction/clear/" <> showT txId) "system"
       mEmpId <- runTxEff pool $ do
         mTx <- getTransactionById txId
@@ -191,58 +236,9 @@ transactionServer pool logEnv =
       withComplianceLog (logTransactionClear lctx txId) $
         runTxEff pool (clearTransaction txId) >> pure NoContent
 
-    -- ── Items ─────────────────────────────────────────────────────────────────
-
-    addTransactionItemHandler :: TransactionItem -> Handler TransactionItem
-    addTransactionItemHandler item = do
-      let txId  = transactionItemTransactionId item
-          skuId = transactionItemMenuItemSku item
-          qty   = transactionItemQuantity item
-      liftIO $ logHttpRequest logEnv "POST" "/transaction/item" "system"
-      -- Fetch the parent transaction so we can log the actual employee ID.
-      -- This is a cheap indexed lookup and worth it for compliance accuracy.
-      mEmpId <- runTxEff pool $ do
-        mTx <- getTransactionById txId
-        pure $ fmap (showT . transactionEmployeeId) mTx
-      let lctx = case mEmpId of
-            Just empIdT -> LogCtx logEnv empIdT "employee"
-            Nothing     -> LogCtx logEnv "system" "system"
-      withComplianceLog
-        (\outcome -> logTransactionAddItem lctx txId skuId qty outcome) $
-        runTxEff pool (SvcTx.addItem item)
-
-    removeTransactionItemHandler :: UUID -> Handler NoContent
-    removeTransactionItemHandler itemId = do
-      liftIO $ logHttpRequest logEnv "DELETE" ("/transaction/item/" <> showT itemId) "system"
-      runTxEff pool (SvcTx.removeItem itemId) >> pure NoContent
-
-    -- ── Payments ──────────────────────────────────────────────────────────────
-
-    addPaymentTransactionHandler :: PaymentTransaction -> Handler PaymentTransaction
-    addPaymentTransactionHandler payment = do
-      let txId   = paymentTransactionId payment
-          amt    = paymentAmount payment
-          method = T.pack (show (paymentMethod payment))
-      liftIO $ logHttpRequest logEnv "POST" "/transaction/payment" "system"
-      mEmpId <- runTxEff pool $ do
-        mTx <- getTransactionById txId
-        pure $ fmap (showT . transactionEmployeeId) mTx
-      let lctx = case mEmpId of
-            Just empIdT -> LogCtx logEnv empIdT "employee"
-            Nothing     -> LogCtx logEnv "system" "system"
-      withComplianceLog
-        (\outcome -> logTransactionAddPayment lctx txId amt method outcome) $
-        runTxEff pool (SvcTx.addPayment payment)
-
-    removePaymentTransactionHandler :: UUID -> Handler NoContent
-    removePaymentTransactionHandler pymtId = do
-      liftIO $ logHttpRequest logEnv "DELETE" ("/transaction/payment/" <> showT pymtId) "system"
-      runTxEff pool (SvcTx.removePayment pymtId) >> pure NoContent
-
-    -- ── Inventory reservation ─────────────────────────────────────────────────
-
-    getAvailableInventoryHandler :: UUID -> Handler AvailableInventory
-    getAvailableInventoryHandler sku = do
+    getAvailableInventoryHandler :: Maybe Text -> UUID -> Handler AvailableInventory
+    getAvailableInventoryHandler mHeader sku = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "GET" ("/inventory/available/" <> showT sku) "system"
       runTxEff pool $ do
         result <- getInventoryAvailability sku
@@ -255,8 +251,9 @@ transactionServer pool logEnv =
               , availableActual   = total - reserved
               }
 
-    reserveInventoryHandler :: ReservationRequest -> Handler InventoryReservation
-    reserveInventoryHandler request = do
+    reserveInventoryHandler :: Maybe Text -> ReservationRequest -> Handler InventoryReservation
+    reserveInventoryHandler mHeader request = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "POST" "/inventory/reserve" "system"
       runTxEff pool $ do
         result <- getInventoryAvailability (reserveItemSku request)
@@ -264,36 +261,34 @@ transactionServer pool logEnv =
           Nothing -> throwError err404 { errBody = "Item not found" }
           Just (total, reserved) -> do
             let available = total - reserved
-            if available < reserveQuantity request
-              then throwError err400
-                     { errBody = stringToLBS $
-                         "Insufficient inventory. Only " ++ show available ++ " available" }
-              else do
-                reservationId <- nextUUID
-                now           <- currentTime
-                createReservation
-                  reservationId
-                  (reserveItemSku request)
-                  (reserveTransactionId request)
-                  (reserveQuantity request)
-                  now
-                pure InventoryReservation
-                  { reservationItemSku       = reserveItemSku request
-                  , reservationTransactionId = reserveTransactionId request
-                  , reservationQuantity      = reserveQuantity request
-                  , reservationStatus        = "Reserved"
-                  }
+            when (available < reserveQuantity request) $
+              throwError err400
+                { errBody = stringToLBS $
+                    "Insufficient inventory. Only " ++ show available ++ " available" }
+            reservationId <- nextUUID
+            now           <- currentTime
+            createReservation
+              reservationId
+              (reserveItemSku request)
+              (reserveTransactionId request)
+              (reserveQuantity request)
+              now
+            pure InventoryReservation
+              { reservationItemSku       = reserveItemSku request
+              , reservationTransactionId = reserveTransactionId request
+              , reservationQuantity      = reserveQuantity request
+              , reservationStatus        = "Reserved"
+              }
 
-    releaseInventoryHandler :: UUID -> Handler NoContent
-    releaseInventoryHandler reservationId = do
+    releaseInventoryHandler :: Maybe Text -> UUID -> Handler NoContent
+    releaseInventoryHandler mHeader reservationId = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "DELETE" ("/inventory/release/" <> showT reservationId) "system"
       runTxEff pool $ do
         released <- releaseReservation reservationId
         if released
           then pure NoContent
           else throwError err404 { errBody = "Reservation not found or already released" }
-
--- ─────────────────────────────────────────────────────────────────────────────
 
 registerServer :: DBPool -> LogEnv -> Server RegisterAPI
 registerServer pool logEnv =
@@ -304,13 +299,18 @@ registerServer pool logEnv =
     :<|> openRegisterHandler
     :<|> closeRegisterHandler
   where
-    getAllRegistersHandler :: Handler [Register]
-    getAllRegistersHandler = do
+    requireAuth :: Maybe Text -> Handler ()
+    requireAuth mHeader = void $ resolveSession pool mHeader
+
+    getAllRegistersHandler :: Maybe Text -> Handler [Register]
+    getAllRegistersHandler mHeader = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "GET" "/register" "system"
       runRegEff pool getAllRegisters
 
-    getRegisterHandler :: UUID -> Handler Register
-    getRegisterHandler regId = do
+    getRegisterHandler :: Maybe Text -> UUID -> Handler Register
+    getRegisterHandler mHeader regId = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "GET" ("/register/" <> showT regId) "system"
       runRegEff pool $ do
         maybeReg <- getRegisterById regId
@@ -318,21 +318,24 @@ registerServer pool logEnv =
           Just reg -> pure reg
           Nothing  -> throwError err404 { errBody = "Register not found" }
 
-    createRegisterHandler :: Register -> Handler Register
-    createRegisterHandler register = do
+    createRegisterHandler :: Maybe Text -> Register -> Handler Register
+    createRegisterHandler mHeader register = do
+      requireAuth mHeader
       let lctx = LogCtx logEnv "system" "system"
       liftIO $ logHttpRequest logEnv "POST" "/register" "system"
       withComplianceLog
         (logRegisterCreate lctx (registerId register)) $
         runRegEff pool (createRegister register)
 
-    updateRegisterHandler :: UUID -> Register -> Handler Register
-    updateRegisterHandler regId register = do
+    updateRegisterHandler :: Maybe Text -> UUID -> Register -> Handler Register
+    updateRegisterHandler mHeader regId register = do
+      requireAuth mHeader
       liftIO $ logHttpRequest logEnv "PUT" ("/register/" <> showT regId) "system"
       runRegEff pool (updateRegister regId register)
 
-    openRegisterHandler :: UUID -> OpenRegisterRequest -> Handler Register
-    openRegisterHandler regId request = do
+    openRegisterHandler :: Maybe Text -> UUID -> OpenRegisterRequest -> Handler Register
+    openRegisterHandler mHeader regId request = do
+      requireAuth mHeader
       let empId     = openRegisterEmployeeId request
           startCash = openRegisterStartingCash request
           lctx      = empLogCtx logEnv empId
@@ -341,14 +344,13 @@ registerServer pool logEnv =
         (\outcome -> logRegisterOpen lctx regId startCash outcome) $
         runRegEff pool (SvcReg.openRegister regId request)
 
-    closeRegisterHandler :: UUID -> CloseRegisterRequest -> Handler CloseRegisterResult
-    closeRegisterHandler regId request = do
+    closeRegisterHandler :: Maybe Text -> UUID -> CloseRegisterRequest -> Handler CloseRegisterResult
+    closeRegisterHandler mHeader regId request = do
+      requireAuth mHeader
       let empId       = closeRegisterEmployeeId request
           countedCash = closeRegisterCountedCash request
           lctx        = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" ("/register/close/" <> showT regId) (showT empId)
-      -- Same pattern as finalize: handle both branches explicitly so the
-      -- success path carries the real variance rather than a placeholder 0.
       result <- liftIO (runHandler (runRegEff pool (SvcReg.closeRegister regId request)))
       case result of
         Left err -> do
@@ -361,10 +363,8 @@ registerServer pool logEnv =
             LogSuccess
           pure closeResult
 
--- ─────────────────────────────────────────────────────────────────────────────
-
 ledgerServer :: DBPool -> Server LedgerAPI
-ledgerServer _ =
+ledgerServer pool =
   getEntriesHandler
     :<|> getEntryHandler
     :<|> getAccountsHandler
@@ -372,38 +372,50 @@ ledgerServer _ =
     :<|> createAccountHandler
     :<|> dailyReportHandler
   where
-    getEntriesHandler :: Handler [LedgerEntry]
-    getEntriesHandler = pure []
+    requireAuth :: Maybe Text -> Handler ()
+    requireAuth mHeader = void $ resolveSession pool mHeader
 
-    getEntryHandler :: UUID -> Handler LedgerEntry
-    getEntryHandler _ = Servant.throwError err501 { errBody = "Not implemented" }
+    getEntriesHandler :: Maybe Text -> Handler [LedgerEntry]
+    getEntriesHandler mHeader = requireAuth mHeader >> pure []
 
-    getAccountsHandler :: Handler [Account]
-    getAccountsHandler = pure []
+    getEntryHandler :: Maybe Text -> UUID -> Handler LedgerEntry
+    getEntryHandler mHeader _ =
+      requireAuth mHeader >> Servant.throwError err501 { errBody = "Not implemented" }
 
-    getAccountHandler :: UUID -> Handler Account
-    getAccountHandler _ = Servant.throwError err501 { errBody = "Not implemented" }
+    getAccountsHandler :: Maybe Text -> Handler [Account]
+    getAccountsHandler mHeader = requireAuth mHeader >> pure []
 
-    createAccountHandler :: Account -> Handler Account
-    createAccountHandler _ = Servant.throwError err501 { errBody = "Not implemented" }
+    getAccountHandler :: Maybe Text -> UUID -> Handler Account
+    getAccountHandler mHeader _ =
+      requireAuth mHeader >> Servant.throwError err501 { errBody = "Not implemented" }
 
-    dailyReportHandler :: DailyReportRequest -> Handler DailyReportResult
-    dailyReportHandler _ = pure $ DailyReportResult 0 0 0 0 0
+    createAccountHandler :: Maybe Text -> Account -> Handler Account
+    createAccountHandler mHeader _ =
+      requireAuth mHeader >> Servant.throwError err501 { errBody = "Not implemented" }
+
+    dailyReportHandler :: Maybe Text -> DailyReportRequest -> Handler DailyReportResult
+    dailyReportHandler mHeader _ =
+      requireAuth mHeader >> pure (DailyReportResult 0 0 0 0 0)
 
 complianceServer :: DBPool -> Server ComplianceAPI
-complianceServer _ =
+complianceServer pool =
   verificationHandler
     :<|> getRecordHandler
     :<|> reportHandler
   where
-    verificationHandler :: CustomerVerification -> Handler CustomerVerification
-    verificationHandler v = pure v
+    requireAuth :: Maybe Text -> Handler ()
+    requireAuth mHeader = void $ resolveSession pool mHeader
 
-    getRecordHandler :: UUID -> Handler ComplianceRecord
-    getRecordHandler _ = Servant.throwError err501 { errBody = "Not implemented" }
+    verificationHandler :: Maybe Text -> CustomerVerification -> Handler CustomerVerification
+    verificationHandler mHeader v = requireAuth mHeader >> pure v
 
-    reportHandler :: ComplianceReportRequest -> Handler ComplianceReportResult
-    reportHandler _ = pure $ ComplianceReportResult (pack "Not implemented")
+    getRecordHandler :: Maybe Text -> UUID -> Handler ComplianceRecord
+    getRecordHandler mHeader _ =
+      requireAuth mHeader >> Servant.throwError err501 { errBody = "Not implemented" }
+
+    reportHandler :: Maybe Text -> ComplianceReportRequest -> Handler ComplianceReportResult
+    reportHandler mHeader _ =
+      requireAuth mHeader >> pure (ComplianceReportResult (pack "Not implemented"))
 
 posServerImpl :: DBPool -> LogEnv -> Server PosAPI
 posServerImpl pool logEnv =
@@ -411,8 +423,6 @@ posServerImpl pool logEnv =
     :<|> registerServer  pool logEnv
     :<|> ledgerServer    pool
     :<|> complianceServer pool
-
--- ─── Helpers ─────────────────────────────────────────────────────────────────
 
 showT :: Show a => a -> Text
 showT = T.pack . show
