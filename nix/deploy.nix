@@ -17,9 +17,6 @@ let
   frontendDir = builtins.head (builtins.split "/[^/]*$" (builtins.head config.purescript.codeDirs));
   dataDir     = config.dataDir;
 
-
-  # ── Shared shell fragments ───────────────────────────────────────────────
-
   firewallOpen = ''
     echo "Ensuring firewall ports are open..."
     sudo iptables -C INPUT -p tcp --dport ${backendPort} -j ACCEPT 2>/dev/null || \
@@ -29,7 +26,6 @@ let
     echo "  Ports ${backendPort} and ${frontendPort} open"
   '';
 
-  # Sets USE_TLS + TLS_CERT_FILE + TLS_KEY_FILE in the current shell.
   tlsEnvSetup = if tlsConfig.enable then ''
     echo "Setting up TLS certificates..."
     tls-setup
@@ -41,28 +37,14 @@ let
     export USE_TLS="false"
   '';
 
-  # Inline env prefix for tmux/alacritty pane commands (source-based).
-  # Expands certDir at Nix-eval time; $HOME / $CERT_DIR expand at runtime.
   tlsEnvPrefix = if tlsConfig.enable then
     ''CERT_DIR="$(echo "${certDir}" | envsubst)" USE_TLS=true TLS_CERT_FILE="$CERT_DIR/${tlsConfig.certFile}" TLS_KEY_FILE="$CERT_DIR/${tlsConfig.keyFile}" ''
   else "";
 
-  # Inline env prefix for tmux pane commands (nix-build artifacts).
-  # Uses already-exported $TLS_CERT_FILE / $TLS_KEY_FILE via shell quoting trick.
   tlsEnvPrefixNix = if tlsConfig.enable then
     ''USE_TLS=true TLS_CERT_FILE="'"$TLS_CERT_FILE"'" TLS_KEY_FILE="'"$TLS_KEY_FILE"'" ''
   else "";
 
-  # For alacritty -e bash -c '...export...' patterns.
-  tlsExportBlock = if tlsConfig.enable then ''
-    export USE_TLS="true"; \
-    export TLS_CERT_FILE="'"$TLS_CERT"'"; \
-    export TLS_KEY_FILE="'"$TLS_KEY"'"; \
-  '' else ''
-    export USE_TLS="false"; \
-  '';
-
-  # Start postgres, restoring the latest backup when one exists.
   pgStartWithBackup = ''
     BACKUP_DIR="${dataDir}/backups"
     mkdir -p "$BACKUP_DIR"
@@ -79,8 +61,6 @@ let
     fi
   '';
 
-  # Shared tmux layout: creates a 4-pane session and attaches.
-  # Callers supply the send-keys lines for panes 0 and 1 between the two fragments.
   tmuxLayout = ''
     tmux kill-session -t ${name} 2>/dev/null || true
     tmux new-session -d -s ${name} -n "Services" -x 120 -y 42
@@ -106,8 +86,6 @@ let
     tmux attach-session -t ${name}
   '';
 
-  # Shared stop logic: backup, pg-stop, kill vite + leftover port occupants.
-  # Expects OUR_PID / PARENT_PID to be set by the caller.
   stopCore = ''
     echo "Creating database backup..."
     pg-backup
@@ -146,9 +124,6 @@ let
     fi
   '';
 
-
-  # ── Source-based deployment (cabal run / spago / vite) ──────────────────
-
   deploy = pkgs.writeShellScriptBin "deploy" ''
     set -euo pipefail
 
@@ -171,10 +146,24 @@ let
     echo ""
 
     ${tmuxLayout}
+
+    echo "Starting backend..."
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefix}cd ${backendDir} && cabal run ${name}-backend' C-m
+      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export PGPASSWORD=$(sops-get db_password); cd ${backendDir} && cabal run ${name}-backend' C-m
+
+    echo "Waiting for backend..."
+    RETRIES=0
+    while ! ${pkgs.curl}/bin/curl -sk "${protocol}://${host}:${backendPort}/inventory" > /dev/null 2>&1; do
+      RETRIES=$((RETRIES + 1))
+      [ $RETRIES -ge 120 ] && { echo "Backend did not start within 120 seconds."; exit 1; }
+      sleep 1
+    done
+    echo "  Backend ready"
+
+    echo "Starting frontend..."
     tmux send-keys -t ${name}:Services.1 \
       '${tlsEnvPrefix}cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
+
     ${tmuxAttach}
   '';
 
@@ -207,6 +196,19 @@ let
       TLS_KEY="$CERT_DIR/${tlsConfig.keyFile}"
     '' else "true"}
 
+    # Write an env file with literal values. No quoting complexity.
+    # Both Alacritty windows source this file before running their command.
+    _ENV_FILE="$(mktemp /tmp/${name}-env-XXXXXX.sh)"
+    cat > "$_ENV_FILE" <<EOF
+export USE_TLS="${if tlsConfig.enable then "true" else "false"}"
+${if tlsConfig.enable then ''
+export TLS_CERT_FILE="$TLS_CERT"
+export TLS_KEY_FILE="$TLS_KEY"
+'' else ""}
+export USE_REAL_AUTH="true"
+export PGPASSWORD="$(sops-get db_password)"
+EOF
+
     ${firewallOpen}
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"
@@ -230,7 +232,7 @@ let
       --title "${name} - Backend" \
       --working-directory "$PROJECT_DIR" \
       -e ${pkgs.bash}/bin/bash -c \
-        '${tlsExportBlock}cd '"$PROJECT_DIR"'/${backendDir} && cabal run ${name}-backend' &
+        ". $_ENV_FILE && cd $PROJECT_DIR/${backendDir} && cabal run ${name}-backend" &
 
     echo "Waiting for backend..."
     RETRIES=0
@@ -245,7 +247,7 @@ let
       --title "${name} - Frontend" \
       --working-directory "$PROJECT_DIR" \
       -e ${pkgs.bash}/bin/bash -c \
-        '${tlsExportBlock}cd '"$PROJECT_DIR"'/${frontendDir} && npx vite --host ${bindAddress} --port ${frontendPort} --open' &
+        ". $_ENV_FILE && cd $PROJECT_DIR/${frontendDir} && npx vite --host ${bindAddress} --port ${frontendPort} --open" &
 
     echo ""
     echo "All windows launched."
@@ -253,9 +255,6 @@ let
     echo "  Backend:   window 2 (${protocol}://${host}:${backendPort})"
     echo "  Frontend:  window 3 (${protocol}://${host}:${frontendPort})"
   '';
-
-
-  # ── Individual service scripts ───────────────────────────────────────────
 
   db-start = pkgs.writeShellScriptBin "db-start" ''
     set -euo pipefail
@@ -295,6 +294,8 @@ let
     (cd "$BACKEND_DIR" && cabal build) || { echo "Backend build failed"; exit 1; }
 
     ${tlsEnvSetup}
+    export USE_REAL_AUTH="true"
+    export PGPASSWORD="$(sops-get db_password)"
 
     echo "Starting backend on ${protocol}://${host}:${backendPort}..."
     cd "$BACKEND_DIR" && exec cabal run ${name}-backend
@@ -363,9 +364,6 @@ let
     echo "Frontend stopped."
   '';
 
-
-  # ── Nix-build artifact deployment ───────────────────────────────────────
-
   build-all = pkgs.writeShellScriptBin "build-all" ''
     set -euo pipefail
     echo "Building ${name}..."
@@ -396,9 +394,11 @@ let
     echo "Starting backend..."
     ${if tlsConfig.enable then ''
       USE_TLS=true TLS_CERT_FILE="$TLS_CERT_FILE" TLS_KEY_FILE="$TLS_KEY_FILE" \
+      USE_REAL_AUTH=true PGPASSWORD="$(sops-get db_password)" \
       ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
     '' else ''
-      USE_TLS=false ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
+      USE_TLS=false USE_REAL_AUTH=true PGPASSWORD="$(sops-get db_password)" \
+      ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
     ''}
     echo $! > "$PIDDIR/backend.pid"
 
@@ -439,7 +439,7 @@ let
 
     ${tmuxLayout}
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefixNix}./result/bin/${name}-backend' C-m
+      '${tlsEnvPrefixNix}USE_REAL_AUTH=true PGPASSWORD=$(sops-get db_password) ./result/bin/${name}-backend' C-m
     tmux send-keys -t ${name}:Services.1 \
       'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
     ${tmuxAttach}
@@ -611,11 +611,9 @@ let
   '';
 
 in {
-  # Source-based
   inherit deploy stop launch-dev;
   inherit db-start db-stop;
   inherit backend-start backend-stop;
   inherit frontend-start frontend-stop;
-  # Nix-build-based
   inherit build-all deploy-nix deploy-nix-interactive stop-nix status-nix tui;
 }

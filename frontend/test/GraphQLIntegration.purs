@@ -54,7 +54,7 @@ gqlPost userId query = do
     , headers:
         { "Content-Type": "application/json"
         , "Accept":       "application/json"
-        , "X-User-Id":    userId
+        , "Authorization": "Bearer " <> userId
         }
     }
   body <- response.text

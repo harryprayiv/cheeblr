@@ -14,7 +14,7 @@ import Control.Parallel (parSequence_, parallel, sequential)
 import Data.Array (find)
 import Data.Either (Either(..))
 import Data.Foldable (for_)
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Maybe (Maybe(..), fromMaybe, isNothing)
 import Data.Tuple (Tuple(..), fst, snd)
 import Deku.Core (fixed)
 import Deku.DOM as D
@@ -46,33 +46,8 @@ import Types.Register (Register)
 import Types.Transaction (Transaction)
 import Types.UUID (UUID, genUUID)
 
--- | Set to true to bypass the login page and use a hardcoded dev user.
--- | Must be false when the backend has USE_REAL_AUTH=true.
 devMode :: Boolean
 devMode = false
-
--- | Attempt to restore a session from localStorage on page load.
--- | If the token is valid the backend returns a SessionResponse and we
--- | push SignedIn carrying the real token so all subsequent API calls
--- | use the correct Authorization header. If invalid we clear storage
--- | and leave auth at SignedOut so the login page shows.
-restoreSession :: (AuthState -> Effect Unit) -> Effect Unit
-restoreSession pushAuth = launchAff_ do
-  mToken <- liftEffect loadToken
-  case mToken of
-    Nothing    -> pure unit
-    Just token -> do
-      result <- validateSession token
-      liftEffect $ case result of
-        Left err -> do
-          Console.warn $ "Session restore failed: " <> err
-          clearToken
-        Right sessionResp -> do
-          let devUser = case findDevUserByRole sessionResp.sessionRole of
-                Just u  -> u
-                Nothing -> defaultDevUser
-          pushAuth (SignedIn devUser token)
-          Console.log $ "Session restored for " <> sessionResp.sessionUserName
 
 run :: forall a r. Aff a -> { push :: a -> Effect Unit | r } -> Aff Unit
 run aff { push } = aff >>= liftEffect <<< push
@@ -170,12 +145,8 @@ main = do
 
   let initialAuth = if devMode then devModeAuthState else defaultAuthState
 
-  -- tokenRef holds the current userId/token so route handlers read the
-  -- latest value at navigation time rather than the value captured at startup.
   tokenRef <- Ref.new (userIdFromAuth initialAuth)
 
-  -- Every call site that changes auth state goes through pushAuth so the
-  -- ref and the poll stay in sync.
   let
     pushAuth :: AuthState -> Effect Unit
     pushAuth st = do
@@ -193,75 +164,75 @@ main = do
   deleteItem <- liftST Poll.create
   txPage     <- liftST Poll.create
 
-  -- Restore session on page load (real-auth mode only).
-  unless devMode $ restoreSession pushAuth
-
-  RegisterService.initLocalRegister
-    (userIdFromAuth initialAuth)
-    dummyLocationId
-    dummyEmployeeId
-    (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
-    (\err      -> Console.error $ "Register pre-init failed: " <> err)
-
   prevAction <- Ref.new (pure unit)
 
+  -- In real-auth mode matchesWith fires the initial route synchronously before
+  -- the async session restore has written the token into tokenRef. readyRef
+  -- suppresses that first automatic fire so the route only runs once the real
+  -- token is available. Subsequent hash-change fires (prev == Just _) always
+  -- pass through regardless of the flag.
+  readyRef <- Ref.new devMode
+
   let
-    matcher _ r = do
-      Console.log $ "Route changed to: " <> show r
+    matcher prev r = do
+      ready <- Ref.read readyRef
+      if not ready && isNothing prev
+        then pure unit
+        else do
+          Console.log $ "Route changed to: " <> show r
 
-      -- Read the current token at navigation time, not at startup.
-      userId <- Ref.read tokenRef
+          userId <- Ref.read tokenRef
 
-      pa <- Ref.read prevAction
-      newAction <- launchAff $ killFiber (error "route changed") pa *>
-        parSequence_ case r of
-          LiveView ->
-            [ do
-                result <- loadInventory userId
-                liftEffect $ inventory.push result
-            , do
-                mcaps <- loadSession userId
-                liftEffect $ for_ mcaps backendCaps.push
-            ]
-          Edit uuid ->
-            [ run (loadEditItem userId uuid) editItem ]
-          Delete uuid ->
-            [ run (loadDeleteItem userId uuid) deleteItem ]
-          CreateTransaction ->
-            [ run (loadTxPageData userId) txPage ]
-          _ -> []
+          pa <- Ref.read prevAction
+          newAction <- launchAff $ killFiber (error "route changed") pa *>
+            parSequence_ case r of
+              LiveView ->
+                [ do
+                    result <- loadInventory userId
+                    liftEffect $ inventory.push result
+                , do
+                    mcaps <- loadSession userId
+                    liftEffect $ for_ mcaps backendCaps.push
+                ]
+              Edit uuid ->
+                [ run (loadEditItem userId uuid) editItem ]
+              Delete uuid ->
+                [ run (loadDeleteItem userId uuid) deleteItem ]
+              CreateTransaction ->
+                [ run (loadTxPageData userId) txPage ]
+              _ -> []
 
-      Ref.write newAction prevAction
+          Ref.write newAction prevAction
 
-      nut <- case r of
-        Login ->
-          pure $ Pages.Login.page pushAuth (pure unit)
+          nut <- case r of
+            Login ->
+              pure $ Pages.Login.page pushAuth (pure unit)
 
-        LiveView ->
-          pure $ Pages.LiveView.page authPoll
-            (pure Pages.LiveView.InventoryLoading <|> inventory.poll)
+            LiveView ->
+              pure $ Pages.LiveView.page authPoll
+                (pure Pages.LiveView.InventoryLoading <|> inventory.poll)
 
-        Create -> do
-          uuid <- genUUID
-          Console.log $ "Generated UUID for new item: " <> show uuid
-          pure $ Pages.CreateItem.page authPoll userId (show uuid)
+            Create -> do
+              uuid <- genUUID
+              Console.log $ "Generated UUID for new item: " <> show uuid
+              pure $ Pages.CreateItem.page authPoll userId (show uuid)
 
-        Edit _ ->
-          pure $ Pages.EditItem.page authPoll userId
-            (pure Pages.EditItem.EditLoading <|> editItem.poll)
+            Edit _ ->
+              pure $ Pages.EditItem.page authPoll userId
+                (pure Pages.EditItem.EditLoading <|> editItem.poll)
 
-        Delete _ ->
-          pure $ Pages.DeleteItem.page authPoll userId
-            (pure Pages.DeleteItem.DeleteLoading <|> deleteItem.poll)
+            Delete _ ->
+              pure $ Pages.DeleteItem.page authPoll userId
+                (pure Pages.DeleteItem.DeleteLoading <|> deleteItem.poll)
 
-        CreateTransaction ->
-          pure $ Pages.CreateTransaction.page authPoll userId
-            (pure Pages.CreateTransaction.TxPageLoading <|> txPage.poll)
+            CreateTransaction ->
+              pure $ Pages.CreateTransaction.page authPoll userId
+                (pure Pages.CreateTransaction.TxPageLoading <|> txPage.poll)
 
-        TransactionHistory ->
-          pure Pages.TransactionHistory.page
+            TransactionHistory ->
+              pure Pages.TransactionHistory.page
 
-      currentRoute.push (Tuple r nut)
+          currentRoute.push (Tuple r nut)
 
   void $ matchesWith (parse route) matcher
 
@@ -272,4 +243,36 @@ main = do
         ]
     )
 
-  matcher Nothing LiveView
+  -- Restore session, then mark ready and fire the initial route.
+  -- This ensures tokenRef holds the real token before loadInventory runs.
+  launchAff_ do
+    initialRoute <- if devMode
+      then pure LiveView
+      else do
+        mToken <- liftEffect loadToken
+        case mToken of
+          Nothing -> pure Login
+          Just token -> do
+            result <- validateSession token
+            liftEffect $ case result of
+              Left err -> do
+                Console.warn $ "Session restore failed: " <> err
+                clearToken
+                pure Login
+              Right sessionResp -> do
+                let devUser = case findDevUserByRole sessionResp.sessionRole of
+                      Just u  -> u
+                      Nothing -> defaultDevUser
+                pushAuth (SignedIn devUser token)
+                Console.log $ "Session restored for " <> sessionResp.sessionUserName
+                pure LiveView
+    liftEffect do
+      userId <- Ref.read tokenRef
+      RegisterService.initLocalRegister
+        userId
+        dummyLocationId
+        dummyEmployeeId
+        (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
+        (\err      -> Console.error $ "Register pre-init failed: " <> err)
+      Ref.write true readyRef
+      matcher Nothing initialRoute

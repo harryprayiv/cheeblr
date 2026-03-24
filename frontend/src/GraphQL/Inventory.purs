@@ -36,7 +36,7 @@ gqlPost userId query = do
       , headers:
           { "Content-Type": "application/json"
           , "Accept":       "application/json"
-          , "X-User-Id":    userId
+          , "Authorization": "Bearer " <> userId
           }
       }
     (r :: GqlResponse a) <- fromJSON response.json
