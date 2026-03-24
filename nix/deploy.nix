@@ -149,7 +149,7 @@ let
 
     echo "Starting backend..."
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export PGPASSWORD=$(sops-get db_password); cd ${backendDir} && cabal run ${name}-backend' C-m
+      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export PGPASSWORD=$(sops-get db_password); export ALLOWED_ORIGIN=$(sops-get allowed_origin 2>/dev/null || true); cd ${backendDir} && cabal run ${name}-backend' C-m
 
     echo "Waiting for backend..."
     RETRIES=0
@@ -184,6 +184,7 @@ let
     echo "All services stopped."
   '';
 
+  # launch-dev intentionally omits ALLOWED_ORIGIN so CORS stays open for local development.
   launch-dev = pkgs.writeShellScriptBin "launch-dev" ''
     set -euo pipefail
     PROJECT_DIR="$(pwd)"
@@ -196,8 +197,8 @@ let
       TLS_KEY="$CERT_DIR/${tlsConfig.keyFile}"
     '' else "true"}
 
-    # Write an env file with literal values. No quoting complexity.
-    # Both Alacritty windows source this file before running their command.
+
+
     _ENV_FILE="$(mktemp /tmp/${name}-env-XXXXXX.sh)"
     cat > "$_ENV_FILE" <<EOF
 export USE_TLS="${if tlsConfig.enable then "true" else "false"}"
@@ -212,6 +213,7 @@ EOF
     ${firewallOpen}
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"
+    echo "Note: CORS is open in dev mode (ALLOWED_ORIGIN not set)"
 
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Database" \
@@ -296,6 +298,8 @@ EOF
     ${tlsEnvSetup}
     export USE_REAL_AUTH="true"
     export PGPASSWORD="$(sops-get db_password)"
+    # Empty string from sops means CORS stays open; non-empty locks it.
+    export ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
 
     echo "Starting backend on ${protocol}://${host}:${backendPort}..."
     cd "$BACKEND_DIR" && exec cabal run ${name}-backend
@@ -391,13 +395,17 @@ EOF
     ${tlsEnvSetup}
     ${firewallOpen}
 
+    _ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
+
     echo "Starting backend..."
     ${if tlsConfig.enable then ''
       USE_TLS=true TLS_CERT_FILE="$TLS_CERT_FILE" TLS_KEY_FILE="$TLS_KEY_FILE" \
       USE_REAL_AUTH=true PGPASSWORD="$(sops-get db_password)" \
+      ALLOWED_ORIGIN="$_ALLOWED_ORIGIN" \
       ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
     '' else ''
       USE_TLS=false USE_REAL_AUTH=true PGPASSWORD="$(sops-get db_password)" \
+      ALLOWED_ORIGIN="$_ALLOWED_ORIGIN" \
       ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
     ''}
     echo $! > "$PIDDIR/backend.pid"
@@ -421,6 +429,11 @@ EOF
     echo "  Frontend: ${protocol}://${host}:${frontendPort} (PID: $(cat $PIDDIR/frontend.pid))"
     echo "  Postgres: ${host}:${dbPort}"
     echo "  Logs: $LOGDIR/"
+    if [ -n "$_ALLOWED_ORIGIN" ]; then
+      echo "  CORS: locked to $_ALLOWED_ORIGIN"
+    else
+      echo "  CORS: open (set allowed_origin in sops to lock)"
+    fi
   '';
 
   deploy-nix-interactive = pkgs.writeShellScriptBin "deploy-nix-interactive" ''
@@ -437,9 +450,11 @@ EOF
     ${tlsEnvSetup}
     ${firewallOpen}
 
+    _ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
+
     ${tmuxLayout}
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefixNix}USE_REAL_AUTH=true PGPASSWORD=$(sops-get db_password) ./result/bin/${name}-backend' C-m
+      '${tlsEnvPrefixNix}USE_REAL_AUTH=true PGPASSWORD=$(sops-get db_password) ALLOWED_ORIGIN="'"$_ALLOWED_ORIGIN"'" ./result/bin/${name}-backend' C-m
     tmux send-keys -t ${name}:Services.1 \
       'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
     ${tmuxAttach}

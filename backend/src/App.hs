@@ -12,7 +12,7 @@ import Network.HTTP.Types.Header (hContentType, hAccept, hAuthorization, hOrigin
 import Network.HTTP.Types.Method (methodGet, methodPost, methodPut, methodDelete, methodOptions)
 import Network.HTTP.Types.Status (status200)
 import Network.TLS (TLSException (..))
-import Network.Wai (responseBuilder, requestMethod)
+import Network.Wai (Middleware, mapResponseHeaders, responseBuilder, requestMethod)
 import Network.Wai.Handler.WarpTLS (runTLS, tlsSettings)
 import qualified Network.Wai.Handler.Warp as Warp
 import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy, CorsResourcePolicy (..), cors)
@@ -35,6 +35,28 @@ data AppConfig = AppConfig
   , tlsKeyFile  :: Maybe FilePath
   }
 
+-- | Emit the standard security response headers on every reply.
+-- unsafe-inline on style-src is a concession to Tailwind inline styles;
+-- tighten once CSS is extracted at build time.
+securityHeadersMiddleware :: Middleware
+securityHeadersMiddleware app req sendResponse =
+  app req $ \response ->
+    sendResponse $ mapResponseHeaders
+      ( <>
+          [ (CI.mk $ B8.pack "Strict-Transport-Security",
+             B8.pack "max-age=31536000; includeSubDomains")
+          , (CI.mk $ B8.pack "X-Content-Type-Options",
+             B8.pack "nosniff")
+          , (CI.mk $ B8.pack "X-Frame-Options",
+             B8.pack "DENY")
+          , (CI.mk $ B8.pack "Referrer-Policy",
+             B8.pack "strict-origin-when-cross-origin")
+          , (CI.mk $ B8.pack "Content-Security-Policy",
+             B8.pack "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:")
+          ]
+      )
+      response
+
 run :: IO ()
 run = do
   currentUser <- getEffectiveUserName
@@ -46,14 +68,19 @@ run = do
   envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
   envPassword <- fromMaybe "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS" <$> lookupEnv "PGPASSWORD"
 
-  useTLS      <- lookupEnv "USE_TLS"
-  certFile    <- lookupEnv "TLS_CERT_FILE"
-  keyFile     <- lookupEnv "TLS_KEY_FILE"
-  logFile     <- fromMaybe "./cheeblr-compliance.log" <$> lookupEnv "LOG_FILE"
-  useRealAuth <- lookupEnv "USE_REAL_AUTH"
+  useTLS         <- lookupEnv "USE_TLS"
+  certFile       <- lookupEnv "TLS_CERT_FILE"
+  keyFile        <- lookupEnv "TLS_KEY_FILE"
+  logFile        <- fromMaybe "./cheeblr-compliance.log" <$> lookupEnv "LOG_FILE"
+  useRealAuth    <- lookupEnv "USE_REAL_AUTH"
+  -- Empty string is treated the same as absent: CORS stays open.
+  -- Set to a non-empty origin (e.g. "https://pos.example.com") in production.
+  allowedOriginE <- lookupEnv "ALLOWED_ORIGIN"
 
-  let tlsEnabled   = useTLS      == Just "true"
-      realAuthMode = useRealAuth == Just "true"
+  let tlsEnabled    = useTLS      == Just "true"
+      realAuthMode  = useRealAuth == Just "true"
+      mAllowedOrigin = allowedOriginE >>= \s ->
+        if null s then Nothing else Just s
 
   let config = AppConfig
         { dbConfig = DBConfig
@@ -78,13 +105,22 @@ run = do
   logAppStartup logEnv (serverPort config) tlsEnabled
   logAppInfo logEnv $
     "Auth mode: " <> if realAuthMode then "real (session tokens)" else "dev (Auth.Simple)"
+  logAppInfo logEnv $
+    "CORS mode: " <> case mAllowedOrigin of
+      Just origin -> "locked to " <> T.pack origin
+      Nothing     -> "open (no ALLOWED_ORIGIN set)"
 
   let
     hXRequestedWith = CI.mk (B8.pack "x-requested-with")
     hXUserId        = CI.mk (B8.pack "x-user-id")
 
+    -- Lock CORS to a specific origin in production; allow all in dev.
+    corsOrigins' = case mAllowedOrigin of
+      Just origin -> Just ([B8.pack origin], True)
+      Nothing     -> Nothing
+
     corsPolicy = simpleCorsResourcePolicy
-      { corsOrigins        = Nothing
+      { corsOrigins        = corsOrigins'
       , corsRequestHeaders =
           [ hContentType, hAccept, hAuthorization, hOrigin
           , hContentLength, hXRequestedWith, hXUserId
@@ -97,10 +133,12 @@ run = do
       , corsIgnoreFailures = True
       }
 
-    app = cors (const $ Just corsPolicy) $
-            serve cheeblrAPI (combinedServer pool logEnv realAuthMode)
+    coreApp = cors (const $ Just corsPolicy) $
+                serve cheeblrAPI (combinedServer pool logEnv realAuthMode)
 
-    appWithOptions = handleOptionsMiddleware app
+    app = securityHeadersMiddleware
+        . handleOptionsMiddleware
+        $ coreApp
 
     warpSettings =
       Warp.setPort (serverPort config)
@@ -118,13 +156,13 @@ run = do
       if certExists && keyExists
         then do
           logAppInfo logEnv $ "TLS enabled cert=" <> T.pack cert
-          runTLS (tlsSettings cert key) warpSettings appWithOptions
+          runTLS (tlsSettings cert key) warpSettings app
         else do
           logAppWarn logEnv
             "USE_TLS=true but cert/key files not found — falling back to HTTP"
-          Warp.runSettings warpSettings appWithOptions
+          Warp.runSettings warpSettings app
     _ ->
-      Warp.runSettings warpSettings appWithOptions
+      Warp.runSettings warpSettings app
 
   logAppShutdown logEnv
   closeLogging logEnv

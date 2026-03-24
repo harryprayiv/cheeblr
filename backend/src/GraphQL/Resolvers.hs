@@ -23,7 +23,6 @@ import Data.Text (Text, pack)
 import qualified Data.UUID as UUID
 import qualified Data.Vector as V
 import GHC.Generics (Generic)
-import Servant.Server (runHandler)
 
 import Auth.Simple (lookupUser)
 import qualified DB.Database as DB

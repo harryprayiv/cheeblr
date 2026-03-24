@@ -1,7 +1,7 @@
 { config, pkgs, lib, ... }:
 
 let
-  appConfig = import ./config.nix {};
+  appConfig = import ./config.nix { };
   name      = appConfig.name;
   dbPort    = toString appConfig.database.port;
 in
@@ -35,17 +35,21 @@ in
     restartUnits = [ "${name}-backend.service" ];
   };
 
-  # Populated by 'bootstrap-admin' on first run.
-  # The value is the initial admin password, Argon2id-hashed in the DB.
-  # Kept here only so it is not lost between shell sessions — rotate it
-  # after first login and then you can remove this entry if desired.
+  # Set to the production frontend origin, e.g. "https://pos.example.com".
+  # Leave blank in the secrets file to keep CORS open for dev/staging.
+  sops.secrets."allowed_origin" = {
+    owner        = name;
+    group        = name;
+    mode         = "0400";
+    path         = "/run/secrets/${name}/allowed_origin";
+    restartUnits = [ "${name}-backend.service" ];
+  };
+
   sops.secrets."admin_password" = {
     owner = name;
     group = name;
     mode  = "0400";
     path  = "/run/secrets/${name}/admin_password";
-    # No restartUnits — the backend does not read this at runtime.
-    # It is stored here purely for operator reference.
   };
 
   sops.templates."${name}-env" = {
@@ -59,6 +63,7 @@ in
       PGPASSWORD=${config.sops.placeholder."db_password"}
       DB_PASSWORD=${config.sops.placeholder."db_password"}
       DATABASE_URL=postgresql://${name}:${config.sops.placeholder."db_password"}@localhost:${dbPort}/${name}
+      ALLOWED_ORIGIN=${config.sops.placeholder."allowed_origin"}
     '';
   };
 

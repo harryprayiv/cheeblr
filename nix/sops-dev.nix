@@ -36,7 +36,7 @@ let
       chmod 600 "$AGE_KEYS"
 
       PUBKEY=$(ssh-to-age -i "$SSH_KEY.pub")
-      echo "# public key: $PUBKEY" >> "$AGE_KEYS"
+      echo ""
 
       echo "✓ Age key written to $AGE_KEYS"
       echo "  Public key: $PUBKEY"
@@ -121,6 +121,9 @@ db_password: $DB_PASS
 tls_cert: ""
 tls_key: ""
 admin_password: ""
+# Set to the production frontend origin to lock CORS, e.g. https://pos.example.com
+# Leave blank to keep CORS open (correct for dev/staging).
+allowed_origin: ""
 EOF
 
       SOPS_AGE_KEY_FILE="$AGE_KEYS" sops --encrypt \
@@ -136,6 +139,10 @@ EOF
       echo "    tls-sops-update     encrypt them into $SECRETS_FILE"
       echo "    bootstrap-admin     create initial admin user"
       echo "    sops-status         verify everything is working"
+      echo ""
+      echo "  For production, set allowed_origin in $SECRETS_FILE:"
+      echo "    sops ${secretsFile}"
+      echo "    # set allowed_origin to your frontend URL"
       echo ""
       echo "  Commit: .sops.yaml  secrets/${name}.yaml"
       echo "  NEVER commit: ~/.config/sops/age/keys.txt"
@@ -184,6 +191,11 @@ EOF
       if [ -n "$DB_PASS" ]; then
         export PGPASSWORD="$DB_PASS"
         export DB_PASSWORD="$DB_PASS"
+      fi
+
+      ALLOWED=$(echo "$DECRYPTED" | jq -r '.allowed_origin // empty')
+      if [ -n "$ALLOWED" ] && [ "$ALLOWED" != '""' ]; then
+        export ALLOWED_ORIGIN="$ALLOWED"
       fi
 
       CERT=$(echo "$DECRYPTED" | jq -r '.tls_cert // empty')
@@ -287,6 +299,14 @@ EOF
             echo "                  reveal with: sops-get admin_password"
           else
             echo "  admin_password: ✗ not set — run 'bootstrap-admin' after pg-start"
+          fi
+
+          ALLOWED=$(echo "$DECRYPTED" | jq -r '.allowed_origin // empty')
+          if [ -n "$ALLOWED" ] && [ "$ALLOWED" != '""' ]; then
+            echo "  allowed_origin: ✓ $ALLOWED"
+          else
+            echo "  allowed_origin: ✗ empty — CORS is open (OK for dev/staging)"
+            echo "                  Set to prod frontend URL to lock CORS in production"
           fi
         else
           echo "  decryptable  : ✗ wrong key or corrupted file"
