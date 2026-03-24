@@ -201,7 +201,6 @@ addItemToCart
     setCheckingInventory true
     setStatusMessage "Checking inventory..."
 
-
     let existingItem = find
           (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
           currentItems
@@ -211,7 +210,6 @@ addItemToCart
           Nothing -> 0
 
     let totalRequestedQty = currentQtyInCart + qty
-
 
     void $ launchAff_ do
       result <- TransactionService.createTransactionItem
@@ -223,15 +221,42 @@ addItemToCart
 
       liftEffect $ case result of
         Right newItem -> do
-
           let updatedItems = case existingItem of
                 Just (TransactionItem existing) ->
-
-                  map (\(TransactionItem i) ->
-                    if i.transactionItemId == existing.transactionItemId
-                    then TransactionItem (i { transactionItemQuantity = totalRequestedQty })
-                    else TransactionItem i
-                  ) currentItems
+                  -- Recalculate subtotal, taxes, and total for the new cumulative
+                  -- quantity. Only patching quantity leaves the money fields stale,
+                  -- causing calculateCartTotals to report single-item prices regardless
+                  -- of how many units are in the cart.
+                  let
+                    priceInCents  = unwrap (toDiscrete existing.transactionItemPricePerUnit)
+                    newSubtotal   = priceInCents * totalRequestedQty
+                    -- Preserve the tax rate from the existing record if present,
+                    -- otherwise fall back to the server item's rate.
+                    taxRate = case existing.transactionItemTaxes of
+                      [ t ] -> t.taxRate
+                      _     -> case (unwrap newItem).transactionItemTaxes of
+                        [ t ] -> t.taxRate
+                        _     -> 0.08
+                    taxAmount     = Int.floor (Int.toNumber newSubtotal * taxRate)
+                    newTotal      = newSubtotal + taxAmount
+                    mergedTaxes   =
+                      [ { taxCategory:   RegularSalesTax
+                        , taxRate:       taxRate
+                        , taxAmount:     fromDiscrete' (Discrete taxAmount)
+                        , taxDescription: "Sales Tax"
+                        }
+                      ]
+                    mergedItem = TransactionItem $ existing
+                      { transactionItemQuantity = totalRequestedQty
+                      , transactionItemSubtotal = fromDiscrete' (Discrete newSubtotal)
+                      , transactionItemTaxes    = mergedTaxes
+                      , transactionItemTotal    = fromDiscrete' (Discrete newTotal)
+                      }
+                  in
+                    map (\i@(TransactionItem ti) ->
+                      if ti.transactionItemMenuItemSku == record.sku then mergedItem
+                      else i
+                    ) currentItems
                 Nothing ->
                   newItem : currentItems
 
