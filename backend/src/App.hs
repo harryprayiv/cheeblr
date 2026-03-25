@@ -1,8 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module App where
 
-import Control.Exception (fromException)
+import Control.Exception (fromException, catch, SomeException)
 import Data.Maybe        (fromMaybe)
 import qualified Data.ByteString.Builder as B
 import qualified Data.ByteString.Char8 as B8
@@ -59,13 +60,13 @@ securityHeadersMiddleware app req sendResponse =
 
 run :: IO ()
 run = do
-  currentUser <- getEffectiveUserName
-
   envHost     <- fromMaybe "localhost"  <$> lookupEnv "PGHOST"
   envDbPort   <- maybe (5432 :: Int) read <$> lookupEnv "PGPORT"
   envPort     <- maybe 8080 read        <$> lookupEnv "PORT"
   envDb       <- fromMaybe "cheeblr"    <$> lookupEnv "PGDATABASE"
-  envUser     <- fromMaybe currentUser  <$> lookupEnv "PGUSER"
+  currentUser <- getEffectiveUserName
+                  `catch` (\e -> let _ = e :: SomeException in pure "nobody")
+  envUser <- fromMaybe currentUser <$> lookupEnv "PGUSER"
   envPassword <- fromMaybe "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS" <$> lookupEnv "PGPASSWORD"
 
   useTLS         <- lookupEnv "USE_TLS"

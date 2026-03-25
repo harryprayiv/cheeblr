@@ -1,4 +1,3 @@
-# nix/build.nix
 { inputs }:
 
 let
@@ -98,10 +97,12 @@ let
         inherit pkgs lib name backendPackage
                 purs-nix-instance psDependencies purescript;
         nix2containerPkgs = n2cPkgs;
-        # frontendProject is intentionally NOT passed here.
-        # purs-nix-instance.build produces a library dependency manifest,
-        # not compiled JavaScript.  containers.nix will use purs-nix-instance
-        # to compile from source, which is the correct path.
+        # bundleMode: "es" (default) or "simple".
+        # "es"     -- purs-backend-es DCE + esbuild minify (smaller bundle)
+        # "simple" -- esbuild directly from output/       (proven, larger)
+        # Change here to switch the container frontend build mode globally.
+        bundleMode = "simple";
+        # frontendProject intentionally not passed; see containers.nix for why.
       };
 
       # ── Devshell ─────────────────────────────────────────────────────────
@@ -117,15 +118,9 @@ let
         backend       = backendPackage;
         frontend      = frontendProject;
 
-        # OCI images.  Not built by `nix develop`; build explicitly:
-        #   nix build .#packages.aarch64-linux.backendImage
-        #   nix build .#packages.aarch64-linux.frontendImage
         backendImage  = containersModule.backendImage;
         frontendImage = containersModule.frontendImage;
 
-        # nix2container passthru packages -- exposed so the lazy devshell
-        # scripts can call `nix run .#packages.${s}.backendImage-copyToPodman`
-        # etc. without needing to know the store path at eval time.
         "backendImage-copyToPodman"    = containersModule.backendImage.copyToPodman;
         "backendImage-copyToRegistry"  = containersModule.backendImage.copyToRegistry;
         "frontendImage-copyToPodman"   = containersModule.frontendImage.copyToPodman;
@@ -166,7 +161,7 @@ in {
 
   systems = [
     "x86_64-linux"
-    "aarch64-linux"   # Raspberry Pi 5
+    "aarch64-linux"
     "x86_64-darwin"
     "aarch64-darwin"
   ];

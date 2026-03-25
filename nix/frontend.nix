@@ -9,17 +9,13 @@ let
     runtimeInputs = with pkgs; [ lsof ];
     text = ''
       VITE_PORT=5173
-      
+
       if lsof -i :"$VITE_PORT" > /dev/null 2>&1; then
         echo "Found processes on port $VITE_PORT"
-        
-        # Get all PIDs using the port
         lsof -t -i :"$VITE_PORT" | while read -r pid; do
           if [ -n "$pid" ]; then
             echo "Killing process $pid"
             kill "$pid" 2>/dev/null || true
-            
-            # Wait briefly for each process
             RETRIES=0
             while kill -0 "$pid" 2>/dev/null; do
               RETRIES=$((RETRIES+1))
@@ -32,8 +28,6 @@ let
             done
           fi
         done
-        
-        # Final check
         if ! lsof -i :"$VITE_PORT" > /dev/null 2>&1; then
           echo "Successfully cleaned up all processes"
         else
@@ -55,18 +49,13 @@ let
       cleanup_port() {
         local port="$1"
         local pids
-        
-        # Get all PIDs using the port, one per line
         pids=$(lsof -t -i :"$port" 2>/dev/null)
-        
         if [ -n "$pids" ]; then
           echo "Found processes using port $port:"
           echo "$pids" | while read -r pid; do
             echo "Killing process $pid"
             kill "$pid" 2>/dev/null || true
           done
-          
-          # Wait for port to be freed
           RETRIES=0
           while lsof -i :"$port" > /dev/null 2>&1; do
             RETRIES=$((RETRIES+1))
@@ -83,18 +72,13 @@ let
         fi
       }
 
-      # Check if port is in use and clean up if necessary
       if lsof -i :"$VITE_PORT" > /dev/null 2>&1; then
         echo "Port $VITE_PORT is in use. Attempting to clean up..."
         cleanup_port "$VITE_PORT"
       fi
 
       export ${lib.toUpper name}_BASE_PATH="${toString ../.}"
-      
-      # Start Vite with specific port and host
       npx vite --port "$VITE_PORT" --host --open
-
-      # Cleanup on script exit using the cleanup function
       trap 'cleanup_port "$VITE_PORT"' EXIT
     '';
   };
@@ -129,18 +113,96 @@ let
     text = ''find {src,test} | entr -s "spago $*" '';
   };
 
-  # spago-watch = pkgs.writeShellApplication {
-  #   name = "spago-watch";
-  #   runtimeInputs = with pkgs; [ entr spago-unstable nodejs_20 purs ];
-  #   text = ''
-  #     # Run codegen once at start
-  #     cd ${frontendPath}
-  #     spago run --main Codegen.Run 2>/dev/null || echo "Codegen skipped (may not be needed)"
-      
-  #     # Then watch
-  #     find {src,test} -name "*.purs" | entr -s "spago $*"
-  #   '';
-  # };
+  bundle = pkgs.writeShellApplication {
+    name = "bundle";
+    runtimeInputs = with pkgs; [
+      purs
+      purs-backend-es
+      esbuild
+      nodejs_20
+      spago-unstable
+    ];
+    text = ''
+      set -euo pipefail
+
+      FRONTEND_DIR="${frontendPath}"
+      OUT_DIR="$FRONTEND_DIR/dist"
+      MINIFY=true
+      MODE=es
+
+      for arg in "$@"; do
+        case "$arg" in
+          --no-minify)   MINIFY=false ;;
+          --mode)        shift; MODE="$1" ;;
+          --mode=*)      MODE="''${arg#--mode=}" ;;
+          --out)         shift; OUT_DIR="$1" ;;
+          --out=*)       OUT_DIR="''${arg#--out=}" ;;
+          --help)
+            echo "Usage: bundle [--mode es|simple] [--no-minify] [--out <dir>]"
+            echo ""
+            echo "Modes:"
+            echo "  es     (default) spago build -> purs-backend-es DCE -> esbuild --minify"
+            echo "  simple           spago build -> entry shim -> esbuild --minify"
+            exit 0 ;;
+        esac
+      done
+
+      cd "$FRONTEND_DIR"
+      mkdir -p "$OUT_DIR"
+
+      echo "--- Step 1: spago build (mode: $MODE)..."
+      spago build
+      echo "    Done."
+
+      if [ "$MODE" = "es" ]; then
+        echo "--- Step 2: purs-backend-es bundle-app (DCE)..."
+        purs-backend-es bundle-app \
+          --main Main \
+          --to "$OUT_DIR/bundle-pre-minify.js" \
+          --no-source-maps
+        PRE_BYTES=$(wc -c < "$OUT_DIR/bundle-pre-minify.js")
+        echo "    Pre-minify: $PRE_BYTES bytes"
+        INPUT_JS="$OUT_DIR/bundle-pre-minify.js"
+      else
+        echo "--- Step 2: creating entry shim (mode: simple)..."
+        if [ ! -f "output/Main/index.js" ]; then
+          echo "ERROR: output/Main/index.js not found after spago build"
+          exit 1
+        fi
+        PRE_BYTES=$(wc -c < output/Main/index.js)
+        echo "    Main/index.js: $PRE_BYTES bytes"
+        echo 'require("./output/Main/index.js").main()' > "$OUT_DIR/_entry.js"
+        INPUT_JS="$OUT_DIR/_entry.js"
+      fi
+
+      echo "--- Step 3: esbuild..."
+      if [ "$MINIFY" = "true" ]; then
+        esbuild "$INPUT_JS" \
+          --bundle \
+          --outfile="$OUT_DIR/app.js" \
+          --format=iife \
+          --platform=browser \
+          --minify \
+          --sourcemap=external
+      else
+        esbuild "$INPUT_JS" \
+          --bundle \
+          --outfile="$OUT_DIR/app.js" \
+          --format=iife \
+          --platform=browser \
+          --sourcemap=external
+      fi
+
+      rm -f "$OUT_DIR/bundle-pre-minify.js" "$OUT_DIR/_entry.js"
+
+      FINAL_BYTES=$(wc -c < "$OUT_DIR/app.js")
+      REDUCTION=$(( (PRE_BYTES - FINAL_BYTES) * 100 / PRE_BYTES ))
+      echo "    Final: $FINAL_BYTES bytes  ($REDUCTION% reduction)"
+      echo ""
+      echo "Output: $OUT_DIR/app.js"
+      echo "        $OUT_DIR/app.js.map"
+    '';
+  };
 
   dev = pkgs.writeShellApplication {
     name = "dev";
@@ -151,21 +213,15 @@ let
       concurrent
     ];
     text = ''
-      # Run codegen before starting dev server
       cd ${frontendPath}
       echo "Running initial codegen..."
       spago run --main Codegen.Run || true
-      
       concurrent "spago-watch build" vite
     '';
   };
 
   get-ip = pkgs.writeShellApplication {
     name = "get-ip";
-    # runtimeInputs = with pkgs; [
-    #   ip
-    #   gnugrep
-    # ];
     text = ''
       ip addr show | grep "inet " | grep -v 127.0.0.1
     '';
@@ -173,46 +229,26 @@ let
 
   network-dev = pkgs.writeShellApplication {
     name = "network-dev";
-    runtimeInputs = with pkgs; [
-      nodejs_20
-      esbuild
-      tmux
-    ];
+    runtimeInputs = with pkgs; [ nodejs_20 esbuild tmux ];
     text = ''
-      # Get the local IP address
       if [[ "$OSTYPE" == "darwin"* ]]; then
-        # For macOS
         IP=$(ipconfig getifaddr en0 || ipconfig getifaddr en1)
       else
-        # For Linux
         IP=$(ip -4 addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
       fi
-      
       echo "Starting development server on network address: $IP"
-      echo "Update Config.purs with this IP address if it's not already set"
-      
       cd frontend
-      
-      # Run the backend in one pane and frontend in another
       tmux new-session -d -s dev-session
-      
-      # Backend pane
       tmux send-keys "cd ../backend && cabal run" C-m
-      
-      # Split window horizontally
       tmux split-window -h
-      
-      # Frontend pane with host set to local IP
       tmux send-keys "cd ../frontend && npx vite --host $IP" C-m
-      
-      # Attach to the session
       tmux attach-session -t dev-session
     '';
   };
 
 in {
-  inherit vite vite-cleanup spago-watch concurrent dev network-dev get-ip codegen;  
-  # Frontend development tools
+  inherit vite vite-cleanup spago-watch concurrent dev network-dev get-ip codegen bundle;
+
   buildInputs = with pkgs; [
     esbuild
     nodejs_20

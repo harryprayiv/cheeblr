@@ -1,5 +1,3 @@
-# nix/containers.nix
-#
 # OCI images built with nix2container.
 # No tarballs written to the Nix store.  Push skips already-pushed layers.
 #
@@ -28,27 +26,18 @@
 #
 #   "es"     (default)
 #            purs-nix compile  ->  purs-backend-es bundle-app  ->  esbuild --minify
-#            purs-backend-es performs dead-code elimination across the entire
-#            PureScript closure before esbuild sees any code.  Produces the
-#            smallest possible bundle.  Requires purs-backend-es in the closure.
+#            Dead-code elimination at the PureScript level.  Smallest bundle.
 #
 #   "simple"
-#            purs-nix compile  ->  esbuild --bundle --minify
-#            esbuild bundles directly from the CommonJS output/ tree.
-#            No DCE at the PureScript level; every compiled module is included.
-#            Simpler pipeline; use this if the "es" mode causes build issues.
+#            purs-nix compile  ->  esbuild entry shim  ->  esbuild --minify
+#            Entry shim calls main() explicitly before bundling.
 
 { pkgs
 , lib            ? pkgs.lib
 , name
 , backendPackage
 , nix2containerPkgs
-  # "es"     -- purs-backend-es DCE + esbuild minify  (default, smaller bundle)
-  # "simple" -- esbuild bundle directly from output/  (simpler, proven path)
 , bundleMode        ? "es"
-  # frontendProject: intentionally optional and NOT the purs-nix-instance.build
-  # derivation.  That derivation produces a library dependency manifest, not
-  # compiled JavaScript.  Leave null; the from-source path is used instead.
 , frontendProject   ? null
 , purs-nix-instance ? null
 , psDependencies    ? []
@@ -63,9 +52,29 @@ let
 
   frontendSrc = ../frontend;
 
+  # ── Minimal /etc files ────────────────────────────────────────────────────
+  etcFiles = pkgs.runCommand "${name}-etc-files" { } ''
+    mkdir -p $out/etc
+    cat > $out/etc/passwd <<'EOF'
+root:x:0:0:root:/root:/bin/sh
+nobody:x:65534:65534:nobody:/:/bin/sh
+EOF
+    cat > $out/etc/group <<'EOF'
+root:x:0:
+nogroup:x:65534:
+nobody:x:65534:
+EOF
+    cat > $out/etc/nsswitch.conf <<'EOF'
+passwd: files
+group:  files
+shadow: files
+EOF
+  '';
+
   # ── Backend entrypoint factory ────────────────────────────────────────────
   mkBackendEntry = pkg: pkgs.writeShellScript "${name}-backend-entrypoint" ''
     set -euo pipefail
+    mkdir -p /var/log/${name}
     if [ -f /run/secrets/tls.crt ] && [ -f /run/secrets/tls.key ]; then
       export USE_TLS=true
       export TLS_CERT_FILE=/run/secrets/tls.crt
@@ -93,9 +102,6 @@ let
   '';
 
   # ── Backend image layers ──────────────────────────────────────────────────
-  # Layer 1: stable system tools -- rebuilt only when nixpkgs changes.
-  # Layer 2: Haskell binary      -- the only layer pushed after a code change.
-
   backendSystemLayer = nix2containerPkgs.buildLayer {
     deps = [
       pkgs.cacert
@@ -112,14 +118,13 @@ let
   };
 
   # ── Backend OCI image ─────────────────────────────────────────────────────
-
   backendImage = nix2containerPkgs.buildImage {
     name = "${name}-backend";
     tag  = "latest";
 
     copyToRoot = pkgs.buildEnv {
       name        = "${name}-backend-copyToRoot";
-      paths       = [ pkgs.cacert pkgs.coreutils pkgs.bash backendRootDirs ];
+      paths       = [ pkgs.cacert pkgs.coreutils pkgs.bash etcFiles backendRootDirs ];
       pathsToLink = [ "/bin" "/etc" "/tmp" "/run" "/var" ];
     };
 
@@ -132,7 +137,7 @@ let
         "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "PORT=${backendPort}"
-        "PGHOST=localhost"
+        "PGHOST=127.0.0.1"
         "PGPORT=5432"
         "PGDATABASE=${name}"
         "PGUSER=${name}"
@@ -148,46 +153,60 @@ let
     };
   };
 
-  # ── Frontend static build ─────────────────────────────────────────────────
-  #
-  # Priority (first match wins):
-  #
-  #   1. purs-nix-instance + purescript available  (normal path)
-  #      Delegates to frontendStaticEs or frontendStaticSimple per bundleMode.
-  #
-  #   2. frontendProject supplied (derivation with $out/Main/index.js)
-  #      Skips compilation; goes straight to bundling.
-  #      NOTE: purs-nix-instance.build does NOT produce $out/Main/index.js.
-  #
-  #   3. Neither available  ->  placeholder HTML page.
+  # ── Frontend static build shared helper ───────────────────────────────────
+  rewriteAndCopy = outDir: srcDir: ''
+    echo "--- Copying static assets..."
+    [ -f "${srcDir}/index.html" ] && cp "${srcDir}/index.html" "${outDir}/"         || true
+    [ -d "${srcDir}/public"     ] && cp -r "${srcDir}/public/." "${outDir}/"        || true
+    [ -d "${srcDir}/css"        ] && cp -r "${srcDir}/css"       "${outDir}/css"    || true
+    [ -d "${srcDir}/assets"     ] && cp -r "${srcDir}/assets"    "${outDir}/assets" || true
 
-  # Shared helper: copy static assets and repoint index.html.
-  # Used by both from-source derivations via shell fragment interpolation.
+    find "${srcDir}" -maxdepth 1 -name "*.css" -exec cp {} "${outDir}/" \; 2>/dev/null || true
 
-  # ── "es" mode: purs-nix compile -> purs-backend-es DCE -> esbuild minify ─
+    if [ -f "${outDir}/index.html" ]; then
+      echo "--- Rewriting index.html..."
+      echo "    Original script/link tags:"
+      grep -E '<script|<link' "${outDir}/index.html" || true
+
+      ${pkgs.perl}/bin/perl -i -0pe \
+        's|<script[^>]+type=["'"'"']module["'"'"'][^>]*>.*?</script>\s*||gsi' \
+        "${outDir}/index.html"
+      ${pkgs.perl}/bin/perl -i -0pe \
+        's|<script[^>]+src=[^>]+type=["'"'"']module["'"'"'][^>]*>\s*</script>\s*||gsi' \
+        "${outDir}/index.html"
+
+      ${pkgs.perl}/bin/perl -i -pe \
+        's|</body>|<script src="/app.js"></script>\n</body>|i' \
+        "${outDir}/index.html"
+
+      echo "    After rewrite:"
+      grep -E '<script|<link' "${outDir}/index.html" || true
+    fi
+  '';
+
+  mkPs = purs-nix-instance.purs {
+    dir          = frontendSrc;
+    dependencies = psDependencies;
+    inherit purescript;
+    nodejs = pkgs.nodejs_20;
+  };
+
+  # ── "es" mode ─────────────────────────────────────────────────────────────
   frontendStaticEs =
-    let
-      ps = purs-nix-instance.purs {
-        dir          = frontendSrc;
-        dependencies = psDependencies;
-        inherit purescript;
-        nodejs = pkgs.nodejs_20;
-      };
-    in
     pkgs.runCommand "${name}-frontend-static" {
       buildInputs = [
-        (ps.command { })
+        (mkPs.command { })
         purescript
         pkgs.purs-backend-es
         pkgs.spago-unstable
         pkgs.nodejs_20
         pkgs.esbuild
+        pkgs.perl
       ];
       src = frontendSrc;
     } ''
       set -euo pipefail
 
-      echo "--- Copying frontend source..."
       cp -r "$src/." workdir
       chmod -R +w workdir
       cd workdir
@@ -200,7 +219,7 @@ let
         exit 1
       fi
 
-      echo "--- Step 2: purs-backend-es bundle-app (DCE + ES module output)"
+      echo "--- Step 2: purs-backend-es bundle-app (DCE)"
       ${pkgs.purs-backend-es}/bin/purs-backend-es bundle-app \
         --main Main \
         --to bundle.js \
@@ -220,55 +239,35 @@ let
         --bundle \
         --outfile="$out/app.js" \
         --format=iife \
-        --global-name=__cheeblrInit \
         --platform=browser \
         --minify \
         --sourcemap=external
 
       FINAL_BYTES=$(wc -c < "$out/app.js")
-      echo "    app.js:    $FINAL_BYTES bytes (minified)"
+      echo "    app.js: $FINAL_BYTES bytes"
       echo "    Reduction: $(( (BUNDLE_BYTES - FINAL_BYTES) * 100 / BUNDLE_BYTES ))%"
 
-      [ -f "index.html" ] && cp index.html "$out/"          || true
-      [ -d "public"     ] && cp -r public/. "$out/"         || true
-      [ -d "css"        ] && cp -r css       "$out/css"     || true
-      [ -d "assets"     ] && cp -r assets    "$out/assets"  || true
+      ${rewriteAndCopy "\"$out\"" "\"$src\""}
 
-      if [ -f "$out/index.html" ]; then
-        sed -i \
-          -e 's|type="module"[^>]*src="[^"]*"|src="/app.js"|g' \
-          -e 's|<script[^>]*type="module"[^>]*>|<script>|g' \
-          "$out/index.html"
-      fi
-
-      echo "--- Frontend static build complete (mode: es)."
+      echo "--- Complete (mode: es)."
       find "$out" -maxdepth 2 -type f
     '';
 
-  # ── "simple" mode: purs-nix compile -> esbuild bundle + minify ───────────
-  # The proven path.  esbuild bundles directly from the CommonJS output/ tree.
+  # ── "simple" mode ─────────────────────────────────────────────────────────
   frontendStaticSimple =
-    let
-      ps = purs-nix-instance.purs {
-        dir          = frontendSrc;
-        dependencies = psDependencies;
-        inherit purescript;
-        nodejs = pkgs.nodejs_20;
-      };
-    in
     pkgs.runCommand "${name}-frontend-static" {
       buildInputs = [
-        (ps.command { })
+        (mkPs.command { })
         purescript
         pkgs.spago-unstable
         pkgs.nodejs_20
         pkgs.esbuild
+        pkgs.perl
       ];
       src = frontendSrc;
     } ''
       set -euo pipefail
 
-      echo "--- Copying frontend source..."
       cp -r "$src/." workdir
       chmod -R +w workdir
       cd workdir
@@ -287,49 +286,37 @@ let
       echo "    Main/index.js: $MAIN_BYTES bytes"
 
       echo "--- Step 2: esbuild --bundle --minify"
+      # Entry shim: explicitly call main() so the IIFE actually runs the app.
+      echo 'require("./output/Main/index.js").main()' > _entry.js
+
       mkdir -p "$out"
-      ${pkgs.esbuild}/bin/esbuild "$MAIN_JS" \
+      ${pkgs.esbuild}/bin/esbuild _entry.js \
         --bundle \
         --outfile="$out/app.js" \
         --format=iife \
-        --global-name=__cheeblrInit \
         --platform=browser \
         --minify \
         --sourcemap=external
 
       FINAL_BYTES=$(wc -c < "$out/app.js")
-      echo "    app.js: $FINAL_BYTES bytes (minified)"
+      echo "    app.js: $FINAL_BYTES bytes"
 
-      [ -f "index.html" ] && cp index.html "$out/"          || true
-      [ -d "public"     ] && cp -r public/. "$out/"         || true
-      [ -d "css"        ] && cp -r css       "$out/css"     || true
-      [ -d "assets"     ] && cp -r assets    "$out/assets"  || true
+      ${rewriteAndCopy "\"$out\"" "\"$src\""}
 
-      if [ -f "$out/index.html" ]; then
-        sed -i \
-          -e 's|type="module"[^>]*src="[^"]*"|src="/app.js"|g' \
-          -e 's|<script[^>]*type="module"[^>]*>|<script>|g' \
-          "$out/index.html"
-      fi
-
-      echo "--- Frontend static build complete (mode: simple)."
+      echo "--- Complete (mode: simple)."
       find "$out" -maxdepth 2 -type f
     '';
 
-  # Select based on bundleMode.
   frontendStaticFromSource =
     if bundleMode == "es" then frontendStaticEs
     else frontendStaticSimple;
 
-  # Fallback: pre-compiled output/ directory supplied by caller.
-  # Requires $frontendProject to be the purs compiler output/ tree
-  # (i.e. $frontendProject/Main/index.js exists).
-  # Also respects bundleMode.
+  # ── frontendProject fallback ───────────────────────────────────────────────
   frontendStaticWithProject =
     pkgs.runCommand "${name}-frontend-static-precompiled" {
       buildInputs =
         (if bundleMode == "es" then [ pkgs.purs-backend-es ] else [])
-        ++ [ pkgs.esbuild ];
+        ++ [ pkgs.esbuild pkgs.perl ];
       inherit frontendProject;
       src = frontendSrc;
     } ''
@@ -340,12 +327,7 @@ let
 
       if [ ! -f "$MAIN_JS" ]; then
         echo "ERROR: frontendProject does not contain Main/index.js"
-        echo "Contents of frontendProject:"
         find "$OUTPUT_DIR" -type f | head -20
-        echo ""
-        echo "Hint: purs-nix-instance.build produces a library manifest,"
-        echo "not compiled JavaScript.  Pass purs-nix-instance + purescript"
-        echo "instead, or a derivation whose \$out IS the purs output/ directory."
         exit 1
       fi
 
@@ -363,30 +345,20 @@ let
         cd ..
         INPUT_JS=bundle.js
       '' else ''
-        echo "--- esbuild direct (mode: simple)"
-        INPUT_JS="$MAIN_JS"
+        echo "--- esbuild entry shim (mode: simple)"
+        echo "require(\"$MAIN_JS\").main()" > _entry.js
+        INPUT_JS=_entry.js
       ''}
 
       ${pkgs.esbuild}/bin/esbuild "$INPUT_JS" \
         --bundle \
         --outfile="$out/app.js" \
         --format=iife \
-        --global-name=__cheeblrInit \
         --platform=browser \
         --minify \
         --sourcemap=external
 
-      [ -f "$src/index.html" ] && cp "$src/index.html"  "$out/"          || true
-      [ -d "$src/public"     ] && cp -r "$src/public/." "$out/"          || true
-      [ -d "$src/css"        ] && cp -r "$src/css"       "$out/css"      || true
-      [ -d "$src/assets"     ] && cp -r "$src/assets"    "$out/assets"   || true
-
-      if [ -f "$out/index.html" ]; then
-        sed -i \
-          -e 's|type="module"[^>]*src="[^"]*"|src="/app.js"|g' \
-          -e 's|<script[^>]*type="module"[^>]*>|<script>|g' \
-          "$out/index.html"
-      fi
+      ${rewriteAndCopy "\"$out\"" "\"$src\""}
     '';
 
   frontendStaticPlaceholder =
@@ -428,9 +400,7 @@ let
     else                                                     frontendStaticPlaceholder;
 
   # ── nginx configuration ───────────────────────────────────────────────────
-
   nginxConf = pkgs.writeText "${name}-nginx.conf" ''
-    user root;
     daemon off;
     error_log /dev/stderr info;
     pid /tmp/nginx.pid;
@@ -455,9 +425,14 @@ let
       gzip_min_length 256;
 
       server {
-        listen ${frontendPort};
-        root   /var/www/${name};
-        index  index.html;
+        listen ${frontendPort} ssl;
+        ssl_certificate     /run/secrets/tls.crt;
+        ssl_certificate_key /run/secrets/tls.key;
+        ssl_protocols       TLSv1.2 TLSv1.3;
+        ssl_ciphers         HIGH:!aNULL:!MD5;
+
+        root  /var/www/${name};
+        index index.html;
 
         location / { try_files $uri $uri/ /index.html; }
 
@@ -472,40 +447,40 @@ let
   frontendEntrypoint = pkgs.writeShellScript "${name}-frontend-entrypoint" ''
     set -euo pipefail
     mkdir -p /tmp/nginx-client /tmp/nginx-proxy \
-             /tmp/nginx-fastcgi /tmp/nginx-uwsgi /tmp/nginx-scgi
+             /tmp/nginx-fastcgi /tmp/nginx-uwsgi /tmp/nginx-scgi \
+             /var/log/nginx /run/nginx /run/secrets
     exec ${pkgs.nginx}/bin/nginx -c ${nginxConf}
   '';
 
   frontendRootDirs = pkgs.runCommand "${name}-frontend-rootdirs" { } ''
     mkdir -p $out/tmp
     mkdir -p $out/var/www/${name}
+    mkdir -p $out/var/log/nginx
+    mkdir -p $out/run/nginx
+    mkdir -p $out/run/secrets
     cp -r ${frontendStatic}/. $out/var/www/${name}/
     chmod 1777 $out/tmp
   '';
 
   # ── Frontend image layers ─────────────────────────────────────────────────
-  # Layer 1: nginx binary     -- stable, rarely changes.
-  # Layer 2: SPA static files -- rebuilt on every frontend code change.
-
   frontendNginxLayer = nix2containerPkgs.buildLayer {
     deps = [ pkgs.nginx pkgs.coreutils pkgs.bash ];
   };
 
   frontendStaticLayer = nix2containerPkgs.buildLayer {
-    deps   = [ frontendRootDirs ];
+    deps   = [ frontendRootDirs etcFiles ];
     layers = [ frontendNginxLayer ];
   };
 
   # ── Frontend OCI image ────────────────────────────────────────────────────
-
   frontendImage = nix2containerPkgs.buildImage {
     name = "${name}-frontend";
     tag  = "latest";
 
     copyToRoot = pkgs.buildEnv {
       name        = "${name}-frontend-copyToRoot";
-      paths       = [ pkgs.coreutils pkgs.bash frontendRootDirs ];
-      pathsToLink = [ "/bin" "/tmp" "/var" ];
+      paths       = [ pkgs.coreutils pkgs.bash etcFiles frontendRootDirs ];
+      pathsToLink = [ "/bin" "/etc" "/tmp" "/var" "/run" ];
     };
 
     layers = [ frontendNginxLayer frontendStaticLayer ];
@@ -521,8 +496,7 @@ let
     };
   };
 
-  # ── NixOS module (bare-metal / VM / single-node) ──────────────────────────
-
+  # ── NixOS module ──────────────────────────────────────────────────────────
   nixosModule = { config, pkgs, lib, ... }:
     let cfg = config.services.${name}; in
     {
@@ -623,52 +597,112 @@ let
       };
     };
 
-  # ── Helper scripts (lazy -- no image derivation paths embedded) ───────────
+  # ── Helper scripts ────────────────────────────────────────────────────────
 
   containerLoad = pkgs.writeShellScriptBin "container-load" ''
     set -euo pipefail
+    RUNTIME="''${1:-podman}"
     SYSTEM="${thisSystem}"
     echo "Building and loading ${name} images ($SYSTEM) ..."
-    echo "  (first build includes PureScript compilation, may take a few minutes)"
-    echo ""
     echo "  backend..."
     nix run ".#packages.$SYSTEM.backendImage-copyToPodman"
     echo "  frontend..."
     nix run ".#packages.$SYSTEM.frontendImage-copyToPodman"
     echo ""
-    echo "Run with:  container-run"
+    echo "Verifying loaded images..."
+    for img in "${name}-backend" "${name}-frontend"; do
+      if "$RUNTIME" image inspect "$img:latest" >/dev/null 2>&1; then
+        echo "  ok: $img:latest"
+      else
+        echo "  WARNING: $img:latest not found after load"
+      fi
+    done
+    echo ""
+    echo "Run with:  container-run [$RUNTIME]"
   '';
 
   containerRun = pkgs.writeShellScriptBin "container-run" ''
     set -euo pipefail
     RUNTIME="''${1:-podman}"
+
+    _PGHOST="''${PGHOST:-127.0.0.1}"
+    _PGPORT="''${PGPORT:-5432}"
+    _PGDATABASE="''${PGDATABASE:-${name}}"
+    _PGUSER="''${PGUSER:-$(whoami)}"
+    _PGPASSWORD="''${PGPASSWORD:-}"
+    _ALLOWED_ORIGIN="''${ALLOWED_ORIGIN:-}"
+
+    _USE_TLS=false
+    _TLS_ARGS=""
+    CERT_DIR="${appConfig.tls.certDir}"
+    CERT_DIR="$(echo "$CERT_DIR" | envsubst 2>/dev/null || echo "$CERT_DIR")"
+    if [ -f "$CERT_DIR/${appConfig.tls.certFile}" ] && \
+       [ -f "$CERT_DIR/${appConfig.tls.keyFile}" ]; then
+      _USE_TLS=true
+      _TLS_ARGS="-v $CERT_DIR/${appConfig.tls.certFile}:/run/secrets/tls.crt:ro -v $CERT_DIR/${appConfig.tls.keyFile}:/run/secrets/tls.key:ro"
+      echo "TLS: using certs from $CERT_DIR"
+    else
+      echo "TLS: no certs found -- run tls-setup first for HTTPS"
+    fi
+
+    if [ -z "$_PGPASSWORD" ] && command -v sops-get >/dev/null 2>&1; then
+      _PGPASSWORD="$(sops-get db_password 2>/dev/null || true)"
+    fi
+    if [ -z "$_PGPASSWORD" ]; then
+      echo "Warning: PGPASSWORD not set -- PostgreSQL trust auth only."
+      echo ""
+    fi
+
+    if ! ${pkgs.postgresql}/bin/pg_isready -h "$_PGHOST" -p "$_PGPORT" -q 2>/dev/null; then
+      echo "Error: PostgreSQL is not accepting connections on $_PGHOST:$_PGPORT"
+      echo "  Run pg-start first."
+      exit 1
+    fi
+
+    image_exists() {
+      "$RUNTIME" image inspect "$1:latest" >/dev/null 2>&1
+    }
+    if ! image_exists "${name}-backend" || ! image_exists "${name}-frontend"; then
+      echo "One or more images not found -- running container-load..."
+      echo ""
+      container-load "$RUNTIME"
+    fi
+
     "$RUNTIME" network create "${name}-net" 2>/dev/null || true
 
+    _PROTOCOL="http"
+    [ "$_USE_TLS" = "true" ] && _PROTOCOL="https"
+
     echo "Starting backend..."
-    "$RUNTIME" run -d \
+    echo "  PG:       $_PGUSER@$_PGHOST:$_PGPORT/$_PGDATABASE"
+    echo "  Protocol: $_PROTOCOL"
+    eval "$RUNTIME" run -d \
+      --pull=never \
+      --network=host \
       --name "${name}-backend" \
-      --network "${name}-net" \
-      -p "${backendPort}:${backendPort}" \
-      -e "PGHOST=''${PGHOST:?Set PGHOST to your PostgreSQL host}" \
-      -e "PGPORT=''${PGPORT:-5432}" \
-      -e "PGDATABASE=''${PGDATABASE:-${name}}" \
-      -e "PGUSER=''${PGUSER:-${name}}" \
-      -e "PGPASSWORD=''${PGPASSWORD:?Set PGPASSWORD}" \
-      -e "USE_TLS=''${USE_TLS:-false}" \
-      -e "ALLOWED_ORIGIN=''${ALLOWED_ORIGIN:-}" \
+      $_TLS_ARGS \
+      -e "PGHOST=$_PGHOST" \
+      -e "PGPORT=$_PGPORT" \
+      -e "PGDATABASE=$_PGDATABASE" \
+      -e "PGUSER=$_PGUSER" \
+      -e "PGPASSWORD=$_PGPASSWORD" \
+      -e "USE_TLS=$_USE_TLS" \
+      -e "ALLOWED_ORIGIN=$_ALLOWED_ORIGIN" \
       -e "USE_REAL_AUTH=true" \
       "${name}-backend:latest"
 
     echo "Starting frontend..."
-    "$RUNTIME" run -d \
+    eval "$RUNTIME" run -d \
+      --pull=never \
+      --network=host \
       --name "${name}-frontend" \
-      --network "${name}-net" \
-      -p "${frontendPort}:${frontendPort}" \
+      $_TLS_ARGS \
       "${name}-frontend:latest"
 
     echo ""
-    echo "  Backend:  http://localhost:${backendPort}"
-    echo "  Frontend: http://localhost:${frontendPort}"
+    echo "  Backend:  $_PROTOCOL://localhost:${backendPort}"
+    echo "  Frontend: $_PROTOCOL://localhost:${frontendPort}"
+    echo ""
     echo "Logs:  $RUNTIME logs -f ${name}-backend"
     echo "Stop:  container-stop [$RUNTIME]"
   '';
@@ -840,13 +874,8 @@ let
     EOF
 
     echo "Manifests written to $OUT/"
-    echo ""
-    echo "Note: nodeSelector kubernetes.io/arch: arm64 targets Pi 5 nodes."
-    echo "Remove it for a mixed-arch cluster."
-    echo ""
-    echo "Next steps:"
     echo "  1. cp $OUT/01-db-secret-TEMPLATE.yaml $OUT/01-db-secret.yaml"
-    echo "     Fill in credentials; add 01-db-secret.yaml to .gitignore"
+    echo "     Fill in credentials; add to .gitignore"
     echo "  2. kubectl apply -f $OUT/"
   '';
 

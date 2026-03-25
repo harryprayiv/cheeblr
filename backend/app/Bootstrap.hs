@@ -1,9 +1,10 @@
 {-# LANGUAGE OverloadedStrings  #-}
 {-# LANGUAGE TypeApplications   #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
-import           Control.Exception          (SomeException, try)
+import Control.Exception (catch, try, SomeException)
 import           Data.ByteArray.Encoding    (Base (Base64), convertToBase)
 import           Data.ByteString            (ByteString)
 import qualified Data.ByteString.Char8      as B8
@@ -64,11 +65,12 @@ generatePassword = do
 
 main :: IO ()
 main = do
-  currentUser <- getEffectiveUserName
 
   envHost <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
   envPort <- maybe (5432 :: Int) read <$> lookupEnv "PGPORT"
   envDb   <- fromMaybe "cheeblr"  <$> lookupEnv "PGDATABASE"
+  currentUser <- getEffectiveUserName
+                  `catch` (\e -> let _ = e :: SomeException in pure "nobody")
   envUser <- fromMaybe currentUser <$> lookupEnv "PGUSER"
   envPass <- fromMaybe ""          <$> lookupEnv "PGPASSWORD"
 
@@ -112,7 +114,7 @@ main = do
           -- Credentials printed once to stdout so the shell wrapper can
           -- capture and store them via sops --set.
           putStrLn "===== Cheeblr Admin Bootstrap ====="
-          putStrLn $ "username : admin"
+          putStrLn "username : admin"
           putStrLn $ "password : " <> T.unpack pwd
           putStrLn $ "uuid     : " <> show uid
           putStrLn "===================================="

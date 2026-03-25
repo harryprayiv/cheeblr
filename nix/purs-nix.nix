@@ -154,6 +154,7 @@ in with ps-pkgs; [
   money
   linear-algebra
   vector
+  hyrule
   deku-core
   deku-dom
   deku-css
