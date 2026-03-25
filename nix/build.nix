@@ -1,13 +1,13 @@
+# nix/build.nix
 { inputs }:
 
 let
-  inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP hackage purescript-overlay purs-nix sops-nix;
+  inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP hackage
+                   purescript-overlay purs-nix sops-nix nix2container;
 
-  # Project name - single source of truth via config.nix
-  appConfig = import ./config.nix {};
+  appConfig = import ./config.nix { };
   name      = appConfig.name;
 
-  # NixOS modules (system-independent)
   nixosModules = {
     postgresql = import ./services/postgresql-service.nix;
     default = { ... }: {
@@ -15,13 +15,10 @@ let
     };
   };
 
-
-  # Per-system build configuration
   mkSystemOutputs = system:
     let
       lib = nixpkgs.lib;
 
-      # Base pkgs with haskell.nix and purescript overlays
       pkgs = import haskellNix.inputs.nixpkgs {
         inherit system;
         inherit (haskellNix) config;
@@ -32,7 +29,10 @@ let
         ];
       };
 
-      # Haskell backend project
+      # nix2container.packages.${system}.nix2container.{ buildImage, buildLayer, ... }
+      n2cPkgs = nix2container.packages.${system}.nix2container;
+
+      # ── Haskell ───────────────────────────────────────────────────────────
       haskellProject = pkgs.haskell-nix.project' {
         src = ../backend;
         compiler-nix-name = "ghc910";
@@ -49,7 +49,6 @@ let
             hlint = { };
             fourmolu = { };
           };
-
           buildInputs = with pkgs; [
             pkg-config
             postgresql.lib
@@ -66,7 +65,7 @@ let
 
       backendFlake = haskellProject.flake { };
 
-      # PureScript frontend configuration
+      # ── PureScript ───────────────────────────────────────────────────────
       purs-nix-instance = purs-nix { inherit system; };
 
       inherit (inputs.ps-tools.legacyPackages.${system}.for-0_15)
@@ -74,19 +73,16 @@ let
 
       ps-pkgs = purs-nix-instance.ps-pkgs;
 
-      # Custom PureScript packages from flake inputs
       psDependencies = import ./purs-nix.nix {
         inherit inputs purs-nix-instance ps-pkgs;
       };
 
-      # Use the combined source (with generated files) for the main build
       frontendProject = purs-nix-instance.build {
         name = "${name}-frontend";
         src.path = ../frontend;
         info.dependencies = psDependencies;
       };
 
-      # Also update ps to use combined source for dev
       ps = purs-nix-instance.purs {
         dir = ../frontend;
         dependencies = psDependencies;
@@ -94,54 +90,84 @@ let
         nodejs = pkgs.nodejs_20;
       };
 
-      # DevShell configuration
+      # ── Containers ───────────────────────────────────────────────────────
+      backendPackage =
+        backendFlake.packages."${name}-backend:exe:${name}-backend";
+
+      containersModule = import ./containers.nix {
+        inherit pkgs lib name backendPackage
+                purs-nix-instance psDependencies purescript;
+        nix2containerPkgs = n2cPkgs;
+        # frontendProject is intentionally NOT passed here.
+        # purs-nix-instance.build produces a library dependency manifest,
+        # not compiled JavaScript.  containers.nix will use purs-nix-instance
+        # to compile from source, which is the correct path.
+      };
+
+      # ── Devshell ─────────────────────────────────────────────────────────
       devshellModule = import ./devshell.nix {
-        inherit pkgs name lib system;
+        inherit pkgs name lib system containersModule;
       };
 
     in rec {
       legacyPackages = pkgs;
 
       packages = backendFlake.packages // {
-        default  = backendFlake.packages."${name}-backend:exe:${name}-backend";
-        backend  = backendFlake.packages."${name}-backend:exe:${name}-backend";
-        frontend = frontendProject;
+        default       = backendPackage;
+        backend       = backendPackage;
+        frontend      = frontendProject;
+
+        # OCI images.  Not built by `nix develop`; build explicitly:
+        #   nix build .#packages.aarch64-linux.backendImage
+        #   nix build .#packages.aarch64-linux.frontendImage
+        backendImage  = containersModule.backendImage;
+        frontendImage = containersModule.frontendImage;
+
+        # nix2container passthru packages -- exposed so the lazy devshell
+        # scripts can call `nix run .#packages.${s}.backendImage-copyToPodman`
+        # etc. without needing to know the store path at eval time.
+        "backendImage-copyToPodman"    = containersModule.backendImage.copyToPodman;
+        "backendImage-copyToRegistry"  = containersModule.backendImage.copyToRegistry;
+        "frontendImage-copyToPodman"   = containersModule.frontendImage.copyToPodman;
+        "frontendImage-copyToRegistry" = containersModule.frontendImage.copyToRegistry;
       };
 
-      devShells = let
-        shell = pkgs.mkShell {
-          inherit name;
-          inputsFrom = [
-            backendFlake.devShells.default
-            devshellModule.devShell
-          ];
-          buildInputs = [
-            (ps.command { })
-            purescript-language-server
-            purs-tidy
-          ];
-        };
-        ciShell = import ./ci-shell.nix {
+      devShells =
+        let
+          shell = pkgs.mkShell {
+            inherit name;
+            inputsFrom = [
+              backendFlake.devShells.default
+              devshellModule.devShell
+            ];
+            buildInputs = [
+              (ps.command { })
+              purescript-language-server
+              purs-tidy
+            ] ++ containersModule.tools;
+          };
+          ciShell = import ./ci-shell.nix {
             inherit pkgs lib name system;
             inherit backendFlake purs-nix-instance purescript psDependencies;
+          };
+        in {
+          default = shell;
+          ci      = ciShell;
         };
-      in {
-        default = shell;
-        ci      = ciShell;
-      };
 
-
-      # Legacy attribute for older nix versions
       devShell = devShells.default;
+
+      nixosModuleContainers = containersModule.nixosModule;
     };
 
 in {
-  # Export nixosModules at top level
   inherit nixosModules;
-
-  # Generate per-system outputs
   perSystem = mkSystemOutputs;
 
-  # Supported systems
-  systems = [ "x86_64-linux" "x86_64-darwin" "aarch64-darwin" ];
+  systems = [
+    "x86_64-linux"
+    "aarch64-linux"   # Raspberry Pi 5
+    "x86_64-darwin"
+    "aarch64-darwin"
+  ];
 }

@@ -1,4 +1,9 @@
-{ pkgs, name, lib, system ? builtins.currentSystem }:
+# nix/devshell.nix
+{ pkgs, name, lib, system ? builtins.currentSystem
+  # containersModule is passed in from build.nix; null omits the container
+  # section from the shell entirely (used by ci-shell.nix).
+, containersModule ? null
+}:
 
 let
   appConfig = import ./config.nix { inherit name; };
@@ -158,10 +163,55 @@ let
           ~/NAS/plutus/workspace/scdWs/${name}/script/concat_archive/
       '';
     };
+
+    project-cleanup = pkgs.writeShellApplication {
+      name = "project-cleanup";
+      text = ''
+        set -euo pipefail
+        PROJECT_ROOT="$(pwd)"
+        echo "Cleaning compiled artifacts for ${name}..."
+        echo "  Project root: $PROJECT_ROOT"
+        echo ""
+
+        remove() {
+          local target="$1"
+          local prefix="$PROJECT_ROOT/"
+          if [ -e "$target" ]; then
+            rm -rf "$target"
+            echo "  + removed ''${target#"$prefix"}"
+          else
+            echo "  - skipped ''${target#"$prefix"}"
+          fi
+        }
+
+        echo "Frontend (${frontendPath}):"
+        remove "$PROJECT_ROOT/${frontendPath}/.spago"
+        remove "$PROJECT_ROOT/${frontendPath}/.vite"
+        remove "$PROJECT_ROOT/${frontendPath}/output"
+        remove "$PROJECT_ROOT/${frontendPath}/.spec-results"
+
+        echo ""
+        echo "Backend (${backendPath}):"
+        remove "$PROJECT_ROOT/${backendPath}/dist-newstyle"
+        remove "$PROJECT_ROOT/${backendPath}/output"
+        remove "$PROJECT_ROOT/${backendPath}/${name}-compliance.log"
+
+        echo ""
+        echo "Project root:"
+        remove "$PROJECT_ROOT/.direnv"
+        remove "$PROJECT_ROOT/.vscode"
+
+        echo ""
+        echo "Done. Run 'nix develop' to re-enter the dev shell."
+      '';
+    };
   };
 
+  containerTools   = if containersModule != null then containersModule.tools else [];
+  hasContainerTools = containersModule != null;
+
   commonBuildInputs = with pkgs; [
-    # deploy
+
     deployModule.build-all
     deployModule.deploy-nix
     deployModule.deploy-nix-interactive
@@ -178,7 +228,6 @@ let
     deployModule.frontend-start
     deployModule.frontend-stop
 
-    # frontend
     esbuild
     nodejs_20
     nixpkgs-fmt
@@ -194,10 +243,8 @@ let
     frontendModule.codegen
     frontendModule.dev
 
-    # system
     zlib pgcli pkg-config openssl.dev libiconv openssl
 
-    # TLS
     tlsModule.tls-setup
     tlsModule.tls-info
     tlsModule.tls-clean
@@ -205,7 +252,6 @@ let
     tlsModule.tls-sops-extract
     pkgs.mkcert
 
-    # ── sops: key + secrets management ────────────────────────────────
     sopsModule.sops-init-key
     sopsModule.sops-pubkey
     sopsModule.sops-bootstrap
@@ -216,14 +262,11 @@ let
     pkgs.age
     pkgs.ssh-to-age
 
-    # Admin bootstrap — creates the initial admin user in the DB and stores
-    # the generated password in sops secrets.  Run once after first pg-start.
     bootstrapModule.bootstrap-admin
     bootstrapModule.admin-password-info
 
     open-firewall
 
-    # postgres
     postgresModule.pg-start
     postgresModule.pg-connect
     postgresModule.pg-stop
@@ -236,17 +279,16 @@ let
     pgadmin4
     gettext
 
-    # project
     toilet rsync tmux
     vscodiumWithExtensions
     workspaceModule.backup-project
     workspaceModule.code-workspace
+    workspaceModule.project-cleanup
     manifestModule.generateScript
     devScripts.compile-manifest
     devScripts.compile-archive
     devScripts.llm-context
 
-    # testing
     testSuiteModule.test-unit
     testSuiteModule.test-integration
     testSuiteModule.test-integration-tls
@@ -254,7 +296,7 @@ let
     testSuiteModule.test-smoke
 
     coreutils bash gnused gnugrep jq perl findutils
-  ];
+  ] ++ containerTools;
 
   nativeBuildInputs = with pkgs; [
     pkg-config postgresql postgresql.lib zlib openssl.dev libiconv openssl
@@ -265,6 +307,27 @@ let
     if (system == "aarch64-darwin" || system == "x86_64-darwin") then
       (with pkgs.darwin.apple_sdk.frameworks; [ Cocoa CoreServices ])
     else [];
+
+  # Container help text is conditional on containersModule being provided.
+  containerHelpText = if hasContainerTools then ''
+      echo "  OCI Containers (nix2container / podman):"
+      echo "    container-run  [podman]         - run locally (native arch)"
+      echo "    container-stop [podman]         - stop and remove"
+      echo "    container-load [podman]         - load pre-built images"
+      echo "    container-push-pi <registry>    - push aarch64 images to registry"
+      echo "    container-k8s-manifests <reg>   - write Kubernetes / Talos YAML"
+      echo ""
+      echo "  Build Pi 5 images (requires binfmt or remote builder):"
+      echo "    nix build .#packages.aarch64-linux.backendImage"
+      echo "    nix build .#packages.aarch64-linux.frontendImage"
+      echo ""
+      echo "  Push directly (skips already-pushed layers):"
+      echo "    nix run .#packages.aarch64-linux.backendImage.copyToRegistry -- \\"
+      echo "        docker://myregistry.io/${name}-backend:latest"
+      echo ""
+      echo "  Enable cross-compilation in your NixOS config:"
+      echo "    boot.binfmt.emulatedSystems = [ \"aarch64-linux\" ];"
+  '' else "";
 
   devShell = pkgs.mkShell {
     inherit name;
@@ -340,6 +403,7 @@ let
       echo "  Frontend:  vite  spago-watch  codegen  dev"
       echo "  Testing:   test-unit  test-integration  test-integration-tls  test-suite  test-smoke"
       echo ""
+      ${containerHelpText}
       toilet ${lib.toSentenceCase name} -t --metal
     '';
   };
