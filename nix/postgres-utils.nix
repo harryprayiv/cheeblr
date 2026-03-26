@@ -151,8 +151,11 @@ BEGIN
 END
 \$\$;
 
-DROP DATABASE IF EXISTS ${pgConfig.database.name};
-CREATE DATABASE ${pgConfig.database.name};
+SELECT 'CREATE DATABASE ${pgConfig.database.name}'
+WHERE NOT EXISTS (
+  SELECT FROM pg_database WHERE datname = '${pgConfig.database.name}'
+)\gexec
+
 GRANT ALL PRIVILEGES ON DATABASE ${pgConfig.database.name} TO "$(whoami)";
 SQL
 

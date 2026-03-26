@@ -156,32 +156,35 @@ EOF
   # ── Frontend static build shared helper ───────────────────────────────────
   rewriteAndCopy = outDir: srcDir: ''
     echo "--- Copying static assets..."
-    [ -f "${srcDir}/index.html" ] && cp "${srcDir}/index.html" "${outDir}/"         || true
-    [ -d "${srcDir}/public"     ] && cp -r "${srcDir}/public/." "${outDir}/"        || true
-    [ -d "${srcDir}/css"        ] && cp -r "${srcDir}/css"       "${outDir}/css"    || true
-    [ -d "${srcDir}/assets"     ] && cp -r "${srcDir}/assets"    "${outDir}/assets" || true
+    [ -d "${srcDir}/public"  ] && cp -r "${srcDir}/public/." "${outDir}/"        || true
+    [ -d "${srcDir}/css"     ] && cp -r "${srcDir}/css"      "${outDir}/css"     || true
+    [ -d "${srcDir}/assets"  ] && cp -r "${srcDir}/assets"   "${outDir}/assets"  || true
 
     find "${srcDir}" -maxdepth 1 -name "*.css" -exec cp {} "${outDir}/" \; 2>/dev/null || true
 
-    if [ -f "${outDir}/index.html" ]; then
+    if [ -f "${srcDir}/index.html" ]; then
       echo "--- Rewriting index.html..."
       echo "    Original script/link tags:"
-      grep -E '<script|<link' "${outDir}/index.html" || true
+      grep -E '<script|<link' "${srcDir}/index.html" || true
 
-      ${pkgs.perl}/bin/perl -i -0pe \
-        's|<script[^>]+type=["'"'"']module["'"'"'][^>]*>.*?</script>\s*||gsi' \
-        "${outDir}/index.html"
-      ${pkgs.perl}/bin/perl -i -0pe \
-        's|<script[^>]+src=[^>]+type=["'"'"']module["'"'"'][^>]*>\s*</script>\s*||gsi' \
-        "${outDir}/index.html"
-
-      ${pkgs.perl}/bin/perl -i -pe \
-        's|</body>|<script src="/app.js"></script>\n</body>|i' \
-        "${outDir}/index.html"
+      _TMPHTML=$(mktemp)
+      cp "${srcDir}/index.html" "$_TMPHTML"
+      ${pkgs.nodejs_20}/bin/node ${rewriteIndexScript} "$_TMPHTML"
+      cp "$_TMPHTML" "${outDir}/index.html"
+      rm "$_TMPHTML"
 
       echo "    After rewrite:"
       grep -E '<script|<link' "${outDir}/index.html" || true
     fi
+  '';
+
+  rewriteIndexScript = pkgs.writeText "rewrite-index.js" ''
+    const fs = require("fs");
+    const p = process.argv[2];
+    let html = fs.readFileSync(p, "utf8");
+    html = html.replace(/<script[^>]*\btype\s*=\s*["']module["'][^>]*>[\s\S]*?<\/script>\s*/gi, "");
+    html = html.replace(/<\/body>/i, "<script src=\"/app.js\"></script>\n</body>");
+    fs.writeFileSync(p, html);
   '';
 
   mkPs = purs-nix-instance.purs {
