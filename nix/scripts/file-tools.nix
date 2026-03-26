@@ -56,25 +56,34 @@ let
     hsConfig = effectiveHsConfig;
   };
 
+  tuiModule = import ./manifest-tui.nix {
+    inherit pkgs lib name;
+    backendPath  = effectiveBackendPath;
+    frontendPath = effectiveFrontendPath;
+    hsDirs       = effectiveHsDirs;
+    psDirs       = effectivePsDirs;
+    hsTestDirs   = effectiveHsTestDirs;
+    psTestDirs   = effectivePsTestDirs;
+  };
+
 in {
 
-  inherit (devScriptsModule) compile-manifest compile-archive run-codegen llm-context ;
+  inherit (devScriptsModule) compile-manifest compile-archive run-codegen llm-context;
 
+  manifest-tui = tuiModule.manifest-tui;
 
   generate-manifest = manifestModule.generateScript;
-
 
   tools = [
     devScriptsModule.compile-manifest
     devScriptsModule.compile-archive
     devScriptsModule.run-codegen
-    devScriptsModule.llm-context 
+    devScriptsModule.llm-context
+    tuiModule.manifest-tui
     manifestModule.generateScript
   ];
 
-
   debug = manifestModule.debug;
-
 
   config = {
     backendPath = effectiveBackendPath;

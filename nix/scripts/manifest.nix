@@ -41,9 +41,9 @@ let
     if [ ''${#${varName}[@]} -gt 0 ]; then
       for i in "''${!${varName}[@]}"; do
         if [ $i -eq $(( ''${#${varName}[@]} - 1 )) ]; then
-          echo "      \"''${${varName}[$i]}\""  >> "$MANIFEST_FILE"
+          echo "      \"''${${varName}[$i]}\""
         else
-          echo "      \"''${${varName}[$i]}\","  >> "$MANIFEST_FILE"
+          echo "      \"''${${varName}[$i]}\","
         fi
       done
     fi

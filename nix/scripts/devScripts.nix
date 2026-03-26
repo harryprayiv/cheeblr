@@ -321,24 +321,30 @@ $rel"
     FILES_ONLY=false
     NO_COMPILE=false
     NO_STRIP=false
+    BASE_REF=""
+    COMPARE_REF=""
 
     for arg in "''${@}"; do
       case "$arg" in
-        --diff-only)  DIFF_ONLY=true ;;
-        --files-only) FILES_ONLY=true ;;
-        --no-compile) NO_COMPILE=true ;;
-        --no-strip)   NO_STRIP=true ;;
+        --diff-only)       DIFF_ONLY=true ;;
+        --files-only)      FILES_ONLY=true ;;
+        --no-compile)      NO_COMPILE=true ;;
+        --no-strip)        NO_STRIP=true ;;
+        --base-ref=*)      BASE_REF="''${arg#--base-ref=}" ;;
+        --compare-ref=*)   COMPARE_REF="''${arg#--compare-ref=}" ;;
         --help)
           echo "Usage: llm-context [OPTIONS]"
           echo ""
-          echo "Generates an LLM-optimized context file from files changed"
-          echo "since the last git commit (staged + unstaged)."
+          echo "Generates an LLM-optimized context file from manifest-tracked files"
+          echo "that differ between two git refs (default: HEAD vs working tree)."
           echo ""
           echo "Options:"
-          echo "  --diff-only   Git diff only, no full file contents"
-          echo "  --files-only  Full file contents only, no git diff"
-          echo "  --no-compile  Skip compilation"
-          echo "  --no-strip    Keep comments in file contents (default: stripped)"
+          echo "  --base-ref=REF      diff from this ref (default: HEAD)"
+          echo "  --compare-ref=REF   diff to this ref   (default: working tree)"
+          echo "  --diff-only         git diff only, no full file contents"
+          echo "  --files-only        full file contents only, no diff"
+          echo "  --no-compile        skip compilation"
+          echo "  --no-strip          keep comments in file contents"
           echo ""
           echo "Output: script/concat_archive/output/LLMContext_TIMESTAMP[_OK|_ERR].md"
           exit 0 ;;
@@ -359,14 +365,18 @@ $rel"
     fi
 
     ALL_CHANGED=""
-    if git -C "$PROJECT_ROOT" rev-parse HEAD > /dev/null 2>&1; then
+    if [ -n "$BASE_REF" ] && [ -n "$COMPARE_REF" ]; then
+      ALL_CHANGED=$(git -C "$PROJECT_ROOT" diff "''${BASE_REF}...''${COMPARE_REF}" --name-only 2>/dev/null || true)
+    elif [ -n "$BASE_REF" ]; then
+      ALL_CHANGED=$(git -C "$PROJECT_ROOT" diff "''${BASE_REF}" --name-only 2>/dev/null || true)
+    elif git -C "$PROJECT_ROOT" rev-parse HEAD > /dev/null 2>&1; then
       ALL_CHANGED=$(git -C "$PROJECT_ROOT" diff HEAD --name-only 2>/dev/null || true)
     else
       ALL_CHANGED=$(git -C "$PROJECT_ROOT" diff --cached --name-only 2>/dev/null || true)
     fi
 
     if [ -z "$ALL_CHANGED" ]; then
-      echo "No changes detected since last commit."
+      echo "No changes detected."
       echo "Hint: use 'compile-manifest' for a full snapshot."
       exit 0
     fi
@@ -564,7 +574,14 @@ $rel"
 
       echo "## Summary"
       echo ""
-      echo "Changed files since last commit: **$CHANGED_COUNT**"
+      if [ -n "$BASE_REF" ] && [ -n "$COMPARE_REF" ]; then
+        echo "Comparing: \`$BASE_REF\` ... \`$COMPARE_REF\`"
+      elif [ -n "$BASE_REF" ]; then
+        echo "Comparing: \`$BASE_REF\` vs working tree"
+      else
+        echo "Comparing: HEAD vs working tree"
+      fi
+      echo "Changed files: **$CHANGED_COUNT**"
       [ -n "$HS_STATUS" ] && echo "Haskell compile: **''${HS_STATUS#_}**"
       [ -n "$PS_STATUS" ] && echo "PureScript compile: **''${PS_STATUS#_}**"
       [ "$NO_COMPILE" = true ] && echo "Compile: skipped (--no-compile)"
@@ -610,7 +627,13 @@ $rel"
         echo '```diff'
         while IFS= read -r f; do
           [ -z "$f" ] && continue
-          git -C "$PROJECT_ROOT" diff HEAD -U10 -- "$f" 2>/dev/null || true
+          if [ -n "$BASE_REF" ] && [ -n "$COMPARE_REF" ]; then
+            git -C "$PROJECT_ROOT" diff "''${BASE_REF}...''${COMPARE_REF}" -U10 -- "$f" 2>/dev/null || true
+          elif [ -n "$BASE_REF" ]; then
+            git -C "$PROJECT_ROOT" diff "''${BASE_REF}" -U10 -- "$f" 2>/dev/null || true
+          else
+            git -C "$PROJECT_ROOT" diff HEAD -U10 -- "$f" 2>/dev/null || true
+          fi
         done <<< "$ALL_MANIFEST_CHANGED"
         echo '```'
         echo ""

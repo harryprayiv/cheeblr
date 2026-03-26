@@ -293,6 +293,7 @@ let
     devScripts.compile-manifest
     devScripts.compile-archive
     devScripts.llm-context
+    devScripts.manifest-tui
 
     testSuiteModule.test-unit
     testSuiteModule.test-integration
