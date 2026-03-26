@@ -561,6 +561,7 @@ EOF
       echo "  Backend dir:  ${backendDir}"
       echo "  Frontend dir: ${frontendDir}"
       echo "  Data dir:     ${dataDir}"
+      echo "  Log file:     $(echo "${logFile}" | envsubst)"
       ${if tlsConfig.enable then ''
         CERT_DIR="$(echo "${certDir}" | envsubst)"
         echo "  Cert:         $CERT_DIR/${tlsConfig.certFile}"
@@ -586,6 +587,8 @@ EOF
       --container-load)       container-load; exit 0 ;;
       --container-run)        container-run; exit 0 ;;
       --container-stop)       container-stop; exit 0 ;;
+      --container-push-pi)    container-push-pi "''${2:-}"; exit 0 ;;
+      --container-k8s)        container-k8s-manifests "''${2:-}" "''${3:-}"; exit 0 ;;
       --db-start)             db-start; exit 0 ;;
       --db-stop)              db-stop; exit 0 ;;
       --db-backup)            pg-backup; exit 0 ;;
@@ -609,6 +612,7 @@ EOF
         echo "  --build --deploy --deploy-interactive --deploy-source"
         echo "  --launch-dev --stop --stop-source --status --config"
         echo "  --container-load --container-run --container-stop"
+        echo "  --container-push-pi <registry>  --container-k8s <registry> [outdir]"
         echo "  --db-start --db-stop --db-backup --db-stats"
         echo "  --backend-start --backend-stop --frontend-start --frontend-stop"
         echo "  --bootstrap-admin --admin-password --sops-status"
@@ -627,6 +631,14 @@ EOF
     pause() {
       echo ""
       read -r -p "  Press Enter to continue..."
+    }
+
+    prompt_input() {
+      local label="$1"
+      local default="$2"
+      local result
+      result=$("$_G" input --placeholder "$default" --prompt "  $label: " 2>/dev/null || echo "$default")
+      echo "''${result:-$default}"
     }
 
     header() {
@@ -698,16 +710,51 @@ EOF
             ACTION=$("$_G" choose \
               --cursor "> " \
               --header "  Choose action:" \
-              --height 6 \
+              --height 14 \
+              "── Podman (local) ──────────────" \
               "Load images into podman" \
               "Run containers" \
               "Stop containers" \
+              "── Build images ────────────────" \
+              "Build backend image" \
+              "Build frontend image" \
+              "── Remote / Pi 5 ───────────────" \
+              "Push aarch64 images to registry" \
+              "── Kubernetes / Talos ──────────" \
+              "Generate k8s manifests" \
               "Back") || break
             case "$ACTION" in
-              "Load images into podman") container-load ; pause ;;
-              "Run containers") container-run ; pause ;;
-              "Stop containers") container-stop ; pause ;;
+              "Load images into podman")
+                container-load ; pause ;;
+              "Run containers")
+                container-run ; pause ;;
+              "Stop containers")
+                container-stop ; pause ;;
+              "Build backend image")
+                echo "Building backend image for $(uname -m)..."
+                nix build ".#packages.$(nix eval --raw --impure --expr 'builtins.currentSystem').backendImage"
+                echo "Done. Load with: container-load"
+                pause ;;
+              "Build frontend image")
+                echo "Building frontend image for $(uname -m)..."
+                nix build ".#packages.$(nix eval --raw --impure --expr 'builtins.currentSystem').frontendImage"
+                echo "Done. Load with: container-load"
+                pause ;;
+              "Push aarch64 images to registry")
+                REGISTRY=$(prompt_input "Registry prefix (e.g. myregistry.io/cheeblr)" "")
+                if [ -n "$REGISTRY" ]; then
+                  container-push-pi "$REGISTRY"
+                  pause
+                fi ;;
+              "Generate k8s manifests")
+                REGISTRY=$(prompt_input "Registry prefix" "")
+                OUTDIR=$(prompt_input "Output directory" "./${name}-k8s")
+                if [ -n "$REGISTRY" ]; then
+                  container-k8s-manifests "$REGISTRY" "$OUTDIR"
+                  pause
+                fi ;;
               "Back") break ;;
+              *) ;;
             esac
           done ;;
 
