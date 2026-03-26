@@ -6,7 +6,7 @@
   # Network settings
   network = {
     host = "localhost";
-    bindAddress = "0.0.0.0";  
+    bindAddress = "0.0.0.0";
   };
 
   # Add to the config attrset:
@@ -25,7 +25,7 @@
   database = {
     name = name;
     user = "$(whoami)";
-    password = "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS";  # never used after sops-bootstrap
+    password = "BOOTSTRAP_FALLBACK_ONLY_USE_SOPS";
     port = 5432;
     dataDir = "$HOME/.local/share/${name}/postgres";
     settings = {
@@ -45,8 +45,7 @@
 
   vite = {
     port = 5173;
-    settings = {
-    };
+    settings = {};
   };
 
   purescript = {
@@ -56,8 +55,7 @@
       "./frontend/src"
     ];
     tests = "./frontend/test";
-    settings = {
-    };
+    settings = {};
   };
 
   haskell = {
@@ -68,10 +66,11 @@
       "./backend/src"
     ];
     tests = "./backend/test";
-    settings = {
-    };
+    settings = {};
   };
 
   # Data directories
   dataDir = "$HOME/.local/share/${name}";
+  logDir  = "$HOME/.local/share/${name}/logs";
+  logFile = "$HOME/.local/share/${name}/logs/${name}-compliance.log";
 }

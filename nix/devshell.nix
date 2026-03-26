@@ -227,6 +227,7 @@ let
     deployModule.backend-stop
     deployModule.frontend-start
     deployModule.frontend-stop
+    gum
 
     esbuild
     nodejs_20
@@ -243,7 +244,12 @@ let
     frontendModule.codegen
     frontendModule.dev
 
-    zlib pgcli pkg-config openssl.dev libiconv openssl
+    zlib 
+    pgcli 
+    pkg-config 
+    openssl.dev 
+    libiconv 
+    openssl
 
     tlsModule.tls-setup
     tlsModule.tls-info

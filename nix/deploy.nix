@@ -6,6 +6,8 @@ let
   host        = config.network.host;
   bindAddress = config.network.bindAddress;
   tlsConfig   = config.tls;
+  logDir  = config.logDir;
+  logFile = config.logFile;
   certDir     = tlsConfig.certDir;
   protocol    = if tlsConfig.enable then "https" else "http";
 
@@ -135,6 +137,10 @@ let
     ${tlsEnvSetup}
     ${firewallOpen}
 
+    LOG_DIR="$(echo "${logDir}" | envsubst)"
+    LOG_FILE="$(echo "${logFile}" | envsubst)"
+    mkdir -p "$LOG_DIR"
+
     echo "TMux Commands:"
     echo "  Ctrl-b d  Detach | Ctrl-b o  Switch panes | Ctrl-b z  Zoom"
     echo "  Arrow keys  Navigate (with Ctrl-b) | Ctrl-b [  Scroll mode (q to exit)"
@@ -143,13 +149,14 @@ let
     echo "  Backend:  ${protocol}://${host}:${backendPort}"
     echo "  Frontend: ${protocol}://${host}:${frontendPort}"
     echo "  Postgres: ${host}:${dbPort}"
+    echo "  Log:      $LOG_FILE"
     echo ""
 
     ${tmuxLayout}
 
     echo "Starting backend..."
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export PGPASSWORD=$(sops-get db_password); export ALLOWED_ORIGIN=$(sops-get allowed_origin 2>/dev/null || true); cd ${backendDir} && cabal run ${name}-backend' C-m
+      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export LOG_FILE="'"$LOG_FILE"'"; export PGPASSWORD=$(sops-get db_password); export ALLOWED_ORIGIN=$(sops-get allowed_origin 2>/dev/null || true); cd ${backendDir} && cabal run ${name}-backend' C-m
 
     echo "Waiting for backend..."
     RETRIES=0
@@ -197,7 +204,9 @@ let
       TLS_KEY="$CERT_DIR/${tlsConfig.keyFile}"
     '' else "true"}
 
-
+    LOG_DIR="$(echo "${logDir}" | envsubst)"
+    LOG_FILE="$(echo "${logFile}" | envsubst)"
+    mkdir -p "$LOG_DIR"
 
     _ENV_FILE="$(mktemp /tmp/${name}-env-XXXXXX.sh)"
     cat > "$_ENV_FILE" <<EOF
@@ -207,12 +216,14 @@ export TLS_CERT_FILE="$TLS_CERT"
 export TLS_KEY_FILE="$TLS_KEY"
 '' else ""}
 export USE_REAL_AUTH="true"
+export LOG_FILE="$LOG_FILE"
 export PGPASSWORD="$(sops-get db_password)"
 EOF
 
     ${firewallOpen}
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"
+    echo "Log:     $LOG_FILE"
     echo "Note: CORS is open in dev mode (ALLOWED_ORIGIN not set)"
 
     ${pkgs.alacritty}/bin/alacritty \
@@ -256,6 +267,7 @@ EOF
     echo "  Database:  window 1 (port ${dbPort})"
     echo "  Backend:   window 2 (${protocol}://${host}:${backendPort})"
     echo "  Frontend:  window 3 (${protocol}://${host}:${frontendPort})"
+    echo "  Log:       $LOG_FILE"
   '';
 
   db-start = pkgs.writeShellScriptBin "db-start" ''
@@ -295,13 +307,18 @@ EOF
 
     (cd "$BACKEND_DIR" && cabal build) || { echo "Backend build failed"; exit 1; }
 
+    LOG_DIR="$(echo "${logDir}" | envsubst)"
+    LOG_FILE="$(echo "${logFile}" | envsubst)"
+    mkdir -p "$LOG_DIR"
+
     ${tlsEnvSetup}
     export USE_REAL_AUTH="true"
+    export LOG_FILE="$LOG_FILE"
     export PGPASSWORD="$(sops-get db_password)"
-    # Empty string from sops means CORS stays open; non-empty locks it.
     export ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
 
     echo "Starting backend on ${protocol}://${host}:${backendPort}..."
+    echo "  Log: $LOG_FILE"
     cd "$BACKEND_DIR" && exec cabal run ${name}-backend
   '';
 
@@ -380,9 +397,10 @@ EOF
 
   deploy-nix = pkgs.writeShellScriptBin "deploy-nix" ''
     set -euo pipefail
-    LOGDIR="${dataDir}/logs"
-    PIDDIR="${dataDir}/pids"
-    BACKUP_DIR="${dataDir}/backups"
+    LOGDIR="$(echo "${logDir}" | envsubst)"
+    LOG_FILE="$(echo "${logFile}" | envsubst)"
+    PIDDIR="$(echo "${dataDir}" | envsubst)/pids"
+    BACKUP_DIR="$(echo "${dataDir}" | envsubst)/backups"
     mkdir -p "$LOGDIR" "$PIDDIR" "$BACKUP_DIR"
 
     [ ! -f "./result/bin/${name}-backend" ] && { echo "Binary not found, building..."; nix build .; }
@@ -398,15 +416,21 @@ EOF
     _ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
 
     echo "Starting backend..."
+    echo "  Log: $LOG_FILE"
     ${if tlsConfig.enable then ''
       USE_TLS=true TLS_CERT_FILE="$TLS_CERT_FILE" TLS_KEY_FILE="$TLS_KEY_FILE" \
-      USE_REAL_AUTH=true PGPASSWORD="$(sops-get db_password)" \
+      USE_REAL_AUTH=true \
+      LOG_FILE="$LOG_FILE" \
+      PGPASSWORD="$(sops-get db_password)" \
       ALLOWED_ORIGIN="$_ALLOWED_ORIGIN" \
-      ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
+      ./result/bin/${name}-backend > "$LOGDIR/stdout.log" 2>&1 &
     '' else ''
-      USE_TLS=false USE_REAL_AUTH=true PGPASSWORD="$(sops-get db_password)" \
+      USE_TLS=false \
+      USE_REAL_AUTH=true \
+      LOG_FILE="$LOG_FILE" \
+      PGPASSWORD="$(sops-get db_password)" \
       ALLOWED_ORIGIN="$_ALLOWED_ORIGIN" \
-      ./result/bin/${name}-backend > "$LOGDIR/backend.log" 2>&1 &
+      ./result/bin/${name}-backend > "$LOGDIR/stdout.log" 2>&1 &
     ''}
     echo $! > "$PIDDIR/backend.pid"
 
@@ -419,7 +443,7 @@ EOF
 
     echo "Starting frontend..."
     cd ${frontendDir}
-    ${pkgs.nodejs}/bin/npx vite --host ${bindAddress} --port ${frontendPort} > "$LOGDIR/frontend.log" 2>&1 &
+    ${pkgs.nodejs}/bin/npx vite --host ${bindAddress} --port ${frontendPort} > "$LOGDIR/vite.log" 2>&1 &
     echo $! > "$PIDDIR/frontend.pid"
     cd ..
 
@@ -428,7 +452,8 @@ EOF
     echo "  Backend:  ${protocol}://${host}:${backendPort} (PID: $(cat $PIDDIR/backend.pid))"
     echo "  Frontend: ${protocol}://${host}:${frontendPort} (PID: $(cat $PIDDIR/frontend.pid))"
     echo "  Postgres: ${host}:${dbPort}"
-    echo "  Logs: $LOGDIR/"
+    echo "  Log:      $LOG_FILE"
+    echo "  Stdout:   $LOGDIR/stdout.log"
     if [ -n "$_ALLOWED_ORIGIN" ]; then
       echo "  CORS: locked to $_ALLOWED_ORIGIN"
     else
@@ -438,8 +463,10 @@ EOF
 
   deploy-nix-interactive = pkgs.writeShellScriptBin "deploy-nix-interactive" ''
     set -euo pipefail
-    BACKUP_DIR="${dataDir}/backups"
-    mkdir -p "$BACKUP_DIR"
+    BACKUP_DIR="$(echo "${dataDir}" | envsubst)/backups"
+    LOG_FILE="$(echo "${logFile}" | envsubst)"
+    LOG_DIR="$(echo "${logDir}" | envsubst)"
+    mkdir -p "$BACKUP_DIR" "$LOG_DIR"
 
     [ ! -f "./result/bin/${name}-backend" ] && { echo "Binary not found, building..."; nix build .; }
 
@@ -454,7 +481,7 @@ EOF
 
     ${tmuxLayout}
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefixNix}USE_REAL_AUTH=true PGPASSWORD=$(sops-get db_password) ALLOWED_ORIGIN="'"$_ALLOWED_ORIGIN"'" ./result/bin/${name}-backend' C-m
+      '${tlsEnvPrefixNix}USE_REAL_AUTH=true LOG_FILE="'"$LOG_FILE"'" PGPASSWORD=$(sops-get db_password) ALLOWED_ORIGIN="'"$_ALLOWED_ORIGIN"'" ./result/bin/${name}-backend' C-m
     tmux send-keys -t ${name}:Services.1 \
       'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
     ${tmuxAttach}
@@ -519,110 +546,276 @@ EOF
 
   tui = pkgs.writeShellScriptBin "${name}-tui" ''
     set -euo pipefail
+    _G="${pkgs.gum}/bin/gum"
 
     show_config() {
+      "$_G" style --foreground 10 --bold "  ${name} configuration"
       echo ""
-      echo "${name} Configuration"
-      echo "========================"
-      echo ""
-      echo "Network:"
       echo "  Host:         ${host}"
-      echo "  Bind address: ${bindAddress}"
+      echo "  Bind:         ${bindAddress}"
       echo "  Protocol:     ${protocol}"
-      echo ""
-      echo "TLS: ${if tlsConfig.enable then "enabled" else "disabled"}"
+      echo "  Backend:      ${protocol}://${host}:${backendPort}"
+      echo "  Frontend:     ${protocol}://${host}:${frontendPort}"
+      echo "  Postgres:     ${host}:${dbPort}"
+      echo "  TLS:          ${if tlsConfig.enable then "enabled" else "disabled"}"
+      echo "  Backend dir:  ${backendDir}"
+      echo "  Frontend dir: ${frontendDir}"
+      echo "  Data dir:     ${dataDir}"
       ${if tlsConfig.enable then ''
         CERT_DIR="$(echo "${certDir}" | envsubst)"
-        echo "  Cert dir: $CERT_DIR"
-        echo "  Cert:     $CERT_DIR/${tlsConfig.certFile}"
-        echo "  Key:      $CERT_DIR/${tlsConfig.keyFile}"
+        echo "  Cert:         $CERT_DIR/${tlsConfig.certFile}"
+        echo "  Key:          $CERT_DIR/${tlsConfig.keyFile}"
       '' else ""}
-      echo ""
-      echo "Services:"
-      echo "  Backend:  ${protocol}://${host}:${backendPort}"
-      echo "  Frontend: ${protocol}://${host}:${frontendPort}"
-      echo "  Postgres: ${host}:${dbPort}"
-      echo ""
-      echo "Directories:"
-      echo "  Backend:  ${backendDir}"
-      echo "  Frontend: ${frontendDir}"
-      echo "  Data:     ${dataDir}"
     }
 
     case "''${1:-}" in
-      --build)              nix build .; exit 0 ;;
-      --deploy)             deploy-nix; exit 0 ;;
-      --deploy-interactive) deploy-nix-interactive; exit 0 ;;
-      --deploy-source)      deploy; exit 0 ;;
-      --launch-dev)         launch-dev; exit 0 ;;
-      --stop)               stop-nix; exit 0 ;;
-      --stop-source)        stop; exit 0 ;;
-      --status)             status-nix; exit 0 ;;
-      --config)             show_config; exit 0 ;;
-      --gc)                 nix-collect-garbage -d; exit 0 ;;
-      --update)             nix flake update; exit 0 ;;
-      --tls-setup)          tls-setup; exit 0 ;;
+      --build)                nix build .; exit 0 ;;
+      --deploy)               deploy-nix; exit 0 ;;
+      --deploy-interactive)   deploy-nix-interactive; exit 0 ;;
+      --deploy-source)        deploy; exit 0 ;;
+      --launch-dev)           launch-dev; exit 0 ;;
+      --stop)                 stop-nix; exit 0 ;;
+      --stop-source)          stop; exit 0 ;;
+      --status)               status-nix; exit 0 ;;
+      --config)               show_config; exit 0 ;;
+      --gc)                   nix-collect-garbage -d; exit 0 ;;
+      --update)               nix flake update; exit 0 ;;
+      --tls-setup)            tls-setup; exit 0 ;;
+      --tls-info)             tls-info; exit 0 ;;
+      --tls-clean)            tls-clean; exit 0 ;;
+      --container-load)       container-load; exit 0 ;;
+      --container-run)        container-run; exit 0 ;;
+      --container-stop)       container-stop; exit 0 ;;
+      --db-start)             db-start; exit 0 ;;
+      --db-stop)              db-stop; exit 0 ;;
+      --db-backup)            pg-backup; exit 0 ;;
+      --db-stats)             pg-stats; exit 0 ;;
+      --backend-start)        backend-start; exit 0 ;;
+      --backend-stop)         backend-stop; exit 0 ;;
+      --frontend-start)       frontend-start; exit 0 ;;
+      --frontend-stop)        frontend-stop; exit 0 ;;
+      --bootstrap-admin)      bootstrap-admin; exit 0 ;;
+      --admin-password)       sops-get admin_password; exit 0 ;;
+      --sops-status)          sops-status; exit 0 ;;
+      --test-unit)            test-unit; exit 0 ;;
+      --test-integration)     test-integration; exit 0 ;;
+      --test-integration-tls) test-integration-tls; exit 0 ;;
+      --test-suite)           test-suite; exit 0 ;;
+      --test-smoke)           test-smoke; exit 0 ;;
       --help)
         echo "Usage: ${name}-tui [OPTION]"
+        echo "Run without arguments for interactive TUI."
         echo ""
-        echo "Nix-build artifact workflows:"
-        echo "  --build              nix build ."
-        echo "  --deploy             Headless (Nix artifacts)"
-        echo "  --deploy-interactive tmux (Nix artifacts)"
-        echo "  --stop               Stop Nix deployment"
-        echo "  --status             Service status"
-        echo ""
-        echo "Source workflows (cabal / spago):"
-        echo "  --deploy-source      tmux (cabal run / spago)"
-        echo "  --launch-dev         Alacritty windows"
-        echo "  --stop-source        Stop source deployment"
-        echo ""
-        echo "Maintenance:"
-        echo "  --config             Show configuration"
-        echo "  --tls-setup          Generate / refresh TLS certificates"
-        echo "  --gc                 Nix garbage collect"
-        echo "  --update             nix flake update"
+        echo "  --build --deploy --deploy-interactive --deploy-source"
+        echo "  --launch-dev --stop --stop-source --status --config"
+        echo "  --container-load --container-run --container-stop"
+        echo "  --db-start --db-stop --db-backup --db-stats"
+        echo "  --backend-start --backend-stop --frontend-start --frontend-stop"
+        echo "  --bootstrap-admin --admin-password --sops-status"
+        echo "  --test-unit --test-integration --test-integration-tls"
+        echo "  --test-suite --test-smoke"
+        echo "  --tls-setup --tls-info --tls-clean --gc --update"
         exit 0 ;;
+      "")
+        ;;
+      *)
+        echo "Unknown option: ''${1}"
+        echo "Run '${name}-tui --help' for usage."
+        exit 1 ;;
     esac
 
-    PS3='Choice: '
-    options=(
-      "── Nix artifacts ──────────────"
-      "Build (nix build .)"
-      "Deploy headless (nix)"
-      "Deploy tmux (nix)"
-      "Stop (nix)"
-      "Status"
-      "── Source (cabal/spago) ───────"
-      "Deploy tmux (source)"
-      "Launch dev (Alacritty)"
-      "Stop (source)"
-      "── Maintenance ────────────────"
-      "Show config"
-      "Setup TLS"
-      "Garbage collect"
-      "Update flake"
-      "Quit"
-    )
+    pause() {
+      echo ""
+      read -r -p "  Press Enter to continue..."
+    }
 
-    select opt in "''${options[@]}"; do
-      case $opt in
-        "Build (nix build .)")      nix build . ;;
-        "Deploy headless (nix)")    deploy-nix; break ;;
-        "Deploy tmux (nix)")        deploy-nix-interactive; break ;;
-        "Stop (nix)")               stop-nix ;;
-        "Status")                   status-nix ;;
-        "Deploy tmux (source)")     deploy; break ;;
-        "Launch dev (Alacritty)")   launch-dev; break ;;
-        "Stop (source)")            stop ;;
-        "Show config")              show_config ;;
-        "Setup TLS")                tls-setup ;;
-        "Garbage collect")          nix-collect-garbage -d ;;
-        "Update flake")             nix flake update ;;
-        "Quit")                     break ;;
-        *) [ -n "$opt" ] && echo "Invalid option" ;;
+    header() {
+      clear
+      "$_G" style \
+        --foreground 10 --border-foreground 2 --border double \
+        --align center --width 54 --margin "1 2" --padding "1 3" \
+        "${lib.toUpper name}" "management console"
+      echo ""
+    }
+
+    section() {
+      clear
+      "$_G" style \
+        --foreground 10 --border-foreground 2 --border normal \
+        --align center --width 54 --margin "0 2" --padding "0 3" \
+        "$1"
+      echo ""
+    }
+
+    while true; do
+      header
+      CATEGORY=$("$_G" choose \
+        --cursor "> " \
+        --header "  Select a category:" \
+        --height 10 \
+        "Deploy & Build" \
+        "Containers" \
+        "Components" \
+        "Auth & Secrets" \
+        "Testing" \
+        "Maintenance" \
+        "Quit") || break
+
+      case "$CATEGORY" in
+
+        "Deploy & Build")
+          while true; do
+            section "Deploy & Build"
+            ACTION=$("$_G" choose \
+              --cursor "> " \
+              --header "  Choose action:" \
+              --height 12 \
+              "Build (nix build .)" \
+              "Deploy headless (nix)" \
+              "Deploy tmux (nix)" \
+              "Stop nix deployment" \
+              "Status" \
+              "Deploy tmux (source)" \
+              "Launch dev (Alacritty)" \
+              "Stop source deployment" \
+              "Back") || break
+            case "$ACTION" in
+              "Build (nix build .)") nix build . ; pause ;;
+              "Deploy headless (nix)") deploy-nix ; pause ;;
+              "Deploy tmux (nix)") deploy-nix-interactive ; break 2 ;;
+              "Stop nix deployment") stop-nix ; pause ;;
+              "Status") status-nix ; pause ;;
+              "Deploy tmux (source)") deploy ; break 2 ;;
+              "Launch dev (Alacritty)") launch-dev ; break 2 ;;
+              "Stop source deployment") stop ; pause ;;
+              "Back") break ;;
+            esac
+          done ;;
+
+        "Containers")
+          while true; do
+            section "Containers"
+            ACTION=$("$_G" choose \
+              --cursor "> " \
+              --header "  Choose action:" \
+              --height 6 \
+              "Load images into podman" \
+              "Run containers" \
+              "Stop containers" \
+              "Back") || break
+            case "$ACTION" in
+              "Load images into podman") container-load ; pause ;;
+              "Run containers") container-run ; pause ;;
+              "Stop containers") container-stop ; pause ;;
+              "Back") break ;;
+            esac
+          done ;;
+
+        "Components")
+          while true; do
+            section "Components"
+            ACTION=$("$_G" choose \
+              --cursor "> " \
+              --header "  Choose action:" \
+              --height 11 \
+              "Database start" \
+              "Database stop" \
+              "Database backup" \
+              "Database stats" \
+              "Backend start" \
+              "Backend stop" \
+              "Frontend start" \
+              "Frontend stop" \
+              "Back") || break
+            case "$ACTION" in
+              "Database start") db-start ; break 2 ;;
+              "Database stop") db-stop ; pause ;;
+              "Database backup") pg-backup ; pause ;;
+              "Database stats") pg-stats ; pause ;;
+              "Backend start") backend-start ; break 2 ;;
+              "Backend stop") backend-stop ; pause ;;
+              "Frontend start") frontend-start ; break 2 ;;
+              "Frontend stop") frontend-stop ; pause ;;
+              "Back") break ;;
+            esac
+          done ;;
+
+        "Auth & Secrets")
+          while true; do
+            section "Auth & Secrets"
+            ACTION=$("$_G" choose \
+              --cursor "> " \
+              --header "  Choose action:" \
+              --height 6 \
+              "Bootstrap admin user" \
+              "Show admin password" \
+              "Sops status" \
+              "Back") || break
+            case "$ACTION" in
+              "Bootstrap admin user") bootstrap-admin ; pause ;;
+              "Show admin password") sops-get admin_password ; pause ;;
+              "Sops status") sops-status ; pause ;;
+              "Back") break ;;
+            esac
+          done ;;
+
+        "Testing")
+          while true; do
+            section "Testing"
+            ACTION=$("$_G" choose \
+              --cursor "> " \
+              --header "  Choose action:" \
+              --height 9 \
+              "Unit tests" \
+              "Integration tests (HTTP)" \
+              "Integration tests (TLS)" \
+              "Full test suite" \
+              "Smoke tests" \
+              "Back") || break
+            case "$ACTION" in
+              "Unit tests") test-unit ; pause ;;
+              "Integration tests (HTTP)") test-integration ; pause ;;
+              "Integration tests (TLS)") test-integration-tls ; pause ;;
+              "Full test suite") test-suite ; pause ;;
+              "Smoke tests") test-smoke ; pause ;;
+              "Back") break ;;
+            esac
+          done ;;
+
+        "Maintenance")
+          while true; do
+            section "Maintenance"
+            ACTION=$("$_G" choose \
+              --cursor "> " \
+              --header "  Choose action:" \
+              --height 10 \
+              "Show config" \
+              "Setup TLS" \
+              "TLS info" \
+              "TLS clean" \
+              "Nix garbage collect" \
+              "Update flake" \
+              "Back") || break
+            case "$ACTION" in
+              "Show config") show_config ; pause ;;
+              "Setup TLS") tls-setup ; pause ;;
+              "TLS info") tls-info ; pause ;;
+              "TLS clean") tls-clean ; pause ;;
+              "Nix garbage collect") nix-collect-garbage -d ; pause ;;
+              "Update flake") nix flake update ; pause ;;
+              "Back") break ;;
+            esac
+          done ;;
+
+        "Quit"|*) break ;;
+
       esac
     done
+
+    clear
+    "$_G" style \
+      --foreground 2 --align center --width 54 --margin "1 2" \
+      "Goodbye from ${name}."
   '';
 
 in {
