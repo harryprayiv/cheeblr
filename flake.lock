@@ -187,6 +187,24 @@
         "systems": "systems_2"
       },
       "locked": {
+        "lastModified": 1726560853,
+        "narHash": "sha256-X6rJYSESBVr3hBoH0WbKE5KvhPU5bloyZ2L4K60/fPQ=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "c1dfcf08411b08f6b8615f7d8971a2bfa81d5e8a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_3": {
+      "inputs": {
+        "systems": "systems_3"
+      },
+      "locked": {
         "lastModified": 1731533236,
         "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
         "owner": "numtide",
@@ -200,7 +218,7 @@
         "type": "github"
       }
     },
-    "flake-utils_3": {
+    "flake-utils_4": {
       "locked": {
         "lastModified": 1644229661,
         "narHash": "sha256-1YdnJAsNy69bpcjuoKdOYQX0YxZBiCYZo4Twxerqv7k=",
@@ -233,11 +251,11 @@
     "hackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1774439682,
-        "narHash": "sha256-++w6eQCADrPudAlCqe/2NXeY9ksko/dQ9RzaOKF0F+k=",
+        "lastModified": 1774676685,
+        "narHash": "sha256-lo9loBLkczFlLP9blS6Wiex+j81AJPYziAs9e63ri1E=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "603f3d4c69522066d18488ab73e3757ec17e3cda",
+        "rev": "88a5fe8a97cd1ee60df69a5836eaf4268d5cc07f",
         "type": "github"
       },
       "original": {
@@ -249,11 +267,11 @@
     "hackage-for-stackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1774398900,
-        "narHash": "sha256-WDte1lC0enUquNlctoyZwuZuNv9vfy1zkHXuDLT5vGs=",
+        "lastModified": 1774658074,
+        "narHash": "sha256-e71mhycTdFExUbZvqkiDi3PEIBDhVL0TY4jxMHR1Q+Y=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "f3106339eef33e49ceba6f770d39acd3b56c9362",
+        "rev": "1125a4fb0c5958bf99db3b9ceeedcfe8906e285a",
         "type": "github"
       },
       "original": {
@@ -282,11 +300,11 @@
     "hackage_2": {
       "flake": false,
       "locked": {
-        "lastModified": 1774398909,
-        "narHash": "sha256-t/sYT+5WoLuLUkW6Ge3IelLiof/uSavlkc2bySqacOs=",
+        "lastModified": 1774658084,
+        "narHash": "sha256-Dho/oakrpWKiWrbnVYr7K0hC33jnY8zW/iDYXD2X32E=",
         "owner": "input-output-hk",
         "repo": "hackage.nix",
-        "rev": "8de8fee2d6ca93bc8a9d447a6b85044aad824339",
+        "rev": "9846b1abe3a31e4e85cfceb908c8629f4d3dedb4",
         "type": "github"
       },
       "original": {
@@ -336,16 +354,37 @@
         "stackage": "stackage"
       },
       "locked": {
-        "lastModified": 1774400318,
-        "narHash": "sha256-QW1BJO2o8eevLqWXFAPmbeFfQKCWYmr1NTLqSSIJ+sc=",
+        "lastModified": 1774659468,
+        "narHash": "sha256-2VYwzS8N2U4NK2WPgSEBGOqIE2H/QIBOP4usjOviUL4=",
         "owner": "input-output-hk",
         "repo": "haskell.nix",
-        "rev": "f78417c0fa919218f41c99576e2db4b76730db08",
+        "rev": "305b013ce07630b037cac29a4c414c2ee4737865",
         "type": "github"
       },
       "original": {
         "owner": "input-output-hk",
         "repo": "haskell.nix",
+        "type": "github"
+      }
+    },
+    "hell": {
+      "inputs": {
+        "flake-utils": "flake-utils_2",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1772618043,
+        "narHash": "sha256-Rf/XMcEk8xFBkxessF5nzZLTgMw1F0gA63hOAaU5iOk=",
+        "owner": "chrisdone",
+        "repo": "hell",
+        "rev": "ce3346790fbd830a742390c4fd155600f8d7eecd",
+        "type": "github"
+      },
+      "original": {
+        "owner": "chrisdone",
+        "repo": "hell",
         "type": "github"
       }
     },
@@ -605,7 +644,7 @@
     "iogx": {
       "inputs": {
         "flake-compat": "flake-compat_3",
-        "flake-utils": "flake-utils_2",
+        "flake-utils": "flake-utils_3",
         "nixpkgs": "nixpkgs"
       },
       "locked": {
@@ -662,7 +701,7 @@
     },
     "lint-utils": {
       "inputs": {
-        "flake-utils": "flake-utils_3",
+        "flake-utils": "flake-utils_4",
         "nixpkgs": [
           "purs-nix",
           "nixpkgs"
@@ -848,11 +887,11 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 1774106199,
-        "narHash": "sha256-US5Tda2sKmjrg2lNHQL3jRQ6p96cgfWh3J1QBliQ8Ws=",
+        "lastModified": 1774386573,
+        "narHash": "sha256-4hAV26quOxdC6iyG7kYaZcM3VOskcPUrdCQd/nx8obc=",
         "owner": "nixos",
         "repo": "nixpkgs",
-        "rev": "6c9a78c09ff4d6c21d0319114873508a6ec01655",
+        "rev": "46db2e09e1d3f113a13c0d7b81e2f221c63b8ce9",
         "type": "github"
       },
       "original": {
@@ -1156,6 +1195,7 @@
         "flake-utils": "flake-utils",
         "hackage": "hackage",
         "haskellNix": "haskellNix",
+        "hell": "hell",
         "iogx": "iogx",
         "iohkNix": "iohkNix",
         "nix2container": "nix2container",
@@ -1235,11 +1275,11 @@
     "stackage": {
       "flake": false,
       "locked": {
-        "lastModified": 1774397975,
-        "narHash": "sha256-PFZ7+PqN+dUQgCTQ+aXncOb1C5iQbO5KwCOyHacEeEY=",
+        "lastModified": 1774657155,
+        "narHash": "sha256-po2ml+1pRFDD2RDxzIMo87apZoGSvUsqnvvXxAfK+8g=",
         "owner": "input-output-hk",
         "repo": "stackage.nix",
-        "rev": "1990b0928c1b7cdd9efc99421a71a06dd3808c55",
+        "rev": "b1b9fd3b89b6ee28963bab7ae7cb8441442838c9",
         "type": "github"
       },
       "original": {
@@ -1293,9 +1333,24 @@
         "type": "github"
       }
     },
+    "systems_4": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
     "utils": {
       "inputs": {
-        "systems": "systems_3"
+        "systems": "systems_4"
       },
       "locked": {
         "lastModified": 1731533236,

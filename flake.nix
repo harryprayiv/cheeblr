@@ -77,6 +77,9 @@
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";
 
+    hell.url = "github:chrisdone/hell";
+    hell.inputs.nixpkgs.follows = "nixpkgs";
+
   };
 
   outputs = inputs@{ self, flake-utils, ... }:

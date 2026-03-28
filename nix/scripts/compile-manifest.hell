@@ -1,0 +1,217 @@
+#!/usr/bin/env hell
+
+main = do
+  root <- Directory.getCurrentDirectory
+  let scriptDir = root <> "/script"
+  let mfstPath  = scriptDir <> "/manifest.json"
+  let baseDir   = scriptDir <> "/concat_archive"
+  let hashDir   = baseDir   <> "/.hashes"
+  let outDir    = baseDir   <> "/output"
+  let arcDir    = baseDir   <> "/archive"
+
+  Directory.createDirectoryIfMissing Bool.True hashDir
+  Directory.createDirectoryIfMissing Bool.True outDir
+  Directory.createDirectoryIfMissing Bool.True arcDir
+
+  exists <- Directory.doesFileExist mfstPath
+  Monad.when (Bool.not exists)
+    (Exit.die ("No manifest at " <> mfstPath <> " -- run generate-manifest first."))
+
+  raw  <- ByteString.readFile mfstPath
+  mfst <- Maybe.maybe
+            (Exit.die "Failed to parse manifest.json")
+            Monad.return
+            (Json.decode raw)
+
+  ts <- Main.getTimestamp
+
+  Text.putStrLn "Processing manifest sections..."
+
+  Monad.forM_
+    [ Main.Section { compile = Bool.True,  ext = "hs",   key = "haskell",         prefix = "Haskell"         }
+    , Main.Section { compile = Bool.False, ext = "hs",   key = "haskellTests",    prefix = "HaskellTests"    }
+    , Main.Section { compile = Bool.True,  ext = "purs", key = "purescript",      prefix = "PureScript"      }
+    , Main.Section { compile = Bool.False, ext = "purs", key = "purescriptTests", prefix = "PureScriptTests" }
+    , Main.Section { compile = Bool.False, ext = "nix",  key = "nix",             prefix = "Nix"             }
+    ]
+    (Main.doSection root mfst hashDir outDir arcDir ts)
+
+  Text.putStrLn ""
+  Text.putStrLn ("Done.  Output in " <> outDir)
+
+data Section = Section
+  { compile :: Bool
+  , ext     :: Text
+  , key     :: Text
+  , prefix  :: Text
+  }
+
+data CompileResult = CompileResult
+  { output    :: Text
+  , succeeded :: Bool
+  }
+
+doSection = \root mfst hashDir outDir arcDir ts sec -> do
+  let files = Main.sectionFiles (Record.get @"key" sec) mfst
+  if List.null files
+    then Text.putStrLn ("  " <> Record.get @"key" sec <> ": no files in manifest, skipping.")
+    else Main.runSection root hashDir outDir arcDir ts sec files
+
+runSection = \root hashDir outDir arcDir ts sec files -> do
+  let k   = Record.get @"key"    sec
+  let pfx = Record.get @"prefix" sec
+  let ex  = Record.get @"ext"    sec
+  cur  <- Main.hashOf files
+  prev <- Main.storedHash hashDir k
+  mold <- Main.findOutput outDir pfx ex
+  if Eq.eq cur prev
+    then Maybe.maybe
+           (Main.regen root hashDir outDir arcDir ts sec files cur)
+           (\fname -> do
+             let sfx  = Main.outputSuffix fname
+             let dest = outDir <> "/" <> pfx <> "_" <> ts <> sfx <> "." <> ex
+             Directory.renameFile (outDir <> "/" <> fname) dest
+             Text.putStrLn ("  " <> k <> ": unchanged -> " <> dest))
+           mold
+    else Main.regen root hashDir outDir arcDir ts sec files cur
+
+regen = \root hashDir outDir arcDir ts sec files cur -> do
+  let k   = Record.get @"key"    sec
+  let pfx = Record.get @"prefix" sec
+  let ex  = Record.get @"ext"    sec
+  let cc  = Main.cmt ex
+
+  Main.archiveOld outDir arcDir pfx ex
+
+  cr <- if Record.get @"compile" sec
+          then Main.doCompile root k
+          else Monad.return (Main.CompileResult { output = "", succeeded = Bool.True })
+
+  let ok  = Record.get @"succeeded" cr
+  let sfx = if ok then "_OK" else "_ERR"
+  let dst = outDir <> "/" <> pfx <> "_" <> ts <> sfx <> "." <> ex
+
+  let hdr = Text.unlines
+              [ cc <> cc
+              , cc <> cc <> " Generated: " <> ts
+              , cc <> cc <> " Section:   " <> k
+              , cc <> cc <> " Files:     " <> Show.show (List.length files)
+              , cc <> cc <> " Compile:   " <> (if ok then "OK" else "FAILED")
+              , cc <> cc
+              ]
+
+  let errBlock =
+        if ok
+          then ""
+          else Text.unlines
+                 (List.map (\ln -> cc <> "   " <> ln)
+                   (Text.lines (Record.get @"output" cr)))
+               <> "\n"
+
+  bodies <- Monad.mapM (Main.fileBlock root ex cc) files
+  Text.writeFile dst (hdr <> errBlock <> Text.concat bodies)
+  Main.saveHash hashDir k cur
+  Text.putStrLn ("  " <> k <> ": -> " <> dst)
+
+doCompile = \root k -> do
+  let sub  = if Text.isPrefixOf "haskell" k then "backend"  else "frontend"
+  let prog = if Text.isPrefixOf "haskell" k then "cabal"    else "spago"
+  let args = if Text.isPrefixOf "haskell" k then ["build"]  else ["build"]
+  let cmd  = Process.setWorkingDir (root <> "/" <> sub) (Process.proc prog args)
+  (code, out, err) <- Text.readProcess cmd
+  let ok = Exit.exitCode Bool.True (\_ -> Bool.False) code
+  Monad.return (Main.CompileResult { output = out <> err, succeeded = ok })
+
+fileBlock = \root ex cc path -> do
+  let full = root <> "/" <> path
+  exists <- Directory.doesFileExist full
+  if exists
+    then do
+      raw <- Text.readFile full
+      Monad.return
+        (cc <> " FILE: " <> path <> "\n"
+         <> Main.stripLineComments cc raw
+         <> cc <> " END OF: " <> path <> "\n\n")
+    else
+      Monad.return (cc <> " WARNING: not found: " <> path <> "\n\n")
+
+stripLineComments = \cc src ->
+  Text.unlines (List.map (Main.dropFrom cc) (Text.lines src))
+
+dropFrom = \marker line ->
+  (\(before, after) -> before) (Text.breakOn marker line)
+
+cmt = \ext ->
+  if Eq.eq ext "nix" then "#" else "--"
+
+hashOf = \files ->
+  if List.null files
+    then Monad.return "empty"
+    else do
+      (code, out, err) <- Text.readProcess (Process.proc "sha256sum" files)
+      let hashes = Exit.exitCode out (\_ -> "") code
+      if Eq.eq hashes ""
+        then Monad.return "empty"
+        else do
+          combined <- Text.readProcessStdout_
+                        (Text.setStdin hashes (Process.proc "sha256sum" ["-"]))
+          Monad.return
+            (Maybe.maybe "empty" Function.id (Maybe.listToMaybe (Text.words combined)))
+
+storedHash = \hashDir k -> do
+  let path = hashDir <> "/" <> k <> "_last_hash"
+  exists <- Directory.doesFileExist path
+  if exists
+    then do
+      raw <- Text.readFile path
+      Monad.return (Text.strip raw)
+    else Monad.return ""
+
+saveHash = \hashDir k h ->
+  Text.writeFile (hashDir <> "/" <> k <> "_last_hash") h
+
+findOutput = \outDir pfx ext -> do
+  fs <- Directory.listDirectory outDir
+  let keep = \f -> if Text.isPrefixOf pfx f then Text.isSuffixOf ("." <> ext) f else Bool.False
+  Monad.return (Maybe.listToMaybe (List.sort (List.filter keep fs)))
+
+outputSuffix = \fname ->
+  if Text.isSuffixOf "_OK.hs" fname then "_OK"
+  else if Text.isSuffixOf "_OK.purs" fname then "_OK"
+  else if Text.isSuffixOf "_OK.nix" fname then "_OK"
+  else if Text.isSuffixOf "_ERR.hs" fname then "_ERR"
+  else if Text.isSuffixOf "_ERR.purs" fname then "_ERR"
+  else if Text.isSuffixOf "_ERR.nix" fname then "_ERR"
+  else ""
+
+archiveOld = \outDir arcDir pfx ext -> do
+  fs <- Directory.listDirectory outDir
+  let old = List.filter (\f -> if Text.isPrefixOf pfx f then Text.isSuffixOf ("." <> ext) f else Bool.False) fs
+  Monad.forM_ old (\f ->
+    Directory.renameFile (outDir <> "/" <> f) (arcDir <> "/" <> f))
+
+getTimestamp = do
+  out <- Text.readProcessStdout_ (Process.proc "date" ["+%Y-%m-%d %H:%M:%S"])
+  Monad.return (Text.strip out)
+
+sectionFiles = \k manifest ->
+  Main.onObj manifest [] (\top ->
+    Maybe.maybe [] (\secVal ->
+      Main.onObj secVal [] (\secObj ->
+        Maybe.maybe [] (\inclVal ->
+          Main.onArr inclVal [] (\items ->
+            Maybe.mapMaybe Main.asStr (Vector.toList items)))
+          (Map.lookup "include" secObj)))
+      (Map.lookup k top))
+
+onObj = \v fallback f ->
+  Json.value fallback (\_ -> fallback) (\_ -> fallback) (\_ -> fallback) (\_ -> fallback) f v
+
+onArr = \v fallback f ->
+  Json.value fallback (\_ -> fallback) (\_ -> fallback) (\_ -> fallback) f (\_ -> fallback) v
+
+asStr = \v ->
+  Json.value
+    Maybe.Nothing (\_ -> Maybe.Nothing) Maybe.Just
+    (\_ -> Maybe.Nothing) (\_ -> Maybe.Nothing) (\_ -> Maybe.Nothing)
+    v

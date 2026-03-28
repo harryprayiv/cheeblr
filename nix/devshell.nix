@@ -2,6 +2,7 @@
   # containersModule is passed in from build.nix; null omits the container
   # section from the shell entirely (used by ci-shell.nix).
 , containersModule ? null
+, hellPkg
 }:
 
 let
@@ -249,6 +250,7 @@ let
     openssl.dev 
     libiconv 
     openssl
+    hellPkg
 
     tlsModule.tls-setup
     tlsModule.tls-info
