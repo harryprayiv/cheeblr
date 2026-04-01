@@ -2,7 +2,7 @@
 
 let
   inherit (inputs) nixpkgs flake-utils haskellNix iohkNix CHaP hackage
-                   purescript-overlay purs-nix sops-nix nix2container hell;
+                   purescript-overlay purs-nix sops-nix nix2container nix-hell;
 
   appConfig = import ./config.nix { };
   name      = appConfig.name;
@@ -108,7 +108,7 @@ let
       # ── Devshell ─────────────────────────────────────────────────────────
       devshellModule = import ./devshell.nix {
         inherit pkgs name lib system containersModule;
-        hellPkg = hell.packages.${system}.default;
+        hellPkg = nix-hell.packages.${system}.default;
       };
 
     in rec {

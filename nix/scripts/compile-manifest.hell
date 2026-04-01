@@ -1,4 +1,4 @@
-#!/usr/bin/env hell
+#!/usr/bin/env nix-hell
 
 main = do
   root <- Directory.getCurrentDirectory

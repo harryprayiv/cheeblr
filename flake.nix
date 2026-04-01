@@ -77,8 +77,8 @@
     nix2container.url = "github:nlewo/nix2container";
     nix2container.inputs.nixpkgs.follows = "nixpkgs";
 
-    hell.url = "github:chrisdone/hell";
-    hell.inputs.nixpkgs.follows = "nixpkgs";
+    nix-hell.url = "github:harryprayiv/nix-hell";
+    nix-hell.inputs.nixpkgs.follows = "nixpkgs";
 
   };
 
