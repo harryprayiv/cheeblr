@@ -1,6 +1,6 @@
-{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeOperators     #-}
 
 module Service.Register
   ( openRegister
@@ -8,20 +8,24 @@ module Service.Register
   ) where
 
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Text.Encoding as TE
-import Data.UUID (UUID)
-import Effectful
-import Effectful.Error.Static
-import Servant (ServerError(..), err404, err409)
+import qualified Data.Text.Encoding   as TE
+import           Data.UUID            (UUID)
+import           Effectful
+import           Effectful.Error.Static
+import           Servant              (ServerError (..), err404, err409)
 
 import API.Transaction
   ( CloseRegisterRequest (..)
-  , CloseRegisterResult
+  , CloseRegisterResult (..)
   , OpenRegisterRequest (..)
   , Register
   )
+import Effect.Clock
+import Effect.EventEmitter
 import Effect.RegisterDb
 import State.RegisterMachine
+import Types.Events.Domain
+import Types.Events.Register
 
 loadReg
   :: (RegisterDb :> es, Error ServerError :> es)
@@ -39,7 +43,11 @@ guardRegEvent (InvalidRegCommand msg) =
 guardRegEvent _ = pure ()
 
 openRegister
-  :: (RegisterDb :> es, Error ServerError :> es)
+  :: ( RegisterDb :> es
+     , EventEmitter :> es
+     , Clock        :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> OpenRegisterRequest
   -> Eff es Register
@@ -48,10 +56,22 @@ openRegister regId req = do
   let cmd      = OpenRegCmd (openRegisterEmployeeId req) (openRegisterStartingCash req)
       (evt, _) = runRegCommand someState cmd
   guardRegEvent evt
-  openRegisterDb regId req
+  result <- openRegisterDb regId req
+  now <- currentTime
+  emit $ RegisterEvt $ RegisterOpened
+    { reRegId        = regId
+    , reEmpId        = openRegisterEmployeeId req
+    , reStartingCash = openRegisterStartingCash req
+    , reTimestamp    = now
+    }
+  pure result
 
 closeRegister
-  :: (RegisterDb :> es, Error ServerError :> es)
+  :: ( RegisterDb :> es
+     , EventEmitter :> es
+     , Clock        :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> CloseRegisterRequest
   -> Eff es CloseRegisterResult
@@ -60,4 +80,13 @@ closeRegister regId req = do
   let cmd      = CloseRegCmd (closeRegisterEmployeeId req) (closeRegisterCountedCash req)
       (evt, _) = runRegCommand someState cmd
   guardRegEvent evt
-  closeRegisterDb regId req
+  result <- closeRegisterDb regId req
+  now <- currentTime
+  emit $ RegisterEvt $ RegisterClosed
+    { reRegId       = regId
+    , reEmpId       = closeRegisterEmployeeId req
+    , reCountedCash = closeRegisterCountedCash req
+    , reVariance    = closeRegisterResultVariance result
+    , reTimestamp   = now
+    }
+  pure result

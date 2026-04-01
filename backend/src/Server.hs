@@ -1,40 +1,39 @@
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 
 module Server where
 
 import API.Inventory
-import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
-import Auth.Session (SessionContext (..), resolveSession)
+import API.OpenApi            (CheeblrAPI, cheeblrOpenApi)
+import Auth.Session           (SessionContext (..), resolveSession)
 import Control.Monad.IO.Class (liftIO)
-import Data.Morpheus (interpreter)
-import Data.Morpheus.Types (GQLRequest, GQLResponse)
-import Data.Text (Text, pack)
-import qualified Data.Text as T
-import Data.UUID (UUID)
-import Effectful (Eff, IOE, runEff)
-import Effectful.Error.Static (Error, runErrorNoCallStack)
-import Katip (LogEnv)
-import Servant hiding (throwError)
-import qualified Servant (throwError)
+import Data.Morpheus           (interpreter)
+import Data.Morpheus.Types     (GQLRequest, GQLResponse)
+import Data.Text               (Text, pack)
+import qualified Data.Text    as T
+import Data.UUID               (UUID)
+import Effectful               (Eff, IOE, runEff)
+import Effectful.Error.Static  (Error, runErrorNoCallStack)
+import Servant                 hiding (throwError)
+import qualified Servant      (throwError)
 
-import DB.Database (DBPool)
+import DB.Database             (DBPool)
 import Effect.InventoryDb
-import GraphQL.Resolvers (rootResolver)
+import GraphQL.Resolvers       (rootResolver)
 import Logging
-import Server.Auth (authServerImpl)
-import Server.Transaction (posServerImpl)
+import Server.Auth             (authServerImpl)
+import Server.Env              (AppEnv (..))
+import Server.Transaction      (posServerImpl)
 import Types.Auth
   ( AuthenticatedUser (..)
   , UserCapabilities (..)
-  , capabilitiesForRole
+  , SessionResponse (..)
   , auRole
   , auUserId
   , auUserName
-  , SessionResponse (..)
+  , capabilitiesForRole
   )
 import Types.Inventory
 
@@ -43,15 +42,15 @@ runInvEff pool action = do
   result <- liftIO . runEff . runErrorNoCallStack @ServerError . runInventoryDbIO pool $ action
   either Servant.throwError pure result
 
-combinedServer :: DBPool -> LogEnv -> Server CheeblrAPI
-combinedServer pool logEnv =
-  inventoryServer pool logEnv
-    :<|> posServerImpl pool logEnv
-    :<|> authServerImpl pool logEnv
+combinedServer :: AppEnv -> Server CheeblrAPI
+combinedServer env =
+  inventoryServer env
+    :<|> posServerImpl env
+    :<|> authServerImpl (envDbPool env) (envLogEnv env)
     :<|> pure cheeblrOpenApi
 
-inventoryServer :: DBPool -> LogEnv -> Server InventoryAPI
-inventoryServer pool logEnv =
+inventoryServer :: AppEnv -> Server InventoryAPI
+inventoryServer env =
   getInventory
     :<|> addInventoryItem
     :<|> updateInventoryItem
@@ -59,6 +58,8 @@ inventoryServer pool logEnv =
     :<|> getSession
     :<|> graphqlInventory
   where
+    pool   = envDbPool env
+    logEnv = envLogEnv env
 
     auth :: Maybe Text -> Handler AuthenticatedUser
     auth mHeader = scUser <$> resolveSession pool mHeader

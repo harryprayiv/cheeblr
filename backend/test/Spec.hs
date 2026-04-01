@@ -14,6 +14,7 @@ import qualified Test.GraphQL.ResolversSpec
 import qualified Test.State.TransactionMachineSpec
 import qualified Test.State.RegisterMachineSpec
 import qualified Test.Effect.InventoryDbSpec
+import qualified Test.Effect.EventEmitterSpec
 import qualified Test.Service.TransactionSpec
 import qualified Test.Service.RegisterSpec
 import qualified Test.Props.JsonRoundtripSpec
@@ -36,6 +37,7 @@ main = hspec $ do
     Test.State.TransactionMachineSpec.spec
     Test.State.RegisterMachineSpec.spec
     Test.Effect.InventoryDbSpec.spec
+    Test.Effect.EventEmitterSpec.spec
     Test.Service.TransactionSpec.spec
     Test.Service.RegisterSpec.spec
     Test.Props.JsonRoundtripSpec.spec

@@ -1,15 +1,21 @@
 {-# LANGUAGE DeriveGeneric #-}
 
--- Stub. Phase 2 replaces DomainEventPlaceholder with the full
--- InventoryEvent / TransactionEvent / RegisterEvent / SessionEvent tree.
 module Types.Events.Domain
   ( DomainEvent (..)
   ) where
 
-import Data.Aeson   (FromJSON, ToJSON)
-import GHC.Generics (Generic)
+import Data.Aeson                (FromJSON, ToJSON)
+import GHC.Generics              (Generic)
+import Types.Events.Inventory    (InventoryEvent)
+import Types.Events.Register     (RegisterEvent)
+import Types.Events.Session      (SessionEvent)
+import Types.Events.Transaction  (TransactionEvent)
 
-data DomainEvent = DomainEventPlaceholder
+data DomainEvent
+  = InventoryEvt   InventoryEvent
+  | TransactionEvt TransactionEvent
+  | RegisterEvt    RegisterEvent
+  | SessionEvt     SessionEvent
   deriving (Show, Eq, Generic)
 
 instance ToJSON   DomainEvent

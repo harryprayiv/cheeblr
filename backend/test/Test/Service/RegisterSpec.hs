@@ -1,15 +1,18 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE NamedFieldPuns     #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE TypeApplications   #-}
 
 module Test.Service.RegisterSpec (spec) where
 
-import Control.Monad (void)
-import qualified Data.Map.Strict as Map
-import Data.UUID (UUID)
-import Effectful (Eff, IOE, runEff)
-import Effectful.Error.Static (Error, runErrorNoCallStack)
-import Servant (ServerError (..))
+import Control.Monad              (void)
+import Data.IORef                  (newIORef, readIORef)
+import qualified Data.Map.Strict  as Map
+import Data.Time                   (UTCTime)
+import Data.UUID                   (UUID)
+import Effectful                   (Eff, IOE, runEff)
+import Effectful.Error.Static      (Error, runErrorNoCallStack)
+import Servant                     (ServerError (..))
 import Test.Hspec
 
 import API.Transaction
@@ -18,13 +21,20 @@ import API.Transaction
   , OpenRegisterRequest (..)
   , Register (..)
   )
+import Effect.Clock                (Clock, runClockPure)
+import Effect.EventEmitter
 import Effect.RegisterDb
 import qualified Service.Register as Svc
+import Types.Events.Domain
+import Types.Events.Register
 
 regUUID, empUUID, locUUID :: UUID
 regUUID = read "11111111-1111-1111-1111-111111111111"
 empUUID = read "22222222-2222-2222-2222-222222222222"
 locUUID = read "33333333-3333-3333-3333-333333333333"
+
+testTime :: UTCTime
+testTime = read "2024-06-15 10:00:00 UTC"
 
 closedReg :: Register
 closedReg = Register
@@ -62,15 +72,42 @@ closeReq = CloseRegisterRequest
 storeWith :: Register -> RegStore
 storeWith reg = RegStore (Map.singleton regUUID reg)
 
-type TestEffs = '[RegisterDb, Error ServerError, IOE]
+-- Effect stack matches service function constraints:
+-- RegisterDb, EventEmitter, Clock, Error ServerError, IOE
+type TestEffs =
+  '[ RegisterDb
+   , Clock
+   , EventEmitter
+   , Error ServerError
+   , IOE
+   ]
 
 runTest :: RegStore -> Eff TestEffs a -> IO (Either ServerError a)
 runTest store action =
   fmap (fmap fst) $
   runEff
   . runErrorNoCallStack @ServerError
+  . runEventEmitterNoop
+  . runClockPure testTime
   . runRegisterDbPure store
   $ action
+
+runTestWithEvents
+  :: RegStore
+  -> Eff TestEffs a
+  -> IO (Either ServerError a, [DomainEvent])
+runTestWithEvents store action = do
+  ref <- newIORef []
+  result <-
+    fmap (fmap fst) $
+    runEff
+    . runErrorNoCallStack @ServerError
+    . runEventEmitterCollect ref
+    . runClockPure testTime
+    . runRegisterDbPure store
+    $ action
+  evts <- reverse <$> readIORef ref
+  pure (result, evts)
 
 shouldSucceed :: IO (Either ServerError a) -> IO a
 shouldSucceed io = do
@@ -124,13 +161,13 @@ spec = describe "Service.Register (pure interpreter)" $ do
       closeRegisterResultVariance result `shouldBe` 2000
 
     it "calculates zero variance when count is exact" $ do
-      let exactCloseReq = closeReq { closeRegisterCountedCash = 50000 }
-      result <- shouldSucceed $ runTest (storeWith openReg) (Svc.closeRegister regUUID exactCloseReq)
+      let exactReq = closeReq { closeRegisterCountedCash = 50000 }
+      result <- shouldSucceed $ runTest (storeWith openReg) (Svc.closeRegister regUUID exactReq)
       closeRegisterResultVariance result `shouldBe` 0
 
     it "calculates negative variance when count is over" $ do
-      let overCloseReq = closeReq { closeRegisterCountedCash = 52000 }
-      result <- shouldSucceed $ runTest (storeWith openReg) (Svc.closeRegister regUUID overCloseReq)
+      let overReq = closeReq { closeRegisterCountedCash = 52000 }
+      result <- shouldSucceed $ runTest (storeWith openReg) (Svc.closeRegister regUUID overReq)
       closeRegisterResultVariance result `shouldBe` (-2000)
 
     it "stores counted cash in currentDrawerAmount" $ do
@@ -172,3 +209,44 @@ spec = describe "Service.Register (pure interpreter)" $ do
       reg <- shouldSucceed $ runTest (storeWith closedReg) action
       registerIsOpen reg `shouldBe` True
       void $ pure reg
+
+  describe "event emission" $ do
+
+    it "openRegister emits RegisterOpened on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith closedReg) (Svc.openRegister regUUID openReq)
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [RegisterEvt (RegisterOpened { reRegId, reEmpId, reStartingCash })] -> do
+          reRegId        `shouldBe` regUUID
+          reEmpId        `shouldBe` empUUID
+          reStartingCash `shouldBe` 50000
+        _ -> expectationFailure $ "Expected [RegisterOpened], got: " <> show (length evts) <> " events"
+
+    it "openRegister emits no events on rejection (already open)" $ do
+      (_, evts) <- runTestWithEvents (storeWith openReg) (Svc.openRegister regUUID openReq)
+      evts `shouldBe` []
+
+    it "openRegister emits no events when register not found" $ do
+      (_, evts) <- runTestWithEvents emptyRegStore (Svc.openRegister regUUID openReq)
+      evts `shouldBe` []
+
+    it "closeRegister emits RegisterClosed on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith openReg) (Svc.closeRegister regUUID closeReq)
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [RegisterEvt (RegisterClosed { reRegId, reVariance })] -> do
+          reRegId    `shouldBe` regUUID
+          reVariance `shouldBe` 2000
+        _ -> expectationFailure $ "Expected [RegisterClosed], got: " <> show (length evts) <> " events"
+
+    it "closeRegister emits no events on rejection (already closed)" $ do
+      (_, evts) <- runTestWithEvents (storeWith closedReg) (Svc.closeRegister regUUID closeReq)
+      evts `shouldBe` []
+
+    it "open then close emits two events in order" $ do
+      (_, evts) <- runTestWithEvents (storeWith closedReg) $ do
+        _ <- Svc.openRegister regUUID openReq
+        Svc.closeRegister regUUID closeReq
+      case evts of
+        [RegisterEvt (RegisterOpened {}), RegisterEvt (RegisterClosed {})] -> pure ()
+        _ -> expectationFailure $ "Expected [RegisterOpened, RegisterClosed], got: " <> show (length evts) <> " events"

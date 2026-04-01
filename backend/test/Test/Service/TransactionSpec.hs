@@ -1,22 +1,27 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DataKinds          #-}
+{-# LANGUAGE NamedFieldPuns     #-}
+{-# LANGUAGE OverloadedStrings  #-}
+{-# LANGUAGE TypeApplications   #-}
 
 module Test.Service.TransactionSpec (spec) where
 
-import Control.Monad (void)
-import qualified Data.Map.Strict as Map
-import Data.Time (UTCTime)
-import Data.UUID (UUID)
-import Effectful (Eff, IOE, runEff)
-import Effectful.Error.Static (Error, runErrorNoCallStack)
-import Servant (ServerError (..))
+import Control.Monad              (void)
+import Data.IORef                  (newIORef, readIORef)
+import qualified Data.Map.Strict  as Map
+import Data.Time                   (UTCTime)
+import Data.UUID                   (UUID)
+import Effectful                   (Eff, IOE, runEff)
+import Effectful.Error.Static      (Error, runErrorNoCallStack)
+import Servant                     (ServerError (..))
 import Test.Hspec
 
-import Effect.Clock (Clock, runClockPure)
-import Effect.GenUUID (GenUUID, runGenUUIDPure)
+import Effect.Clock                (Clock, runClockPure)
+import Effect.EventEmitter
+import Effect.GenUUID              (GenUUID, runGenUUIDPure)
 import Effect.TransactionDb
 import qualified Service.Transaction as Svc
+import Types.Events.Domain
+import Types.Events.Transaction
 import Types.Transaction
 
 txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
@@ -31,7 +36,6 @@ locUUID  = read "77777777-7777-7777-7777-777777777777"
 freshUUID :: UUID
 freshUUID = read "88888888-8888-8888-8888-888888888888"
 
--- Infinite supply of distinct deterministic UUIDs for the pure interpreter.
 uuidSupply :: [UUID]
 uuidSupply =
   [ read "a0000000-0000-0000-0000-000000000001"
@@ -126,23 +130,45 @@ storeWithPayment status =
     , tsInventory   = Map.singleton skuUUID 10
     }
 
-type TestEffs = '[TransactionDb, Clock, GenUUID, Error ServerError, IOE]
+-- Effect stack matches service function constraints:
+-- TransactionDb, EventEmitter, Clock, GenUUID, Error ServerError, IOE
+type TestEffs =
+  '[ TransactionDb
+   , Clock
+   , GenUUID
+   , EventEmitter
+   , Error ServerError
+   , IOE
+   ]
 
--- Interpreter order: TransactionDb innermost so GenUUID and Clock remain
--- in scope when the pure DB handler dispatches nextUUID / currentTime.
--- Result nesting: Either ServerError ((a, TxStore), [UUID])
-runTest
-  :: TxStore
-  -> Eff TestEffs a
-  -> IO (Either ServerError a)
+runTest :: TxStore -> Eff TestEffs a -> IO (Either ServerError a)
 runTest store action =
   fmap (fmap (fst . fst)) $
   runEff
   . runErrorNoCallStack @ServerError
+  . runEventEmitterNoop
   . runGenUUIDPure uuidSupply
   . runClockPure testTime
   . runTransactionDbPure store
   $ action
+
+runTestWithEvents
+  :: TxStore
+  -> Eff TestEffs a
+  -> IO (Either ServerError a, [DomainEvent])
+runTestWithEvents store action = do
+  ref <- newIORef []
+  result <-
+    fmap (fmap (fst . fst)) $
+    runEff
+    . runErrorNoCallStack @ServerError
+    . runEventEmitterCollect ref
+    . runGenUUIDPure uuidSupply
+    . runClockPure testTime
+    . runTransactionDbPure store
+    $ action
+  evts <- reverse <$> readIORef ref
+  pure (result, evts)
 
 shouldSucceed :: IO (Either ServerError a) -> IO a
 shouldSucceed io = do
@@ -315,3 +341,67 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       case result of
         Just (_, reserved) -> reserved `shouldBe` 0
         Nothing            -> expectationFailure "Expected availability"
+
+  describe "event emission" $ do
+
+    it "addItem emits TransactionItemAdded on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith Created) (Svc.addItem testItem)
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [TransactionEvt (TransactionItemAdded { teTxId })] ->
+          teTxId `shouldBe` txUUID
+        _ -> expectationFailure $ "Expected [TransactionItemAdded], got: " <> show (length evts) <> " events"
+
+    it "addItem emits no events on state machine rejection (Completed)" $ do
+      (_, evts) <- runTestWithEvents (storeWith Completed) (Svc.addItem testItem)
+      evts `shouldBe` []
+
+    it "addItem emits no events when SKU not in inventory" $ do
+      (_, evts) <- runTestWithEvents (storeWith Created) $
+        Svc.addItem testItem { transactionItemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff" }
+      evts `shouldBe` []
+
+    it "voidTx emits TransactionVoided on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.voidTx txUUID "fraud")
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [TransactionEvt (TransactionVoided { teReason })] ->
+          teReason `shouldBe` "fraud"
+        _ -> expectationFailure $ "Expected [TransactionVoided], got: " <> show (length evts) <> " events"
+
+    it "voidTx emits no events on rejection (already voided)" $ do
+      (_, evts) <- runTestWithEvents (storeWith Voided) (Svc.voidTx txUUID "again")
+      evts `shouldBe` []
+
+    it "finalizeTx emits TransactionFinalized on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.finalizeTx txUUID)
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [TransactionEvt (TransactionFinalized { teTxId })] ->
+          teTxId `shouldBe` txUUID
+        _ -> expectationFailure $ "Expected [TransactionFinalized], got: " <> show (length evts) <> " events"
+
+    it "addPayment emits TransactionPaymentAdded on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.addPayment testPayment)
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [TransactionEvt (TransactionPaymentAdded { teTxId })] ->
+          teTxId `shouldBe` txUUID
+        _ -> expectationFailure $ "Expected [TransactionPaymentAdded], got: " <> show (length evts) <> " events"
+
+    it "removePayment emits TransactionPaymentRemoved on success" $ do
+      (result, evts) <- runTestWithEvents (storeWithPayment InProgress) (Svc.removePayment pymtUUID)
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [TransactionEvt (TransactionPaymentRemoved { tePaymentId })] ->
+          tePaymentId `shouldBe` pymtUUID
+        _ -> expectationFailure $ "Expected [TransactionPaymentRemoved], got: " <> show (length evts) <> " events"
+
+    it "refundTx emits TransactionRefunded on success" $ do
+      (result, evts) <- runTestWithEvents (storeWith Completed) (Svc.refundTx txUUID "defective")
+      result `shouldSatisfy` either (const False) (const True)
+      case evts of
+        [TransactionEvt (TransactionRefunded { teTxId, teReason })] -> do
+          teTxId   `shouldBe` txUUID
+          teReason `shouldBe` "defective"
+        _ -> expectationFailure $ "Expected [TransactionRefunded], got: " <> show (length evts) <> " events"

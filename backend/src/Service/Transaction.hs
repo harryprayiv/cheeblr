@@ -1,10 +1,11 @@
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module Service.Transaction
-  ( addItem
+  ( createTransactionSvc
+  , addItem
   , removeItem
   , addPayment
   , removePayment
@@ -14,17 +15,22 @@ module Service.Transaction
   ) where
 
 import qualified Data.ByteString.Lazy as LBS
-import Data.Text (Text, pack)
-import qualified Data.Text.Encoding as TE
-import Data.UUID (UUID)
-import Effectful
-import Effectful.Error.Static
-import Servant (ServerError(..), err400, err404, err409)
-import Control.Monad (void)
-import DB.Transaction (InventoryException (..))
+import           Data.Text            (Text, pack)
+import qualified Data.Text.Encoding   as TE
+import           Data.UUID            (UUID)
+import           Effectful
+import           Effectful.Error.Static
+import           Servant              (ServerError (..), err400, err404, err409)
+import           Control.Monad        (void)
+
+import DB.Transaction        (InventoryException (..))
+import Effect.Clock
+import Effect.EventEmitter
 import Effect.GenUUID
 import Effect.TransactionDb
 import State.TransactionMachine
+import Types.Events.Domain
+import Types.Events.Transaction
 import Types.Transaction
 
 loadTx
@@ -54,10 +60,8 @@ requireTxId lookupFn notFoundMsg entityId = do
     Nothing   -> throwError err404 { errBody = notFoundMsg }
     Just txId -> pure txId
 
--- Persist any status change produced by the state machine transition so that
--- subsequent operations see the correct state when they call loadTx.
 persistStatusChange
-  :: (TransactionDb :> es)
+  :: TransactionDb :> es
   => Transaction
   -> SomeTxState
   -> Eff es ()
@@ -67,8 +71,28 @@ persistStatusChange tx nextState = do
     then pure ()
     else void $ updateTransaction (transactionId tx) tx { transactionStatus = nextStatus }
 
+createTransactionSvc
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     )
+  => Transaction
+  -> Eff es Transaction
+createTransactionSvc tx = do
+  result <- createTransaction tx
+  now    <- currentTime
+  emit $ TransactionEvt $ TransactionCreated
+    { teTx        = result
+    , teTimestamp = now
+    }
+  pure result
+
 addItem
-  :: (TransactionDb :> es, Error ServerError :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , Error ServerError :> es
+     )
   => TransactionItem
   -> Eff es TransactionItem
 addItem item = do
@@ -78,7 +102,14 @@ addItem item = do
   persistStatusChange tx nextState
   result <- addTransactionItem item
   case result of
-    Right ti -> pure ti
+    Right ti -> do
+      now <- currentTime
+      emit $ TransactionEvt $ TransactionItemAdded
+        { teTxId      = transactionItemTransactionId item
+        , teItem      = ti
+        , teTimestamp = now
+        }
+      pure ti
     Left (ItemNotFound sku) ->
       throwError err404 { errBody = LBS.fromStrict . TE.encodeUtf8 $
         "Item not found: " <> pack (show sku) }
@@ -89,28 +120,63 @@ addItem item = do
         <> pack (show requested) <> " requested" }
 
 removeItem
-  :: (TransactionDb :> es, Error ServerError :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> Eff es ()
 removeItem itemId = do
   txId <- requireTxId getTxIdByItemId "Item not found" itemId
   (_, someState) <- loadTx txId
+  -- fetch item before deletion for the event payload
+  mTx <- getTransactionById txId
+  let mItem = mTx >>= \t ->
+        foldr (\i acc -> if transactionItemId i == itemId then Just i else acc)
+              Nothing (transactionItems t)
   let (evt, _) = runTxCommand someState (RemoveItemCmd itemId)
   guardTxEvent evt
   deleteTransactionItem itemId
+  now <- currentTime
+  case mItem of
+    Just item ->
+      emit $ TransactionEvt $ TransactionItemRemoved
+        { teTxId      = txId
+        , teItemId    = itemId
+        , teItemSku   = transactionItemMenuItemSku item
+        , teQty       = transactionItemQuantity item
+        , teTimestamp = now
+        }
+    Nothing -> pure ()
 
 addPayment
-  :: (TransactionDb :> es, Error ServerError :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , Error ServerError :> es
+     )
   => PaymentTransaction
   -> Eff es PaymentTransaction
 addPayment payment = do
   (_, someState) <- loadTx (paymentTransactionId payment)
   let (evt, _) = runTxCommand someState (AddPaymentCmd payment)
   guardTxEvent evt
-  addPaymentTransaction payment
+  result <- addPaymentTransaction payment
+  now <- currentTime
+  emit $ TransactionEvt $ TransactionPaymentAdded
+    { teTxId      = paymentTransactionId payment
+    , tePayment   = result
+    , teTimestamp = now
+    }
+  pure result
 
 removePayment
-  :: (TransactionDb :> es, Error ServerError :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> Eff es ()
 removePayment pymtId = do
@@ -119,36 +185,79 @@ removePayment pymtId = do
   let (evt, _) = runTxCommand someState (RemovePaymentCmd pymtId)
   guardTxEvent evt
   deletePaymentTransaction pymtId
+  now <- currentTime
+  emit $ TransactionEvt $ TransactionPaymentRemoved
+    { teTxId      = txId
+    , tePaymentId = pymtId
+    , teTimestamp = now
+    }
 
 finalizeTx
-  :: (TransactionDb :> es, Error ServerError :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> Eff es Transaction
 finalizeTx txId = do
   (_, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState FinalizeCmd
   guardTxEvent evt
-  finalizeTransaction txId
+  result <- finalizeTransaction txId
+  now <- currentTime
+  emit $ TransactionEvt $ TransactionFinalized
+    { teTxId      = txId
+    , teTx        = result
+    , teTimestamp = now
+    }
+  pure result
 
 voidTx
-  :: (TransactionDb :> es, Error ServerError :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> Text
   -> Eff es Transaction
 voidTx txId reason = do
-  (_, someState) <- loadTx txId
+  (tx, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState (VoidCmd reason)
   guardTxEvent evt
-  voidTransaction txId reason
+  result <- voidTransaction txId reason
+  now <- currentTime
+  emit $ TransactionEvt $ TransactionVoided
+    { teTxId      = txId
+    , teReason    = reason
+    , teActorId   = transactionEmployeeId tx
+    , teTimestamp = now
+    }
+  pure result
 
 refundTx
-  :: (TransactionDb :> es, Error ServerError :> es, GenUUID :> es)
+  :: ( TransactionDb :> es
+     , EventEmitter  :> es
+     , Clock         :> es
+     , GenUUID       :> es
+     , Error ServerError :> es
+     )
   => UUID
   -> Text
   -> Eff es Transaction
 refundTx txId reason = do
-  (_, someState) <- loadTx txId
+  (tx, someState) <- loadTx txId
   refundId <- nextUUID
   let (evt, _) = runTxCommand someState (RefundCmd reason refundId)
   guardTxEvent evt
-  refundTransaction txId reason
+  result <- refundTransaction txId reason
+  now <- currentTime
+  emit $ TransactionEvt $ TransactionRefunded
+    { teTxId      = txId
+    , teReason    = reason
+    , teActorId   = transactionEmployeeId tx
+    , teRefTxId   = transactionId result
+    , teTimestamp = now
+    }
+  pure result

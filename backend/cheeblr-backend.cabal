@@ -98,6 +98,11 @@ library
                    , Types.Events.Domain
                    , Types.Events.Log
                    , Types.Events.Stock
+                   , Effect.EventEmitter
+                   , Types.Events.Inventory
+                   , Types.Events.Register
+                   , Types.Events.Session
+                   , Types.Events.Transaction
     build-depends: filepath
                  , directory
     hs-source-dirs: src
@@ -147,6 +152,7 @@ test-suite cheeblr-unit-tests
         Test.Props.NegateSpec
         Test.Props.ParseShowSpec
         Test.Props.StateMachineSpec
+        Test.Effect.EventEmitterSpec
     build-depends:
         cheeblr-backend
         , hspec
