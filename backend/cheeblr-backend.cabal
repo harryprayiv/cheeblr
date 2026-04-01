@@ -56,6 +56,7 @@ common shared-properties
                 , memory
                 , entropy
                 , base64-bytestring
+                , stm
 library
     import: shared-properties
     exposed-modules: App
@@ -87,6 +88,16 @@ library
                    , Effect.RegisterDb
                    , Effect.Clock
                    , Effect.GenUUID
+                   , Config.App
+                   , Config.BuildInfo
+                   , Config.Env
+                   , Infrastructure.Broadcast
+                   , Server.Env
+                   , Server.Metrics
+                   , Types.Events.Availability
+                   , Types.Events.Domain
+                   , Types.Events.Log
+                   , Types.Events.Stock
     build-depends: filepath
                  , directory
     hs-source-dirs: src
