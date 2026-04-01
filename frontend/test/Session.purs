@@ -17,19 +17,19 @@ import Yoga.JSON (readJSON_)
 
 adminSessionJson :: String
 adminSessionJson =
-  """{"sessionUserId":"d3a1f4f0-c518-4db3-aa43-e80b428d6304","sessionUserName":"admin-1","sessionRole":"Admin","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":true,"capCanManageUsers":true,"capCanViewCompliance":true}}"""
+  """{"sessionUserId":"d3a1f4f0-c518-4db3-aa43-e80b428d6304","sessionUserName":"admin-1","sessionRole":"Admin","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":true,"capCanManageUsers":true,"capCanViewCompliance":true,"capCanFulfillOrders":true,"capCanViewAdminDashboard":true,"capCanPerformAdminActions":true}}"""
 
 cashierSessionJson :: String
 cashierSessionJson =
-  """{"sessionUserId":"0a6f2deb-892b-4411-8025-08c1a4d61229","sessionUserName":"cashier-1","sessionRole":"Cashier","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":true,"capCanDeleteItem":false,"capCanProcessTransaction":true,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true}}"""
+  """{"sessionUserId":"0a6f2deb-892b-4411-8025-08c1a4d61229","sessionUserName":"cashier-1","sessionRole":"Cashier","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":true,"capCanDeleteItem":false,"capCanProcessTransaction":true,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true,"capCanFulfillOrders":true,"capCanViewAdminDashboard":false,"capCanPerformAdminActions":false}}"""
 
 managerSessionJson :: String
 managerSessionJson =
-  """{"sessionUserId":"8b75ea4a-00a4-4a2a-a5d5-a1bab8883802","sessionUserName":"manager-1","sessionRole":"Manager","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true}}"""
+  """{"sessionUserId":"8b75ea4a-00a4-4a2a-a5d5-a1bab8883802","sessionUserName":"manager-1","sessionRole":"Manager","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true,"capCanFulfillOrders":true,"capCanViewAdminDashboard":false,"capCanPerformAdminActions":false}}"""
 
 customerSessionJson :: String
 customerSessionJson =
-  """{"sessionUserId":"8244082f-a6bc-4d6c-9427-64a0ecdc10db","sessionUserName":"customer-1","sessionRole":"Customer","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":false,"capCanDeleteItem":false,"capCanProcessTransaction":false,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":false,"capCanCloseRegister":false,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":false}}"""
+  """{"sessionUserId":"8244082f-a6bc-4d6c-9427-64a0ecdc10db","sessionUserName":"customer-1","sessionRole":"Customer","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":false,"capCanDeleteItem":false,"capCanProcessTransaction":false,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":false,"capCanCloseRegister":false,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":false,"capCanFulfillOrders":false,"capCanViewAdminDashboard":false,"capCanPerformAdminActions":false}}"""
 
 spec :: Spec Unit
 spec = describe "Types.Session" do
@@ -156,40 +156,46 @@ spec = describe "Types.Session" do
       case readJSON_ adminSessionJson :: Maybe SessionResponse of
         Just s -> do
           let caps = s.sessionCapabilities
-          caps.capCanViewInventory    `shouldEqual` true
-          caps.capCanCreateItem       `shouldEqual` true
-          caps.capCanEditItem         `shouldEqual` true
-          caps.capCanDeleteItem       `shouldEqual` true
+          caps.capCanViewInventory      `shouldEqual` true
+          caps.capCanCreateItem         `shouldEqual` true
+          caps.capCanEditItem           `shouldEqual` true
+          caps.capCanDeleteItem         `shouldEqual` true
           caps.capCanProcessTransaction `shouldEqual` true
-          caps.capCanVoidTransaction  `shouldEqual` true
-          caps.capCanRefundTransaction `shouldEqual` true
-          caps.capCanApplyDiscount    `shouldEqual` true
-          caps.capCanManageRegisters  `shouldEqual` true
-          caps.capCanOpenRegister     `shouldEqual` true
-          caps.capCanCloseRegister    `shouldEqual` true
-          caps.capCanViewReports      `shouldEqual` true
-          caps.capCanViewAllLocations `shouldEqual` true
-          caps.capCanManageUsers      `shouldEqual` true
-          caps.capCanViewCompliance   `shouldEqual` true
+          caps.capCanVoidTransaction    `shouldEqual` true
+          caps.capCanRefundTransaction  `shouldEqual` true
+          caps.capCanApplyDiscount      `shouldEqual` true
+          caps.capCanManageRegisters    `shouldEqual` true
+          caps.capCanOpenRegister       `shouldEqual` true
+          caps.capCanCloseRegister      `shouldEqual` true
+          caps.capCanViewReports        `shouldEqual` true
+          caps.capCanViewAllLocations   `shouldEqual` true
+          caps.capCanManageUsers        `shouldEqual` true
+          caps.capCanViewCompliance     `shouldEqual` true
+          caps.capCanFulfillOrders      `shouldEqual` true
+          caps.capCanViewAdminDashboard `shouldEqual` true
+          caps.capCanPerformAdminActions `shouldEqual` true
         Nothing -> false `shouldEqual` true
 
     it "cashier session caps match cashierCapabilities shape" do
       case readJSON_ cashierSessionJson :: Maybe SessionResponse of
         Just s -> do
           let caps = s.sessionCapabilities
-          caps.capCanViewInventory    `shouldEqual` true
-          caps.capCanCreateItem       `shouldEqual` false
-          caps.capCanEditItem         `shouldEqual` true
-          caps.capCanDeleteItem       `shouldEqual` false
+          caps.capCanViewInventory      `shouldEqual` true
+          caps.capCanCreateItem         `shouldEqual` false
+          caps.capCanEditItem           `shouldEqual` true
+          caps.capCanDeleteItem         `shouldEqual` false
           caps.capCanProcessTransaction `shouldEqual` true
-          caps.capCanVoidTransaction  `shouldEqual` false
-          caps.capCanRefundTransaction `shouldEqual` false
-          caps.capCanApplyDiscount    `shouldEqual` false
-          caps.capCanManageRegisters  `shouldEqual` false
-          caps.capCanOpenRegister     `shouldEqual` true
-          caps.capCanCloseRegister    `shouldEqual` true
-          caps.capCanViewReports      `shouldEqual` false
-          caps.capCanViewAllLocations `shouldEqual` false
-          caps.capCanManageUsers      `shouldEqual` false
-          caps.capCanViewCompliance   `shouldEqual` true
+          caps.capCanVoidTransaction    `shouldEqual` false
+          caps.capCanRefundTransaction  `shouldEqual` false
+          caps.capCanApplyDiscount      `shouldEqual` false
+          caps.capCanManageRegisters    `shouldEqual` false
+          caps.capCanOpenRegister       `shouldEqual` true
+          caps.capCanCloseRegister      `shouldEqual` true
+          caps.capCanViewReports        `shouldEqual` false
+          caps.capCanViewAllLocations   `shouldEqual` false
+          caps.capCanManageUsers        `shouldEqual` false
+          caps.capCanViewCompliance     `shouldEqual` true
+          caps.capCanFulfillOrders      `shouldEqual` true
+          caps.capCanViewAdminDashboard `shouldEqual` false
+          caps.capCanPerformAdminActions `shouldEqual` false
         Nothing -> false `shouldEqual` true

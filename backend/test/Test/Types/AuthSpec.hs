@@ -169,7 +169,7 @@ spec = describe "Types.Auth" $ do
       decode (encode caps) `shouldBe` Just caps
 
   describe "UserCapabilities JSON field names" $ do
-      it "all 15 capability fields survive a roundtrip" $ do
+      it "all 18 capability fields survive a roundtrip" $ do
         let caps = capabilitiesForRole Admin
         decode (encode caps) `shouldBe` Just caps
       it "capability fields are booleans accessible after decode" $ do

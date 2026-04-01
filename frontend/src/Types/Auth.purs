@@ -17,8 +17,8 @@ data UserRole
   | Manager
   | Admin
 
-derive instance eqUserRole :: Eq UserRole
-derive instance ordUserRole :: Ord UserRole
+derive instance eqUserRole      :: Eq UserRole
+derive instance ordUserRole     :: Ord UserRole
 derive instance genericUserRole :: Generic UserRole _
 
 instance showUserRole :: Show UserRole where
@@ -26,26 +26,24 @@ instance showUserRole :: Show UserRole where
 
 instance Enum UserRole where
   succ Customer = Just Cashier
-  succ Cashier = Just Manager
-  succ Manager = Just Admin
-  succ Admin = Nothing
-
-  pred Cashier = Just Customer
-  pred Manager = Just Cashier
-  pred Admin = Just Manager
+  succ Cashier  = Just Manager
+  succ Manager  = Just Admin
+  succ Admin    = Nothing
+  pred Cashier  = Just Customer
+  pred Manager  = Just Cashier
+  pred Admin    = Just Manager
   pred Customer = Nothing
 
 instance Bounded UserRole where
   bottom = Customer
-  top = Admin
+  top    = Admin
 
 instance BoundedEnum UserRole where
   cardinality = Cardinality 4
   fromEnum Customer = 0
-  fromEnum Cashier = 1
-  fromEnum Manager = 2
-  fromEnum Admin = 3
-
+  fromEnum Cashier  = 1
+  fromEnum Manager  = 2
+  fromEnum Admin    = 3
   toEnum 0 = Just Customer
   toEnum 1 = Just Cashier
   toEnum 2 = Just Manager
@@ -54,129 +52,138 @@ instance BoundedEnum UserRole where
 
 instance writeForeignUserRole :: WriteForeign UserRole where
   writeImpl Customer = writeImpl "Customer"
-  writeImpl Cashier = writeImpl "Cashier"
-  writeImpl Manager = writeImpl "Manager"
-  writeImpl Admin = writeImpl "Admin"
+  writeImpl Cashier  = writeImpl "Cashier"
+  writeImpl Manager  = writeImpl "Manager"
+  writeImpl Admin    = writeImpl "Admin"
 
 instance readForeignUserRole :: ReadForeign UserRole where
   readImpl f = do
     role <- readImpl f
     case role of
       "Customer" -> pure Customer
-      "Cashier" -> pure Cashier
-      "Manager" -> pure Manager
-      "Admin" -> pure Admin
-      _ -> fail (ForeignError $ "Invalid UserRole: " <> role)
+      "Cashier"  -> pure Cashier
+      "Manager"  -> pure Manager
+      "Admin"    -> pure Admin
+      _          -> fail (ForeignError $ "Invalid UserRole: " <> role)
+
+------------------------------------------------------------------------
+-- AuthenticatedUser
+------------------------------------------------------------------------
 
 type AuthenticatedUser =
-  { auUserId :: UUID
-  , auUserName :: String
-  , auEmail :: Maybe String
-  , auRole :: UserRole
+  { auUserId     :: UUID
+  , auUserName   :: String
+  , auEmail      :: Maybe String
+  , auRole       :: UserRole
   , auLocationId :: Maybe UUID
-  , auCreatedAt :: DateTime
+  , auCreatedAt  :: DateTime
   }
 
 type UserCapabilities =
-  { capCanViewInventory :: Boolean
-  , capCanCreateItem :: Boolean
-  , capCanEditItem :: Boolean
-  , capCanDeleteItem :: Boolean
-  , capCanProcessTransaction :: Boolean
-  , capCanVoidTransaction :: Boolean
-  , capCanRefundTransaction :: Boolean
-  , capCanApplyDiscount :: Boolean
-  , capCanManageRegisters :: Boolean
-  , capCanOpenRegister :: Boolean
-  , capCanCloseRegister :: Boolean
-  , capCanViewReports :: Boolean
-  , capCanViewAllLocations :: Boolean
-  , capCanManageUsers :: Boolean
-  , capCanViewCompliance :: Boolean
+  { capCanViewInventory       :: Boolean
+  , capCanCreateItem          :: Boolean
+  , capCanEditItem            :: Boolean
+  , capCanDeleteItem          :: Boolean
+  , capCanProcessTransaction  :: Boolean
+  , capCanVoidTransaction     :: Boolean
+  , capCanRefundTransaction   :: Boolean
+  , capCanApplyDiscount       :: Boolean
+  , capCanManageRegisters     :: Boolean
+  , capCanOpenRegister        :: Boolean
+  , capCanCloseRegister       :: Boolean
+  , capCanViewReports         :: Boolean
+  , capCanViewAllLocations    :: Boolean
+  , capCanManageUsers         :: Boolean
+  , capCanViewCompliance      :: Boolean
+  -- New in Phase 1
+  , capCanFulfillOrders       :: Boolean
+  , capCanViewAdminDashboard  :: Boolean
+  , capCanPerformAdminActions :: Boolean
   }
 
--- | Default empty capabilities (no permissions)
 emptyCapabilities :: UserCapabilities
 emptyCapabilities =
-  { capCanViewInventory: false
-  , capCanCreateItem: false
-  , capCanEditItem: false
-  , capCanDeleteItem: false
-  , capCanProcessTransaction: false
-  , capCanVoidTransaction: false
-  , capCanRefundTransaction: false
-  , capCanApplyDiscount: false
-  , capCanManageRegisters: false
-  , capCanOpenRegister: false
-  , capCanCloseRegister: false
-  , capCanViewReports: false
-  , capCanViewAllLocations: false
-  , capCanManageUsers: false
-  , capCanViewCompliance: false
+  { capCanViewInventory:       false
+  , capCanCreateItem:          false
+  , capCanEditItem:            false
+  , capCanDeleteItem:          false
+  , capCanProcessTransaction:  false
+  , capCanVoidTransaction:     false
+  , capCanRefundTransaction:   false
+  , capCanApplyDiscount:       false
+  , capCanManageRegisters:     false
+  , capCanOpenRegister:        false
+  , capCanCloseRegister:       false
+  , capCanViewReports:         false
+  , capCanViewAllLocations:    false
+  , capCanManageUsers:         false
+  , capCanViewCompliance:      false
+  , capCanFulfillOrders:       false
+  , capCanViewAdminDashboard:  false
+  , capCanPerformAdminActions: false
   }
 
--- | Customer capabilities (view only)
 customerCapabilities :: UserCapabilities
 customerCapabilities = emptyCapabilities
   { capCanViewInventory = true
   }
 
--- | Cashier capabilities
 cashierCapabilities :: UserCapabilities
 cashierCapabilities = emptyCapabilities
-  { capCanViewInventory = true
-  , capCanEditItem = true
+  { capCanViewInventory      = true
+  , capCanEditItem           = true
   , capCanProcessTransaction = true
-  , capCanOpenRegister = true
-  , capCanCloseRegister = true
-  , capCanViewCompliance = true
+  , capCanOpenRegister       = true
+  , capCanCloseRegister      = true
+  , capCanViewCompliance     = true
+  , capCanFulfillOrders      = true
   }
 
--- | Manager capabilities
 managerCapabilities :: UserCapabilities
 managerCapabilities = emptyCapabilities
-  { capCanViewInventory = true
-  , capCanCreateItem = true
-  , capCanEditItem = true
-  , capCanDeleteItem = true
+  { capCanViewInventory      = true
+  , capCanCreateItem         = true
+  , capCanEditItem           = true
+  , capCanDeleteItem         = true
   , capCanProcessTransaction = true
-  , capCanVoidTransaction = true
-  , capCanRefundTransaction = true
-  , capCanApplyDiscount = true
-  , capCanManageRegisters = true
-  , capCanOpenRegister = true
-  , capCanCloseRegister = true
-  , capCanViewReports = true
-  , capCanViewCompliance = true
+  , capCanVoidTransaction    = true
+  , capCanRefundTransaction  = true
+  , capCanApplyDiscount      = true
+  , capCanManageRegisters    = true
+  , capCanOpenRegister       = true
+  , capCanCloseRegister      = true
+  , capCanViewReports        = true
+  , capCanViewCompliance     = true
+  , capCanFulfillOrders      = true
   }
 
--- | Admin capabilities (full access)
 adminCapabilities :: UserCapabilities
 adminCapabilities =
-  { capCanViewInventory: true
-  , capCanCreateItem: true
-  , capCanEditItem: true
-  , capCanDeleteItem: true
-  , capCanProcessTransaction: true
-  , capCanVoidTransaction: true
-  , capCanRefundTransaction: true
-  , capCanApplyDiscount: true
-  , capCanManageRegisters: true
-  , capCanOpenRegister: true
-  , capCanCloseRegister: true
-  , capCanViewReports: true
-  , capCanViewAllLocations: true
-  , capCanManageUsers: true
-  , capCanViewCompliance: true
+  { capCanViewInventory:       true
+  , capCanCreateItem:          true
+  , capCanEditItem:            true
+  , capCanDeleteItem:          true
+  , capCanProcessTransaction:  true
+  , capCanVoidTransaction:     true
+  , capCanRefundTransaction:   true
+  , capCanApplyDiscount:       true
+  , capCanManageRegisters:     true
+  , capCanOpenRegister:        true
+  , capCanCloseRegister:       true
+  , capCanViewReports:         true
+  , capCanViewAllLocations:    true
+  , capCanManageUsers:         true
+  , capCanViewCompliance:      true
+  , capCanFulfillOrders:       true
+  , capCanViewAdminDashboard:  true
+  , capCanPerformAdminActions: true
   }
 
--- | Get capabilities for a given role (mirrors backend capabilitiesForRole)
 capabilitiesForRole :: UserRole -> UserCapabilities
 capabilitiesForRole Customer = customerCapabilities
-capabilitiesForRole Cashier = cashierCapabilities
-capabilitiesForRole Manager = managerCapabilities
-capabilitiesForRole Admin = adminCapabilities
+capabilitiesForRole Cashier  = cashierCapabilities
+capabilitiesForRole Manager  = managerCapabilities
+capabilitiesForRole Admin    = adminCapabilities
 
--- | Check if user has a specific capability
 hasCapability :: (UserCapabilities -> Boolean) -> UserCapabilities -> Boolean
 hasCapability capFn caps = capFn caps

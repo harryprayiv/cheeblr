@@ -238,9 +238,10 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
     -- The backend sends sessionCapabilities alongside role/userId.
     -- ─────────────────────────────────────────────────────────────────────
     describe "SessionResponse from backend" do
-      let adminSessionJson = """{"sessionUserId":"d3a1f4f0-c518-4db3-aa43-e80b428d6304","sessionUserName":"admin-1","sessionRole":"Admin","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":true,"capCanManageUsers":true,"capCanViewCompliance":true}}"""
+      -- Three new capability fields added to match Phase 1 backend output.
+      let adminSessionJson = """{"sessionUserId":"d3a1f4f0-c518-4db3-aa43-e80b428d6304","sessionUserName":"admin-1","sessionRole":"Admin","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":true,"capCanEditItem":true,"capCanDeleteItem":true,"capCanProcessTransaction":true,"capCanVoidTransaction":true,"capCanRefundTransaction":true,"capCanApplyDiscount":true,"capCanManageRegisters":true,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":true,"capCanViewAllLocations":true,"capCanManageUsers":true,"capCanViewCompliance":true,"capCanFulfillOrders":true,"capCanViewAdminDashboard":true,"capCanPerformAdminActions":true}}"""
 
-      let cashierSessionJson = """{"sessionUserId":"0a6f2deb-892b-4411-8025-08c1a4d61229","sessionUserName":"cashier-1","sessionRole":"Cashier","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":true,"capCanDeleteItem":false,"capCanProcessTransaction":true,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true}}"""
+      let cashierSessionJson = """{"sessionUserId":"0a6f2deb-892b-4411-8025-08c1a4d61229","sessionUserName":"cashier-1","sessionRole":"Cashier","sessionCapabilities":{"capCanViewInventory":true,"capCanCreateItem":false,"capCanEditItem":true,"capCanDeleteItem":false,"capCanProcessTransaction":true,"capCanVoidTransaction":false,"capCanRefundTransaction":false,"capCanApplyDiscount":false,"capCanManageRegisters":false,"capCanOpenRegister":true,"capCanCloseRegister":true,"capCanViewReports":false,"capCanViewAllLocations":false,"capCanManageUsers":false,"capCanViewCompliance":true,"capCanFulfillOrders":true,"capCanViewAdminDashboard":false,"capCanPerformAdminActions":false}}"""
 
       it "parses admin session" do
         (readJSON_ adminSessionJson :: Maybe SessionResponse) `shouldSatisfy` isJust
@@ -314,12 +315,10 @@ spec = describe "JSON Contract: Backend ↔ Frontend" do
       it "writes RegularSalesTax (PascalCase)" do
         writeJSON RegularSalesTax `shouldEqual` "\"RegularSalesTax\""
 
-    -- Inventory is written as a plain array — backend expects this.
     describe "Inventory WriteForeign" do
       it "writes as JSON array" do
         let inv = Inventory []
         let json = writeJSON inv
-        -- Should start with '[' not '{', confirming no wrapper object
         json `shouldEqual` "[]"
 
   -- ═══════════════════════════════════════════════
