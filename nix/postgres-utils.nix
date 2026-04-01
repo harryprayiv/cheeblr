@@ -74,7 +74,15 @@ let
     export PGUSER="''${PGUSER:-${config.user}}"
     export PGDATABASE="''${PGDATABASE:-${pgConfig.database.name}}"
     export PGHOST="$PGDATA"
-    export PGPASSWORD="''${PGPASSWORD:-${config.password}}"
+    if [ -z "''${PGPASSWORD:-}" ]; then
+      _SECRETS_FILE="$(pwd)/secrets/${name}.yaml"
+      if [ -f "$_SECRETS_FILE" ] && command -v sops &>/dev/null; then
+        PGPASSWORD=$(sops --decrypt --output-type json "$_SECRETS_FILE" 2>/dev/null \
+          | ${pkgs.jq}/bin/jq -r '.db_password // empty' 2>/dev/null || true)
+      fi
+      export PGPASSWORD="''${PGPASSWORD:-${config.password}}"
+      unset _SECRETS_FILE
+    fi
   '';
 
   validateEnv = ''
@@ -282,5 +290,11 @@ SQL
       GROUP BY schema_name
       ORDER BY sum(table_size) DESC;
 SQL
+  '';
+
+  with-db = pkgs.writeShellScriptBin "with-db" ''
+    ${envSetup}
+    ${validateEnv}
+    exec "$@"
   '';
 }

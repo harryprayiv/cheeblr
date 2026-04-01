@@ -283,6 +283,7 @@ let
     postgresModule.pg-rotate-credentials
     postgresModule.pg-create-schema
     postgresModule.pg-stats
+    postgresModule.with-db
     pgadmin4
     gettext
 
@@ -394,6 +395,7 @@ let
       echo "    pg-backup / pg-restore - Backup / restore"
       echo "    pg-rotate-credentials  - Rotate password + update sops hint"
       echo "    pg-stats               - Database statistics"
+      echo "    with-db <cmd>          - Run command with DB credentials in scope"      
       echo ""
       echo "  Nix Deployment:"
       echo "    build-all              - nix build ."

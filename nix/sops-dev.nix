@@ -322,22 +322,15 @@ EOF
   loadSecretsHook = ''
     _SOPS_FILE="$(pwd)/${secretsFile}"
     if [ -f "$_SOPS_FILE" ] && command -v sops &>/dev/null; then
-      _DECRYPTED=$(sops --decrypt --output-type json "$_SOPS_FILE" 2>/dev/null || true)
-      if [ -n "$_DECRYPTED" ]; then
-        _DB_PASS=$(echo "$_DECRYPTED" | ${pkgs.jq}/bin/jq -r '.db_password // empty' 2>/dev/null || true)
-        if [ -n "$_DB_PASS" ]; then
-          export PGPASSWORD="$_DB_PASS"
-          echo "    ✓ PGPASSWORD loaded from sops"
-        fi
-        unset _DB_PASS _DECRYPTED
+      if sops --decrypt "$_SOPS_FILE" > /dev/null 2>&1; then
+        echo "    ✓ sops secrets available"
+        echo "      Use 'sops-exec <cmd>' to run with secrets in scope"
+        echo "      Use 'sops-get <key>' to retrieve a single value"
       else
-        export PGPASSWORD="${config.database.password}"
-        echo "    ✗ sops decrypt failed — using config default password"
+        echo "    ✗ sops decrypt failed — run 'sops-init-key' to fix"
       fi
     else
-      export PGPASSWORD="${config.database.password}"
-      echo "    ⚠ sops not bootstrapped — using config default password"
-      echo "      Run 'sops-init-key' then 'sops-bootstrap' to enable."
+      echo "    ⚠ sops not bootstrapped — run 'sops-init-key' then 'sops-bootstrap'"
     fi
     unset _SOPS_FILE
   '';

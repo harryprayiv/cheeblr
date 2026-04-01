@@ -42,19 +42,9 @@ let
 
       # Inject PGPASSWORD from sops if the secrets file exists.
       # PGHOST is already set by the devshell to $PGDATA (Unix socket dir).
-      if [ -f "$SECRETS_FILE" ]; then
-        DECRYPTED=$(sops --decrypt --output-type json "$SECRETS_FILE" 2>/dev/null || true)
-        if [ -n "$DECRYPTED" ]; then
-          DB_PASS=$(echo "$DECRYPTED" | jq -r '.db_password // empty')
-          [ -n "$DB_PASS" ] && export PGPASSWORD="$DB_PASS"
-        fi
-      else
-        echo "⚠ No sops secrets file found — using PGPASSWORD from environment."
-      fi
-
       # Run cabal from the backend directory where the cabal project lives.
-      OUTPUT=$(cd "$BACKEND_DIR" && cabal run cheeblr-bootstrap-admin -v0 2>/dev/null \
-               || cd "$BACKEND_DIR" && cabal run cheeblr-bootstrap-admin)
+      OUTPUT=$(cd "$BACKEND_DIR" && with-db cabal run cheeblr-bootstrap-admin -v0 2>/dev/null \
+         || cd "$BACKEND_DIR" && with-db cabal run cheeblr-bootstrap-admin)
 
       echo "$OUTPUT"
       echo ""

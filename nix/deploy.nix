@@ -156,7 +156,7 @@ let
 
     echo "Starting backend..."
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export LOG_FILE="'"$LOG_FILE"'"; export PGPASSWORD=$(sops-get db_password); export ALLOWED_ORIGIN=$(sops-get allowed_origin 2>/dev/null || true); cd ${backendDir} && cabal run ${name}-backend' C-m
+      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export LOG_FILE="'"$LOG_FILE"'"; ALLOWED_ORIGIN=$(sops-get allowed_origin 2>/dev/null || true) cd ${backendDir} && with-db cabal run ${name}-backend' C-m
 
     echo "Waiting for backend..."
     RETRIES=0
@@ -217,7 +217,6 @@ export TLS_KEY_FILE="$TLS_KEY"
 '' else ""}
 export USE_REAL_AUTH="true"
 export LOG_FILE="$LOG_FILE"
-export PGPASSWORD="$(sops-get db_password)"
 EOF
 
     ${firewallOpen}
@@ -245,7 +244,7 @@ EOF
       --title "${name} - Backend" \
       --working-directory "$PROJECT_DIR" \
       -e ${pkgs.bash}/bin/bash -c \
-        ". $_ENV_FILE && cd $PROJECT_DIR/${backendDir} && cabal run ${name}-backend" &
+        ". $_ENV_FILE && cd $PROJECT_DIR/${backendDir} && with-db cabal run ${name}-backend" &
 
     echo "Waiting for backend..."
     RETRIES=0
@@ -314,12 +313,11 @@ EOF
     ${tlsEnvSetup}
     export USE_REAL_AUTH="true"
     export LOG_FILE="$LOG_FILE"
-    export PGPASSWORD="$(sops-get db_password)"
     export ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
 
     echo "Starting backend on ${protocol}://${host}:${backendPort}..."
     echo "  Log: $LOG_FILE"
-    cd "$BACKEND_DIR" && exec cabal run ${name}-backend
+    cd "$BACKEND_DIR" && exec with-db cabal run ${name}-backend
   '';
 
   backend-stop = pkgs.writeShellScriptBin "backend-stop" ''
