@@ -1,22 +1,25 @@
--- {-# LANGUAGE OverloadedStrings #-}
-
 module Main where
 
-import Data.Time               (getCurrentTime)
-import qualified Data.Text.Encoding as TE
+import Control.Concurrent.STM          (newTVarIO)
+import Data.Time                        (getCurrentTime)
+import qualified Data.Map.Strict        as Map
+import qualified Data.Text.Encoding     as TE
 
-import App                     (runWithEnv)
-import Config.App              (AppConfig (..), loadConfig)
-import Config.BuildInfo        (currentBuildInfo)
-import DB.Database             (DBConfig (..), initializeDB)
-import Infrastructure.Broadcast (newBroadcaster, Broadcaster)
-import Logging                 (initLogging)
-import Server.Env              (AppEnv (..))
-import Server.Metrics          (newMetrics)
-import Types.Events.Availability (AvailabilityUpdate)
-import Types.Events.Domain     (DomainEvent)
-import Types.Events.Log        (LogEvent)
-import Types.Events.Stock      (StockEvent)
+import App                              (runWithEnv)
+import Config.App                       (AppConfig (..), loadConfig)
+import Config.BuildInfo                 (currentBuildInfo)
+import DB.Database                      (DBConfig (..), initializeDB)
+import Infrastructure.AvailabilityState (AvailabilityState (..))
+import Infrastructure.Broadcast         (newBroadcaster, Broadcaster)
+import Logging                          (initLogging)
+import Server.Env                       (AppEnv (..))
+import Server.Metrics                   (newMetrics)
+import Types.Events.Availability        (AvailabilityUpdate)
+import Types.Events.Domain              (DomainEvent)
+import Types.Events.Log                 (LogEvent)
+import Types.Events.Stock               (StockEvent)
+import Types.Location                   (locationIdToUUID)
+import Types.Public.AvailableItem       (PublicLocationId (..))
 
 main :: IO ()
 main = do
@@ -32,9 +35,15 @@ main = do
   availBc  <- newBroadcaster (cfgAvailabilityBroadcastSize config)
                 :: IO (Broadcaster AvailabilityUpdate)
 
-  metrics  <- newMetrics
-  logEnv   <- initLogging (cfgLogFile config)
-  pool     <- initializeDB (toDBConfig config)
+  metrics    <- newMetrics
+  logEnv     <- initLogging (cfgLogFile config)
+  pool       <- initializeDB (toDBConfig config)
+  availState <- newTVarIO $ AvailabilityState
+    { asItems       = Map.empty
+    , asReserved    = Map.empty
+    , asPublicLocId = PublicLocationId (locationIdToUUID (cfgPublicLocationId config))
+    , asLocName     = cfgPublicLocationName config
+    }
 
   let env = AppEnv
         { envStartTime               = startTime
@@ -49,15 +58,12 @@ main = do
         , envDomainBroadcaster       = domainBc
         , envStockBroadcaster        = stockBc
         , envAvailabilityBroadcaster = availBc
+        , envAvailabilityState       = availState
         , envMetrics                 = metrics
         }
 
-  -- Phase 5: uncomment when Infrastructure.AvailabilityRelay exists.
-  -- _ <- forkIO (runAvailabilityRelay env)
-
   runWithEnv env
 
--- Translate the new AppConfig into the DBConfig that initializeDB expects.
 toDBConfig :: AppConfig -> DBConfig
 toDBConfig cfg = DBConfig
   { dbHost     = TE.encodeUtf8 (cfgPgHost     cfg)

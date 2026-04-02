@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module DB.Transaction where
 
@@ -175,6 +176,21 @@ hydrateItem pool itemRow = do
   pure $ itemRowToDomain itemRow
     (map taxRowToDomain taxRows)
     (map discountRowToDomain discountRows)
+
+getAllActiveReservations :: DBPool -> IO [InventoryReservation]
+getAllActiveReservations pool = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    res <- each reservationSchema
+    where_ $ resStatus res ==. lit "Reserved"
+    pure res
+  pure $ map rowToReservation rows
+  where
+    rowToReservation row = InventoryReservation
+      { reservationItemSku       = resItemSku row
+      , reservationTransactionId = resTransactionId row
+      , reservationQuantity      = fromIntegral (resQuantity row)
+      , reservationStatus        = resStatus row
+      }
 
 getAllTransactions :: DBPool -> IO [Transaction]
 getAllTransactions pool = do

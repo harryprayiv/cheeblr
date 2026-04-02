@@ -3,10 +3,13 @@
 
 module App (run, runWithEnv) where
 
-import Control.Exception         (fromException)
+import Control.Concurrent        (forkIO)
+import Control.Concurrent.STM   (newTVarIO)
+import Control.Exception         (SomeException, fromException, catch)
 import qualified Data.ByteString.Builder  as B
 import qualified Data.ByteString.Char8    as B8
 import qualified Data.CaseInsensitive     as CI
+import qualified Data.Map.Strict          as Map
 import qualified Data.Text                as T
 import qualified Data.Text.Encoding       as TE
 import Data.Time                 (getCurrentTime)
@@ -22,29 +25,34 @@ import Network.Wai.Handler.WarpTLS (runTLS, tlsSettings)
 import qualified Network.Wai.Handler.Warp as Warp
 import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy,
                                      CorsResourcePolicy (..), cors)
+import System.IO                 (hPutStrLn, stderr)
 import Katip
 import Servant
 import System.Directory          (doesFileExist)
 
-import API.OpenApi                (cheeblrAPI)
-import Config.App                 (AppConfig (..), loadConfig)
-import Config.BuildInfo           (currentBuildInfo)
-import DB.Auth                    (createAuthTables)
-import DB.Database                (DBConfig (..), initializeDB, createTables)
-import DB.Events                  (createEventsTables)
-import DB.Transaction             (createTransactionTables)
-import Infrastructure.Broadcast   (newBroadcaster, Broadcaster)
-import Logging                    (initLogging, closeLogging, logAppStartup,
-                                   logAppShutdown, logAppInfo, logAppWarn)
-import Logging.BroadcastScribe    (mkBroadcastScribe)
-import Server                     (combinedServer)
-import Server.Env                 (AppEnv (..))
-import Server.Metrics             (newMetrics)
-import Server.Middleware.Tracing  (tracingMiddleware)
-import Types.Events.Availability  (AvailabilityUpdate)
-import Types.Events.Domain        (DomainEvent)
-import Types.Events.Log           (LogEvent)
-import Types.Events.Stock         (StockEvent)
+import API.OpenApi                        (cheeblrAPI)
+import Config.App                         (AppConfig (..), loadConfig)
+import Config.BuildInfo                   (currentBuildInfo)
+import DB.Auth                            (createAuthTables)
+import DB.Database                        (DBConfig (..), initializeDB, createTables)
+import DB.Events                          (createEventsTables)
+import DB.Transaction                     (createTransactionTables)
+import Infrastructure.AvailabilityRelay   (runAvailabilityRelay)
+import Infrastructure.AvailabilityState   (AvailabilityState (..))
+import Infrastructure.Broadcast           (newBroadcaster, Broadcaster)
+import Logging                            (initLogging, closeLogging, logAppStartup,
+                                           logAppShutdown, logAppInfo, logAppWarn)
+import Logging.BroadcastScribe            (mkBroadcastScribe)
+import Server                             (combinedServer)
+import Server.Env                         (AppEnv (..))
+import Server.Metrics                     (newMetrics)
+import Server.Middleware.Tracing          (tracingMiddleware)
+import Types.Events.Availability          (AvailabilityUpdate)
+import Types.Events.Domain                (DomainEvent)
+import Types.Events.Log                   (LogEvent)
+import Types.Events.Stock                 (StockEvent)
+import Types.Location                     (locationIdToUUID)
+import Types.Public.AvailableItem         (PublicLocationId (..))
 
 run :: IO ()
 run = do
@@ -55,9 +63,15 @@ run = do
   stockBc  <- newBroadcaster (cfgStockBroadcastSize  config) :: IO (Broadcaster StockEvent)
   availBc  <- newBroadcaster (cfgAvailabilityBroadcastSize config)
                 :: IO (Broadcaster AvailabilityUpdate)
-  metrics  <- newMetrics
-  logEnv   <- initLogging (cfgLogFile config)
-  pool     <- initializeDB (toDBConfig config)
+  metrics    <- newMetrics
+  logEnv     <- initLogging (cfgLogFile config)
+  pool       <- initializeDB (toDBConfig config)
+  availState <- newTVarIO $ AvailabilityState
+    { asItems       = Map.empty
+    , asReserved    = Map.empty
+    , asPublicLocId = PublicLocationId (locationIdToUUID (cfgPublicLocationId config))
+    , asLocName     = cfgPublicLocationName config
+    }
   let env = AppEnv
         { envStartTime               = startTime
         , envBuildInfo               = currentBuildInfo
@@ -71,6 +85,7 @@ run = do
         , envDomainBroadcaster       = domainBc
         , envStockBroadcaster        = stockBc
         , envAvailabilityBroadcaster = availBc
+        , envAvailabilityState       = availState
         , envMetrics                 = metrics
         }
   runWithEnv env
@@ -100,6 +115,11 @@ runWithEnv env = do
     "CORS mode: " <> case mAllowed of
       Just origin -> "locked to " <> origin
       Nothing     -> "open (no ALLOWED_ORIGIN set)"
+
+  _ <- forkIO $
+    runAvailabilityRelay env `catch`
+      (\(e :: SomeException) ->
+        hPutStrLn stderr $ "AvailabilityRelay stopped: " <> show e)
 
   let
     hXRequestedWith = CI.mk (B8.pack "x-requested-with")

@@ -23,6 +23,8 @@ import qualified Test.Props.JsonRoundtripSpec
 import qualified Test.Props.ParseShowSpec
 import qualified Test.Props.NegateSpec
 import qualified Test.Props.StateMachineSpec
+import qualified Test.Types.Public.AvailableItemSpec
+import qualified Test.Infrastructure.AvailabilityRelaySpec
 
 main :: IO ()
 main = hspec $ do
@@ -48,3 +50,5 @@ main = hspec $ do
     Test.Props.ParseShowSpec.spec
     Test.Props.NegateSpec.spec
     Test.Props.StateMachineSpec.spec
+    Test.Types.Public.AvailableItemSpec.spec
+    Test.Infrastructure.AvailabilityRelaySpec.spec

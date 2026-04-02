@@ -109,6 +109,9 @@ library
                    , Server.Middleware.Tracing
                    , Types.Trace
                    , Types.Location
+                   , Types.Public.AvailableItem
+                   , Infrastructure.AvailabilityState
+                   , Infrastructure.AvailabilityRelay
     build-depends: filepath
                  , directory
     hs-source-dirs: src
@@ -161,6 +164,8 @@ test-suite cheeblr-unit-tests
         Test.Effect.EventEmitterSpec
         Test.Server.Middleware.TracingSpec
         Test.Types.TraceSpec
+        Test.Types.Public.AvailableItemSpec
+        Test.Infrastructure.AvailabilityRelaySpec
     build-depends:
         cheeblr-backend
         , hspec

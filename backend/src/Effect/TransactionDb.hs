@@ -27,6 +27,7 @@ module Effect.TransactionDb
   , getInventoryAvailability
   , createReservation
   , releaseReservation
+  , getAllActiveReservations
   , runTransactionDbIO
   , ReservationEntry (..)
   , TxStore (..)
@@ -56,24 +57,25 @@ import Types.Transaction
 import Types.Location (LocationId)
 
 data TransactionDb :: Effect where
-  GetAllTransactions       :: TransactionDb m [Transaction]
+  GetAllTransactions        :: TransactionDb m [Transaction]
   GetTransactionsByLocation :: LocationId -> TransactionDb m [Transaction]
-  GetTransactionById       :: UUID -> TransactionDb m (Maybe Transaction)
-  CreateTransaction        :: Transaction -> TransactionDb m Transaction
-  UpdateTransaction        :: UUID -> Transaction -> TransactionDb m Transaction
-  VoidTransaction          :: UUID -> Text -> TransactionDb m Transaction
-  RefundTransaction        :: UUID -> Text -> TransactionDb m Transaction
-  ClearTransaction         :: UUID -> TransactionDb m ()
-  FinalizeTransaction      :: UUID -> TransactionDb m Transaction
-  AddTransactionItem       :: TransactionItem -> TransactionDb m (Either InventoryException TransactionItem)
-  DeleteTransactionItem    :: UUID -> TransactionDb m ()
-  AddPayment               :: PaymentTransaction -> TransactionDb m PaymentTransaction
-  DeletePayment            :: UUID -> TransactionDb m ()
-  GetTxIdByItemId          :: UUID -> TransactionDb m (Maybe UUID)
-  GetTxIdByPaymentId       :: UUID -> TransactionDb m (Maybe UUID)
-  GetInventoryAvailability :: UUID -> TransactionDb m (Maybe (Int, Int))
-  CreateReservation        :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
-  ReleaseReservation       :: UUID -> TransactionDb m Bool
+  GetTransactionById        :: UUID -> TransactionDb m (Maybe Transaction)
+  CreateTransaction         :: Transaction -> TransactionDb m Transaction
+  UpdateTransaction         :: UUID -> Transaction -> TransactionDb m Transaction
+  VoidTransaction           :: UUID -> Text -> TransactionDb m Transaction
+  RefundTransaction         :: UUID -> Text -> TransactionDb m Transaction
+  ClearTransaction          :: UUID -> TransactionDb m ()
+  FinalizeTransaction       :: UUID -> TransactionDb m Transaction
+  AddTransactionItem        :: TransactionItem -> TransactionDb m (Either InventoryException TransactionItem)
+  DeleteTransactionItem     :: UUID -> TransactionDb m ()
+  AddPayment                :: PaymentTransaction -> TransactionDb m PaymentTransaction
+  DeletePayment             :: UUID -> TransactionDb m ()
+  GetTxIdByItemId           :: UUID -> TransactionDb m (Maybe UUID)
+  GetTxIdByPaymentId        :: UUID -> TransactionDb m (Maybe UUID)
+  GetInventoryAvailability  :: UUID -> TransactionDb m (Maybe (Int, Int))
+  CreateReservation         :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
+  ReleaseReservation        :: UUID -> TransactionDb m Bool
+  GetAllActiveReservations  :: TransactionDb m [InventoryReservation]
 
 type instance DispatchOf TransactionDb = Dynamic
 
@@ -132,32 +134,32 @@ createReservation resId itemSku txId qty now =
 releaseReservation :: TransactionDb :> es => UUID -> Eff es Bool
 releaseReservation = send . ReleaseReservation
 
--- IO interpreter
+getAllActiveReservations :: TransactionDb :> es => Eff es [InventoryReservation]
+getAllActiveReservations = send GetAllActiveReservations
 
 runTransactionDbIO :: IOE :> es => DBPool -> Eff (TransactionDb : es) a -> Eff es a
 runTransactionDbIO pool = interpret $ \_ -> \case
-  GetAllTransactions          -> liftIO $ DBT.getAllTransactions pool
-  GetTransactionById u        -> liftIO $ DBT.getTransactionById pool u
+  GetAllTransactions            -> liftIO $ DBT.getAllTransactions pool
+  GetTransactionById u          -> liftIO $ DBT.getTransactionById pool u
   GetTransactionsByLocation locId -> liftIO $ do
     txs <- DBT.getAllTransactions pool
     pure (filter (\tx -> transactionLocationId tx == locId) txs)
-  CreateTransaction tx        -> liftIO $ DBT.createTransaction pool tx
-  UpdateTransaction u tx      -> liftIO $ DBT.updateTransaction pool u tx
-  VoidTransaction u r         -> liftIO $ DBT.voidTransaction pool u r
-  RefundTransaction u r       -> liftIO $ DBT.refundTransaction pool u r
-  ClearTransaction u          -> liftIO $ DBT.clearTransaction pool u
-  FinalizeTransaction u       -> liftIO $ DBT.finalizeTransaction pool u
-  AddTransactionItem ti       -> liftIO $ try @InventoryException $ DBT.addTransactionItem pool ti
-  DeleteTransactionItem u     -> liftIO $ DBT.deleteTransactionItem pool u
-  AddPayment p                -> liftIO $ DBT.addPaymentTransaction pool p
-  DeletePayment u             -> liftIO $ DBT.deletePaymentTransaction pool u
-  GetTxIdByItemId u           -> liftIO $ DBT.getTransactionIdByItemId pool u
-  GetTxIdByPaymentId u        -> liftIO $ DBT.getTransactionIdByPaymentId pool u
-  GetInventoryAvailability u  -> liftIO $ DBT.getInventoryAvailability pool u
-  CreateReservation a b c d e -> liftIO $ DBT.createInventoryReservation pool a b c d e
-  ReleaseReservation u        -> liftIO $ DBT.releaseInventoryReservation pool u
-
--- Pure in-memory interpreter
+  CreateTransaction tx          -> liftIO $ DBT.createTransaction pool tx
+  UpdateTransaction u tx        -> liftIO $ DBT.updateTransaction pool u tx
+  VoidTransaction u r           -> liftIO $ DBT.voidTransaction pool u r
+  RefundTransaction u r         -> liftIO $ DBT.refundTransaction pool u r
+  ClearTransaction u            -> liftIO $ DBT.clearTransaction pool u
+  FinalizeTransaction u         -> liftIO $ DBT.finalizeTransaction pool u
+  AddTransactionItem ti         -> liftIO $ try @InventoryException $ DBT.addTransactionItem pool ti
+  DeleteTransactionItem u       -> liftIO $ DBT.deleteTransactionItem pool u
+  AddPayment p                  -> liftIO $ DBT.addPaymentTransaction pool p
+  DeletePayment u               -> liftIO $ DBT.deletePaymentTransaction pool u
+  GetTxIdByItemId u             -> liftIO $ DBT.getTransactionIdByItemId pool u
+  GetTxIdByPaymentId u          -> liftIO $ DBT.getTransactionIdByPaymentId pool u
+  GetInventoryAvailability u    -> liftIO $ DBT.getInventoryAvailability pool u
+  CreateReservation a b c d e   -> liftIO $ DBT.createInventoryReservation pool a b c d e
+  ReleaseReservation u          -> liftIO $ DBT.releaseInventoryReservation pool u
+  GetAllActiveReservations      -> liftIO $ DBT.getAllActiveReservations pool
 
 data ReservationEntry = ReservationEntry
   { reSku    :: UUID
@@ -194,7 +196,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
     gets @TxStore (Map.lookup txId . tsTxs)
 
   GetTransactionsByLocation locId ->
-      gets @TxStore (filter (\tx -> transactionLocationId tx == locId) . Map.elems . tsTxs)
+    gets @TxStore (filter (\tx -> transactionLocationId tx == locId) . Map.elems . tsTxs)
 
   CreateTransaction tx -> do
     modify @TxStore $ \st -> st
@@ -281,7 +283,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
       }
 
   FinalizeTransaction txId -> do
-    st <- get @TxStore
+    st  <- get @TxStore
     now <- currentTime
     case Map.lookup txId (tsTxs st) of
       Nothing -> error $ "FinalizeTransaction: not found: " <> show txId
@@ -316,7 +318,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
           then pure $ Left (InsufficientInventory sku qty available)
           else do
             resId <- nextUUID
-            let txId  = transactionItemTransactionId ti
+            let txId   = transactionItemTransactionId ti
                 newRes = ReservationEntry sku txId qty "Reserved"
             modify @TxStore $ \s -> s
               { tsItemToTx     = Map.insert (transactionItemId ti) txId (tsItemToTx s)
@@ -386,8 +388,10 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
 
   CreateReservation resId itemSku txId qty _now ->
     modify @TxStore $ \st -> st
-      { tsReservations = Map.insert resId (ReservationEntry itemSku txId qty "Reserved")
-                                          (tsReservations st) }
+      { tsReservations = Map.insert resId
+          (ReservationEntry itemSku txId qty "Reserved")
+          (tsReservations st)
+      }
 
   ReleaseReservation resId -> do
     st <- get @TxStore
@@ -397,6 +401,19 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
         if reStatus r == "Reserved"
           then do
             put @TxStore st
-              { tsReservations = Map.insert resId r { reStatus = "Released" } (tsReservations st) }
+              { tsReservations = Map.insert resId r { reStatus = "Released" }
+                                             (tsReservations st) }
             pure True
           else pure False
+
+  GetAllActiveReservations ->
+    gets @TxStore $ \st ->
+      [ InventoryReservation
+          { reservationItemSku       = reSku r
+          , reservationTransactionId = reTxId r
+          , reservationQuantity      = reQty r
+          , reservationStatus        = reStatus r
+          }
+      | r <- Map.elems (tsReservations st)
+      , reStatus r == "Reserved"
+      ]

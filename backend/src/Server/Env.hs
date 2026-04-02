@@ -4,17 +4,19 @@ module Server.Env
   ( AppEnv (..)
   ) where
 
-import Config.App                (AppConfig)
-import Config.BuildInfo          (BuildInfo)
-import Data.Time                 (UTCTime)
-import Hasql.Pool                (Pool)
-import Infrastructure.Broadcast  (Broadcaster)
-import Katip                     (LogContexts, LogEnv, Namespace)
-import Server.Metrics            (Metrics)
-import Types.Events.Availability (AvailabilityUpdate)
-import Types.Events.Domain       (DomainEvent)
-import Types.Events.Log          (LogEvent)
-import Types.Events.Stock        (StockEvent)
+import Config.App                       (AppConfig)
+import Config.BuildInfo                 (BuildInfo)
+import Control.Concurrent.STM          (TVar)
+import Data.Time                        (UTCTime)
+import Hasql.Pool                       (Pool)
+import Infrastructure.AvailabilityState (AvailabilityState)
+import Infrastructure.Broadcast         (Broadcaster)
+import Katip                            (LogContexts, LogEnv, Namespace)
+import Server.Metrics                   (Metrics)
+import Types.Events.Availability        (AvailabilityUpdate)
+import Types.Events.Domain              (DomainEvent)
+import Types.Events.Log                 (LogEvent)
+import Types.Events.Stock               (StockEvent)
 
 data AppEnv = AppEnv
   { envStartTime               :: UTCTime
@@ -32,5 +34,6 @@ data AppEnv = AppEnv
   , envDomainBroadcaster       :: Broadcaster DomainEvent
   , envStockBroadcaster        :: Broadcaster StockEvent
   , envAvailabilityBroadcaster :: Broadcaster AvailabilityUpdate
+  , envAvailabilityState       :: TVar AvailabilityState
   , envMetrics                 :: Metrics
   }
