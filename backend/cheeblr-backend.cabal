@@ -57,6 +57,7 @@ common shared-properties
                 , entropy
                 , base64-bytestring
                 , stm
+                , vault
 library
     import: shared-properties
     exposed-modules: App
@@ -103,6 +104,10 @@ library
                    , Types.Events.Register
                    , Types.Events.Session
                    , Types.Events.Transaction
+                   , DB.Events
+                   , Logging.BroadcastScribe
+                   , Server.Middleware.Tracing
+                   , Types.Trace
     build-depends: filepath
                  , directory
     hs-source-dirs: src
@@ -153,11 +158,14 @@ test-suite cheeblr-unit-tests
         Test.Props.ParseShowSpec
         Test.Props.StateMachineSpec
         Test.Effect.EventEmitterSpec
+        Test.Server.Middleware.TracingSpec
+        Test.Types.TraceSpec
     build-depends:
         cheeblr-backend
         , hspec
         , hedgehog
         , hspec-hedgehog
+        , wai-extra
         
 test-suite cheeblr-integration-tests
     import:         shared-properties

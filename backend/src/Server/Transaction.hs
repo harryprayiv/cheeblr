@@ -12,12 +12,12 @@ import Control.Monad              (void, when)
 import Control.Monad.IO.Class     (liftIO)
 import Data.Text                  (Text, pack)
 import qualified Data.Text        as T
-import Data.UUID                  (UUID)
+-- import Data.UUID                  (UUID)
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Effectful                  (Eff, IOE, runEff)
 import Effectful.Error.Static     (Error, runErrorNoCallStack, throwError)
 import Servant                    hiding (throwError)
-import qualified Servant          as Servant (throwError)
+import qualified Servant (throwError)
 import Types.Transaction
 
 import Effect.Clock
@@ -29,6 +29,7 @@ import Logging
 import Server.Env                 (AppEnv (..))
 import qualified Service.Register    as SvcReg
 import qualified Service.Transaction as SvcTx
+import Data.UUID                  (UUID)
 
 type TxEffs =
   '[ GenUUID
@@ -54,7 +55,10 @@ runTxEff env action = do
     liftIO
       . runEff
       . runErrorNoCallStack @ServerError
-      . runEventEmitterProd (envDomainBroadcaster env)
+      . runEventEmitterProd
+          (envDbPool env)
+          (envDomainBroadcaster env)
+          Nothing Nothing Nothing
       . runTransactionDbIO (envDbPool env)
       . runClockIO
       . runGenUUIDIO
@@ -67,7 +71,10 @@ runRegEff env action = do
     liftIO
       . runEff
       . runErrorNoCallStack @ServerError
-      . runEventEmitterProd (envDomainBroadcaster env)
+      . runEventEmitterProd
+          (envDbPool env)
+          (envDomainBroadcaster env)
+          Nothing Nothing Nothing
       . runRegisterDbIO (envDbPool env)
       . runClockIO
       . runGenUUIDIO

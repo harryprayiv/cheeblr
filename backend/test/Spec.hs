@@ -3,6 +3,7 @@ module Main where
 import Test.Hspec
 
 import qualified Test.Types.AuthSpec
+import qualified Test.Types.TraceSpec
 import qualified Test.Types.TransactionSpec
 import qualified Test.Types.InventorySpec
 import qualified Test.Auth.SimpleSpec
@@ -15,6 +16,7 @@ import qualified Test.State.TransactionMachineSpec
 import qualified Test.State.RegisterMachineSpec
 import qualified Test.Effect.InventoryDbSpec
 import qualified Test.Effect.EventEmitterSpec
+import qualified Test.Server.Middleware.TracingSpec
 import qualified Test.Service.TransactionSpec
 import qualified Test.Service.RegisterSpec
 import qualified Test.Props.JsonRoundtripSpec
@@ -26,6 +28,7 @@ main :: IO ()
 main = hspec $ do
   describe "Cheeblr Backend" $ do
     Test.Types.AuthSpec.spec
+    Test.Types.TraceSpec.spec
     Test.Types.TransactionSpec.spec
     Test.Types.InventorySpec.spec
     Test.Auth.SimpleSpec.spec
@@ -38,6 +41,7 @@ main = hspec $ do
     Test.State.RegisterMachineSpec.spec
     Test.Effect.InventoryDbSpec.spec
     Test.Effect.EventEmitterSpec.spec
+    Test.Server.Middleware.TracingSpec.spec
     Test.Service.TransactionSpec.spec
     Test.Service.RegisterSpec.spec
     Test.Props.JsonRoundtripSpec.spec

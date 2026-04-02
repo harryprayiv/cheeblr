@@ -1,10 +1,8 @@
-{-# LANGUAGE DataKinds    #-}
-{-# LANGUAGE GADTs        #-}
--- {-# LANGUAGE LambdaCase   #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DataKinds        #-}
 {-# LANGUAGE FlexibleContexts #-}
-
+{-# LANGUAGE GADTs            #-}
+{-# LANGUAGE TypeFamilies     #-}
+{-# LANGUAGE TypeOperators    #-}
 
 module Effect.EventEmitter
   ( EventEmitter (..)
@@ -14,12 +12,16 @@ module Effect.EventEmitter
   , runEventEmitterProd
   ) where
 
-import Data.IORef                  (IORef, modifyIORef')
+import Data.IORef               (IORef, modifyIORef')
+import Data.UUID                (UUID)
 import Effectful
 import Effectful.Dispatch.Dynamic
 
-import Infrastructure.Broadcast    (Broadcaster, publish)
-import Types.Events.Domain         (DomainEvent)
+import DB.Database              (DBPool)
+import DB.Events                (insertDomainEvent)
+import Infrastructure.Broadcast (Broadcaster, publish)
+import Types.Events.Domain      (DomainEvent)
+import Types.Trace              (TraceId)
 
 data EventEmitter :: Effect where
   Emit :: DomainEvent -> EventEmitter m ()
@@ -40,13 +42,16 @@ runEventEmitterCollect
 runEventEmitterCollect ref = interpret $ \_ (Emit evt) ->
   liftIO $ modifyIORef' ref (evt :)
 
--- The DB write (domain_events table) will be added in Phase 3 when
--- TraceId and request context are threaded through. For now, events
--- are published to the in-memory broadcaster only.
 runEventEmitterProd
   :: IOE :> es
-  => Broadcaster DomainEvent
+  => DBPool
+  -> Broadcaster DomainEvent
+  -> Maybe TraceId
+  -> Maybe UUID    -- actor
+  -> Maybe UUID    -- location
   -> Eff (EventEmitter : es) a
   -> Eff es a
-runEventEmitterProd broadcaster = interpret $ \_ (Emit evt) ->
-  liftIO $ publish broadcaster evt
+runEventEmitterProd pool broadcaster mTraceId mActorId mLocationId =
+  interpret $ \_ (Emit evt) -> liftIO $ do
+    insertDomainEvent pool mTraceId mActorId mLocationId evt
+    publish broadcaster evt

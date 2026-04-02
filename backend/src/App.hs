@@ -22,6 +22,7 @@ import Network.Wai.Handler.WarpTLS (runTLS, tlsSettings)
 import qualified Network.Wai.Handler.Warp as Warp
 import Network.Wai.Middleware.Cors (simpleCorsResourcePolicy,
                                      CorsResourcePolicy (..), cors)
+import Katip
 import Servant
 import System.Directory          (doesFileExist)
 
@@ -30,20 +31,21 @@ import Config.App                 (AppConfig (..), loadConfig)
 import Config.BuildInfo           (currentBuildInfo)
 import DB.Auth                    (createAuthTables)
 import DB.Database                (DBConfig (..), initializeDB, createTables)
+import DB.Events                  (createEventsTables)
 import DB.Transaction             (createTransactionTables)
 import Infrastructure.Broadcast   (newBroadcaster, Broadcaster)
 import Logging                    (initLogging, closeLogging, logAppStartup,
                                    logAppShutdown, logAppInfo, logAppWarn)
+import Logging.BroadcastScribe    (mkBroadcastScribe)
 import Server                     (combinedServer)
 import Server.Env                 (AppEnv (..))
 import Server.Metrics             (newMetrics)
+import Server.Middleware.Tracing  (tracingMiddleware)
 import Types.Events.Availability  (AvailabilityUpdate)
 import Types.Events.Domain        (DomainEvent)
 import Types.Events.Log           (LogEvent)
 import Types.Events.Stock         (StockEvent)
 
--- | Legacy standalone entry point. Constructs an AppEnv from environment
--- variables and delegates to runWithEnv.
 run :: IO ()
 run = do
   config    <- loadConfig
@@ -75,20 +77,26 @@ run = do
 
 runWithEnv :: AppEnv -> IO ()
 runWithEnv env = do
-  let pool    = envDbPool env
-      logEnv' = envLogEnv env
-      cfg     = envConfig env
+  let pool   = envDbPool env
+      cfg    = envConfig env
 
   createTables pool
   createTransactionTables pool
   createAuthTables pool
+  createEventsTables pool
+
+  -- Register the broadcast scribe so log events flow to envLogBroadcaster.
+  -- logEnv is used for all logging from this point forward.
+  broadcastScribe <- mkBroadcastScribe (envLogBroadcaster env) (permitItem InfoS)
+  logEnv <- registerScribe "broadcast" broadcastScribe defaultScribeSettings
+              (envLogEnv env)
 
   let port       = cfgPort cfg
       tlsEnabled = cfgUseTls cfg
       mAllowed   = cfgAllowedOrigin cfg
 
-  logAppStartup logEnv' port tlsEnabled
-  logAppInfo logEnv' $
+  logAppStartup logEnv port tlsEnabled
+  logAppInfo logEnv $
     "CORS mode: " <> case mAllowed of
       Just origin -> "locked to " <> origin
       Nothing     -> "open (no ALLOWED_ORIGIN set)"
@@ -117,7 +125,8 @@ runWithEnv env = do
       cors (const $ Just corsPolicy) $
         serve cheeblrAPI (combinedServer env)
     app =
-      securityHeadersMiddleware
+      tracingMiddleware
+      . securityHeadersMiddleware
       . handleOptionsMiddleware
       $ coreApp
     warpSettings =
@@ -137,17 +146,17 @@ runWithEnv env = do
       keyExists  <- doesFileExist key
       if certExists && keyExists
         then do
-          logAppInfo logEnv' $ "TLS enabled cert=" <> T.pack cert
+          logAppInfo logEnv $ "TLS enabled cert=" <> T.pack cert
           runTLS (tlsSettings cert key) warpSettings app
         else do
-          logAppWarn logEnv'
+          logAppWarn logEnv
             "USE_TLS=true but cert/key files not found — falling back to HTTP"
           Warp.runSettings warpSettings app
     else
       Warp.runSettings warpSettings app
 
-  logAppShutdown logEnv'
-  closeLogging logEnv'
+  logAppShutdown logEnv
+  closeLogging logEnv
 
 securityHeadersMiddleware :: Middleware
 securityHeadersMiddleware app req sendResponse =
