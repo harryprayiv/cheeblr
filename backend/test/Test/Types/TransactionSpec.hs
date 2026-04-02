@@ -10,6 +10,7 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Types.Transaction
 import DB.Transaction (parseDiscountType)
+import Types.Location (LocationId (..))
 
 -- ──────────────────────────────────────────────
 -- Fixtures
@@ -75,7 +76,7 @@ mkTestTransaction = Transaction
   , transactionCustomerId             = Nothing
   , transactionEmployeeId             = testUUID2
   , transactionRegisterId             = testUUID2
-  , transactionLocationId             = testUUID2
+  , transactionLocationId             = LocationId testUUID2
   , transactionItems                  = [mkTestTransactionItem]
   , transactionPayments               = [mkTestPayment]
   , transactionSubtotal               = 2000

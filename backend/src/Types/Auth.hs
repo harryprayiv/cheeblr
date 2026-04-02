@@ -11,6 +11,8 @@ import Data.Time     (UTCTime)
 import Data.UUID     (UUID)
 import GHC.Generics  (Generic)
 
+import Types.Location (LocationId)
+
 ------------------------------------------------------------------------
 -- UserRole
 ------------------------------------------------------------------------
@@ -79,7 +81,6 @@ data UserCapabilities = UserCapabilities
   , capCanViewAllLocations   :: Bool
   , capCanManageUsers        :: Bool
   , capCanViewCompliance     :: Bool
-  -- New in Phase 1 — false for all existing roles except Admin
   , capCanFulfillOrders      :: Bool
   , capCanViewAdminDashboard :: Bool
   , capCanPerformAdminActions :: Bool
@@ -214,7 +215,7 @@ data AuthenticatedUser = AuthenticatedUser
   , auUserName   :: Text
   , auEmail      :: Maybe Text
   , auRole       :: UserRole
-  , auLocationId :: Maybe UUID
+  , auLocationId :: Maybe LocationId
   , auCreatedAt  :: UTCTime
   } deriving (Show, Eq, Generic)
 

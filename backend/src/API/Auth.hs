@@ -14,6 +14,7 @@ import           GHC.Generics     (Generic)
 import           Servant
 
 import           Types.Auth       (SessionResponse, UserRole)
+import           Types.Location   (LocationId)
 
 -- The Authorization header used by all session-protected endpoints.
 -- Format: "Bearer <token>"
@@ -26,7 +27,7 @@ type SessionHeader = Header "Authorization" Text
 data LoginRequest = LoginRequest
   { loginUsername   :: Text
   , loginPassword   :: Text
-  , loginRegisterId :: Maybe UUID  -- optional: bind session to a register
+  , loginRegisterId :: Maybe UUID
   } deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
 data LoginResponse = LoginResponse
@@ -51,7 +52,7 @@ data NewUserRequest = NewUserRequest
   , newReqDisplayName :: Text
   , newReqEmail       :: Maybe Text
   , newReqRole        :: UserRole
-  , newReqLocationId  :: Maybe UUID
+  , newReqLocationId  :: Maybe LocationId
   , newReqPassword    :: Text
   } deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 

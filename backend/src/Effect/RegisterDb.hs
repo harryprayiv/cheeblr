@@ -1,14 +1,15 @@
-{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DataKinds        #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE TypeFamilies #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE GADTs            #-}
+{-# LANGUAGE LambdaCase       #-}
+{-# LANGUAGE TypeFamilies     #-}
+{-# LANGUAGE TypeOperators    #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Effect.RegisterDb
   ( RegisterDb (..)
   , getAllRegisters
+  , getRegistersByLocation
   , getRegisterById
   , createRegister
   , updateRegister
@@ -35,19 +36,24 @@ import API.Transaction
   )
 import DB.Database (DBPool)
 import qualified DB.Transaction as DBT
+import Types.Location (LocationId)
 
 data RegisterDb :: Effect where
-  GetAllRegisters :: RegisterDb m [Register]
-  GetRegisterById :: UUID -> RegisterDb m (Maybe Register)
-  CreateRegister  :: Register -> RegisterDb m Register
-  UpdateRegister  :: UUID -> Register -> RegisterDb m Register
-  OpenRegisterDb  :: UUID -> OpenRegisterRequest -> RegisterDb m Register
-  CloseRegisterDb :: UUID -> CloseRegisterRequest -> RegisterDb m CloseRegisterResult
+  GetAllRegisters       :: RegisterDb m [Register]
+  GetRegistersByLocation :: LocationId -> RegisterDb m [Register]
+  GetRegisterById       :: UUID -> RegisterDb m (Maybe Register)
+  CreateRegister        :: Register -> RegisterDb m Register
+  UpdateRegister        :: UUID -> Register -> RegisterDb m Register
+  OpenRegisterDb        :: UUID -> OpenRegisterRequest -> RegisterDb m Register
+  CloseRegisterDb       :: UUID -> CloseRegisterRequest -> RegisterDb m CloseRegisterResult
 
 type instance DispatchOf RegisterDb = Dynamic
 
 getAllRegisters :: RegisterDb :> es => Eff es [Register]
 getAllRegisters = send GetAllRegisters
+
+getRegistersByLocation :: RegisterDb :> es => LocationId -> Eff es [Register]
+getRegistersByLocation = send . GetRegistersByLocation
 
 getRegisterById :: RegisterDb :> es => UUID -> Eff es (Maybe Register)
 getRegisterById = send . GetRegisterById
@@ -64,18 +70,17 @@ openRegisterDb regId req = send (OpenRegisterDb regId req)
 closeRegisterDb :: RegisterDb :> es => UUID -> CloseRegisterRequest -> Eff es CloseRegisterResult
 closeRegisterDb regId req = send (CloseRegisterDb regId req)
 
--- IO interpreter
-
 runRegisterDbIO :: IOE :> es => DBPool -> Eff (RegisterDb : es) a -> Eff es a
 runRegisterDbIO pool = interpret $ \_ -> \case
-  GetAllRegisters       -> liftIO $ DBT.getAllRegisters pool
-  GetRegisterById u     -> liftIO $ DBT.getRegisterById pool u
-  CreateRegister r      -> liftIO $ DBT.createRegister pool r
-  UpdateRegister u r    -> liftIO $ DBT.updateRegister pool u r
-  OpenRegisterDb u req  -> liftIO $ DBT.openRegister pool u req
-  CloseRegisterDb u req -> liftIO $ DBT.closeRegister pool u req
-
--- Pure in-memory interpreter
+  GetAllRegisters         -> liftIO $ DBT.getAllRegisters pool
+  GetRegistersByLocation locId -> liftIO $ do
+    regs <- DBT.getAllRegisters pool
+    pure (filter (\r -> registerLocationId r == locId) regs)
+  GetRegisterById u       -> liftIO $ DBT.getRegisterById pool u
+  CreateRegister r        -> liftIO $ DBT.createRegister pool r
+  UpdateRegister u r      -> liftIO $ DBT.updateRegister pool u r
+  OpenRegisterDb u req    -> liftIO $ DBT.openRegister pool u req
+  CloseRegisterDb u req   -> liftIO $ DBT.closeRegister pool u req
 
 newtype RegStore = RegStore
   { rsRegisters :: Map UUID Register
@@ -88,6 +93,9 @@ runRegisterDbPure :: RegStore -> Eff (RegisterDb : es) a -> Eff es (a, RegStore)
 runRegisterDbPure initial = reinterpret (runState initial) $ \_ -> \case
   GetAllRegisters ->
     gets @RegStore (Map.elems . rsRegisters)
+
+  GetRegistersByLocation locId ->
+    gets @RegStore (filter (\r -> registerLocationId r == locId) . Map.elems . rsRegisters)
 
   GetRegisterById regId ->
     gets @RegStore (Map.lookup regId . rsRegisters)

@@ -11,6 +11,7 @@ module Effect.TransactionDb
   ( TransactionDb (..)
   , getAllTransactions
   , getTransactionById
+  , getTransactionsByLocation
   , createTransaction
   , updateTransaction
   , voidTransaction
@@ -52,9 +53,11 @@ import qualified DB.Transaction as DBT
 import Effect.Clock
 import Effect.GenUUID
 import Types.Transaction
+import Types.Location (LocationId)
 
 data TransactionDb :: Effect where
   GetAllTransactions       :: TransactionDb m [Transaction]
+  GetTransactionsByLocation :: LocationId -> TransactionDb m [Transaction]
   GetTransactionById       :: UUID -> TransactionDb m (Maybe Transaction)
   CreateTransaction        :: Transaction -> TransactionDb m Transaction
   UpdateTransaction        :: UUID -> Transaction -> TransactionDb m Transaction
@@ -76,6 +79,9 @@ type instance DispatchOf TransactionDb = Dynamic
 
 getAllTransactions :: TransactionDb :> es => Eff es [Transaction]
 getAllTransactions = send GetAllTransactions
+
+getTransactionsByLocation :: TransactionDb :> es => LocationId -> Eff es [Transaction]
+getTransactionsByLocation = send . GetTransactionsByLocation
 
 getTransactionById :: TransactionDb :> es => UUID -> Eff es (Maybe Transaction)
 getTransactionById = send . GetTransactionById
@@ -132,6 +138,9 @@ runTransactionDbIO :: IOE :> es => DBPool -> Eff (TransactionDb : es) a -> Eff e
 runTransactionDbIO pool = interpret $ \_ -> \case
   GetAllTransactions          -> liftIO $ DBT.getAllTransactions pool
   GetTransactionById u        -> liftIO $ DBT.getTransactionById pool u
+  GetTransactionsByLocation locId -> liftIO $ do
+    txs <- DBT.getAllTransactions pool
+    pure (filter (\tx -> transactionLocationId tx == locId) txs)
   CreateTransaction tx        -> liftIO $ DBT.createTransaction pool tx
   UpdateTransaction u tx      -> liftIO $ DBT.updateTransaction pool u tx
   VoidTransaction u r         -> liftIO $ DBT.voidTransaction pool u r
@@ -183,6 +192,9 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
 
   GetTransactionById txId ->
     gets @TxStore (Map.lookup txId . tsTxs)
+
+  GetTransactionsByLocation locId ->
+      gets @TxStore (filter (\tx -> transactionLocationId tx == locId) . Map.elems . tsTxs)
 
   CreateTransaction tx -> do
     modify @TxStore $ \st -> st

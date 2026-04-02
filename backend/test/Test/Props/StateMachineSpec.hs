@@ -16,6 +16,7 @@ import           State.RegisterMachine
 import           State.TransactionMachine
 import           Test.Gen
 import qualified Types.Transaction as T
+import Types.Location (LocationId (..))
 
 fixedUUID :: UUID
 fixedUUID = read "33333333-3333-3333-3333-333333333333"
@@ -35,7 +36,7 @@ baseTx status = T.Transaction
   , T.transactionCustomerId             = Nothing
   , T.transactionEmployeeId             = fixedUUID2
   , T.transactionRegisterId             = fixedUUID2
-  , T.transactionLocationId             = fixedUUID2
+  , T.transactionLocationId             = LocationId fixedUUID2
   , T.transactionItems                  = []
   , T.transactionPayments               = []
   , T.transactionSubtotal               = 0
@@ -55,7 +56,7 @@ baseReg :: Bool -> Register
 baseReg isOpen = Register
   { registerId                   = fixedUUID
   , registerName                 = "Test"
-  , registerLocationId           = fixedUUID2
+  , registerLocationId           = LocationId fixedUUID2
   , registerIsOpen               = isOpen
   , registerCurrentDrawerAmount  = 50000
   , registerExpectedDrawerAmount = 50000

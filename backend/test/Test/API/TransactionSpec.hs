@@ -7,6 +7,7 @@ import Data.Aeson (encode, decode)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import API.Transaction
+import Types.Location (LocationId (..))
 
 -- ──────────────────────────────────────────────
 -- Fixtures
@@ -103,7 +104,7 @@ spec = describe "API.Transaction request/response types" $ do
       let reg = Register
             { registerId = testUUID
             , registerName = "Register 1"
-            , registerLocationId = testUUID2
+            , registerLocationId = LocationId testUUID2
             , registerIsOpen = False
             , registerCurrentDrawerAmount = 48000
             , registerExpectedDrawerAmount = 50000
@@ -118,7 +119,7 @@ spec = describe "API.Transaction request/response types" $ do
       decode (encode result) `shouldBe` Just result
 
     it "preserves variance" $ do
-      let reg = Register testUUID "Reg" testUUID2 False 0 0 Nothing Nothing Nothing
+      let reg = Register testUUID "Reg" (LocationId testUUID2) False 0 0 Nothing Nothing Nothing
       let result = CloseRegisterResult reg 500
       case decode (encode result) of
         Just r  -> closeRegisterResultVariance r `shouldBe` 500
@@ -132,7 +133,7 @@ spec = describe "API.Transaction request/response types" $ do
       let reg = Register
             { registerId = testUUID
             , registerName = "Main Register"
-            , registerLocationId = testUUID2
+            , registerLocationId = LocationId testUUID2
             , registerIsOpen = True
             , registerCurrentDrawerAmount = 50000
             , registerExpectedDrawerAmount = 50000
@@ -143,14 +144,14 @@ spec = describe "API.Transaction request/response types" $ do
       decode (encode reg) `shouldBe` Just reg
 
     it "handles closed register with all Nothing optional fields" $ do
-      let reg = Register testUUID "Reg" testUUID2 False 0 0 Nothing Nothing Nothing
+      let reg = Register testUUID "Reg" (LocationId testUUID2) False 0 0 Nothing Nothing Nothing
       decode (encode reg) `shouldBe` Just reg
 
     it "handles open register with all Just optional fields" $ do
       let reg = Register
             { registerId = testUUID
             , registerName = "Reg"
-            , registerLocationId = testUUID2
+            , registerLocationId = LocationId testUUID2
             , registerIsOpen = True
             , registerCurrentDrawerAmount = 50000
             , registerExpectedDrawerAmount = 50000

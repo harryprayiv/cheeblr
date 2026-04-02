@@ -14,6 +14,7 @@ import Effectful                   (Eff, IOE, runEff)
 import Effectful.Error.Static      (Error, runErrorNoCallStack)
 import Servant                     (ServerError (..))
 import Test.Hspec
+import Types.Location (LocationId (..))
 
 import API.Transaction
   ( CloseRegisterRequest (..)
@@ -40,7 +41,7 @@ closedReg :: Register
 closedReg = Register
   { registerId                   = regUUID
   , registerName                 = "Test Register"
-  , registerLocationId           = locUUID
+  , registerLocationId = LocationId locUUID
   , registerIsOpen               = False
   , registerCurrentDrawerAmount  = 0
   , registerExpectedDrawerAmount = 0

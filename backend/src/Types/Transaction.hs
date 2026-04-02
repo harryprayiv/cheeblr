@@ -15,6 +15,7 @@ import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import GHC.Generics (Generic)
+import Types.Location (LocationId)
 
 data TransactionStatus
   = Created
@@ -206,7 +207,7 @@ data Transaction = Transaction
   , transactionCustomerId            :: Maybe UUID
   , transactionEmployeeId            :: UUID
   , transactionRegisterId            :: UUID
-  , transactionLocationId            :: UUID
+  , transactionLocationId            :: LocationId
   , transactionItems                 :: [TransactionItem]
   , transactionPayments              :: [PaymentTransaction]
   , transactionSubtotal              :: Int

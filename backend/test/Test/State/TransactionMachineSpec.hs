@@ -10,6 +10,7 @@ import Data.Time (UTCTime)
 
 import State.TransactionMachine
 import qualified Types.Transaction as T
+import Types.Location (LocationId (..))
 
 -- ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ baseTx status = T.Transaction
   , T.transactionCustomerId             = Nothing
   , T.transactionEmployeeId             = testUUID2
   , T.transactionRegisterId             = testUUID2
-  , T.transactionLocationId             = testUUID2
+  , T.transactionLocationId             = LocationId testUUID2
   , T.transactionItems                  = []
   , T.transactionPayments               = []
   , T.transactionSubtotal               = 0

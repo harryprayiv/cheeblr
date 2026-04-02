@@ -21,6 +21,7 @@ import DB.Database              (DBPool)
 import DB.Events                (insertDomainEvent)
 import Infrastructure.Broadcast (Broadcaster, publish)
 import Types.Events.Domain      (DomainEvent)
+import Types.Location           (LocationId)
 import Types.Trace              (TraceId)
 
 data EventEmitter :: Effect where
@@ -47,8 +48,8 @@ runEventEmitterProd
   => DBPool
   -> Broadcaster DomainEvent
   -> Maybe TraceId
-  -> Maybe UUID    -- actor
-  -> Maybe UUID    -- location
+  -> Maybe UUID       -- actor
+  -> Maybe LocationId -- location
   -> Eff (EventEmitter : es) a
   -> Eff es a
 runEventEmitterProd pool broadcaster mTraceId mActorId mLocationId =

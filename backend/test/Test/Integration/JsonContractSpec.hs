@@ -21,6 +21,7 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import qualified Data.Text as T
 import qualified Data.Vector as V
+import Types.Location (LocationId (..))
 
 import Types.Auth
     ( capabilitiesForRole,
@@ -248,7 +249,7 @@ spec = describe "Integration: JSON Contract Tests" $ do
               { transactionId = testUUID, transactionStatus = Created
               , transactionCreated = testTime, transactionCompleted = Nothing
               , transactionCustomerId = Nothing, transactionEmployeeId = testUUID2
-              , transactionRegisterId = testUUID2, transactionLocationId = testUUID2
+              , transactionRegisterId = testUUID2, transactionLocationId = LocationId testUUID2
               , transactionItems = [], transactionPayments = []
               , transactionSubtotal = 0, transactionDiscountTotal = 0
               , transactionTaxTotal = 0, transactionTotal = 0
@@ -279,7 +280,7 @@ spec = describe "Integration: JSON Contract Tests" $ do
 
       it "serializes monetary fields as plain integers" $ do
         let tx = Transaction testUUID Created testTime Nothing Nothing
-                   testUUID2 testUUID2 testUUID2 [] []
+                   testUUID2 testUUID2 (LocationId testUUID2) [] []
                    5000 100 400 5300 Sale False Nothing False Nothing Nothing Nothing
         case toJSON tx of
           Object obj -> do
@@ -426,7 +427,7 @@ spec = describe "Integration: JSON Contract Tests" $ do
       it "has field names matching PureScript Register type" $ do
         let reg = Register
               { registerId = testUUID, registerName = "Register 1"
-              , registerLocationId = testUUID2, registerIsOpen = True
+              , registerLocationId = LocationId testUUID2, registerIsOpen = True
               , registerCurrentDrawerAmount = 50000
               , registerExpectedDrawerAmount = 50000
               , registerOpenedAt = Just testTime

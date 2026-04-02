@@ -23,6 +23,7 @@ import qualified Service.Transaction as Svc
 import Types.Events.Domain
 import Types.Events.Transaction
 import Types.Transaction
+import Types.Location (LocationId (..))
 
 txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
 txUUID   = read "11111111-1111-1111-1111-111111111111"
@@ -64,7 +65,7 @@ mkTx status = Transaction
   , transactionCustomerId             = Nothing
   , transactionEmployeeId             = empUUID
   , transactionRegisterId             = regUUID
-  , transactionLocationId             = locUUID
+  , transactionLocationId             = LocationId locUUID
   , transactionItems                  = []
   , transactionPayments               = []
   , transactionSubtotal               = 0

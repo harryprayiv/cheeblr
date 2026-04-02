@@ -9,6 +9,7 @@ import Data.UUID (UUID)
 
 import State.RegisterMachine
 import API.Transaction (Register (..))
+import Types.Location  (LocationId (..))
 
 -- ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -17,15 +18,15 @@ empUUID = read "11111111-1111-1111-1111-111111111111"
 
 closedReg :: Register
 closedReg = Register
-  { registerId                 = read "22222222-2222-2222-2222-222222222222"
-  , registerName               = "Test Register"
-  , registerLocationId         = read "33333333-3333-3333-3333-333333333333"
-  , registerIsOpen             = False
+  { registerId                   = read "22222222-2222-2222-2222-222222222222"
+  , registerName                 = "Test Register"
+  , registerLocationId           = LocationId (read "33333333-3333-3333-3333-333333333333")
+  , registerIsOpen               = False
   , registerCurrentDrawerAmount  = 0
   , registerExpectedDrawerAmount = 0
-  , registerOpenedAt           = Nothing
-  , registerOpenedBy           = Nothing
-  , registerLastTransactionTime = Nothing
+  , registerOpenedAt             = Nothing
+  , registerOpenedBy             = Nothing
+  , registerLastTransactionTime  = Nothing
   }
 
 openReg :: Register
@@ -69,7 +70,6 @@ spec = describe "State.RegisterMachine" $ do
 
     it "open register carry-through" $
       registerIsOpen (regOf (fromRegister openReg)) `shouldBe` True
-
 
   describe "OpenRegCmd" $ do
 
@@ -116,7 +116,6 @@ spec = describe "State.RegisterMachine" $ do
     it "stays at RegOpen after a rejected open command" $ do
       let (_, next) = runRegCommand (fromRegister openReg) (OpenRegCmd empUUID 30000)
       vertexOf next `shouldBe` RegOpen
-
 
   describe "CloseRegCmd — variance calculation" $ do
 
@@ -165,7 +164,6 @@ spec = describe "State.RegisterMachine" $ do
     it "stays at RegClosed after a rejected close command" $ do
       let (_, next) = runRegCommand (fromRegister closedReg) (CloseRegCmd empUUID 0)
       vertexOf next `shouldBe` RegClosed
-
 
   describe "round-trip: open then close" $ do
 

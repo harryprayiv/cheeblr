@@ -5,6 +5,7 @@ module Test.Types.AuthSpec (spec) where
 import Test.Hspec
 import Data.Aeson (encode, decode, toJSON, fromJSON, Result(..))
 import Types.Auth
+import Types.Location (LocationId(..))
 
 -- Fixtures
 mkTestUser :: UserRole -> AuthenticatedUser
@@ -242,10 +243,10 @@ spec = describe "Types.Auth" $ do
         Just u  -> auLocationId u `shouldBe` Nothing
         Nothing -> expectationFailure "Failed to decode"
     it "handles Just locationId" $ do
-      let user = (mkTestUser Customer)
-            { auLocationId = Just (read "b2bd4b3a-d50f-4c04-90b1-01266735876b") }
+      let locId = LocationId (read "b2bd4b3a-d50f-4c04-90b1-01266735876b")
+          user = (mkTestUser Customer) { auLocationId = Just locId }
       case decode (encode user) of
-        Just u  -> auLocationId u `shouldBe` Just (read "b2bd4b3a-d50f-4c04-90b1-01266735876b")
+        Just u  -> auLocationId u `shouldBe` Just locId
         Nothing -> expectationFailure "Failed to decode"
 
   -- ──────────────────────────────────────────────

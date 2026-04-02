@@ -29,6 +29,7 @@ import API.Transaction
 import DB.Database (DBPool, runSession, ddl)
 import DB.Schema
 import Types.Transaction
+import Types.Location (LocationId (..), locationIdToUUID)
 
 data InventoryException
   = ItemNotFound UUID
@@ -689,7 +690,7 @@ txDomainToRow tx = TransactionRow
   , txCustomerId             = lit (transactionCustomerId tx)
   , txEmployeeId             = lit (transactionEmployeeId tx)
   , txRegisterId             = lit (transactionRegisterId tx)
-  , txLocationId             = lit (transactionLocationId tx)
+  , txLocationId             = lit (locationIdToUUID (transactionLocationId tx))
   , txSubtotal               = lit $ fromIntegral (transactionSubtotal tx)
   , txDiscountTotal          = lit $ fromIntegral (transactionDiscountTotal tx)
   , txTaxTotal               = lit $ fromIntegral (transactionTaxTotal tx)
@@ -712,7 +713,7 @@ txRowToDomain row items payments = Transaction
   , transactionCustomerId             = txCustomerId row
   , transactionEmployeeId             = txEmployeeId row
   , transactionRegisterId             = txRegisterId row
-  , transactionLocationId             = txLocationId row
+  , transactionLocationId             = LocationId (txLocationId row)
   , transactionItems                  = items
   , transactionPayments               = payments
   , transactionSubtotal               = fromIntegral (txSubtotal row)
@@ -824,7 +825,7 @@ regDomainToRow :: Register -> RegisterRow Expr
 regDomainToRow r = RegisterRow
   { regId                   = lit (registerId r)
   , regName                 = lit (registerName r)
-  , regLocationId           = lit (registerLocationId r)
+  , regLocationId           = lit (locationIdToUUID (registerLocationId r))
   , regIsOpen               = lit (registerIsOpen r)
   , regCurrentDrawerAmount  = lit $ fromIntegral (registerCurrentDrawerAmount r)
   , regExpectedDrawerAmount = lit $ fromIntegral (registerExpectedDrawerAmount r)
@@ -837,7 +838,7 @@ regRowToDomain :: RegisterRow Result -> Register
 regRowToDomain row = Register
   { registerId                   = DB.Schema.regId row
   , registerName                 = regName row
-  , registerLocationId           = regLocationId row
+  , registerLocationId           = LocationId (regLocationId row)
   , registerIsOpen               = regIsOpen row
   , registerCurrentDrawerAmount  = fromIntegral (regCurrentDrawerAmount row)
   , registerExpectedDrawerAmount = fromIntegral (regExpectedDrawerAmount row)

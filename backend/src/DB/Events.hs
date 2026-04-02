@@ -26,6 +26,7 @@ import qualified Types.Events.Session         as SE
 import qualified Types.Events.Transaction     as TE
 import qualified Types.Inventory              as TI
 import qualified Types.Transaction            as TT
+import           Types.Location               (LocationId, locationIdToUUID)
 import           Types.Trace                  (TraceId (..))
 
 createEventsTables :: DBPool -> IO ()
@@ -83,8 +84,8 @@ createEventsTables pool = runSession pool $ do
 insertDomainEvent
   :: DBPool
   -> Maybe TraceId
-  -> Maybe UUID
-  -> Maybe UUID
+  -> Maybe UUID        -- actor
+  -> Maybe LocationId  -- location
   -> D.DomainEvent
   -> IO ()
 insertDomainEvent pool mTraceId mActorId mLocationId evt = do
@@ -92,10 +93,11 @@ insertDomainEvent pool mTraceId mActorId mLocationId evt = do
   now <- getCurrentTime
   let (evtType, aggId) = eventMeta evt
       mTraceUUID       = (\(TraceId u) -> u) <$> mTraceId
+      mLocUUID         = locationIdToUUID <$> mLocationId
       payload          = LBS.toStrict (encode evt)
   runSession pool $
     Session.statement
-      (eid, evtType, aggId, mTraceUUID, mActorId, mLocationId, payload, now)
+      (eid, evtType, aggId, mTraceUUID, mActorId, mLocUUID, payload, now)
       insertStmt
 
 type Row = (UUID, Text, UUID, Maybe UUID, Maybe UUID, Maybe UUID, BS.ByteString, UTCTime)

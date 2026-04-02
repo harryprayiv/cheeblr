@@ -45,13 +45,15 @@ import           DB.Database                    (DBPool, ddl, runSession)
 import           DB.Schema
 import           Types.Auth                     (AuthenticatedUser (..),
                                                  UserRole (..))
+import           Types.Location                 (LocationId (..),
+                                                 locationIdToUUID)
 
 data NewUser = NewUser
   { newUserName    :: Text
   , newDisplayName :: Text
   , newEmail       :: Maybe Text
   , newRole        :: UserRole
-  , newLocationId  :: Maybe UUID
+  , newLocationId  :: Maybe LocationId
   , newPassword    :: Text
   }
 
@@ -135,7 +137,7 @@ userRowToAuthUser row = AuthenticatedUser
   , auUserName   = displayName row
   , auEmail      = email row
   , auRole       = parseRole (userRole row)
-  , auLocationId = userLocationId row
+  , auLocationId = fmap LocationId (userLocationId row)
   , auCreatedAt  = userCreatedAt row
   }
 
@@ -203,7 +205,7 @@ createUser pool nu = do
             , displayName    = lit (newDisplayName nu)
             , email          = lit (newEmail nu)
             , userRole       = lit $ T.pack $ show (newRole nu)
-            , userLocationId = lit (newLocationId nu)
+            , userLocationId = lit (fmap locationIdToUUID (newLocationId nu))
             , passwordHash   = lit hashed
             , isActive       = lit True
             , userCreatedAt  = lit now

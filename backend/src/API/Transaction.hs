@@ -13,6 +13,7 @@ import Data.UUID (UUID)
 import GHC.Generics (Generic)
 import Servant
 import Types.Transaction
+import Types.Location
 
 type AuthHeader = Header "Authorization" Text
 
@@ -78,7 +79,7 @@ data ReservationRequest = ReservationRequest
 data Register = Register
   { registerId                   :: UUID
   , registerName                 :: Text
-  , registerLocationId           :: UUID
+  , registerLocationId           :: LocationId
   , registerIsOpen               :: Bool
   , registerCurrentDrawerAmount  :: Int
   , registerExpectedDrawerAmount :: Int

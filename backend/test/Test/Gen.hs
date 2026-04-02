@@ -34,6 +34,7 @@ import qualified Hedgehog.Range as Range
 
 import           Types.Inventory
 import           Types.Transaction
+import Types.Location (LocationId (..))
 
 genUUID :: Gen UUID
 genUUID =
@@ -148,7 +149,7 @@ genTransaction =
     <*> Gen.maybe genUUID
     <*> genUUID
     <*> genUUID
-    <*> genUUID
+    <*> (LocationId <$> genUUID)
     <*> Gen.list (Range.linear 0 3) genTransactionItem
     <*> Gen.list (Range.linear 0 2) genPaymentTransaction
     <*> Gen.int (Range.linear 0 10000000)

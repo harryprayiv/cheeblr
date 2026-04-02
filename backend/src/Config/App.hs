@@ -16,6 +16,8 @@ import Data.UUID    (UUID)
 import qualified Data.UUID as UUID
 import GHC.Generics (Generic)
 
+import Types.Location (LocationId (..))
+
 data Environment
   = Development
   | Staging
@@ -62,7 +64,7 @@ data AppConfig = AppConfig
   , cfgUseRealAuth               :: Bool
   , cfgLogFile                   :: FilePath
   -- Public feed identity
-  , cfgPublicLocationId          :: UUID
+  , cfgPublicLocationId          :: LocationId
   , cfgPublicLocationName        :: Text
   }
 
@@ -96,8 +98,8 @@ loadConfig = do
   availBcSize  <- envInt  "AVAILABILITY_BROADCAST_SIZE"   200
   appEnv       <- envEnum "APP_ENVIRONMENT"               Development
   useRealAuth  <- envBool "USE_REAL_AUTH"                 False
-  logFile      <- envPath "LOG_FILE"                      "cheeblr-compliance.log"
-  pubLocId     <- envUUID "PUBLIC_LOCATION_ID"            nilUUID
+  logFile      <- envPath "LOG_FILE"                      "cheeblr.log"
+  pubLocId     <- LocationId <$> envUUID "PUBLIC_LOCATION_ID" nilUUID
   pubLocName   <- envText "PUBLIC_LOCATION_NAME"          "Main Location"
   pure AppConfig
     { cfgPort                      = port
