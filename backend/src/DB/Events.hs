@@ -30,9 +30,11 @@ import qualified Types.Events.Session         as SE
 import qualified Types.Events.Transaction     as TE
 import qualified Types.Inventory              as TI
 import qualified Types.Transaction            as TT
+import qualified Types.Events.Stock           as StE
 import           Types.Location               (LocationId, locationIdToUUID)
 import           Types.Trace                  (TraceId (..))
 import           Types.Admin                  (DomainEventRow (..))
+import           Types.Stock
 
 createEventsTables :: DBPool -> IO ()
 createEventsTables pool = runSession pool $ do
@@ -179,6 +181,7 @@ eventMeta (D.InventoryEvt   ie) = invMeta  ie
 eventMeta (D.TransactionEvt te) = txMeta   te
 eventMeta (D.RegisterEvt    re) = regMeta  re
 eventMeta (D.SessionEvt     se) = sessMeta se
+eventMeta (D.StockEvt se) = stockMeta se
 
 invMeta :: IE.InventoryEvent -> (Text, UUID)
 invMeta IE.ItemCreated    { IE.ieItem    = item } = ("inventory.item_created",     TI.sku item)
@@ -204,3 +207,9 @@ sessMeta :: SE.SessionEvent -> (Text, UUID)
 sessMeta SE.SessionCreated{ SE.sesUserId = u } = ("session.created", u)
 sessMeta SE.SessionExpired{ SE.sesUserId = u } = ("session.expired", u)
 sessMeta SE.SessionRevoked{ SE.sesUserId = u } = ("session.revoked", u)
+
+stockMeta :: StE.StockEvent -> (Text, UUID)
+stockMeta StE.PullRequestCreated  { StE.sePull      = pr } = ("stock.pull_created",   Types.Stock.prId pr)
+stockMeta StE.PullStatusChanged   { StE.sePullId    = u  } = ("stock.status_changed", u)
+stockMeta StE.PullMessageAdded    { StE.sePullId    = u  } = ("stock.message_added",  u)
+stockMeta StE.PullRequestCancelled{ StE.sePullId    = u  } = ("stock.pull_cancelled", u)

@@ -8,10 +8,10 @@ module Infrastructure.AvailabilityRelay
 
 import Control.Concurrent.STM
 import Control.Monad           (forever)
-import Data.Map.Strict         (Map)
+-- import Data.Map.Strict         (Map)
 import qualified Data.Map.Strict as Map
 import Data.Time               (UTCTime, getCurrentTime)
-import Data.UUID               (UUID)
+-- import Data.UUID               (UUID)
 import qualified Data.Vector   as V
 
 import qualified DB.Database   as DB
@@ -42,10 +42,10 @@ runAvailabilityRelay env = do
 populateFromDb :: AppEnv -> TVar AvailabilityState -> IO ()
 populateFromDb env stVar = do
   Inventory itemVec <- DB.getAllMenuItems (envDbPool env)
-  let items     = V.toList itemVec
+  let invItems  = V.toList itemVec
   reservations  <- DBT.getAllActiveReservations (envDbPool env)
   atomically $ modifyTVar' stVar $ \st -> st
-    { asItems    = Map.fromList [(TI.sku i, i) | i <- items]
+    { asItems    = Map.fromList [(TI.sku i, i) | i <- invItems]
     , asReserved = Map.fromListWith (+)
         [ (TT.reservationItemSku r, TT.reservationQuantity r)
         | r <- reservations

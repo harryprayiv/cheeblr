@@ -28,6 +28,9 @@ import qualified Test.Props.StateMachineSpec
 import qualified Test.Infrastructure.AvailabilityRelaySpec
 import qualified Test.Manager.TypesSpec
 import qualified Test.Manager.LogicSpec
+import qualified Test.State.StockPullMachineSpec
+import qualified Test.Effect.StockDbSpec
+import qualified Test.Service.StockSpec
 
 main :: IO ()
 main = hspec $ do
@@ -58,3 +61,6 @@ main = hspec $ do
     Test.Infrastructure.AvailabilityRelaySpec.spec
     Test.Manager.TypesSpec.spec
     Test.Manager.LogicSpec.spec
+    Test.State.StockPullMachineSpec.spec
+    Test.Effect.StockDbSpec.spec
+    Test.Service.StockSpec.spec

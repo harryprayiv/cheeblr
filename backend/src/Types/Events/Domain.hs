@@ -10,12 +10,14 @@ import Types.Events.Inventory    (InventoryEvent)
 import Types.Events.Register     (RegisterEvent)
 import Types.Events.Session      (SessionEvent)
 import Types.Events.Transaction  (TransactionEvent)
+import Types.Events.Stock (StockEvent)
 
 data DomainEvent
   = InventoryEvt   InventoryEvent
   | TransactionEvt TransactionEvent
   | RegisterEvt    RegisterEvent
   | SessionEvt     SessionEvent
+  | StockEvt       StockEvent
   deriving (Show, Eq, Generic)
 
 instance ToJSON   DomainEvent

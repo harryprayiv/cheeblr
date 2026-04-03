@@ -381,11 +381,11 @@ recentFailedAttemptsByIp pool ip windowSecs = do
 
 getSessionById :: DBPool -> UUID -> IO (Maybe (SessionRow Result))
 getSessionById pool sid = do
-  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+  sessRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
     sess <- each sessionSchema
     where_ $ sessId sess ==. lit sid
     pure sess
-  case rows of
+  case sessRows of
     [s] -> pure (Just s)
     _   -> pure Nothing
 
@@ -409,6 +409,3 @@ clearRateLimitForIp pool ip =
     , deleteWhere = \() row -> attemptIpAddress row ==. lit ip
     , returning   = NoReturning
     }
-
-sessUserId' :: SessionRow Result -> UUID
-sessUserId' = sessUserId

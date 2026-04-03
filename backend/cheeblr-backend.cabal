@@ -120,6 +120,13 @@ library
                    , Infrastructure.AvailabilityRelay
                    , API.Manager
                    , Server.Manager
+                   , State.StockPullMachine
+                   , Types.Stock
+                   , DB.Stock
+                   , Effect.StockDb
+                   , Service.Stock
+                   , API.Stock
+                   , Server.Stock
     build-depends: filepath
                  , directory
     hs-source-dirs: src
@@ -177,6 +184,9 @@ test-suite cheeblr-unit-tests
         Test.Infrastructure.AvailabilityRelaySpec
         Test.Manager.TypesSpec
         Test.Manager.LogicSpec
+        Test.Effect.StockDbSpec
+        Test.State.StockPullMachineSpec
+        Test.Service.StockSpec
     build-depends:
         cheeblr-backend
         , hspec

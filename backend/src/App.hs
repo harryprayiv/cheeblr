@@ -37,6 +37,7 @@ import DB.Auth                            (createAuthTables)
 import DB.Database                        (DBConfig (..), initializeDB, createTables)
 import DB.Events                          (createEventsTables)
 import DB.Transaction                     (createTransactionTables)
+import DB.Stock (createStockTables)
 import Infrastructure.AvailabilityRelay   (runAvailabilityRelay)
 import Infrastructure.AvailabilityState   (AvailabilityState (..))
 import Infrastructure.Broadcast           (newBroadcaster, Broadcaster)
@@ -99,6 +100,7 @@ runWithEnv env = do
   createTransactionTables pool
   createAuthTables pool
   createEventsTables pool
+  createStockTables pool
 
   -- Register the broadcast scribe so log events flow to envLogBroadcaster.
   -- logEnv is used for all logging from this point forward.
