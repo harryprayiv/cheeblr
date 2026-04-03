@@ -8,7 +8,6 @@ module DB.Events (
 
 import Data.Aeson (Value, decode)
 import qualified Data.Aeson as Aeson
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Functor.Contravariant ((>$<))
 import Data.Int (Int64)
@@ -110,13 +109,13 @@ insertDomainEvent pool mTraceId mActorId mLocationId evt = do
     (evtType, aggId) = eventMeta evt
     mTraceUUID = (\(TraceId u) -> u) <$> mTraceId
     mLocUUID = locationIdToUUID <$> mLocationId
-    payload = LBS.toStrict (Aeson.encode evt)
+    payload = TE.decodeUtf8 $ LBS.toStrict (Aeson.encode evt)
   runSession pool $
     Session.statement
       (eid, evtType, aggId, mTraceUUID, mActorId, mLocUUID, payload, now)
       insertStmt
 
-type Row = (UUID, Text, UUID, Maybe UUID, Maybe UUID, Maybe UUID, BS.ByteString, UTCTime)
+type Row = (UUID, Text, UUID, Maybe UUID, Maybe UUID, Maybe UUID, Text, UTCTime)
 
 insertStmt :: Statement.Statement Row ()
 insertStmt = Statement.Statement sql encoder Decoders.noResult False
@@ -132,7 +131,7 @@ insertStmt = Statement.Statement sql encoder Decoders.noResult False
         <> ((\(_, _, _, d, _, _, _, _) -> d) >$< Encoders.param (Encoders.nullable Encoders.uuid))
         <> ((\(_, _, _, _, e, _, _, _) -> e) >$< Encoders.param (Encoders.nullable Encoders.uuid))
         <> ((\(_, _, _, _, _, f, _, _) -> f) >$< Encoders.param (Encoders.nullable Encoders.uuid))
-        <> ((\(_, _, _, _, _, _, g, _) -> g) >$< Encoders.param (Encoders.nonNullable Encoders.bytea))
+        <> ((\(_, _, _, _, _, _, g, _) -> g) >$< Encoders.param (Encoders.nonNullable Encoders.text))
         <> ((\(_, _, _, _, _, _, _, h) -> h) >$< Encoders.param (Encoders.nonNullable Encoders.timestamptz))
 
 -- Query params: (Maybe UUID aggId, Maybe Text traceId, Maybe Int64 cursor, Int64 limit)
