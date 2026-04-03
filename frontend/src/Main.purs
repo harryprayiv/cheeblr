@@ -28,7 +28,7 @@ import Effect.Ref as Ref
 import FRP.Poll as Poll
 import GraphQL.API.Inventory (readInventoryGql)
 import Pages.Admin.Dashboard as Pages.Admin.Dashboard
-import Pages.Admin.Dashboard as Pages.Manager.Dashboard
+import Pages.Manager.Dashboard as Pages.Manager.Dashboard
 import Pages.CreateItem as Pages.CreateItem
 import Pages.CreateTransaction as Pages.CreateTransaction
 import Pages.DeleteItem as Pages.DeleteItem
