@@ -5,12 +5,12 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Effect.GenUUID
-  ( GenUUID (..)
-  , nextUUID
-  , runGenUUIDIO
-  , runGenUUIDPure
-  ) where
+module Effect.GenUUID (
+  GenUUID (..),
+  nextUUID,
+  runGenUUIDIO,
+  runGenUUIDPure,
+) where
 
 import Data.UUID (UUID)
 import Data.UUID.V4 (nextRandom)
@@ -23,10 +23,10 @@ data GenUUID :: Effect where
 
 type instance DispatchOf GenUUID = Dynamic
 
-nextUUID :: GenUUID :> es => Eff es UUID
+nextUUID :: (GenUUID :> es) => Eff es UUID
 nextUUID = send NextUUID
 
-runGenUUIDIO :: IOE :> es => Eff (GenUUID : es) a -> Eff es a
+runGenUUIDIO :: (IOE :> es) => Eff (GenUUID : es) a -> Eff es a
 runGenUUIDIO = interpret $ \_ -> \case
   NextUUID -> liftIO nextRandom
 
@@ -35,5 +35,5 @@ runGenUUIDPure supply = reinterpret (runState supply) $ \_ -> \case
   NextUUID -> do
     uuids <- get
     case uuids of
-      []       -> error "runGenUUIDPure: UUID supply exhausted"
+      [] -> error "runGenUUIDPure: UUID supply exhausted"
       (u : us) -> put us >> pure u

@@ -1,47 +1,47 @@
-{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
-module Types.Events.Inventory
-  ( InventoryEvent (..)
-  , QuantityChangeReason (..)
-  ) where
+module Types.Events.Inventory (
+  InventoryEvent (..),
+  QuantityChangeReason (..),
+) where
 
-import Data.Aeson      (FromJSON, ToJSON)
-import Data.Text       (Text)
-import Data.Time       (UTCTime)
-import Data.UUID       (UUID)
-import GHC.Generics    (Generic)
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Text (Text)
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
+import GHC.Generics (Generic)
 import Types.Inventory (MenuItem)
 
 data InventoryEvent
   = ItemCreated
-      { ieItem      :: MenuItem
+      { ieItem :: MenuItem
       , ieTimestamp :: UTCTime
-      , ieActorId   :: UUID
+      , ieActorId :: UUID
       }
   | ItemUpdated
-      { ieOldItem   :: MenuItem
-      , ieNewItem   :: MenuItem
+      { ieOldItem :: MenuItem
+      , ieNewItem :: MenuItem
       , ieTimestamp :: UTCTime
-      , ieActorId   :: UUID
+      , ieActorId :: UUID
       }
   | ItemDeleted
-      { ieSku       :: UUID
-      , ieItemName  :: Text
+      { ieSku :: UUID
+      , ieItemName :: Text
       , ieTimestamp :: UTCTime
-      , ieActorId   :: UUID
+      , ieActorId :: UUID
       }
   | QuantityChanged
-      { ieItemSku       :: UUID
-      , ieOldQty        :: Int
-      , ieNewQty        :: Int
+      { ieItemSku :: UUID
+      , ieOldQty :: Int
+      , ieNewQty :: Int
       , ieReservedDelta :: Int
-      , ieReason        :: QuantityChangeReason
-      , ieTimestamp     :: UTCTime
+      , ieReason :: QuantityChangeReason
+      , ieTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
 
-instance ToJSON   InventoryEvent
+instance ToJSON InventoryEvent
 instance FromJSON InventoryEvent
 
 data QuantityChangeReason
@@ -52,5 +52,5 @@ data QuantityChangeReason
   | ManualAdjustment Text
   deriving (Show, Eq, Generic)
 
-instance ToJSON   QuantityChangeReason
+instance ToJSON QuantityChangeReason
 instance FromJSON QuantityChangeReason

@@ -1,48 +1,48 @@
-{-# LANGUAGE DataKinds           #-}
-{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications    #-}
-{-# LANGUAGE TypeOperators       #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
 module Server where
 
-import API.Admin              (AdminAPI)
+import API.Admin (AdminAPI)
 import API.Inventory
-import API.OpenApi             (CheeblrAPI, cheeblrOpenApi)
-import Auth.Session            (SessionContext (..), resolveSession)
-import Control.Monad.IO.Class  (liftIO)
-import Data.Morpheus            (interpreter)
-import Data.Morpheus.Types      (GQLRequest, GQLResponse)
-import Data.Text                (Text, pack)
-import qualified Data.Text     as T
-import Data.UUID                (UUID)
-import Effectful                (Eff, IOE, runEff)
-import Effectful.Error.Static   (Error, runErrorNoCallStack)
-import Servant                  hiding (throwError)
-import qualified Servant       (throwError)
+import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
+import Auth.Session (SessionContext (..), resolveSession)
+import Control.Monad.IO.Class (liftIO)
+import Data.Morpheus (interpreter)
+import Data.Morpheus.Types (GQLRequest, GQLResponse)
+import Data.Text (Text, pack)
+import qualified Data.Text as T
+import Data.UUID (UUID)
+import Effectful (Eff, IOE, runEff)
+import Effectful.Error.Static (Error, runErrorNoCallStack)
+import Servant hiding (throwError)
+import qualified Servant (throwError)
 
-import DB.Database              (DBPool)
+import API.Manager (ManagerAPI)
+import API.Stock (StockAPI)
+import DB.Database (DBPool)
 import Effect.InventoryDb
-import GraphQL.Resolvers        (rootResolver)
+import GraphQL.Resolvers (rootResolver)
 import Logging
-import Server.Admin             (adminServerImpl)
-import Server.Auth              (authServerImpl)
-import Server.Env               (AppEnv (..))
-import Server.Transaction       (posServerImpl)
-import Types.Auth
-  ( AuthenticatedUser (..)
-  , UserCapabilities (..)
-  , SessionResponse (..)
-  , auRole
-  , auUserId
-  , auUserName
-  , capabilitiesForRole
-  )
-import Types.Inventory
-import API.Manager  (ManagerAPI)
+import Server.Admin (adminServerImpl)
+import Server.Auth (authServerImpl)
+import Server.Env (AppEnv (..))
 import Server.Manager (managerServerImpl)
-import API.Stock    (StockAPI)
 import Server.Stock (stockServerImpl)
+import Server.Transaction (posServerImpl)
+import Types.Auth (
+  AuthenticatedUser (..),
+  SessionResponse (..),
+  UserCapabilities (..),
+  auRole,
+  auUserId,
+  auUserName,
+  capabilitiesForRole,
+ )
+import Types.Inventory
 
 type FullAPI = CheeblrAPI :<|> AdminAPI :<|> ManagerAPI :<|> StockAPI
 
@@ -51,10 +51,10 @@ fullAPI = Proxy
 
 fullServer :: AppEnv -> Server FullAPI
 fullServer env =
-       combinedServer    env
-  :<|> adminServerImpl   env
-  :<|> managerServerImpl env
-  :<|> stockServerImpl   env
+  combinedServer env
+    :<|> adminServerImpl env
+    :<|> managerServerImpl env
+    :<|> stockServerImpl env
 
 runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
 runInvEff pool action = do
@@ -77,7 +77,7 @@ inventoryServer env =
     :<|> getSession
     :<|> graphqlInventory
   where
-    pool   = envDbPool env
+    pool = envDbPool env
     logEnv = envLogEnv env
 
     auth :: Maybe Text -> Handler AuthenticatedUser
@@ -95,56 +95,65 @@ inventoryServer env =
     addInventoryItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     addInventoryItem mHeader item = do
       user <- auth mHeader
-      let caps = capabilitiesForRole (auRole user)
-          lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
-          skuT = T.pack (show (Types.Inventory.sku item))
+      let
+        caps = capabilitiesForRole (auRole user)
+        lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
+        skuT = T.pack (show (Types.Inventory.sku item))
       liftIO $ logHttpRequest logEnv "POST" "/inventory" (T.pack (show (auUserId user)))
       if not (capCanCreateItem caps)
         then do
           liftIO $ logAuthDenied logEnv (T.pack (show (auUserId user))) "capCanCreateItem"
-          Servant.throwError err403 { errBody = "You don't have permission to create items" }
+          Servant.throwError err403 {errBody = "You don't have permission to create items"}
         else runInvEff pool $ do
           result <- Effect.InventoryDb.insertMenuItem item
           liftIO $ case result of
             Right () -> logInventoryCreate lctx skuT LogSuccess
-            Left  e  -> logInventoryCreate lctx skuT
-                          (LogFailure (T.pack $ "insertMenuItem: " <> show e))
+            Left e ->
+              logInventoryCreate
+                lctx
+                skuT
+                (LogFailure (T.pack $ "insertMenuItem: " <> show e))
           pure $ case result of
-            Right () -> MutationResponse True  "Item added successfully"
-            Left  e  -> MutationResponse False (pack $ "Error inserting item: " <> show e)
+            Right () -> MutationResponse True "Item added successfully"
+            Left e -> MutationResponse False (pack $ "Error inserting item: " <> show e)
 
     updateInventoryItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     updateInventoryItem mHeader item = do
       user <- auth mHeader
-      let caps = capabilitiesForRole (auRole user)
-          lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
-          skuT = T.pack (show (Types.Inventory.sku item))
+      let
+        caps = capabilitiesForRole (auRole user)
+        lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
+        skuT = T.pack (show (Types.Inventory.sku item))
       liftIO $ logHttpRequest logEnv "PUT" "/inventory" (T.pack (show (auUserId user)))
       if not (capCanEditItem caps)
         then do
           liftIO $ logAuthDenied logEnv (T.pack (show (auUserId user))) "capCanEditItem"
-          Servant.throwError err403 { errBody = "You don't have permission to edit items" }
+          Servant.throwError err403 {errBody = "You don't have permission to edit items"}
         else runInvEff pool $ do
           result <- Effect.InventoryDb.updateMenuItem item
           liftIO $ case result of
             Right () -> logInventoryUpdate lctx skuT LogSuccess
-            Left  e  -> logInventoryUpdate lctx skuT
-                          (LogFailure (T.pack $ "updateMenuItem: " <> show e))
+            Left e ->
+              logInventoryUpdate
+                lctx
+                skuT
+                (LogFailure (T.pack $ "updateMenuItem: " <> show e))
           pure $ case result of
-            Right () -> MutationResponse True  "Item updated successfully"
-            Left  e  -> MutationResponse False (pack $ "Error updating item: " <> show e)
+            Right () -> MutationResponse True "Item updated successfully"
+            Left e -> MutationResponse False (pack $ "Error updating item: " <> show e)
 
     deleteInventoryItem :: Maybe Text -> UUID -> Handler MutationResponse
     deleteInventoryItem mHeader uuid = do
       user <- auth mHeader
-      let caps = capabilitiesForRole (auRole user)
-          lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
-          skuT = T.pack (show uuid)
+      let
+        caps = capabilitiesForRole (auRole user)
+        lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
+        skuT = T.pack (show uuid)
       liftIO $ logHttpRequest logEnv "DELETE" ("/inventory/" <> skuT) (T.pack (show (auUserId user)))
       if not (capCanDeleteItem caps)
         then do
           liftIO $ logAuthDenied logEnv (T.pack (show (auUserId user))) "capCanDeleteItem"
-          Servant.throwError err403 { errBody = "You don't have permission to delete items" }
+          Servant.throwError err403 {errBody = "You don't have permission to delete items"}
         else do
           response <- runInvEff pool (Effect.InventoryDb.deleteMenuItem uuid)
           if success response
@@ -153,7 +162,7 @@ inventoryServer env =
               pure response
             else do
               liftIO $ logInventoryDelete lctx skuT (LogFailure (message response))
-              Servant.throwError err404 { errBody = "Item not found" }
+              Servant.throwError err404 {errBody = "Item not found"}
 
     getSession :: Maybe Text -> Handler SessionResponse
     getSession mHeader = do
@@ -162,12 +171,13 @@ inventoryServer env =
       liftIO $ do
         logHttpRequest logEnv "GET" "/session" (T.pack (show (auUserId user)))
         logSessionAccess lctx
-      pure SessionResponse
-        { sessionUserId       = auUserId user
-        , sessionUserName     = auUserName user
-        , sessionRole         = auRole user
-        , sessionCapabilities = capabilitiesForRole (auRole user)
-        }
+      pure
+        SessionResponse
+          { sessionUserId = auUserId user
+          , sessionUserName = auUserName user
+          , sessionRole = auRole user
+          , sessionCapabilities = capabilitiesForRole (auRole user)
+          }
 
     graphqlInventory :: Maybe Text -> GQLRequest -> Handler GQLResponse
     graphqlInventory mHeader req = do

@@ -2,7 +2,7 @@
 
 module Test.State.StockPullMachineSpec (spec) where
 
-import Data.UUID   (UUID)
+import Data.UUID (UUID)
 import Test.Hspec
 
 import State.StockPullMachine
@@ -33,14 +33,13 @@ issue = fromVertex PullIssue
 
 spec :: Spec
 spec = describe "State.StockPullMachine" $ do
-
   describe "fromVertex / toPullVertex roundtrip" $ do
-    it "Pending" $ toPullVertex (fromVertex PullPending)   `shouldBe` PullPending
+    it "Pending" $ toPullVertex (fromVertex PullPending) `shouldBe` PullPending
     it "Accepted" $ toPullVertex (fromVertex PullAccepted) `shouldBe` PullAccepted
-    it "Pulling" $ toPullVertex (fromVertex PullPulling)   `shouldBe` PullPulling
+    it "Pulling" $ toPullVertex (fromVertex PullPulling) `shouldBe` PullPulling
     it "Fulfilled" $ toPullVertex (fromVertex PullFulfilled) `shouldBe` PullFulfilled
     it "Cancelled" $ toPullVertex (fromVertex PullCancelled) `shouldBe` PullCancelled
-    it "Issue" $ toPullVertex (fromVertex PullIssue)       `shouldBe` PullIssue
+    it "Issue" $ toPullVertex (fromVertex PullIssue) `shouldBe` PullIssue
 
   describe "valid transitions" $ do
     it "Pending + AcceptCmd → Accepted" $ do
@@ -48,14 +47,14 @@ spec = describe "State.StockPullMachine" $ do
       toPullVertex next `shouldBe` PullAccepted
       case evt of
         PullWasAccepted a -> a `shouldBe` actorId
-        _                 -> expectationFailure $ "Expected PullWasAccepted, got: " <> show evt
+        _ -> expectationFailure $ "Expected PullWasAccepted, got: " <> show evt
 
     it "Pending + CancelCmd → Cancelled" $ do
       let (evt, next) = runPullCommand pendingSt (CancelCmd "No stock" actorId)
       toPullVertex next `shouldBe` PullCancelled
       case evt of
         PullWasCancelled r _ -> r `shouldBe` "No stock"
-        _                    -> expectationFailure $ "Expected PullWasCancelled, got: " <> show evt
+        _ -> expectationFailure $ "Expected PullWasCancelled, got: " <> show evt
 
     it "Accepted + StartPullCmd → Pulling" $ do
       let (_, next) = runPullCommand accepted (StartPullCmd actorId)
@@ -70,14 +69,14 @@ spec = describe "State.StockPullMachine" $ do
       toPullVertex next `shouldBe` PullFulfilled
       case evt of
         PullWasFulfilled a -> a `shouldBe` actorId
-        _                  -> expectationFailure $ "Expected PullWasFulfilled, got: " <> show evt
+        _ -> expectationFailure $ "Expected PullWasFulfilled, got: " <> show evt
 
     it "Pulling + ReportIssueCmd → Issue" $ do
       let (evt, next) = runPullCommand pulling (ReportIssueCmd "Out of stock" actorId)
       toPullVertex next `shouldBe` PullIssue
       case evt of
         IssueWasReported note _ -> note `shouldBe` "Out of stock"
-        _                       -> expectationFailure $ "Expected IssueWasReported, got: " <> show evt
+        _ -> expectationFailure $ "Expected IssueWasReported, got: " <> show evt
 
     it "Issue + RetryCmd → Accepted" $ do
       let (_, next) = runPullCommand issue (RetryCmd actorId)
@@ -93,28 +92,28 @@ spec = describe "State.StockPullMachine" $ do
       toPullVertex next `shouldBe` PullFulfilled
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
     it "Fulfilled rejects FulfillCmd" $ do
       let (evt, next) = runPullCommand fulfilled (FulfillCmd actorId)
       toPullVertex next `shouldBe` PullFulfilled
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
     it "Cancelled rejects AcceptCmd" $ do
       let (evt, next) = runPullCommand cancelled (AcceptCmd actorId)
       toPullVertex next `shouldBe` PullCancelled
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
     it "Cancelled rejects RetryCmd" $ do
       let (evt, next) = runPullCommand cancelled (RetryCmd actorId)
       toPullVertex next `shouldBe` PullCancelled
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
   describe "invalid transitions" $ do
     it "Pending rejects StartPullCmd" $ do
@@ -122,25 +121,25 @@ spec = describe "State.StockPullMachine" $ do
       toPullVertex next `shouldBe` PullPending
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
     it "Pending rejects FulfillCmd" $ do
       let (evt, next) = runPullCommand pendingSt (FulfillCmd actorId)
       toPullVertex next `shouldBe` PullPending
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
     it "Accepted rejects FulfillCmd" $ do
       let (evt, next) = runPullCommand accepted (FulfillCmd actorId)
       toPullVertex next `shouldBe` PullAccepted
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
 
     it "Pulling rejects AcceptCmd" $ do
       let (evt, next) = runPullCommand pulling (AcceptCmd actorId)
       toPullVertex next `shouldBe` PullPulling
       case evt of
         InvalidPullCmd _ -> pure ()
-        _                -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt

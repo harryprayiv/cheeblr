@@ -1,30 +1,30 @@
-{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
-module Types.Events.Register
-  ( RegisterEvent (..)
-  ) where
+module Types.Events.Register (
+  RegisterEvent (..),
+) where
 
-import Data.Aeson   (FromJSON, ToJSON)
-import Data.Time    (UTCTime)
-import Data.UUID    (UUID)
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
 import GHC.Generics (Generic)
 
 data RegisterEvent
   = RegisterOpened
-      { reRegId        :: UUID
-      , reEmpId        :: UUID
+      { reRegId :: UUID
+      , reEmpId :: UUID
       , reStartingCash :: Int
-      , reTimestamp    :: UTCTime
+      , reTimestamp :: UTCTime
       }
   | RegisterClosed
-      { reRegId       :: UUID
-      , reEmpId       :: UUID
+      { reRegId :: UUID
+      , reEmpId :: UUID
       , reCountedCash :: Int
-      , reVariance    :: Int
-      , reTimestamp   :: UTCTime
+      , reVariance :: Int
+      , reTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
 
-instance ToJSON   RegisterEvent
+instance ToJSON RegisterEvent
 instance FromJSON RegisterEvent

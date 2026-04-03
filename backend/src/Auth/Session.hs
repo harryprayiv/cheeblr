@@ -4,27 +4,31 @@
 -- Replaces Auth.Simple.lookupUser for the real-auth path.
 -- Step 3 will wire resolveSession into existing handlers behind
 -- the USE_REAL_AUTH flag; for now it is used only by Server.Auth.
-module Auth.Session
-  ( SessionContext (..)
-  , resolveSession
-  , extractBearer
-  ) where
+module Auth.Session (
+  SessionContext (..),
+  resolveSession,
+  extractBearer,
+) where
 
+import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import           Data.Text                  (Text)
-import qualified Data.Text                  as T
-import           Data.UUID                  (UUID)
-import           Control.Monad.IO.Class     (liftIO)
-import           Servant                    (Handler, ServerError (..), err401,
-                                             throwError)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.UUID (UUID)
+import Servant (
+  Handler,
+  ServerError (..),
+  err401,
+  throwError,
+ )
 
-import           DB.Auth                    (lookupSession, userRowToAuthUser)
-import           DB.Database                (DBPool)
-import           DB.Schema                  (sessId)
-import           Types.Auth                 (AuthenticatedUser)
+import DB.Auth (lookupSession, userRowToAuthUser)
+import DB.Database (DBPool)
+import DB.Schema (sessId)
+import Types.Auth (AuthenticatedUser)
 
 data SessionContext = SessionContext
-  { scUser      :: AuthenticatedUser
+  { scUser :: AuthenticatedUser
   , scSessionId :: UUID
   }
 
@@ -39,15 +43,19 @@ extractBearer _ = Nothing
 resolveSession :: DBPool -> Maybe Text -> Handler SessionContext
 resolveSession pool mHeader = do
   token <- case extractBearer mHeader of
-    Nothing -> throwError err401
-      { errBody = LBS.pack "Missing or malformed Authorization header" }
-    Just t  -> pure t
+    Nothing ->
+      throwError
+        err401
+          { errBody = LBS.pack "Missing or malformed Authorization header"
+          }
+    Just t -> pure t
   mResult <- liftIO $ lookupSession pool token
   case mResult of
     Nothing ->
-      throwError err401 { errBody = LBS.pack "Invalid or expired session" }
+      throwError err401 {errBody = LBS.pack "Invalid or expired session"}
     Just (sessRow, userRow) ->
-      pure SessionContext
-        { scUser      = userRowToAuthUser userRow
-        , scSessionId = sessId sessRow
-        }
+      pure
+        SessionContext
+          { scUser = userRowToAuthUser userRow
+          , scSessionId = sessId sessRow
+          }

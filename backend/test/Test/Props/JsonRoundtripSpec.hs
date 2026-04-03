@@ -2,18 +2,16 @@
 
 module Test.Props.JsonRoundtripSpec (spec) where
 
-import           Data.Aeson (decode, encode)
-import           Hedgehog
-import           Test.Hspec
-import           Test.Hspec.Hedgehog (hedgehog)
+import Data.Aeson (decode, encode)
+import Hedgehog
+import Test.Hspec
+import Test.Hspec.Hedgehog (hedgehog)
 
-import           Test.Gen
+import Test.Gen
 
 spec :: Spec
 spec = describe "Props.JsonRoundtrip" $ do
-
   describe "Types.Transaction" $ do
-
     it "DiscountType" $ hedgehog $ do
       x <- forAll genDiscountType
       decode (encode x) === Just x
@@ -39,7 +37,6 @@ spec = describe "Props.JsonRoundtrip" $ do
       decode (encode x) === Just x
 
   describe "Types.Inventory" $ do
-
     it "StrainLineage" $ hedgehog $ do
       x <- forAll genStrainLineage
       decode (encode x) === Just x

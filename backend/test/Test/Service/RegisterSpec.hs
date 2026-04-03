@@ -1,28 +1,28 @@
-{-# LANGUAGE DataKinds          #-}
-{-# LANGUAGE NamedFieldPuns     #-}
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE TypeApplications   #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Test.Service.RegisterSpec (spec) where
 
-import Control.Monad              (void)
-import Data.IORef                  (newIORef, readIORef)
-import qualified Data.Map.Strict  as Map
-import Data.Time                   (UTCTime)
-import Data.UUID                   (UUID)
-import Effectful                   (Eff, IOE, runEff)
-import Effectful.Error.Static      (Error, runErrorNoCallStack)
-import Servant                     (ServerError (..))
+import Control.Monad (void)
+import Data.IORef (newIORef, readIORef)
+import qualified Data.Map.Strict as Map
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
+import Effectful (Eff, IOE, runEff)
+import Effectful.Error.Static (Error, runErrorNoCallStack)
+import Servant (ServerError (..))
 import Test.Hspec
 import Types.Location (LocationId (..))
 
-import API.Transaction
-  ( CloseRegisterRequest (..)
-  , CloseRegisterResult (..)
-  , OpenRegisterRequest (..)
-  , Register (..)
-  )
-import Effect.Clock                (Clock, runClockPure)
+import API.Transaction (
+  CloseRegisterRequest (..),
+  CloseRegisterResult (..),
+  OpenRegisterRequest (..),
+  Register (..),
+ )
+import Effect.Clock (Clock, runClockPure)
 import Effect.EventEmitter
 import Effect.RegisterDb
 import qualified Service.Register as Svc
@@ -38,37 +38,41 @@ testTime :: UTCTime
 testTime = read "2024-06-15 10:00:00 UTC"
 
 closedReg :: Register
-closedReg = Register
-  { registerId                   = regUUID
-  , registerName                 = "Test Register"
-  , registerLocationId = LocationId locUUID
-  , registerIsOpen               = False
-  , registerCurrentDrawerAmount  = 0
-  , registerExpectedDrawerAmount = 0
-  , registerOpenedAt             = Nothing
-  , registerOpenedBy             = Nothing
-  , registerLastTransactionTime  = Nothing
-  }
+closedReg =
+  Register
+    { registerId = regUUID
+    , registerName = "Test Register"
+    , registerLocationId = LocationId locUUID
+    , registerIsOpen = False
+    , registerCurrentDrawerAmount = 0
+    , registerExpectedDrawerAmount = 0
+    , registerOpenedAt = Nothing
+    , registerOpenedBy = Nothing
+    , registerLastTransactionTime = Nothing
+    }
 
 openReg :: Register
-openReg = closedReg
-  { registerIsOpen               = True
-  , registerCurrentDrawerAmount  = 50000
-  , registerExpectedDrawerAmount = 50000
-  , registerOpenedBy             = Just empUUID
-  }
+openReg =
+  closedReg
+    { registerIsOpen = True
+    , registerCurrentDrawerAmount = 50000
+    , registerExpectedDrawerAmount = 50000
+    , registerOpenedBy = Just empUUID
+    }
 
 openReq :: OpenRegisterRequest
-openReq = OpenRegisterRequest
-  { openRegisterEmployeeId   = empUUID
-  , openRegisterStartingCash = 50000
-  }
+openReq =
+  OpenRegisterRequest
+    { openRegisterEmployeeId = empUUID
+    , openRegisterStartingCash = 50000
+    }
 
 closeReq :: CloseRegisterRequest
-closeReq = CloseRegisterRequest
-  { closeRegisterEmployeeId  = empUUID
-  , closeRegisterCountedCash = 48000
-  }
+closeReq =
+  CloseRegisterRequest
+    { closeRegisterEmployeeId = empUUID
+    , closeRegisterCountedCash = 48000
+    }
 
 storeWith :: Register -> RegStore
 storeWith reg = RegStore (Map.singleton regUUID reg)
@@ -85,28 +89,28 @@ type TestEffs =
 
 runTest :: RegStore -> Eff TestEffs a -> IO (Either ServerError a)
 runTest store action =
-  fmap (fmap fst) $
-  runEff
-  . runErrorNoCallStack @ServerError
-  . runEventEmitterNoop
-  . runClockPure testTime
-  . runRegisterDbPure store
-  $ action
+  fmap (fmap fst)
+    $ runEff
+      . runErrorNoCallStack @ServerError
+      . runEventEmitterNoop
+      . runClockPure testTime
+      . runRegisterDbPure store
+    $ action
 
-runTestWithEvents
-  :: RegStore
-  -> Eff TestEffs a
-  -> IO (Either ServerError a, [DomainEvent])
+runTestWithEvents ::
+  RegStore ->
+  Eff TestEffs a ->
+  IO (Either ServerError a, [DomainEvent])
 runTestWithEvents store action = do
   ref <- newIORef []
   result <-
-    fmap (fmap fst) $
-    runEff
-    . runErrorNoCallStack @ServerError
-    . runEventEmitterCollect ref
-    . runClockPure testTime
-    . runRegisterDbPure store
-    $ action
+    fmap (fmap fst)
+      $ runEff
+        . runErrorNoCallStack @ServerError
+        . runEventEmitterCollect ref
+        . runClockPure testTime
+        . runRegisterDbPure store
+      $ action
   evts <- reverse <$> readIORef ref
   pure (result, evts)
 
@@ -124,11 +128,10 @@ shouldFailWith code io = do
   result <- io
   case result of
     Left err -> errHTTPCode err `shouldBe` code
-    Right _  -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
+    Right _ -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
 
 spec :: Spec
 spec = describe "Service.Register (pure interpreter)" $ do
-
   describe "openRegister — state machine guards" $ do
     it "succeeds on a closed register" $ do
       reg <- shouldSucceed $ runTest (storeWith closedReg) (Svc.openRegister regUUID openReq)
@@ -147,10 +150,12 @@ spec = describe "Service.Register (pure interpreter)" $ do
       registerOpenedBy reg `shouldBe` Just empUUID
 
     it "rejects opening an already-open register with 409" $
-      shouldFailWith 409 $ runTest (storeWith openReg) (Svc.openRegister regUUID openReq)
+      shouldFailWith 409 $
+        runTest (storeWith openReg) (Svc.openRegister regUUID openReq)
 
     it "returns 404 for a non-existent register" $
-      shouldFailWith 404 $ runTest emptyRegStore (Svc.openRegister regUUID openReq)
+      shouldFailWith 404 $
+        runTest emptyRegStore (Svc.openRegister regUUID openReq)
 
   describe "closeRegister — state machine guards" $ do
     it "succeeds on an open register" $ do
@@ -162,12 +167,12 @@ spec = describe "Service.Register (pure interpreter)" $ do
       closeRegisterResultVariance result `shouldBe` 2000
 
     it "calculates zero variance when count is exact" $ do
-      let exactReq = closeReq { closeRegisterCountedCash = 50000 }
+      let exactReq = closeReq {closeRegisterCountedCash = 50000}
       result <- shouldSucceed $ runTest (storeWith openReg) (Svc.closeRegister regUUID exactReq)
       closeRegisterResultVariance result `shouldBe` 0
 
     it "calculates negative variance when count is over" $ do
-      let overReq = closeReq { closeRegisterCountedCash = 52000 }
+      let overReq = closeReq {closeRegisterCountedCash = 52000}
       result <- shouldSucceed $ runTest (storeWith openReg) (Svc.closeRegister regUUID overReq)
       closeRegisterResultVariance result `shouldBe` (-2000)
 
@@ -176,10 +181,12 @@ spec = describe "Service.Register (pure interpreter)" $ do
       registerCurrentDrawerAmount (closeRegisterResultRegister result) `shouldBe` 48000
 
     it "rejects closing an already-closed register with 409" $
-      shouldFailWith 409 $ runTest (storeWith closedReg) (Svc.closeRegister regUUID closeReq)
+      shouldFailWith 409 $
+        runTest (storeWith closedReg) (Svc.closeRegister regUUID closeReq)
 
     it "returns 404 for a non-existent register" $
-      shouldFailWith 404 $ runTest emptyRegStore (Svc.closeRegister regUUID closeReq)
+      shouldFailWith 404 $
+        runTest emptyRegStore (Svc.closeRegister regUUID closeReq)
 
   describe "round-trip: open then close" $ do
     it "open then close yields closed register" $ do
@@ -212,14 +219,13 @@ spec = describe "Service.Register (pure interpreter)" $ do
       void $ pure reg
 
   describe "event emission" $ do
-
     it "openRegister emits RegisterOpened on success" $ do
       (result, evts) <- runTestWithEvents (storeWith closedReg) (Svc.openRegister regUUID openReq)
       result `shouldSatisfy` either (const False) (const True)
       case evts of
-        [RegisterEvt (RegisterOpened { reRegId, reEmpId, reStartingCash })] -> do
-          reRegId        `shouldBe` regUUID
-          reEmpId        `shouldBe` empUUID
+        [RegisterEvt (RegisterOpened {reRegId, reEmpId, reStartingCash})] -> do
+          reRegId `shouldBe` regUUID
+          reEmpId `shouldBe` empUUID
           reStartingCash `shouldBe` 50000
         _ -> expectationFailure $ "Expected [RegisterOpened], got: " <> show (length evts) <> " events"
 
@@ -235,8 +241,8 @@ spec = describe "Service.Register (pure interpreter)" $ do
       (result, evts) <- runTestWithEvents (storeWith openReg) (Svc.closeRegister regUUID closeReq)
       result `shouldSatisfy` either (const False) (const True)
       case evts of
-        [RegisterEvt (RegisterClosed { reRegId, reVariance })] -> do
-          reRegId    `shouldBe` regUUID
+        [RegisterEvt (RegisterClosed {reRegId, reVariance})] -> do
+          reRegId `shouldBe` regUUID
           reVariance `shouldBe` 2000
         _ -> expectationFailure $ "Expected [RegisterClosed], got: " <> show (length evts) <> " events"
 

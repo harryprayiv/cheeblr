@@ -1,16 +1,16 @@
-{-# LANGUAGE DataKinds        #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Test.Effect.EventEmitterSpec (spec) where
 
-import Data.IORef                  (newIORef, readIORef)
-import Data.Time                   (UTCTime)
-import Data.UUID                   (UUID)
-import Effectful                   (runEff)
+import Data.IORef (newIORef, readIORef)
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
+import Effectful (runEff)
 import Test.Hspec
 
 import Effect.EventEmitter
-import Types.Auth                  (UserRole (..))
+import Types.Auth (UserRole (..))
 import Types.Events.Domain
 import Types.Events.Session
 
@@ -21,28 +21,33 @@ testTime :: UTCTime
 testTime = read "2024-06-15 10:00:00 UTC"
 
 evt1 :: DomainEvent
-evt1 = SessionEvt $ SessionCreated
-  { sesUserId    = testUUID
-  , sesRole      = Cashier
-  , sesTimestamp = testTime
-  }
+evt1 =
+  SessionEvt $
+    SessionCreated
+      { sesUserId = testUUID
+      , sesRole = Cashier
+      , sesTimestamp = testTime
+      }
 
 evt2 :: DomainEvent
-evt2 = SessionEvt $ SessionExpired
-  { sesUserId    = testUUID
-  , sesTimestamp = testTime
-  }
+evt2 =
+  SessionEvt $
+    SessionExpired
+      { sesUserId = testUUID
+      , sesTimestamp = testTime
+      }
 
 evt3 :: DomainEvent
-evt3 = SessionEvt $ SessionRevoked
-  { sesUserId    = testUUID
-  , sesActorId   = testUUID
-  , sesTimestamp = testTime
-  }
+evt3 =
+  SessionEvt $
+    SessionRevoked
+      { sesUserId = testUUID
+      , sesActorId = testUUID
+      , sesTimestamp = testTime
+      }
 
 spec :: Spec
 spec = describe "Effect.EventEmitter" $ do
-
   describe "runEventEmitterNoop" $ do
     it "discards events without error" $ do
       runEff $ runEventEmitterNoop $ do

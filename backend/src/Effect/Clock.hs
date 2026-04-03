@@ -5,13 +5,13 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
-module Effect.Clock
-  ( Clock (..)
-  , currentTime
-  , runClockIO
-  , runClockPure
-  , runClockPureSequence
-  ) where
+module Effect.Clock (
+  Clock (..),
+  currentTime,
+  runClockIO,
+  runClockPure,
+  runClockPureSequence,
+) where
 
 import Data.Time (UTCTime, getCurrentTime)
 import Effectful
@@ -23,10 +23,10 @@ data Clock :: Effect where
 
 type instance DispatchOf Clock = Dynamic
 
-currentTime :: Clock :> es => Eff es UTCTime
+currentTime :: (Clock :> es) => Eff es UTCTime
 currentTime = send CurrentTime
 
-runClockIO :: IOE :> es => Eff (Clock : es) a -> Eff es a
+runClockIO :: (IOE :> es) => Eff (Clock : es) a -> Eff es a
 runClockIO = interpret $ \_ -> \case
   CurrentTime -> liftIO getCurrentTime
 
@@ -39,5 +39,5 @@ runClockPureSequence supply = reinterpret (runState supply) $ \_ -> \case
   CurrentTime -> do
     times <- get
     case times of
-      []       -> error "runClockPureSequence: time supply exhausted"
+      [] -> error "runClockPureSequence: time supply exhausted"
       (t : ts) -> put ts >> pure t

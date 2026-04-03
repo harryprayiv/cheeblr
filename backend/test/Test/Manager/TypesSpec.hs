@@ -2,11 +2,11 @@
 
 module Test.Manager.TypesSpec (spec) where
 
-import Data.Aeson     (decode, encode)
-import Data.Maybe     (isJust)
-import Data.Time      (UTCTime)
-import Data.UUID      (UUID)
-import Test.Hspec ( Spec, describe, it, shouldBe, shouldSatisfy )
+import Data.Aeson (decode, encode)
+import Data.Maybe (isJust)
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
+import Test.Hspec (Spec, describe, it, shouldBe, shouldSatisfy)
 import Types.Admin
 import Types.Transaction (TransactionStatus (..))
 
@@ -18,18 +18,18 @@ testTime = read "2024-06-15 10:00:00 UTC"
 
 spec :: Spec
 spec = describe "Manager Types" $ do
-
   describe "TransactionSummary JSON" $ do
     it "roundtrips" $ do
-      let ts = TransactionSummary
-            { tsId          = testUUID
-            , tsStatus      = InProgress
-            , tsCreated     = testTime
-            , tsElapsedSecs = 120
-            , tsItemCount   = 3
-            , tsTotal       = 5000
-            , tsIsStale     = False
-            }
+      let ts =
+            TransactionSummary
+              { tsId = testUUID
+              , tsStatus = InProgress
+              , tsCreated = testTime
+              , tsElapsedSecs = 120
+              , tsItemCount = 3
+              , tsTotal = 5000
+              , tsIsStale = False
+              }
       decode (encode ts) `shouldBe` Just ts
 
     it "stale flag roundtrips" $ do
@@ -38,13 +38,14 @@ spec = describe "Manager Types" $ do
 
   describe "LocationDayStats JSON" $ do
     it "roundtrips" $ do
-      let s = LocationDayStats
-            { ldsTxCount     = 10
-            , ldsRevenue     = 50000
-            , ldsVoidCount   = 1
-            , ldsRefundCount = 0
-            , ldsAvgTxValue  = 5000
-            }
+      let s =
+            LocationDayStats
+              { ldsTxCount = 10
+              , ldsRevenue = 50000
+              , ldsVoidCount = 1
+              , ldsRefundCount = 0
+              , ldsAvgTxValue = 5000
+              }
       decode (encode s) `shouldBe` Just s
 
     it "handles zeroes" $ do
@@ -66,5 +67,5 @@ spec = describe "Manager Types" $ do
 
   describe "OverrideRequest JSON" $ do
     it "roundtrips" $ do
-      let r = OverrideRequest { orActorId = testUUID, orReason = "Customer request" }
+      let r = OverrideRequest {orActorId = testUUID, orReason = "Customer request"}
       decode (encode r) `shouldBe` Just r

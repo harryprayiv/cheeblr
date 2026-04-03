@@ -2,17 +2,16 @@
 
 module Test.Props.NegateSpec (spec) where
 
-import           Hedgehog
-import           Test.Hspec
-import           Test.Hspec.Hedgehog (hedgehog)
+import Hedgehog
+import Test.Hspec
+import Test.Hspec.Hedgehog (hedgehog)
 
-import           DB.Transaction
-import           Test.Gen
-import           Types.Transaction
+import DB.Transaction
+import Test.Gen
+import Types.Transaction
 
 spec :: Spec
 spec = describe "Props.Negate" $ do
-
   describe "negateTransactionItem" $ do
     it "double negate is identity on subtotal" $ hedgehog $ do
       item <- forAll genTransactionItem

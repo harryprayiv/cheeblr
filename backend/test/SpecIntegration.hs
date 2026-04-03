@@ -2,8 +2,8 @@ module Main where
 
 import Test.Hspec
 
-import qualified Test.Integration.JsonContractSpec
 import qualified Test.GraphQL.IntegrationSpec
+import qualified Test.Integration.JsonContractSpec
 
 main :: IO ()
 main = hspec $ do

@@ -1,30 +1,30 @@
-{-# LANGUAGE OverloadedStrings  #-}
-{-# LANGUAGE TypeApplications   #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Main where
 
-import Control.Exception (catch, try, SomeException)
-import           Data.ByteArray.Encoding    (Base (Base64), convertToBase)
-import           Data.ByteString            (ByteString)
-import qualified Data.ByteString.Char8      as B8
-import           Data.Maybe                 (fromMaybe)
-import           Data.Text                  (Text)
-import qualified Data.Text                  as T
-import qualified Data.Text.Encoding         as TE
-import qualified Hasql.Pool                 as Pool
-import qualified Hasql.Session              as Session
-import           Rel8
-import           System.Entropy             (getEntropy)
-import           System.Environment         (lookupEnv)
-import           System.Exit                (exitFailure, exitSuccess)
-import           System.IO                  (hPutStrLn, stderr)
-import           System.Posix.User          (getEffectiveUserName)
+import Control.Exception (SomeException, catch, try)
+import Data.ByteArray.Encoding (Base (Base64), convertToBase)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as B8
+import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Hasql.Pool as Pool
+import qualified Hasql.Session as Session
+import Rel8
+import System.Entropy (getEntropy)
+import System.Environment (lookupEnv)
+import System.Exit (exitFailure, exitSuccess)
+import System.IO (hPutStrLn, stderr)
+import System.Posix.User (getEffectiveUserName)
 
-import           DB.Auth
-import           DB.Database                (DBConfig (..), initializeDB)
-import           DB.Schema                  (userSchema, isActive)
-import           Types.Auth                 (UserRole (..))
+import DB.Auth
+import DB.Database (DBConfig (..), initializeDB)
+import DB.Schema (isActive, userSchema)
+import Types.Auth (UserRole (..))
 
 ------------------------------------------------------------------------
 -- Check whether the users table is empty
@@ -37,7 +37,7 @@ anyUserExists pool = do
     where_ $ isActive u
     pure u
   case result of
-    Left _  -> pure False
+    Left _ -> pure False
     Right r -> pure (not (Prelude.null r))
 
 ------------------------------------------------------------------------
@@ -46,18 +46,19 @@ anyUserExists pool = do
 
 generatePassword :: IO Text
 generatePassword = do
-  raw <- getEntropy 18  -- 18 bytes -> 24 base64url chars
+  raw <- getEntropy 18 -- 18 bytes -> 24 base64url chars
   let encoded = convertToBase Base64 (raw :: ByteString)
   -- Drop any padding and replace + / with - _ for URL safety.
-  let clean = T.map sanitize
-            . T.dropWhileEnd (== '=')
-            . TE.decodeUtf8
-            $ encoded
+  let clean =
+        T.map sanitize
+          . T.dropWhileEnd (== '=')
+          . TE.decodeUtf8
+          $ encoded
   pure clean
   where
     sanitize '+' = '-'
     sanitize '/' = '_'
-    sanitize c   = c
+    sanitize c = c
 
 ------------------------------------------------------------------------
 -- Main
@@ -65,23 +66,24 @@ generatePassword = do
 
 main :: IO ()
 main = do
-
   envHost <- fromMaybe "localhost" <$> lookupEnv "PGHOST"
   envPort <- maybe (5432 :: Int) read <$> lookupEnv "PGPORT"
-  envDb   <- fromMaybe "cheeblr"  <$> lookupEnv "PGDATABASE"
-  currentUser <- getEffectiveUserName
-                  `catch` (\e -> let _ = e :: SomeException in pure "nobody")
+  envDb <- fromMaybe "cheeblr" <$> lookupEnv "PGDATABASE"
+  currentUser <-
+    getEffectiveUserName
+      `catch` (\e -> let _ = e :: SomeException in pure "nobody")
   envUser <- fromMaybe currentUser <$> lookupEnv "PGUSER"
-  envPass <- fromMaybe ""          <$> lookupEnv "PGPASSWORD"
+  envPass <- fromMaybe "" <$> lookupEnv "PGPASSWORD"
 
-  let cfg = DBConfig
-        { dbHost     = B8.pack envHost
-        , dbPort     = fromIntegral envPort
-        , dbName     = B8.pack envDb
-        , dbUser     = B8.pack envUser
-        , dbPassword = B8.pack envPass
-        , poolSize   = 2
-        }
+  let cfg =
+        DBConfig
+          { dbHost = B8.pack envHost
+          , dbPort = fromIntegral envPort
+          , dbName = B8.pack envDb
+          , dbUser = B8.pack envUser
+          , dbPassword = B8.pack envPass
+          , poolSize = 2
+          }
 
   pool <- initializeDB cfg
   createAuthTables pool
@@ -89,21 +91,24 @@ main = do
   hasUsers <- anyUserExists pool
   if hasUsers
     then do
-      hPutStrLn stderr
+      hPutStrLn
+        stderr
         "bootstrap-admin: users table already has rows — skipping."
-      hPutStrLn stderr
+      hPutStrLn
+        stderr
         "  To re-bootstrap, delete all rows from the users table first."
       exitSuccess
     else do
       pwd <- generatePassword
-      let nu = NewUser
-                 { newUserName    = "admin"
-                 , newDisplayName = "Administrator"
-                 , newEmail       = Nothing
-                 , newRole        = Admin
-                 , newLocationId  = Nothing
-                 , newPassword    = pwd
-                 }
+      let nu =
+            NewUser
+              { newUserName = "admin"
+              , newDisplayName = "Administrator"
+              , newEmail = Nothing
+              , newRole = Admin
+              , newLocationId = Nothing
+              , newPassword = pwd
+              }
       result <- try @SomeException $ createUser pool nu
       case result of
         Left err -> do

@@ -1,42 +1,41 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications  #-}
-{-# LANGUAGE DataKinds  #-}
+{-# LANGUAGE TypeApplications #-}
 
+module Server.Stock (
+  stockServerImpl,
+) where
 
-module Server.Stock
-  ( stockServerImpl
-  ) where
-
-import           Control.Monad              (unless)
-import           Control.Monad.IO.Class     (liftIO)
+import Control.Monad (unless)
+import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString.Lazy.Char8 as LBS
-import           Data.Maybe                 (fromMaybe)
-import           Data.Text                  (Text, pack)
-import           Data.UUID                  (UUID)
-import           Data.UUID.V4               (nextRandom)
-import           Effectful                  (runEff, Eff, IOE)
-import           Effectful.Error.Static     (runErrorNoCallStack, Error)
-import           Servant                    hiding (throwError)
+import Data.Maybe (fromMaybe)
+import Data.Text (Text, pack)
+import Data.UUID (UUID)
+import Data.UUID.V4 (nextRandom)
+import Effectful (Eff, IOE, runEff)
+import Effectful.Error.Static (Error, runErrorNoCallStack)
+import Servant hiding (throwError)
 import qualified Servant
 
-import           API.Stock
-import           Auth.Session               (SessionContext (..), resolveSession)
-import qualified DB.Stock                  as DBS
-import           Effect.Clock               (runClockIO, Clock)
-import           Effect.EventEmitter        (runEventEmitterProd, EventEmitter)
-import           Effect.StockDb             (runStockDbIO, StockDb)
-import qualified Service.Stock             as Svc
-import           Server.Env                 (AppEnv (..))
-import           Types.Auth
-  ( AuthenticatedUser (..)
-  , capabilitiesForRole
-  , capCanFulfillOrders
-  )
-import           Types.Inventory            (MutationResponse (..))
-import           Types.Location             (LocationId (..))
-import           Types.Stock
+import API.Stock
+import Auth.Session (SessionContext (..), resolveSession)
+import qualified DB.Stock as DBS
+import Effect.Clock (Clock, runClockIO)
+import Effect.EventEmitter (EventEmitter, runEventEmitterProd)
+import Effect.StockDb (StockDb, runStockDbIO)
+import Network.HTTP.Types (status200)
 import Network.Wai (responseLBS)
-import           Network.HTTP.Types        (status200)
+import Server.Env (AppEnv (..))
+import qualified Service.Stock as Svc
+import Types.Auth (
+  AuthenticatedUser (..),
+  capCanFulfillOrders,
+  capabilitiesForRole,
+ )
+import Types.Inventory (MutationResponse (..))
+import Types.Location (LocationId (..))
+import Types.Stock
 
 authCtx :: AppEnv -> Maybe Text -> Handler SessionContext
 authCtx env = resolveSession (envDbPool env)
@@ -44,27 +43,33 @@ authCtx env = resolveSession (envDbPool env)
 requireStock :: SessionContext -> Handler ()
 requireStock ctx =
   unless (capCanFulfillOrders (capabilitiesForRole (auRole (scUser ctx)))) $
-    Servant.throwError err403 { errBody = LBS.pack "Forbidden: stock room access required" }
+    Servant.throwError err403 {errBody = LBS.pack "Forbidden: stock room access required"}
 
-runStockEff :: AppEnv -> Effectful.Eff
-  '[ Effect.StockDb.StockDb
-   , Effect.Clock.Clock
-   , Effect.EventEmitter.EventEmitter
-   , Effectful.Error.Static.Error ServerError
-   , Effectful.IOE
-   ] a -> Handler a
+runStockEff ::
+  AppEnv ->
+  Effectful.Eff
+    '[ Effect.StockDb.StockDb
+     , Effect.Clock.Clock
+     , Effect.EventEmitter.EventEmitter
+     , Effectful.Error.Static.Error ServerError
+     , Effectful.IOE
+     ]
+    a ->
+  Handler a
 runStockEff env action = do
   result <-
     liftIO
-    . runEff
-    . runErrorNoCallStack @ServerError
-    . runEventEmitterProd
+      . runEff
+      . runErrorNoCallStack @ServerError
+      . runEventEmitterProd
         (envDbPool env)
         (envDomainBroadcaster env)
-        Nothing Nothing Nothing
-    . runClockIO
-    . runStockDbIO (envDbPool env)
-    $ action
+        Nothing
+        Nothing
+        Nothing
+      . runClockIO
+      . runStockDbIO (envDbPool env)
+      $ action
   either Servant.throwError pure result
 
 queueHandler :: AppEnv -> Maybe Text -> Maybe LocationId -> Handler [PullRequest]
@@ -84,10 +89,10 @@ pullDetailHandler env pullId mHeader = do
   requireStock ctx
   mPr <- liftIO $ DBS.getPullRequest (envDbPool env) pullId
   case mPr of
-    Nothing -> Servant.throwError err404 { errBody = LBS.pack "Pull request not found" }
+    Nothing -> Servant.throwError err404 {errBody = LBS.pack "Pull request not found"}
     Just pr -> do
       msgs <- liftIO $ DBS.getPullMessages (envDbPool env) pullId
-      pure PullRequestDetail { pdPullRequest = pr, pdMessages = msgs }
+      pure PullRequestDetail {pdPullRequest = pr, pdMessages = msgs}
 
 acceptHandler :: AppEnv -> UUID -> Maybe Text -> Handler MutationResponse
 acceptHandler env pullId mHeader = do
@@ -133,17 +138,19 @@ messageHandler :: AppEnv -> UUID -> Maybe Text -> NewMessage -> Handler Mutation
 messageHandler env pullId mHeader msg = do
   ctx <- authCtx env mHeader
   requireStock ctx
-  let senderId = auUserId (scUser ctx)
-      role     = show (auRole (scUser ctx))
+  let
+    senderId = auUserId (scUser ctx)
+    role = show (auRole (scUser ctx))
   msgId <- liftIO nextRandom
-  let pm = PullMessage
-        { pmId            = msgId
-        , pmPullRequestId = pullId
-        , pmFromRole      = fromString role
-        , pmSenderId      = senderId
-        , pmMessage       = nmMessage msg
-        , pmCreatedAt     = read "2024-01-01 00:00:00 UTC"
-        }
+  let pm =
+        PullMessage
+          { pmId = msgId
+          , pmPullRequestId = pullId
+          , pmFromRole = fromString role
+          , pmSenderId = senderId
+          , pmMessage = nmMessage msg
+          , pmCreatedAt = read "2024-01-01 00:00:00 UTC"
+          }
   liftIO $ DBS.insertPullMessage (envDbPool env) pullId pm
   pure $ MutationResponse True "Message added"
   where
@@ -157,13 +164,13 @@ messagesHandler env pullId mHeader = do
 
 stockServerImpl :: AppEnv -> Server StockAPI
 stockServerImpl env =
-       queueHandler     env
-  :<|> queueStreamHandler env
-  :<|> pullDetailHandler  env
-  :<|> acceptHandler      env
-  :<|> startHandler       env
-  :<|> fulfillHandler     env
-  :<|> issueHandler       env
-  :<|> retryHandler       env
-  :<|> messageHandler     env
-  :<|> messagesHandler    env
+  queueHandler env
+    :<|> queueStreamHandler env
+    :<|> pullDetailHandler env
+    :<|> acceptHandler env
+    :<|> startHandler env
+    :<|> fulfillHandler env
+    :<|> issueHandler env
+    :<|> retryHandler env
+    :<|> messageHandler env
+    :<|> messagesHandler env

@@ -1,40 +1,40 @@
-module Test.Gen
-  ( genUUID
-  , genText
-  , genMaybeText
-  , genUTCTime
-  , genMaybeUTCTime
-  , genTransactionStatus
-  , genTransactionType
-  , genPaymentMethod
-  , genTaxCategory
-  , genDiscountType
-  , genTaxRecord
-  , genDiscountRecord
-  , genTransactionItem
-  , genPaymentTransaction
-  , genTransaction
-  , genSpecies
-  , genItemCategory
-  , genStrainLineage
-  , genMenuItem
-  , genInventory
-  ) where
+module Test.Gen (
+  genUUID,
+  genText,
+  genMaybeText,
+  genUTCTime,
+  genMaybeUTCTime,
+  genTransactionStatus,
+  genTransactionType,
+  genPaymentMethod,
+  genTaxCategory,
+  genDiscountType,
+  genTaxRecord,
+  genDiscountRecord,
+  genTransactionItem,
+  genPaymentTransaction,
+  genTransaction,
+  genSpecies,
+  genItemCategory,
+  genStrainLineage,
+  genMenuItem,
+  genInventory,
+) where
 
-import           Data.Scientific (Scientific)
-import           Data.Text (Text)
-import           Data.Time.Calendar (fromGregorian)
-import           Data.Time.Clock (UTCTime (..), secondsToDiffTime)
-import           Data.UUID (UUID)
+import Data.Scientific (Scientific)
+import Data.Text (Text)
+import Data.Time.Calendar (fromGregorian)
+import Data.Time.Clock (UTCTime (..), secondsToDiffTime)
+import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import qualified Data.Vector as V
-import           Hedgehog
+import Hedgehog
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 
-import           Types.Inventory
-import           Types.Transaction
+import Types.Inventory
 import Types.Location (LocationId (..))
+import Types.Transaction
 
 genUUID :: Gen UUID
 genUUID =
@@ -52,10 +52,10 @@ genMaybeText = Gen.maybe genText
 
 genUTCTime :: Gen UTCTime
 genUTCTime = do
-  year  <- Gen.integral (Range.linear 2020 2030)
+  year <- Gen.integral (Range.linear 2020 2030)
   month <- Gen.integral (Range.linear 1 12)
-  day   <- Gen.integral (Range.linear 1 28)
-  secs  <- Gen.integral (Range.linear 0 86399)
+  day <- Gen.integral (Range.linear 1 28)
+  secs <- Gen.integral (Range.linear 0 86399)
   pure $ UTCTime (fromGregorian year month day) (secondsToDiffTime secs)
 
 genMaybeUTCTime :: Gen (Maybe UTCTime)
@@ -70,16 +70,17 @@ genTransactionType =
   Gen.element [Sale, Return, Exchange, InventoryAdjustment, ManagerComp, Administrative]
 
 genPaymentMethod :: Gen PaymentMethod
-genPaymentMethod = Gen.choice
-  [ pure Cash
-  , pure Debit
-  , pure Credit
-  , pure ACH
-  , pure GiftCard
-  , pure StoredValue
-  , pure Mixed
-  , Other <$> genText
-  ]
+genPaymentMethod =
+  Gen.choice
+    [ pure Cash
+    , pure Debit
+    , pure Credit
+    , pure ACH
+    , pure GiftCard
+    , pure StoredValue
+    , pure Mixed
+    , Other <$> genText
+    ]
 
 genTaxCategory :: Gen TaxCategory
 genTaxCategory =
@@ -90,12 +91,13 @@ genScientific :: Gen Scientific
 genScientific = fromIntegral <$> Gen.int (Range.linear 0 10000)
 
 genDiscountType :: Gen DiscountType
-genDiscountType = Gen.choice
-  [ PercentOff <$> genScientific
-  , AmountOff  <$> Gen.int (Range.linear 0 100000)
-  , pure BuyOneGetOne
-  , Custom <$> genText <*> Gen.int (Range.linear 0 100000)
-  ]
+genDiscountType =
+  Gen.choice
+    [ PercentOff <$> genScientific
+    , AmountOff <$> Gen.int (Range.linear 0 100000)
+    , pure BuyOneGetOne
+    , Custom <$> genText <*> Gen.int (Range.linear 0 100000)
+    ]
 
 genTaxRecord :: Gen TaxRecord
 genTaxRecord =

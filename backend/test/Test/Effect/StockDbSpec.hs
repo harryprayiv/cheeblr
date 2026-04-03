@@ -1,17 +1,17 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE DataKinds         #-}
 
 module Test.Effect.StockDbSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import           Data.Time       (UTCTime)
-import           Data.UUID       (UUID)
-import Effectful ( runPureEff, Eff, runPureEff )
-import           Test.Hspec
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
+import Effectful (Eff, runPureEff)
+import Test.Hspec
 
 import Effect.StockDb
 import State.StockPullMachine (PullVertex (..))
-import Types.Location         (LocationId (..))
+import Types.Location (LocationId (..))
 import Types.Stock
 
 locId :: LocationId
@@ -39,37 +39,38 @@ testTime :: UTCTime
 testTime = read "2024-01-01 00:00:00 UTC"
 
 mkPullRequest :: UUID -> LocationId -> PullVertex -> PullRequest
-mkPullRequest pid loc status = PullRequest
-  { prId             = pid
-  , prTransactionId  = txId
-  , prItemSku        = read "66666666-6666-6666-6666-666666666666"
-  , prItemName       = "Blue Dream"
-  , prQuantityNeeded = 2
-  , prStatus         = status
-  , prCashierId      = Nothing
-  , prRegisterId     = Nothing
-  , prLocationId     = loc
-  , prCreatedAt      = testTime
-  , prUpdatedAt      = testTime
-  , prFulfilledAt    = Nothing
-  }
+mkPullRequest pid loc status =
+  PullRequest
+    { prId = pid
+    , prTransactionId = txId
+    , prItemSku = read "66666666-6666-6666-6666-666666666666"
+    , prItemName = "Blue Dream"
+    , prQuantityNeeded = 2
+    , prStatus = status
+    , prCashierId = Nothing
+    , prRegisterId = Nothing
+    , prLocationId = loc
+    , prCreatedAt = testTime
+    , prUpdatedAt = testTime
+    , prFulfilledAt = Nothing
+    }
 
 mkMessage :: UUID -> UUID -> PullMessage
-mkMessage mid pid = PullMessage
-  { pmId            = mid
-  , pmPullRequestId = pid
-  , pmFromRole      = "cashier"
-  , pmSenderId      = actorId
-  , pmMessage       = "Please bring 2 units"
-  , pmCreatedAt     = testTime
-  }
+mkMessage mid pid =
+  PullMessage
+    { pmId = mid
+    , pmPullRequestId = pid
+    , pmFromRole = "cashier"
+    , pmSenderId = actorId
+    , pmMessage = "Please bring 2 units"
+    , pmCreatedAt = testTime
+    }
 
 runPure :: StockStore -> Eff '[StockDb] a -> IO (a, StockStore)
 runPure store action = pure $ runPureEff $ runStockDbPure store action
 
 spec :: Spec
 spec = describe "Effect.StockDb pure interpreter" $ do
-
   describe "createPullRequest / getPullRequest" $ do
     it "creates and retrieves a pull request" $ do
       let pr = mkPullRequest pullId locId PullPending
@@ -97,11 +98,12 @@ spec = describe "Effect.StockDb pure interpreter" $ do
       result `shouldBe` Right ()
       case Map.lookup pullId (ssRequests store) of
         Just pr' -> prStatus pr' `shouldBe` PullAccepted
-        Nothing  -> expectationFailure "Pull request not found after update"
+        Nothing -> expectationFailure "Pull request not found after update"
 
     it "returns Left for unknown pull request" $ do
-      (result, _) <- runPure emptyStockStore $
-        updatePullStatus pullId PullAccepted Nothing
+      (result, _) <-
+        runPure emptyStockStore $
+          updatePullStatus pullId PullAccepted Nothing
       result `shouldBe` Left "Pull request not found"
 
   describe "getPendingPulls" $ do
@@ -131,8 +133,9 @@ spec = describe "Effect.StockDb pure interpreter" $ do
       result `shouldBe` []
 
     it "filters by location" $ do
-      let pr1 = mkPullRequest pullId  locId  PullPending
-          pr2 = mkPullRequest pullId2 locId2 PullPending
+      let
+        pr1 = mkPullRequest pullId locId PullPending
+        pr2 = mkPullRequest pullId2 locId2 PullPending
       (result, _) <- runPure emptyStockStore $ do
         _ <- createPullRequest pr1
         _ <- createPullRequest pr2
@@ -141,8 +144,9 @@ spec = describe "Effect.StockDb pure interpreter" $ do
 
   describe "cancelPullsForTransaction" $ do
     it "cancels all active pulls for a transaction" $ do
-      let pr1 = mkPullRequest pullId  locId PullPending
-          pr2 = mkPullRequest pullId2 locId PullAccepted
+      let
+        pr1 = mkPullRequest pullId locId PullPending
+        pr2 = mkPullRequest pullId2 locId PullAccepted
       (_, store) <- runPure emptyStockStore $ do
         _ <- createPullRequest pr1
         _ <- createPullRequest pr2
@@ -157,12 +161,13 @@ spec = describe "Effect.StockDb pure interpreter" $ do
         cancelPullsForTransaction txId "Voided"
       case Map.lookup pullId (ssRequests store) of
         Just pr' -> prStatus pr' `shouldBe` PullFulfilled
-        Nothing  -> expectationFailure "Pull request missing"
+        Nothing -> expectationFailure "Pull request missing"
 
   describe "addPullMessage / getPullMessages" $ do
     it "adds and retrieves messages" $ do
-      let pr  = mkPullRequest pullId locId PullPending
-          msg = mkMessage msgId pullId
+      let
+        pr = mkPullRequest pullId locId PullPending
+        msg = mkMessage msgId pullId
       (result, _) <- runPure emptyStockStore $ do
         _ <- createPullRequest pr
         _ <- addPullMessage pullId msg

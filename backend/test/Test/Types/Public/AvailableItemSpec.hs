@@ -3,10 +3,10 @@
 module Test.Types.Public.AvailableItemSpec (spec) where
 
 import qualified Data.Map.Strict as Map
-import Data.Maybe      (isJust, isNothing)
-import Data.Time       (UTCTime (..))
+import Data.Maybe (isJust, isNothing)
+import Data.Time (UTCTime (..))
 import Data.Time.Calendar (fromGregorian)
-import Data.UUID       (UUID)
+import Data.UUID (UUID)
 import qualified Data.Vector as V
 import Test.Hspec
 
@@ -24,52 +24,54 @@ testLocId :: PublicLocationId
 testLocId = PublicLocationId (read "00000000-0000-0000-0000-000000000002")
 
 testMenuItem :: MenuItem
-testMenuItem = MenuItem
-  { sort           = 1
-  , sku            = testSku
-  , brand          = "Test Brand"
-  , name           = "Test Item"
-  , price          = 1000
-  , measure_unit   = "g"
-  , per_package    = "3.5"
-  , quantity       = 10
-  , category       = Flower
-  , subcategory    = "Indoor"
-  , description    = "Test"
-  , tags           = V.fromList ["test"]
-  , effects        = V.fromList ["relaxed"]
-  , strain_lineage = StrainLineage
-      { thc              = "25%"
-      , cbg              = "1%"
-      , strain           = "Test Strain"
-      , creator          = "Test Creator"
-      , species          = Hybrid
-      , dominant_terpene = "Myrcene"
-      , terpenes         = V.fromList ["Myrcene"]
-      , lineage          = V.fromList []
-      , leafly_url       = "https://leafly.com/test"
-      , img              = "https://example.com/img.jpg"
-      }
-  }
+testMenuItem =
+  MenuItem
+    { sort = 1
+    , sku = testSku
+    , brand = "Test Brand"
+    , name = "Test Item"
+    , price = 1000
+    , measure_unit = "g"
+    , per_package = "3.5"
+    , quantity = 10
+    , category = Flower
+    , subcategory = "Indoor"
+    , description = "Test"
+    , tags = V.fromList ["test"]
+    , effects = V.fromList ["relaxed"]
+    , strain_lineage =
+        StrainLineage
+          { thc = "25%"
+          , cbg = "1%"
+          , strain = "Test Strain"
+          , creator = "Test Creator"
+          , species = Hybrid
+          , dominant_terpene = "Myrcene"
+          , terpenes = V.fromList ["Myrcene"]
+          , lineage = V.fromList []
+          , leafly_url = "https://leafly.com/test"
+          , img = "https://example.com/img.jpg"
+          }
+    }
 
 testState :: AvailabilityState
-testState = AvailabilityState
-  { asItems       = Map.singleton testSku testMenuItem
-  , asReserved    = Map.empty
-  , asPublicLocId = testLocId
-  , asLocName     = "Test Location"
-  }
+testState =
+  AvailabilityState
+    { asItems = Map.singleton testSku testMenuItem
+    , asReserved = Map.empty
+    , asPublicLocId = testLocId
+    , asLocName = "Test Location"
+    }
 
 spec :: Spec
 spec = describe "AvailableItem" $ do
-
   describe "availableQty" $ do
     it "is total minus reserved" $ do
-      let st = testState { asReserved = Map.singleton testSku 3 }
+      let st = testState {asReserved = Map.singleton testSku 3}
       availableQty st testSku `shouldBe` 7
 
     it "never goes below zero" $ do
-      let st = testState { asReserved = Map.singleton testSku 999 }
+      let st = testState {asReserved = Map.singleton testSku 999}
       availableQty st testSku `shouldBe` 0
 
     it "is zero for unknown sku" $ do
@@ -94,8 +96,9 @@ spec = describe "AvailableItem" $ do
       aiPricePerUnit ai `shouldBe` 1000
 
     it "has no transaction, employee, session, or register fields in JSON" $ do
-      let ai   = mkAvailableItem testMenuItem 5 testLocId "Test" testTime
-          json = show ai   -- just structural: the type has no such fields
+      let
+        ai = mkAvailableItem testMenuItem 5 testLocId "Test" testTime
+        json = show ai -- just structural: the type has no such fields
       json `shouldNotContain` "transactionId"
       json `shouldNotContain` "employeeId"
       json `shouldNotContain` "sessionId"
@@ -110,7 +113,7 @@ spec = describe "AvailableItem" $ do
       toAvailableItem testState testSku testTime `shouldSatisfy` isJust
 
     it "reflects reserved quantity" $ do
-      let st = testState { asReserved = Map.singleton testSku 4 }
+      let st = testState {asReserved = Map.singleton testSku 4}
       case toAvailableItem st testSku testTime of
         Nothing -> expectationFailure "expected Just"
         Just ai -> aiAvailableQty ai `shouldBe` 6

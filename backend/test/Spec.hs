@@ -2,35 +2,35 @@ module Main where
 
 import Test.Hspec
 
+import qualified Test.API.AdminSpec
+import qualified Test.API.OpenApiSpec
+import qualified Test.API.TransactionSpec
+import qualified Test.Auth.SimpleSpec
+import qualified Test.DB.PureFunctionsSpec
+import qualified Test.Effect.EventEmitterSpec
+import qualified Test.Effect.InventoryDbSpec
+import qualified Test.Effect.StockDbSpec
+import qualified Test.GraphQL.ResolversSpec
+import qualified Test.GraphQL.SchemaSpec
+import qualified Test.Infrastructure.AvailabilityRelaySpec
+import qualified Test.Manager.LogicSpec
+import qualified Test.Manager.TypesSpec
+import qualified Test.Props.JsonRoundtripSpec
+import qualified Test.Props.NegateSpec
+import qualified Test.Props.ParseShowSpec
+import qualified Test.Props.StateMachineSpec
+import qualified Test.Server.Middleware.TracingSpec
+import qualified Test.Service.RegisterSpec
+import qualified Test.Service.StockSpec
+import qualified Test.Service.TransactionSpec
+import qualified Test.State.RegisterMachineSpec
+import qualified Test.State.StockPullMachineSpec
+import qualified Test.State.TransactionMachineSpec
 import qualified Test.Types.AuthSpec
-import qualified Test.Types.TraceSpec
-import qualified Test.Types.TransactionSpec
 import qualified Test.Types.InventorySpec
 import qualified Test.Types.Public.AvailableItemSpec
-import qualified Test.Auth.SimpleSpec
-import qualified Test.API.TransactionSpec
-import qualified Test.API.OpenApiSpec
-import qualified Test.API.AdminSpec
-import qualified Test.DB.PureFunctionsSpec
-import qualified Test.GraphQL.SchemaSpec
-import qualified Test.GraphQL.ResolversSpec
-import qualified Test.State.TransactionMachineSpec
-import qualified Test.State.RegisterMachineSpec
-import qualified Test.Effect.InventoryDbSpec
-import qualified Test.Effect.EventEmitterSpec
-import qualified Test.Server.Middleware.TracingSpec
-import qualified Test.Service.TransactionSpec
-import qualified Test.Service.RegisterSpec
-import qualified Test.Props.JsonRoundtripSpec
-import qualified Test.Props.ParseShowSpec
-import qualified Test.Props.NegateSpec
-import qualified Test.Props.StateMachineSpec
-import qualified Test.Infrastructure.AvailabilityRelaySpec
-import qualified Test.Manager.TypesSpec
-import qualified Test.Manager.LogicSpec
-import qualified Test.State.StockPullMachineSpec
-import qualified Test.Effect.StockDbSpec
-import qualified Test.Service.StockSpec
+import qualified Test.Types.TraceSpec
+import qualified Test.Types.TransactionSpec
 
 main :: IO ()
 main = hspec $ do

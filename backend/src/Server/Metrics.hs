@@ -1,31 +1,32 @@
-module Server.Metrics
-  ( Metrics (..)
-  , newMetrics
-  , incRequestCount
-  , incErrorCount
-  , incDbQueryCount
-  , incDbErrorCount
-  , adjustActiveConnections
-  ) where
+module Server.Metrics (
+  Metrics (..),
+  newMetrics,
+  incRequestCount,
+  incErrorCount,
+  incDbQueryCount,
+  incDbErrorCount,
+  adjustActiveConnections,
+) where
 
 import Control.Concurrent.STM
 import Data.Int (Int64)
 
 data Metrics = Metrics
-  { mRequestCount      :: TVar Int64
-  , mErrorCount        :: TVar Int64
+  { mRequestCount :: TVar Int64
+  , mErrorCount :: TVar Int64
   , mActiveConnections :: TVar Int
-  , mDbQueryCount      :: TVar Int64
-  , mDbErrorCount      :: TVar Int64
+  , mDbQueryCount :: TVar Int64
+  , mDbErrorCount :: TVar Int64
   }
 
 newMetrics :: IO Metrics
-newMetrics = Metrics
-  <$> newTVarIO 0
-  <*> newTVarIO 0
-  <*> newTVarIO 0
-  <*> newTVarIO 0
-  <*> newTVarIO 0
+newMetrics =
+  Metrics
+    <$> newTVarIO 0
+    <*> newTVarIO 0
+    <*> newTVarIO 0
+    <*> newTVarIO 0
+    <*> newTVarIO 0
 
 incRequestCount :: Metrics -> STM ()
 incRequestCount m = modifyTVar' (mRequestCount m) (+ 1)

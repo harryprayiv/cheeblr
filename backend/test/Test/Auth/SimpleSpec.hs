@@ -2,15 +2,14 @@
 
 module Test.Auth.SimpleSpec (spec) where
 
-import Test.Hspec
+import Auth.Simple
 import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
+import Test.Hspec
 import Types.Auth
-import Auth.Simple
 
 spec :: Spec
 spec = describe "Auth.Simple" $ do
-
   -- ──────────────────────────────────────────────
   -- devUsers map
   -- ──────────────────────────────────────────────
@@ -32,37 +31,37 @@ spec = describe "Auth.Simple" $ do
 
     it "customer-1 has Customer role" $
       case Map.lookup "customer-1" devUsers of
-        Just u  -> auRole u `shouldBe` Customer
+        Just u -> auRole u `shouldBe` Customer
         Nothing -> expectationFailure "customer-1 not found"
 
     it "cashier-1 has Cashier role" $
       case Map.lookup "cashier-1" devUsers of
-        Just u  -> auRole u `shouldBe` Cashier
+        Just u -> auRole u `shouldBe` Cashier
         Nothing -> expectationFailure "cashier-1 not found"
 
     it "manager-1 has Manager role" $
       case Map.lookup "manager-1" devUsers of
-        Just u  -> auRole u `shouldBe` Manager
+        Just u -> auRole u `shouldBe` Manager
         Nothing -> expectationFailure "manager-1 not found"
 
     it "admin-1 has Admin role" $
       case Map.lookup "admin-1" devUsers of
-        Just u  -> auRole u `shouldBe` Admin
+        Just u -> auRole u `shouldBe` Admin
         Nothing -> expectationFailure "admin-1 not found"
 
     it "cashier-1 has a locationId" $ do
       case Map.lookup "cashier-1" devUsers of
-        Just u  -> auLocationId u `shouldSatisfy` isJust
+        Just u -> auLocationId u `shouldSatisfy` isJust
         Nothing -> expectationFailure "cashier-1 not found"
 
     it "customer-1 has no locationId" $ do
       case Map.lookup "customer-1" devUsers of
-        Just u  -> auLocationId u `shouldBe` Nothing
+        Just u -> auLocationId u `shouldBe` Nothing
         Nothing -> expectationFailure "customer-1 not found"
 
     it "admin-1 has no locationId" $ do
       case Map.lookup "admin-1" devUsers of
-        Just u  -> auLocationId u `shouldBe` Nothing
+        Just u -> auLocationId u `shouldBe` Nothing
         Nothing -> expectationFailure "admin-1 not found"
 
     it "all users have emails" $
@@ -110,8 +109,7 @@ spec = describe "Auth.Simple" $ do
 
     it "returns default for unknown key" $ do
       let user = lookupUser (Just "unknown-user")
-      auRole user `shouldBe` Cashier  -- default is cashier
-
+      auRole user `shouldBe` Cashier -- default is cashier
     it "returns default for unknown UUID" $ do
       let user = lookupUser (Just "00000000-0000-0000-0000-000000000000")
       auRole user `shouldBe` Cashier
@@ -145,12 +143,12 @@ spec = describe "Auth.Simple" $ do
 
     it "preserves username" $ do
       case getDevUser "admin-1" of
-        Just u  -> auUserName u `shouldBe` "Test Admin"
+        Just u -> auUserName u `shouldBe` "Test Admin"
         Nothing -> expectationFailure "admin-1 not found"
 
     it "preserves email" $ do
       case getDevUser "cashier-1" of
-        Just u  -> auEmail u `shouldBe` Just "cashier@example.com"
+        Just u -> auEmail u `shouldBe` Just "cashier@example.com"
         Nothing -> expectationFailure "cashier-1 not found"
 
   -- ──────────────────────────────────────────────

@@ -1,19 +1,19 @@
-{-# LANGUAGE DeriveGeneric     #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Config.BuildInfo
-  ( BuildInfo (..)
-  , currentBuildInfo
-  ) where
+module Config.BuildInfo (
+  BuildInfo (..),
+  currentBuildInfo,
+) where
 
-import Data.Aeson   (ToJSON)
-import Data.Text    (Text)
+import Data.Aeson (ToJSON)
+import Data.Text (Text)
 import GHC.Generics (Generic)
 
 data BuildInfo = BuildInfo
-  { biGitSha    :: Text
+  { biGitSha :: Text
   , biBuildTime :: Text
-  , biVersion   :: Text
+  , biVersion :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -23,8 +23,9 @@ instance ToJSON BuildInfo
 -- passthruVars in the haskell.nix derivation and splice via gitrev + CPP.
 -- "dev" / "unknown" are safe compile-time defaults.
 currentBuildInfo :: BuildInfo
-currentBuildInfo = BuildInfo
-  { biGitSha    = "dev"
-  , biBuildTime = "unknown"
-  , biVersion   = "0.1.0"
-  }
+currentBuildInfo =
+  BuildInfo
+    { biGitSha = "dev"
+    , biBuildTime = "unknown"
+    , biVersion = "0.1.0"
+    }

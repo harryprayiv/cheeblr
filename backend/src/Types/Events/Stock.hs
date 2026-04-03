@@ -1,42 +1,42 @@
-{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
-module Types.Events.Stock
-  ( StockEvent (..)
-  ) where
+module Types.Events.Stock (
+  StockEvent (..),
+) where
 
-import Data.Aeson   (FromJSON, ToJSON)
-import Data.Text    (Text)
-import Data.Time    (UTCTime)
-import Data.UUID    (UUID)
+import Data.Aeson (FromJSON, ToJSON)
+import Data.Text (Text)
+import Data.Time (UTCTime)
+import Data.UUID (UUID)
 import GHC.Generics (Generic)
 
 import State.StockPullMachine (PullVertex)
-import Types.Stock            (PullMessage, PullRequest)
+import Types.Stock (PullMessage, PullRequest)
 
 data StockEvent
   = PullRequestCreated
-      { sePull      :: PullRequest
+      { sePull :: PullRequest
       , seTimestamp :: UTCTime
       }
   | PullStatusChanged
-      { sePullId    :: UUID
+      { sePullId :: UUID
       , seOldStatus :: PullVertex
       , seNewStatus :: PullVertex
-      , seActorId   :: UUID
+      , seActorId :: UUID
       , seTimestamp :: UTCTime
       }
   | PullMessageAdded
-      { sePullId    :: UUID
-      , seMessage   :: PullMessage
+      { sePullId :: UUID
+      , seMessage :: PullMessage
       , seTimestamp :: UTCTime
       }
   | PullRequestCancelled
-      { sePullId    :: UUID
-      , seReason    :: Text
+      { sePullId :: UUID
+      , seReason :: Text
       , seTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
 
-instance ToJSON   StockEvent
+instance ToJSON StockEvent
 instance FromJSON StockEvent

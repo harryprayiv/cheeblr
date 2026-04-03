@@ -3,20 +3,35 @@
 
 module Test.Types.InventorySpec (spec) where
 
-import Test.Hspec
-import Data.Aeson (encode, decode, toJSON, fromJSON, Result(..))
-import qualified Data.Vector as V
-import Data.UUID (UUID)
-import Types.Inventory
-    ( Inventory(..),
-      MenuItem(..),
-      StrainLineage(..),
-      ItemCategory(Flower, PreRolls, Vaporizers, Edibles, Drinks,
-                   Concentrates, Topicals, Tinctures, Accessories),
-      Species(Indica, IndicaDominantHybrid, Hybrid, SativaDominantHybrid,
-              Sativa),
-      MutationResponse(message, success, MutationResponse) )
+import Data.Aeson (Result (..), decode, encode, fromJSON, toJSON)
 import Data.Maybe (isJust)
+import Data.UUID (UUID)
+import qualified Data.Vector as V
+import Test.Hspec
+import Types.Inventory (
+  Inventory (..),
+  ItemCategory (
+    Accessories,
+    Concentrates,
+    Drinks,
+    Edibles,
+    Flower,
+    PreRolls,
+    Tinctures,
+    Topicals,
+    Vaporizers
+  ),
+  MenuItem (..),
+  MutationResponse (MutationResponse, message, success),
+  Species (
+    Hybrid,
+    Indica,
+    IndicaDominantHybrid,
+    Sativa,
+    SativaDominantHybrid
+  ),
+  StrainLineage (..),
+ )
 
 -- ──────────────────────────────────────────────
 -- Fixtures
@@ -26,40 +41,41 @@ testSku :: UUID
 testSku = read "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
 
 testStrainLineage :: StrainLineage
-testStrainLineage = StrainLineage
-  { thc = "25%"
-  , cbg = "0.5%"
-  , strain = "OG Kush"
-  , creator = "Unknown"
-  , species = Indica
-  , dominant_terpene = "Myrcene"
-  , terpenes = V.fromList ["Myrcene", "Limonene"]
-  , lineage = V.fromList ["Hindu Kush", "Chemdawg"]
-  , leafly_url = "https://leafly.com/strains/og-kush"
-  , img = "https://example.com/ogkush.jpg"
-  }
+testStrainLineage =
+  StrainLineage
+    { thc = "25%"
+    , cbg = "0.5%"
+    , strain = "OG Kush"
+    , creator = "Unknown"
+    , species = Indica
+    , dominant_terpene = "Myrcene"
+    , terpenes = V.fromList ["Myrcene", "Limonene"]
+    , lineage = V.fromList ["Hindu Kush", "Chemdawg"]
+    , leafly_url = "https://leafly.com/strains/og-kush"
+    , img = "https://example.com/ogkush.jpg"
+    }
 
 testMenuItem :: MenuItem
-testMenuItem = MenuItem
-  { sort = 1
-  , sku = testSku
-  , brand = "TestBrand"
-  , name = "OG Kush"
-  , price = 2999
-  , measure_unit = "g"
-  , per_package = "3.5"
-  , quantity = 10
-  , category = Flower
-  , subcategory = "Indoor"
-  , description = "Classic strain"
-  , tags = V.fromList ["indica", "classic"]
-  , effects = V.fromList ["relaxed", "sleepy"]
-  , strain_lineage = testStrainLineage
-  }
+testMenuItem =
+  MenuItem
+    { sort = 1
+    , sku = testSku
+    , brand = "TestBrand"
+    , name = "OG Kush"
+    , price = 2999
+    , measure_unit = "g"
+    , per_package = "3.5"
+    , quantity = 10
+    , category = Flower
+    , subcategory = "Indoor"
+    , description = "Classic strain"
+    , tags = V.fromList ["indica", "classic"]
+    , effects = V.fromList ["relaxed", "sleepy"]
+    , strain_lineage = testStrainLineage
+    }
 
 spec :: Spec
 spec = describe "Types.Inventory" $ do
-
   -- ──────────────────────────────────────────────
   -- Species
   -- ──────────────────────────────────────────────
@@ -117,13 +133,31 @@ spec = describe "Types.Inventory" $ do
       (Edibles < Accessories) `shouldBe` True
 
     it "roundtrips through JSON" $ do
-      let cats = [Flower, PreRolls, Vaporizers, Edibles, Drinks,
-                  Concentrates, Topicals, Tinctures, Accessories]
+      let cats =
+            [ Flower
+            , PreRolls
+            , Vaporizers
+            , Edibles
+            , Drinks
+            , Concentrates
+            , Topicals
+            , Tinctures
+            , Accessories
+            ]
       mapM_ (\c -> fromJSON (toJSON c) `shouldBe` Success c) cats
 
     it "roundtrips through Read/Show" $ do
-      let cats = [Flower, PreRolls, Vaporizers, Edibles, Drinks,
-                  Concentrates, Topicals, Tinctures, Accessories]
+      let cats =
+            [ Flower
+            , PreRolls
+            , Vaporizers
+            , Edibles
+            , Drinks
+            , Concentrates
+            , Topicals
+            , Tinctures
+            , Accessories
+            ]
       mapM_ (\c -> read (show c) `shouldBe` c) cats
 
   -- ──────────────────────────────────────────────
@@ -192,7 +226,7 @@ spec = describe "Types.Inventory" $ do
       decode (encode inv) `shouldBe` Just inv
 
     it "preserves multiple items" $ do
-      let item2 = testMenuItem { sku = read "00000000-0000-0000-0000-000000000001", name = "Blue Dream" }
+      let item2 = testMenuItem {sku = read "00000000-0000-0000-0000-000000000001", name = "Blue Dream"}
       let inv = Inventory (V.fromList [testMenuItem, item2])
       case decode (encode inv) of
         Just inv' -> V.length (items inv') `shouldBe` 2
@@ -203,21 +237,21 @@ spec = describe "Types.Inventory" $ do
   -- ──────────────────────────────────────────────
   describe "MutationResponse JSON" $ do
     it "roundtrips success response" $ do
-      let resp = MutationResponse { success = True, message = "Item added successfully" }
+      let resp = MutationResponse {success = True, message = "Item added successfully"}
       decode (encode resp) `shouldBe` Just resp
 
     it "roundtrips failure response" $ do
-      let resp = MutationResponse { success = False, message = "Item not found" }
+      let resp = MutationResponse {success = False, message = "Item not found"}
       decode (encode resp) `shouldBe` Just resp
 
     it "preserves success flag" $ do
-      let resp = MutationResponse { success = True, message = "ok" }
+      let resp = MutationResponse {success = True, message = "ok"}
       case decode (encode resp) of
-        Just MutationResponse { success = s } -> s `shouldBe` True
+        Just MutationResponse {success = s} -> s `shouldBe` True
         Nothing -> expectationFailure "Failed to decode"
 
     it "preserves message text" $ do
-      let resp = MutationResponse { success = False, message = "Item added successfully" }
+      let resp = MutationResponse {success = False, message = "Item added successfully"}
       case decode (encode resp) of
-        Just MutationResponse { message = msg } -> msg `shouldBe` "Item added successfully"
+        Just MutationResponse {message = msg} -> msg `shouldBe` "Item added successfully"
         Nothing -> expectationFailure "Failed to decode"

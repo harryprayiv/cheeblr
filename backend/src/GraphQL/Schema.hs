@@ -2,9 +2,10 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GADTs #-}
 
--- | morpheus-graphql type definitions for the inventory GraphQL layer.
--- | These mirror Types.Inventory but use plain Haskell lists (not V.Vector)
--- | and Text UUIDs — conversion happens in GraphQL.Resolvers.
+{- | morpheus-graphql type definitions for the inventory GraphQL layer.
+| These mirror Types.Inventory but use plain Haskell lists (not V.Vector)
+| and Text UUIDs — conversion happens in GraphQL.Resolvers.
+-}
 module GraphQL.Schema where
 
 import Data.Morpheus.Types (GQLType)
@@ -16,43 +17,46 @@ import GHC.Generics (Generic)
 -- ---------------------------------------------------------------------------
 
 data StrainLineageGql = StrainLineageGql
-  { thc              :: Text
-  , cbg              :: Text
-  , strain           :: Text
-  , creator          :: Text
-  , species          :: Text
+  { thc :: Text
+  , cbg :: Text
+  , strain :: Text
+  , creator :: Text
+  , species :: Text
   , dominant_terpene :: Text
-  , terpenes         :: [Text]
-  , lineage          :: [Text]
-  , leafly_url       :: Text
-  , img              :: Text
-  } deriving (Generic, Show)
+  , terpenes :: [Text]
+  , lineage :: [Text]
+  , leafly_url :: Text
+  , img :: Text
+  }
+  deriving (Generic, Show)
 
 instance GQLType StrainLineageGql
 
 data MenuItemGql = MenuItemGql
-  { sort           :: Int
-  , sku            :: Text
-  , brand          :: Text
-  , name           :: Text
-  , price          :: Int       -- cents
-  , measure_unit   :: Text
-  , per_package    :: Text
-  , quantity       :: Int
-  , category       :: Text
-  , subcategory    :: Text
-  , description    :: Text
-  , tags           :: [Text]
-  , effects        :: [Text]
+  { sort :: Int
+  , sku :: Text
+  , brand :: Text
+  , name :: Text
+  , price :: Int -- cents
+  , measure_unit :: Text
+  , per_package :: Text
+  , quantity :: Int
+  , category :: Text
+  , subcategory :: Text
+  , description :: Text
+  , tags :: [Text]
+  , effects :: [Text]
   , strain_lineage :: StrainLineageGql
-  } deriving (Generic, Show)
+  }
+  deriving (Generic, Show)
 
 instance GQLType MenuItemGql
 
 data MutationResponseGql = MutationResponseGql
   { success :: Bool
   , message :: Text
-  } deriving (Generic, Show)
+  }
+  deriving (Generic, Show)
 
 instance GQLType MutationResponseGql
 
@@ -61,36 +65,38 @@ instance GQLType MutationResponseGql
 -- ---------------------------------------------------------------------------
 
 data StrainLineageInputGql = StrainLineageInputGql
-  { thc              :: Text
-  , cbg              :: Text
-  , strain           :: Text
-  , creator          :: Text
-  , species          :: Text
+  { thc :: Text
+  , cbg :: Text
+  , strain :: Text
+  , creator :: Text
+  , species :: Text
   , dominant_terpene :: Text
-  , terpenes         :: [Text]
-  , lineage          :: [Text]
-  , leafly_url       :: Text
-  , img              :: Text
-  } deriving (Generic, Show)
+  , terpenes :: [Text]
+  , lineage :: [Text]
+  , leafly_url :: Text
+  , img :: Text
+  }
+  deriving (Generic, Show)
 
 instance GQLType StrainLineageInputGql
 
 data MenuItemInputGql = MenuItemInputGql
-  { sort           :: Int
-  , sku            :: Text
-  , brand          :: Text
-  , name           :: Text
-  , price          :: Int
-  , measure_unit   :: Text
-  , per_package    :: Text
-  , quantity       :: Int
-  , category       :: Text
-  , subcategory    :: Text
-  , description    :: Text
-  , tags           :: [Text]
-  , effects        :: [Text]
+  { sort :: Int
+  , sku :: Text
+  , brand :: Text
+  , name :: Text
+  , price :: Int
+  , measure_unit :: Text
+  , per_package :: Text
+  , quantity :: Int
+  , category :: Text
+  , subcategory :: Text
+  , description :: Text
+  , tags :: [Text]
+  , effects :: [Text]
   , strain_lineage :: StrainLineageInputGql
-  } deriving (Generic, Show)
+  }
+  deriving (Generic, Show)
 
 instance GQLType MenuItemInputGql
 
@@ -105,15 +111,17 @@ data MenuItemArgs where
 instance GQLType MenuItemArgs
 
 data CreateMenuItemArgs where
-  CreateMenuItemArgs :: {input :: MenuItemInputGql} ->
-                          CreateMenuItemArgs
+  CreateMenuItemArgs ::
+    {input :: MenuItemInputGql} ->
+    CreateMenuItemArgs
   deriving (Generic, Show)
 
 instance GQLType CreateMenuItemArgs
 
 data UpdateMenuItemArgs where
-  UpdateMenuItemArgs :: {input :: MenuItemInputGql} ->
-                          UpdateMenuItemArgs
+  UpdateMenuItemArgs ::
+    {input :: MenuItemInputGql} ->
+    UpdateMenuItemArgs
   deriving (Generic, Show)
 
 instance GQLType UpdateMenuItemArgs

@@ -2,8 +2,8 @@
 
 module Test.Types.TraceSpec (spec) where
 
-import Data.Maybe  (isJust)
-import Data.Text   (Text)
+import Data.Maybe (isJust)
+import Data.Text (Text)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -11,7 +11,6 @@ import Types.Trace
 
 spec :: Spec
 spec = describe "Types.Trace" $ do
-
   describe "newTraceId" $ do
     it "generates a TraceId" $ do
       tid <- newTraceId
