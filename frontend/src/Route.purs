@@ -31,6 +31,7 @@ data Route
   | Edit String
   | Admin
   | Manager
+  | Stock
 
 derive instance Eq Route
 derive instance Ord Route
@@ -50,6 +51,7 @@ route = root $ G.sum
   , "TransactionHistory": "transaction" / "history" / G.noArgs
   , "Admin": "admin" / G.noArgs
   , "Manager": "manager" / G.noArgs
+  , "Stock": "stock" / G.noArgs
   }
 
 nav
@@ -68,6 +70,7 @@ nav currentRoute authPoll pushAuth =
             , authPoll <#~> authButton
             , navItem Admin "/#/admin" "Admin" currentRoute
             , navItem Manager "/#/manager" "Manager" currentRoute
+            , navItem Stock "/#/stock" "Stock Room" currentRoute
             ]
         ]
     ]

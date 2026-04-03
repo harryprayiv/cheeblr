@@ -47,6 +47,7 @@ import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register)
 import Types.Transaction (Transaction)
 import Types.UUID (UUID, genUUID)
+import Pages.Stock.Interface as Pages.Stock.Interface
 
 devMode :: Boolean
 devMode = false
@@ -212,6 +213,7 @@ main = do
                     mcaps <- loadSession userId
                     liftEffect $ for_ mcaps backendCaps.push
                 ]
+              Stock -> []
               _ -> []
 
           Ref.write newAction prevAction
@@ -229,6 +231,9 @@ main = do
 
             Manager ->
               pure $ Pages.Manager.Dashboard.page authPoll userId
+
+            Stock ->
+              pure $ Pages.Stock.Interface.page authPoll userId
 
             Create -> do
               uuid <- genUUID
