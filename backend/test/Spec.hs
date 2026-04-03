@@ -6,9 +6,11 @@ import qualified Test.Types.AuthSpec
 import qualified Test.Types.TraceSpec
 import qualified Test.Types.TransactionSpec
 import qualified Test.Types.InventorySpec
+import qualified Test.Types.Public.AvailableItemSpec
 import qualified Test.Auth.SimpleSpec
 import qualified Test.API.TransactionSpec
 import qualified Test.API.OpenApiSpec
+import qualified Test.API.AdminSpec
 import qualified Test.DB.PureFunctionsSpec
 import qualified Test.GraphQL.SchemaSpec
 import qualified Test.GraphQL.ResolversSpec
@@ -23,7 +25,6 @@ import qualified Test.Props.JsonRoundtripSpec
 import qualified Test.Props.ParseShowSpec
 import qualified Test.Props.NegateSpec
 import qualified Test.Props.StateMachineSpec
-import qualified Test.Types.Public.AvailableItemSpec
 import qualified Test.Infrastructure.AvailabilityRelaySpec
 
 main :: IO ()
@@ -33,9 +34,11 @@ main = hspec $ do
     Test.Types.TraceSpec.spec
     Test.Types.TransactionSpec.spec
     Test.Types.InventorySpec.spec
+    Test.Types.Public.AvailableItemSpec.spec
     Test.Auth.SimpleSpec.spec
     Test.API.TransactionSpec.spec
     Test.API.OpenApiSpec.spec
+    Test.API.AdminSpec.spec
     Test.DB.PureFunctionsSpec.spec
     Test.GraphQL.SchemaSpec.spec
     Test.GraphQL.ResolversSpec.spec
@@ -50,5 +53,4 @@ main = hspec $ do
     Test.Props.ParseShowSpec.spec
     Test.Props.NegateSpec.spec
     Test.Props.StateMachineSpec.spec
-    Test.Types.Public.AvailableItemSpec.spec
     Test.Infrastructure.AvailabilityRelaySpec.spec

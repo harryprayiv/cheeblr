@@ -5,6 +5,7 @@ module Infrastructure.Broadcast
   , publish
   , subscribe
   , historyFrom
+  , historyDepth
   , currentSeq
   ) where
 
@@ -50,6 +51,9 @@ subscribe b = atomically $ do
 historyFrom :: Broadcaster a -> Int64 -> IO (Seq (Int64, a))
 historyFrom b cursor = atomically $
   Seq.filter (\(s, _) -> s > cursor) <$> readTVar (bHistory b)
+
+historyDepth :: Broadcaster a -> IO Int
+historyDepth b = atomically $ Seq.length <$> readTVar (bHistory b)
 
 currentSeq :: Broadcaster a -> IO Int64
 currentSeq b = readTVarIO (bNextSeq b)

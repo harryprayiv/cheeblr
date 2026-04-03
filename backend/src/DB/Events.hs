@@ -3,13 +3,17 @@
 module DB.Events
   ( createEventsTables
   , insertDomainEvent
+  , queryDomainEvents
   ) where
 
-import           Data.Aeson                   (encode)
+import           Data.Aeson                   (Value, decode)
+import qualified Data.Aeson                   as Aeson
+import           Data.Functor.Contravariant    ((>$<))
+import           Data.Int                      (Int64)
 import qualified Data.ByteString              as BS
 import qualified Data.ByteString.Lazy         as LBS
-import           Data.Functor.Contravariant    ((>$<))
 import           Data.Text                    (Text)
+import qualified Data.Text.Encoding           as TE
 import           Data.Time                    (UTCTime, getCurrentTime)
 import           Data.UUID                    (UUID)
 import           Data.UUID.V4                 (nextRandom)
@@ -28,6 +32,7 @@ import qualified Types.Inventory              as TI
 import qualified Types.Transaction            as TT
 import           Types.Location               (LocationId, locationIdToUUID)
 import           Types.Trace                  (TraceId (..))
+import           Types.Admin                  (DomainEventRow (..))
 
 createEventsTables :: DBPool -> IO ()
 createEventsTables pool = runSession pool $ do
@@ -84,8 +89,8 @@ createEventsTables pool = runSession pool $ do
 insertDomainEvent
   :: DBPool
   -> Maybe TraceId
-  -> Maybe UUID        -- actor
-  -> Maybe LocationId  -- location
+  -> Maybe UUID
+  -> Maybe LocationId
   -> D.DomainEvent
   -> IO ()
 insertDomainEvent pool mTraceId mActorId mLocationId evt = do
@@ -94,7 +99,7 @@ insertDomainEvent pool mTraceId mActorId mLocationId evt = do
   let (evtType, aggId) = eventMeta evt
       mTraceUUID       = (\(TraceId u) -> u) <$> mTraceId
       mLocUUID         = locationIdToUUID <$> mLocationId
-      payload          = LBS.toStrict (encode evt)
+      payload          = LBS.toStrict (Aeson.encode evt)
   runSession pool $
     Session.statement
       (eid, evtType, aggId, mTraceUUID, mActorId, mLocUUID, payload, now)
@@ -119,6 +124,56 @@ insertStmt = Statement.Statement sql encoder Decoders.noResult False
       <> ((\(_,_,_,_,_,_,g,_) -> g) >$< Encoders.param (Encoders.nonNullable Encoders.bytea))
       <> ((\(_,_,_,_,_,_,_,h) -> h) >$< Encoders.param (Encoders.nonNullable Encoders.timestamptz))
 
+-- Query params: (Maybe UUID aggId, Maybe Text traceId, Maybe Int64 cursor, Int64 limit)
+type QueryRow = (Maybe UUID, Maybe Text, Maybe Int64, Int64)
+
+queryDomainEvents
+  :: DBPool
+  -> Maybe UUID   -- aggregate_id filter
+  -> Maybe Text   -- trace_id filter
+  -> Maybe Int64  -- cursor (seq > cursor)
+  -> Int          -- limit
+  -> IO [DomainEventRow]
+queryDomainEvents pool mAggId mTraceId mCursor limit =
+  runSession pool $
+    Session.statement (mAggId, mTraceId, mCursor, fromIntegral limit) queryStmt
+
+queryStmt :: Statement.Statement QueryRow [DomainEventRow]
+queryStmt = Statement.Statement sql encoder decoder False
+  where
+    sql =
+      "SELECT seq, id, type, aggregate_id, trace_id, actor_id, location_id, \
+      \       payload::text, occurred_at \
+      \FROM domain_events \
+      \WHERE ($1::uuid IS NULL OR aggregate_id = $1) \
+      \  AND ($2::text IS NULL OR trace_id::text = $2) \
+      \  AND ($3::bigint IS NULL OR seq > $3) \
+      \ORDER BY seq DESC \
+      \LIMIT $4"
+    encoder
+      =  ((\(a,_,_,_) -> a) >$< Encoders.param (Encoders.nullable Encoders.uuid))
+      <> ((\(_,b,_,_) -> b) >$< Encoders.param (Encoders.nullable Encoders.text))
+      <> ((\(_,_,c,_) -> c) >$< Encoders.param (Encoders.nullable Encoders.int8))
+      <> ((\(_,_,_,d) -> d) >$< Encoders.param (Encoders.nonNullable Encoders.int8))
+    decoder = Decoders.rowList rowDecoder
+    rowDecoder =
+      DomainEventRow
+        <$> Decoders.column (Decoders.nonNullable Decoders.int8)
+        <*> Decoders.column (Decoders.nonNullable Decoders.uuid)
+        <*> Decoders.column (Decoders.nonNullable Decoders.text)
+        <*> Decoders.column (Decoders.nonNullable Decoders.uuid)
+        <*> Decoders.column (Decoders.nullable    Decoders.uuid)
+        <*> Decoders.column (Decoders.nullable    Decoders.uuid)
+        <*> Decoders.column (Decoders.nullable    Decoders.uuid)
+        <*> fmap decodePayload (Decoders.column (Decoders.nonNullable Decoders.text))
+        <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)
+
+decodePayload :: Text -> Value
+decodePayload t =
+  case decode (LBS.fromStrict (TE.encodeUtf8 t)) of
+    Just v  -> v
+    Nothing -> Aeson.Null
+
 eventMeta :: D.DomainEvent -> (Text, UUID)
 eventMeta (D.InventoryEvt   ie) = invMeta  ie
 eventMeta (D.TransactionEvt te) = txMeta   te
@@ -132,14 +187,14 @@ invMeta IE.ItemDeleted    { IE.ieSku     = u    } = ("inventory.item_deleted",  
 invMeta IE.QuantityChanged{ IE.ieItemSku = u    } = ("inventory.quantity_changed", u)
 
 txMeta :: TE.TransactionEvent -> (Text, UUID)
-txMeta TE.TransactionCreated      { TE.teTx    = tx } = ("transaction.created",          TT.transactionId tx)
-txMeta TE.TransactionItemAdded    { TE.teTxId  = u  } = ("transaction.item_added",       u)
-txMeta TE.TransactionItemRemoved  { TE.teTxId  = u  } = ("transaction.item_removed",     u)
-txMeta TE.TransactionPaymentAdded { TE.teTxId  = u  } = ("transaction.payment_added",    u)
-txMeta TE.TransactionPaymentRemoved{ TE.teTxId = u  } = ("transaction.payment_removed",  u)
-txMeta TE.TransactionFinalized    { TE.teTxId  = u  } = ("transaction.finalized",        u)
-txMeta TE.TransactionVoided       { TE.teTxId  = u  } = ("transaction.voided",           u)
-txMeta TE.TransactionRefunded     { TE.teTxId  = u  } = ("transaction.refunded",         u)
+txMeta TE.TransactionCreated       { TE.teTx    = tx } = ("transaction.created",          TT.transactionId tx)
+txMeta TE.TransactionItemAdded     { TE.teTxId  = u  } = ("transaction.item_added",       u)
+txMeta TE.TransactionItemRemoved   { TE.teTxId  = u  } = ("transaction.item_removed",     u)
+txMeta TE.TransactionPaymentAdded  { TE.teTxId  = u  } = ("transaction.payment_added",    u)
+txMeta TE.TransactionPaymentRemoved{ TE.teTxId  = u  } = ("transaction.payment_removed",  u)
+txMeta TE.TransactionFinalized     { TE.teTxId  = u  } = ("transaction.finalized",        u)
+txMeta TE.TransactionVoided        { TE.teTxId  = u  } = ("transaction.voided",           u)
+txMeta TE.TransactionRefunded      { TE.teTxId  = u  } = ("transaction.refunded",         u)
 
 regMeta :: RE.RegisterEvent -> (Text, UUID)
 regMeta RE.RegisterOpened{ RE.reRegId = u } = ("register.opened", u)

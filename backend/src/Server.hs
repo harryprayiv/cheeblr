@@ -2,30 +2,33 @@
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeOperators       #-}
 
 module Server where
 
+import API.Admin              (AdminAPI)
 import API.Inventory
-import API.OpenApi            (CheeblrAPI, cheeblrOpenApi)
-import Auth.Session           (SessionContext (..), resolveSession)
-import Control.Monad.IO.Class (liftIO)
-import Data.Morpheus           (interpreter)
-import Data.Morpheus.Types     (GQLRequest, GQLResponse)
-import Data.Text               (Text, pack)
-import qualified Data.Text    as T
-import Data.UUID               (UUID)
-import Effectful               (Eff, IOE, runEff)
-import Effectful.Error.Static  (Error, runErrorNoCallStack)
-import Servant                 hiding (throwError)
-import qualified Servant      (throwError)
+import API.OpenApi             (CheeblrAPI, cheeblrOpenApi)
+import Auth.Session            (SessionContext (..), resolveSession)
+import Control.Monad.IO.Class  (liftIO)
+import Data.Morpheus            (interpreter)
+import Data.Morpheus.Types      (GQLRequest, GQLResponse)
+import Data.Text                (Text, pack)
+import qualified Data.Text     as T
+import Data.UUID                (UUID)
+import Effectful                (Eff, IOE, runEff)
+import Effectful.Error.Static   (Error, runErrorNoCallStack)
+import Servant                  hiding (throwError)
+import qualified Servant       (throwError)
 
-import DB.Database             (DBPool)
+import DB.Database              (DBPool)
 import Effect.InventoryDb
-import GraphQL.Resolvers       (rootResolver)
+import GraphQL.Resolvers        (rootResolver)
 import Logging
-import Server.Auth             (authServerImpl)
-import Server.Env              (AppEnv (..))
-import Server.Transaction      (posServerImpl)
+import Server.Admin             (adminServerImpl)
+import Server.Auth              (authServerImpl)
+import Server.Env               (AppEnv (..))
+import Server.Transaction       (posServerImpl)
 import Types.Auth
   ( AuthenticatedUser (..)
   , UserCapabilities (..)
@@ -36,6 +39,15 @@ import Types.Auth
   , capabilitiesForRole
   )
 import Types.Inventory
+
+-- The full server type — CheeblrAPI (public/POS) plus AdminAPI
+type FullAPI = CheeblrAPI :<|> AdminAPI
+
+fullAPI :: Proxy FullAPI
+fullAPI = Proxy
+
+fullServer :: AppEnv -> Server FullAPI
+fullServer env = combinedServer env :<|> adminServerImpl env
 
 runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
 runInvEff pool action = do

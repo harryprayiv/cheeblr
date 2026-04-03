@@ -29,6 +29,7 @@ data Route
   | CreateTransaction
   | TransactionHistory
   | Edit String
+  | Admin
 
 derive instance Eq Route
 derive instance Ord Route
@@ -46,6 +47,7 @@ route = root $ G.sum
   , "Delete":             "delete"      / (string segment)
   , "CreateTransaction":  "transaction" / "create"  / G.noArgs
   , "TransactionHistory": "transaction" / "history" / G.noArgs
+  , "Admin": "admin" / G.noArgs
   }
 
 nav
@@ -62,6 +64,7 @@ nav currentRoute authPoll pushAuth =
             , navItem Create            "/#/create"             "Create Item"     currentRoute
             , navItem CreateTransaction "/#/transaction/create" "New Transaction" currentRoute
             , authPoll <#~> authButton
+            , navItem Admin "/#/admin" "Admin" currentRoute
             ]
         ]
     ]

@@ -30,7 +30,7 @@ import Katip
 import Servant
 import System.Directory          (doesFileExist)
 
-import API.OpenApi                        (cheeblrAPI)
+-- import API.OpenApi                        (cheeblrAPI)
 import Config.App                         (AppConfig (..), loadConfig)
 import Config.BuildInfo                   (currentBuildInfo)
 import DB.Auth                            (createAuthTables)
@@ -43,7 +43,7 @@ import Infrastructure.Broadcast           (newBroadcaster, Broadcaster)
 import Logging                            (initLogging, closeLogging, logAppStartup,
                                            logAppShutdown, logAppInfo, logAppWarn)
 import Logging.BroadcastScribe            (mkBroadcastScribe)
-import Server                             (combinedServer)
+import Server                             (fullAPI, fullServer)
 import Server.Env                         (AppEnv (..))
 import Server.Metrics                     (newMetrics)
 import Server.Middleware.Tracing          (tracingMiddleware)
@@ -143,7 +143,7 @@ runWithEnv env = do
       }
     coreApp =
       cors (const $ Just corsPolicy) $
-        serve cheeblrAPI (combinedServer env)
+        serve fullAPI (fullServer env)
     app =
       tracingMiddleware
       . securityHeadersMiddleware

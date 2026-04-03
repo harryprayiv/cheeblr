@@ -19,6 +19,9 @@ module DB.Auth
   , hashPassword
   , verifyPassword
   , userRowToAuthUser
+  , listActiveSessions
+  , getSessionById
+  , clearRateLimitForIp
   ) where
 
 import qualified Crypto.Hash                    as CH
@@ -375,3 +378,37 @@ recentFailedAttemptsByIp pool ip windowSecs = do
           &&. attemptedAt a >. lit cutoff
     pure a
   pure (length attemptRows)
+
+getSessionById :: DBPool -> UUID -> IO (Maybe (SessionRow Result))
+getSessionById pool sid = do
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    sess <- each sessionSchema
+    where_ $ sessId sess ==. lit sid
+    pure sess
+  case rows of
+    [s] -> pure (Just s)
+    _   -> pure Nothing
+
+listActiveSessions :: DBPool -> IO [(SessionRow Result, UserRow Result)]
+listActiveSessions pool = do
+  now <- getCurrentTime
+  runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    sess <- each sessionSchema
+    user <- each userSchema
+    where_ $ sessUserId sess ==. userId user
+          &&. Rel8.not_ (sessRevoked sess)
+          &&. sessExpiresAt sess >. lit now
+          &&. isActive user
+    pure (sess, user)
+
+clearRateLimitForIp :: DBPool -> Text -> IO ()
+clearRateLimitForIp pool ip =
+  runSession pool $ Session.statement () $ run_ $ Rel8.delete $ Delete
+    { from        = loginAttemptSchema
+    , using       = pure ()
+    , deleteWhere = \() row -> attemptIpAddress row ==. lit ip
+    , returning   = NoReturning
+    }
+
+sessUserId' :: SessionRow Result -> UUID
+sessUserId' = sessUserId

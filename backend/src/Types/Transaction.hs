@@ -16,6 +16,7 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import GHC.Generics (Generic)
 import Types.Location (LocationId)
+import Web.HttpApiData (FromHttpApiData (..), parseBoundedTextData)
 
 data TransactionStatus
   = Created
@@ -378,7 +379,13 @@ data InventoryStatus
 instance ToJSON InventoryStatus
 instance FromJSON InventoryStatus
 
--- ToSchema instances (unchanged)
+instance FromHttpApiData TransactionStatus where
+  parseUrlPiece = parseBoundedTextData
+
+deriving instance Bounded TransactionStatus
+deriving instance Enum    TransactionStatus
+
+-- ToSchema instances
 deriving instance ToSchema TransactionStatus
 deriving instance ToSchema TransactionType
 deriving instance ToSchema PaymentMethod
@@ -400,6 +407,8 @@ deriving instance ToSchema CustomerVerification
 deriving instance ToSchema ReportingStatus
 deriving instance ToSchema ComplianceRecord
 deriving instance ToSchema InventoryStatus
+
+
 
 -- Parse helpers (used by DB.Transaction row conversions)
 parseTransactionStatus :: String -> TransactionStatus

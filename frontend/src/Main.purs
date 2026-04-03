@@ -45,6 +45,7 @@ import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register)
 import Types.Transaction (Transaction)
 import Types.UUID (UUID, genUUID)
+import Pages.Admin.Dashboard as Pages.Admin.Dashboard
 
 devMode :: Boolean
 devMode = false
@@ -200,6 +201,11 @@ main = do
                 [ run (loadDeleteItem userId uuid) deleteItem ]
               CreateTransaction ->
                 [ run (loadTxPageData userId) txPage ]
+              Admin ->
+                [ do
+                    mcaps <- loadSession userId
+                    liftEffect $ for_ mcaps backendCaps.push
+                ]
               _ -> []
 
           Ref.write newAction prevAction
@@ -211,6 +217,9 @@ main = do
             LiveView ->
               pure $ Pages.LiveView.page authPoll
                 (pure Pages.LiveView.InventoryLoading <|> inventory.poll)
+
+            Admin ->
+              pure $ Pages.Admin.Dashboard.page authPoll userId
 
             Create -> do
               uuid <- genUUID

@@ -58,6 +58,8 @@ common shared-properties
                 , base64-bytestring
                 , stm
                 , vault
+                , tagged
+                , http-api-data
 library
     import: shared-properties
     exposed-modules: App
@@ -77,6 +79,7 @@ library
                    , API.Auth
                    , API.Inventory
                    , API.Transaction
+                   , API.Admin
                    , API.OpenApi
                    , GraphQL.Resolvers
                    , GraphQL.Schema
@@ -93,6 +96,7 @@ library
                    , Config.BuildInfo
                    , Config.Env
                    , Infrastructure.Broadcast
+                   , Infrastructure.SSE
                    , Server.Env
                    , Server.Metrics
                    , Types.Events.Availability
@@ -107,8 +111,10 @@ library
                    , DB.Events
                    , Logging.BroadcastScribe
                    , Server.Middleware.Tracing
+                   , Server.Admin
                    , Types.Trace
                    , Types.Location
+                   , Types.Admin
                    , Types.Public.AvailableItem
                    , Infrastructure.AvailabilityState
                    , Infrastructure.AvailabilityRelay
@@ -148,6 +154,7 @@ test-suite cheeblr-unit-tests
         Test.Auth.SimpleSpec
         Test.API.TransactionSpec
         Test.API.OpenApiSpec
+        Test.API.AdminSpec
         Test.DB.PureFunctionsSpec
         Test.GraphQL.SchemaSpec
         Test.GraphQL.ResolversSpec
