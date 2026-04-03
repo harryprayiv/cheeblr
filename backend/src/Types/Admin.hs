@@ -13,6 +13,11 @@ module Types.Admin
   , TransactionPage (..)
   , DomainEventPage (..)
   , DomainEventRow (..)
+  , ActivitySummary (..)
+  , ManagerAlert (..)
+  , OverrideRequest (..)
+  , TransactionSummary (..)
+  , LocationDayStats (..)
   ) where
 
 import Data.Aeson   (FromJSON, ToJSON, Value)
@@ -26,7 +31,7 @@ import Config.App        (Environment)
 import Config.BuildInfo  (BuildInfo)
 import Types.Auth        (UserRole)
 import Types.Events.Log  (LogEvent)
-import Types.Transaction (Transaction)
+import Types.Transaction (Transaction, TransactionStatus)
 import API.Transaction   (Register)
 
 data AdminSnapshot = AdminSnapshot
@@ -152,3 +157,54 @@ data AdminAction
 
 instance FromJSON AdminAction
 instance ToJSON   AdminAction
+
+data ActivitySummary = ActivitySummary
+  { asSummaryTime      :: UTCTime
+  , asOpenRegisters    :: [Register]
+  , asLiveTransactions :: [TransactionSummary]
+  , asTodayStats       :: LocationDayStats
+  , asAlerts           :: [ManagerAlert]
+  } deriving (Show, Generic)
+
+instance ToJSON ActivitySummary
+
+data TransactionSummary = TransactionSummary
+  { tsId          :: UUID
+  , tsStatus      :: TransactionStatus
+  , tsCreated     :: UTCTime
+  , tsElapsedSecs :: Int
+  , tsItemCount   :: Int
+  , tsTotal       :: Int
+  , tsIsStale     :: Bool
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON   TransactionSummary
+instance FromJSON TransactionSummary
+
+data LocationDayStats = LocationDayStats
+  { ldsTxCount     :: Int
+  , ldsRevenue     :: Int
+  , ldsVoidCount   :: Int
+  , ldsRefundCount :: Int
+  , ldsAvgTxValue  :: Int
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON   LocationDayStats
+instance FromJSON LocationDayStats
+
+data ManagerAlert
+  = LowInventoryAlert     UUID Text Int Int
+  | StaleTransactionAlert UUID Int
+  | RegisterVarianceAlert UUID Int
+  deriving (Show, Eq, Generic)
+
+instance ToJSON   ManagerAlert
+instance FromJSON ManagerAlert
+
+data OverrideRequest = OverrideRequest
+  { orActorId :: UUID
+  , orReason  :: Text
+  } deriving (Show, Eq, Generic)
+
+instance ToJSON   OverrideRequest
+instance FromJSON OverrideRequest

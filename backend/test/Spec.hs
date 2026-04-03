@@ -26,6 +26,8 @@ import qualified Test.Props.ParseShowSpec
 import qualified Test.Props.NegateSpec
 import qualified Test.Props.StateMachineSpec
 import qualified Test.Infrastructure.AvailabilityRelaySpec
+import qualified Test.Manager.TypesSpec
+import qualified Test.Manager.LogicSpec
 
 main :: IO ()
 main = hspec $ do
@@ -54,3 +56,5 @@ main = hspec $ do
     Test.Props.NegateSpec.spec
     Test.Props.StateMachineSpec.spec
     Test.Infrastructure.AvailabilityRelaySpec.spec
+    Test.Manager.TypesSpec.spec
+    Test.Manager.LogicSpec.spec

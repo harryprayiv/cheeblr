@@ -3,6 +3,7 @@
 module Infrastructure.SSE
   ( sseStream
   , sendEvent
+  , filteredSseStream
   ) where
 
 import           Control.Concurrent.STM    (atomically, readTChan)
@@ -20,6 +21,7 @@ import           Network.Wai               (Application, StreamingBody,
 
 import Infrastructure.Broadcast (Broadcaster, Subscription (..), currentSeq,
                                   historyFrom, subscribe)
+import Control.Monad (when)
 
 sseStream :: forall a. ToJSON a => Broadcaster a -> Maybe Int64 -> Application
 sseStream broadcaster mCursor _req respond = do
@@ -53,3 +55,33 @@ sendEvent write seq' evt = do
   write $  Builder.byteString (B8.pack "data: ")
         <> Builder.lazyByteString (encode evt)
         <> Builder.byteString (B8.pack "\n\n")
+
+filteredSseStream
+  :: forall a. ToJSON a
+  => (a -> Bool)
+  -> Broadcaster a
+  -> Maybe Int64
+  -> Application
+filteredSseStream predicate broadcaster mCursor _req respond = do
+  history <- case mCursor of
+    Nothing -> pure Seq.empty
+    Just c  -> historyFrom broadcaster c
+  sub <- subscribe broadcaster
+  respond $ responseStream status200 sseHeaders (filteredBody history sub)
+  where
+    sseHeaders =
+      [ (CI.mk (B8.pack "Content-Type"),  B8.pack "text/event-stream")
+      , (CI.mk (B8.pack "Cache-Control"), B8.pack "no-cache")
+      , (CI.mk (B8.pack "Connection"),    B8.pack "keep-alive")
+      ]
+
+    filteredBody :: Seq (Int64, a) -> Subscription a -> StreamingBody
+    filteredBody history sub write _flush = do
+      mapM_ (uncurry (sendEvent write)) $
+        filter (predicate . snd) (toList history)
+      let loop = do
+            evt  <- atomically $ readTChan (subChan sub)
+            seq' <- currentSeq broadcaster
+            when (predicate evt) $ sendEvent write seq' evt
+            loop
+      loop

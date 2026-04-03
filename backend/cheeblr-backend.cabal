@@ -118,6 +118,8 @@ library
                    , Types.Public.AvailableItem
                    , Infrastructure.AvailabilityState
                    , Infrastructure.AvailabilityRelay
+                   , API.Manager
+                   , Server.Manager
     build-depends: filepath
                  , directory
     hs-source-dirs: src
@@ -173,6 +175,8 @@ test-suite cheeblr-unit-tests
         Test.Types.TraceSpec
         Test.Types.Public.AvailableItemSpec
         Test.Infrastructure.AvailabilityRelaySpec
+        Test.Manager.TypesSpec
+        Test.Manager.LogicSpec
     build-depends:
         cheeblr-backend
         , hspec

@@ -39,15 +39,16 @@ import Types.Auth
   , capabilitiesForRole
   )
 import Types.Inventory
+import API.Manager  (ManagerAPI)
+import Server.Manager (managerServerImpl)
 
--- The full server type — CheeblrAPI (public/POS) plus AdminAPI
-type FullAPI = CheeblrAPI :<|> AdminAPI
+type FullAPI = CheeblrAPI :<|> AdminAPI :<|> ManagerAPI
 
 fullAPI :: Proxy FullAPI
 fullAPI = Proxy
 
 fullServer :: AppEnv -> Server FullAPI
-fullServer env = combinedServer env :<|> adminServerImpl env
+fullServer env = combinedServer env :<|> adminServerImpl env :<|> managerServerImpl env
 
 runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
 runInvEff pool action = do

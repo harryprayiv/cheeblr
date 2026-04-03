@@ -8,6 +8,7 @@ import Data.UUID   (UUID)
 import Test.Hspec
 
 import Types.Admin
+import Data.Int (Int64)
 
 testUUID :: UUID
 testUUID = read "11111111-1111-1111-1111-111111111111"
@@ -38,7 +39,7 @@ spec = describe "API.Admin types" $ do
   describe "DomainEventRow JSON" $ do
     it "roundtrips" $ do
       let row = DomainEventRow
-            { derSeq         = 42
+            { derSeq         = 42 :: Int64
             , derId          = testUUID
             , derType        = "transaction.created"
             , derAggregateId = testUUID

@@ -4,7 +4,6 @@ import Prelude
 
 import API.Auth (validateSession)
 import API.Inventory (fetchInventory, fetchSession, readInventory)
-import GraphQL.API.Inventory (readInventoryGql)
 import Config.Auth (defaultDevUser, findDevUserByRole)
 import Config.Entity (dummyEmployeeId, dummyLocationId)
 import Config.LiveView (defaultViewConfig)
@@ -27,6 +26,9 @@ import Effect.Class.Console as Console
 import Effect.Exception (error)
 import Effect.Ref as Ref
 import FRP.Poll as Poll
+import GraphQL.API.Inventory (readInventoryGql)
+import Pages.Admin.Dashboard as Pages.Admin.Dashboard
+import Pages.Admin.Dashboard as Pages.Manager.Dashboard
 import Pages.CreateItem as Pages.CreateItem
 import Pages.CreateTransaction as Pages.CreateTransaction
 import Pages.DeleteItem as Pages.DeleteItem
@@ -45,7 +47,6 @@ import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register)
 import Types.Transaction (Transaction)
 import Types.UUID (UUID, genUUID)
-import Pages.Admin.Dashboard as Pages.Admin.Dashboard
 
 devMode :: Boolean
 devMode = false
@@ -206,6 +207,11 @@ main = do
                     mcaps <- loadSession userId
                     liftEffect $ for_ mcaps backendCaps.push
                 ]
+              Manager ->
+                [ do
+                    mcaps <- loadSession userId
+                    liftEffect $ for_ mcaps backendCaps.push
+                ]
               _ -> []
 
           Ref.write newAction prevAction
@@ -220,6 +226,9 @@ main = do
 
             Admin ->
               pure $ Pages.Admin.Dashboard.page authPoll userId
+
+            Manager ->
+              pure $ Pages.Manager.Dashboard.page authPoll userId
 
             Create -> do
               uuid <- genUUID
