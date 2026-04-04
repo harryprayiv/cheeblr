@@ -47,7 +47,7 @@ import Types.Public.FeedFrame (FeedStatus (..), mkFeedFrame)
 
 feedServerImpl :: AppEnv -> Server FeedAPI
 feedServerImpl env =
-  ( feedSubscribeApp env :<|> feedStatusHandler env )
+  (feedSubscribeApp env :<|> feedStatusHandler env)
     :<|> lexiconsApp
     :<|> feedSnapshotHandler env
 
@@ -56,8 +56,9 @@ feedServerImpl env =
 -- ---------------------------------------------------------------------------
 
 feedSubscribeApp :: AppEnv -> Maybe Int64 -> Tagged Handler Application
-feedSubscribeApp env cursor = Tagged $
-  websocketsOr WS.defaultConnectionOptions (wsHandler env cursor) fallback
+feedSubscribeApp env cursor =
+  Tagged $
+    websocketsOr WS.defaultConnectionOptions (wsHandler env cursor) fallback
   where
     fallback :: Application
     fallback _req resp =
@@ -67,8 +68,9 @@ wsHandler :: AppEnv -> Maybe Int64 -> WS.ServerApp
 wsHandler env cursor pending = do
   conn <- WS.acceptRequest pending
 
-  let sendFrame :: Int64 -> AvailabilityUpdate -> IO ()
-      sendFrame s u = WS.sendTextData conn (Aeson.encode (mkFeedFrame s u))
+  let
+    sendFrame :: Int64 -> AvailabilityUpdate -> IO ()
+    sendFrame s u = WS.sendTextData conn (Aeson.encode (mkFeedFrame s u))
 
   case cursor of
     -- Reconnect: replay broadcaster history since the given sequence number.
@@ -81,8 +83,8 @@ wsHandler env cursor pending = do
     -- change to trigger a broadcaster event. Without this, the page is
     -- empty until something in the inventory changes.
     Nothing -> do
-      st   <- readTVarIO (envAvailabilityState env)
-      now  <- getCurrentTime
+      st <- readTVarIO (envAvailabilityState env)
+      now <- getCurrentTime
       seq' <- currentSeq (envAvailabilityBroadcaster env)
       let upds = map (`AvailabilityUpdate` now) (allAvailableItems st now)
       mapM_ (sendFrame seq') upds
@@ -91,7 +93,7 @@ wsHandler env cursor pending = do
   sub <- subscribe (envAvailabilityBroadcaster env)
   WS.withPingThread conn 30 (pure ()) $
     let loop = do
-          upd  <- atomically (readTChan (subChan sub))
+          upd <- atomically (readTChan (subChan sub))
           seq' <- currentSeq (envAvailabilityBroadcaster env)
           sendFrame seq' upd
           loop
@@ -103,22 +105,22 @@ wsHandler env cursor pending = do
 
 feedStatusHandler :: AppEnv -> Handler FeedStatus
 feedStatusHandler env = liftIO $ do
-  st   <- readTVarIO (envAvailabilityState env)
+  st <- readTVarIO (envAvailabilityState env)
   seq' <- currentSeq (envAvailabilityBroadcaster env)
-  now  <- getCurrentTime
+  now <- getCurrentTime
   hist <- readTVarIO (bHistory (envAvailabilityBroadcaster env))
   let
-    items        = allAvailableItems st now
+    items = allAvailableItems st now
     inStockCount = length (filter aiInStock items)
-    oldSeq       = fst <$> listToMaybe (toList hist)
+    oldSeq = fst <$> listToMaybe (toList hist)
   pure
     FeedStatus
-      { fsLocationId   = asPublicLocId st
+      { fsLocationId = asPublicLocId st
       , fsLocationName = asLocName st
-      , fsCurrentSeq   = seq'
-      , fsItemCount    = length items
+      , fsCurrentSeq = seq'
+      , fsItemCount = length items
       , fsInStockCount = inStockCount
-      , fsOldestSeq    = oldSeq
+      , fsOldestSeq = oldSeq
       }
 
 -- ---------------------------------------------------------------------------
@@ -127,7 +129,7 @@ feedStatusHandler env = liftIO $ do
 
 feedSnapshotHandler :: AppEnv -> Handler [AvailableItem]
 feedSnapshotHandler env = liftIO $ do
-  st  <- readTVarIO (envAvailabilityState env)
+  st <- readTVarIO (envAvailabilityState env)
   now <- getCurrentTime
   pure (allAvailableItems st now)
 

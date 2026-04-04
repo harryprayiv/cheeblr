@@ -77,40 +77,40 @@ type PullTopology =
      ]
 
 data PullState (v :: PullVertex) where
-  PendingState   :: PullState 'PullPending
-  AcceptedState  :: PullState 'PullAccepted
-  PullingState   :: PullState 'PullPulling
+  PendingState :: PullState 'PullPending
+  AcceptedState :: PullState 'PullAccepted
+  PullingState :: PullState 'PullPulling
   FulfilledState :: PullState 'PullFulfilled
   CancelledState :: PullState 'PullCancelled
-  IssueState     :: PullState 'PullIssue
+  IssueState :: PullState 'PullIssue
 
 data SomePullState = forall v. SomePullState (SPullVertex v) (PullState v)
 
 fromVertex :: PullVertex -> SomePullState
-fromVertex PullPending   = SomePullState SPullPending   PendingState
-fromVertex PullAccepted  = SomePullState SPullAccepted  AcceptedState
-fromVertex PullPulling   = SomePullState SPullPulling   PullingState
+fromVertex PullPending = SomePullState SPullPending PendingState
+fromVertex PullAccepted = SomePullState SPullAccepted AcceptedState
+fromVertex PullPulling = SomePullState SPullPulling PullingState
 fromVertex PullFulfilled = SomePullState SPullFulfilled FulfilledState
 fromVertex PullCancelled = SomePullState SPullCancelled CancelledState
-fromVertex PullIssue     = SomePullState SPullIssue     IssueState
+fromVertex PullIssue = SomePullState SPullIssue IssueState
 
 toPullVertex :: SomePullState -> PullVertex
 toPullVertex (SomePullState sv _) = case sv of
-  SPullPending   -> PullPending
-  SPullAccepted  -> PullAccepted
-  SPullPulling   -> PullPulling
+  SPullPending -> PullPending
+  SPullAccepted -> PullAccepted
+  SPullPulling -> PullPulling
   SPullFulfilled -> PullFulfilled
   SPullCancelled -> PullCancelled
-  SPullIssue     -> PullIssue
+  SPullIssue -> PullIssue
 
 toSomePullState :: PullState v -> SomePullState
 toSomePullState = \case
-  PendingState   -> SomePullState SPullPending   PendingState
-  AcceptedState  -> SomePullState SPullAccepted  AcceptedState
-  PullingState   -> SomePullState SPullPulling   PullingState
+  PendingState -> SomePullState SPullPending PendingState
+  AcceptedState -> SomePullState SPullAccepted AcceptedState
+  PullingState -> SomePullState SPullPulling PullingState
   FulfilledState -> SomePullState SPullFulfilled FulfilledState
   CancelledState -> SomePullState SPullCancelled CancelledState
-  IssueState     -> SomePullState SPullIssue     IssueState
+  IssueState -> SomePullState SPullIssue IssueState
 
 data PullCommand
   = AcceptCmd UUID
@@ -122,13 +122,13 @@ data PullCommand
   deriving (Show, Eq, Generic)
 
 data PullEvent
-  = PullWasAccepted   UUID
+  = PullWasAccepted UUID
   | PullingWasStarted UUID
-  | PullWasFulfilled  UUID
-  | IssueWasReported  Text UUID
-  | PullWasRetried    UUID
-  | PullWasCancelled  Text UUID
-  | InvalidPullCmd    Text
+  | PullWasFulfilled UUID
+  | IssueWasReported Text UUID
+  | PullWasRetried UUID
+  | PullWasCancelled Text UUID
+  | InvalidPullCmd Text
   deriving (Show, Eq, Generic)
 
 pullAction :: PullState v -> PullCommand -> ActionResult Identity PullTopology PullState v PullEvent

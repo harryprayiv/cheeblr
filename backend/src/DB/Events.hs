@@ -107,11 +107,11 @@ insertDomainEvent pool mTraceId mActorId mLocationId evt = do
   now <- getCurrentTime
   let
     (evtType, aggId) = eventMeta evt
-    mTraceUUID       = (\(TraceId u) -> u) <$> mTraceId
-    mLocUUID         = locationIdToUUID <$> mLocationId
+    mTraceUUID = (\(TraceId u) -> u) <$> mTraceId
+    mLocUUID = locationIdToUUID <$> mLocationId
     -- Encode as UTF-8 text; the SQL casts it directly to jsonb.
     -- Using bytea here causes double-encoding and breaks the jsonb cast.
-    payload          = TE.decodeUtf8 $ LBS.toStrict (Aeson.encode evt)
+    payload = TE.decodeUtf8 $ LBS.toStrict (Aeson.encode evt)
   runSession pool $
     Session.statement
       (eid, evtType, aggId, mTraceUUID, mActorId, mLocUUID, payload, now)
@@ -186,31 +186,31 @@ queryStmt = Statement.Statement sql encoder decoder False
 decodePayload :: Text -> Value
 decodePayload t =
   case decode (LBS.fromStrict (TE.encodeUtf8 t)) of
-    Just v  -> v
+    Just v -> v
     Nothing -> Aeson.Null
 
 eventMeta :: D.DomainEvent -> (Text, UUID)
-eventMeta (D.InventoryEvt ie)  = invMeta ie
+eventMeta (D.InventoryEvt ie) = invMeta ie
 eventMeta (D.TransactionEvt te) = txMeta te
-eventMeta (D.RegisterEvt re)   = regMeta re
-eventMeta (D.SessionEvt se)    = sessMeta se
-eventMeta (D.StockEvt se)      = stockMeta se
+eventMeta (D.RegisterEvt re) = regMeta re
+eventMeta (D.SessionEvt se) = sessMeta se
+eventMeta (D.StockEvt se) = stockMeta se
 
 invMeta :: IE.InventoryEvent -> (Text, UUID)
-invMeta IE.ItemCreated {IE.ieItem = item}    = ("inventory.item_created", TI.sku item)
+invMeta IE.ItemCreated {IE.ieItem = item} = ("inventory.item_created", TI.sku item)
 invMeta IE.ItemUpdated {IE.ieNewItem = item} = ("inventory.item_updated", TI.sku item)
-invMeta IE.ItemDeleted {IE.ieSku = u}        = ("inventory.item_deleted", u)
+invMeta IE.ItemDeleted {IE.ieSku = u} = ("inventory.item_deleted", u)
 invMeta IE.QuantityChanged {IE.ieItemSku = u} = ("inventory.quantity_changed", u)
 
 txMeta :: TE.TransactionEvent -> (Text, UUID)
-txMeta TE.TransactionCreated {TE.teTx = tx}          = ("transaction.created", TT.transactionId tx)
-txMeta TE.TransactionItemAdded {TE.teTxId = u}        = ("transaction.item_added", u)
-txMeta TE.TransactionItemRemoved {TE.teTxId = u}      = ("transaction.item_removed", u)
-txMeta TE.TransactionPaymentAdded {TE.teTxId = u}     = ("transaction.payment_added", u)
-txMeta TE.TransactionPaymentRemoved {TE.teTxId = u}   = ("transaction.payment_removed", u)
-txMeta TE.TransactionFinalized {TE.teTxId = u}        = ("transaction.finalized", u)
-txMeta TE.TransactionVoided {TE.teTxId = u}           = ("transaction.voided", u)
-txMeta TE.TransactionRefunded {TE.teTxId = u}         = ("transaction.refunded", u)
+txMeta TE.TransactionCreated {TE.teTx = tx} = ("transaction.created", TT.transactionId tx)
+txMeta TE.TransactionItemAdded {TE.teTxId = u} = ("transaction.item_added", u)
+txMeta TE.TransactionItemRemoved {TE.teTxId = u} = ("transaction.item_removed", u)
+txMeta TE.TransactionPaymentAdded {TE.teTxId = u} = ("transaction.payment_added", u)
+txMeta TE.TransactionPaymentRemoved {TE.teTxId = u} = ("transaction.payment_removed", u)
+txMeta TE.TransactionFinalized {TE.teTxId = u} = ("transaction.finalized", u)
+txMeta TE.TransactionVoided {TE.teTxId = u} = ("transaction.voided", u)
+txMeta TE.TransactionRefunded {TE.teTxId = u} = ("transaction.refunded", u)
 
 regMeta :: RE.RegisterEvent -> (Text, UUID)
 regMeta RE.RegisterOpened {RE.reRegId = u} = ("register.opened", u)
@@ -222,7 +222,7 @@ sessMeta SE.SessionExpired {SE.sesUserId = u} = ("session.expired", u)
 sessMeta SE.SessionRevoked {SE.sesUserId = u} = ("session.revoked", u)
 
 stockMeta :: StE.StockEvent -> (Text, UUID)
-stockMeta StE.PullRequestCreated {StE.sePull = pr}  = ("stock.pull_created", Types.Stock.prId pr)
-stockMeta StE.PullStatusChanged {StE.sePullId = u}  = ("stock.status_changed", u)
-stockMeta StE.PullMessageAdded {StE.sePullId = u}   = ("stock.message_added", u)
+stockMeta StE.PullRequestCreated {StE.sePull = pr} = ("stock.pull_created", Types.Stock.prId pr)
+stockMeta StE.PullStatusChanged {StE.sePullId = u} = ("stock.status_changed", u)
+stockMeta StE.PullMessageAdded {StE.sePullId = u} = ("stock.message_added", u)
 stockMeta StE.PullRequestCancelled {StE.sePullId = u} = ("stock.pull_cancelled", u)

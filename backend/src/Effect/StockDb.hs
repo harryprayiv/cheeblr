@@ -39,15 +39,15 @@ import Types.Location (LocationId)
 import Types.Stock
 
 data StockDb :: Effect where
-  CreatePullRequest         :: PullRequest -> StockDb m (Either Text ())
-  GetPullRequest            :: UUID -> StockDb m (Maybe PullRequest)
-  UpdatePullStatus          :: UUID -> PullVertex -> Maybe Text -> StockDb m (Either Text ())
-  GetPendingPulls           :: LocationId -> StockDb m [PullRequest]
-  GetPullsByTransaction     :: UUID -> StockDb m [PullRequest]
-  AddPullMessage            :: UUID -> PullMessage -> StockDb m (Either Text ())
-  GetPullMessages           :: UUID -> StockDb m [PullMessage]
+  CreatePullRequest :: PullRequest -> StockDb m (Either Text ())
+  GetPullRequest :: UUID -> StockDb m (Maybe PullRequest)
+  UpdatePullStatus :: UUID -> PullVertex -> Maybe Text -> StockDb m (Either Text ())
+  GetPendingPulls :: LocationId -> StockDb m [PullRequest]
+  GetPullsByTransaction :: UUID -> StockDb m [PullRequest]
+  AddPullMessage :: UUID -> PullMessage -> StockDb m (Either Text ())
+  GetPullMessages :: UUID -> StockDb m [PullMessage]
   CancelPullsForTransaction :: UUID -> Text -> StockDb m ()
-  CancelPullsForItem        :: UUID -> UUID -> Text -> StockDb m ()
+  CancelPullsForItem :: UUID -> UUID -> Text -> StockDb m ()
 
 type instance DispatchOf StockDb = Dynamic
 

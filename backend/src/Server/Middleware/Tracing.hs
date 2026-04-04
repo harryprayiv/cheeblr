@@ -6,14 +6,12 @@ module Server.Middleware.Tracing (
   traceIdKey,
 ) where
 
-import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as TE
 import qualified Data.Vault.Lazy as Vault
 import Network.Wai (
   Middleware,
   Request,
   mapResponseHeaders,
-  modifyRequest,
   requestHeaders,
   vault,
  )
@@ -28,15 +26,13 @@ traceIdKey = unsafePerformIO Vault.newKey
 tracingMiddleware :: Middleware
 tracingMiddleware app req respond = do
   traceId <- case lookup "X-Trace-Id" (requestHeaders req) of
-    Just raw -> case parseTraceId (TE.decodeUtf8 raw) of
-      Just tid -> pure tid
-      Nothing -> newTraceId
+    Just raw -> maybe newTraceId pure (parseTraceId (TE.decodeUtf8 raw))
     Nothing -> newTraceId
   let req' = req {vault = Vault.insert traceIdKey traceId (vault req)}
   app req' $ \response ->
     respond $
       mapResponseHeaders
-        ((("X-Trace-Id", TE.encodeUtf8 (traceIdToText traceId)) :))
+        (("X-Trace-Id", TE.encodeUtf8 (traceIdToText traceId)) :)
         response
 
 getTraceId :: Request -> Maybe TraceId

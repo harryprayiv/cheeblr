@@ -24,9 +24,9 @@ import qualified Data.UUID as UUID
 import qualified Data.Vector as V
 import GHC.Generics (Generic)
 
+import Data.Aeson.Types (parseJSON)
 import Types.Inventory (MenuItem)
 import qualified Types.Inventory as TI
-import Data.Aeson.Types (parseJSON)
 
 newtype PublicSku = PublicSku Text
   deriving (Show, Eq, Ord, Generic)

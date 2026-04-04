@@ -28,9 +28,10 @@ import Types.Public.AvailableItem (AvailableItem, PublicLocationId)
 -- prohibits using locally-defined values in top-level splices). The lambda is
 -- inlined directly. Both use the identical transformation.
 
--- | A single frame sent over the WebSocket feed.
--- JSON fields: seq, type, payload, timestamp.
--- Maps to the app.cheeblr.feed.subscribe#frame lexicon definition.
+{- | A single frame sent over the WebSocket feed.
+JSON fields: seq, type, payload, timestamp.
+Maps to the app.cheeblr.feed.subscribe#frame lexicon definition.
+-}
 data FeedFrame = FeedFrame
   { ffSeq :: Int64
   , ffType :: Text -- always "app.cheeblr.inventory.availableItem"
@@ -39,18 +40,20 @@ data FeedFrame = FeedFrame
   }
   deriving (Show, Eq, Generic)
 
-$(deriveToJSON
-    ( defaultOptions
-        { fieldLabelModifier = \label -> case drop 2 label of
-            [] -> label
-            (c : cs) -> toLower c : cs
-        }
-    )
-    ''FeedFrame)
+$( deriveToJSON
+     ( defaultOptions
+         { fieldLabelModifier = \label -> case drop 2 label of
+             [] -> label
+             (c : cs) -> toLower c : cs
+         }
+     )
+     ''FeedFrame
+ )
 
--- | Response from GET /xrpc/app.cheeblr.feed.status.
--- JSON fields: locationId, locationName, currentSeq, itemCount,
---              inStockCount, oldestSeq.
+{- | Response from GET /xrpc/app.cheeblr.feed.status.
+JSON fields: locationId, locationName, currentSeq, itemCount,
+             inStockCount, oldestSeq.
+-}
 data FeedStatus = FeedStatus
   { fsLocationId :: PublicLocationId
   , fsLocationName :: Text
@@ -61,14 +64,15 @@ data FeedStatus = FeedStatus
   }
   deriving (Show, Eq, Generic)
 
-$(deriveToJSON
-    ( defaultOptions
-        { fieldLabelModifier = \label -> case drop 2 label of
-            [] -> label
-            (c : cs) -> toLower c : cs
-        }
-    )
-    ''FeedStatus)
+$( deriveToJSON
+     ( defaultOptions
+         { fieldLabelModifier = \label -> case drop 2 label of
+             [] -> label
+             (c : cs) -> toLower c : cs
+         }
+     )
+     ''FeedStatus
+ )
 
 mkFeedFrame :: Int64 -> AvailabilityUpdate -> FeedFrame
 mkFeedFrame seq' upd =

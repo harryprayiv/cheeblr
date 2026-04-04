@@ -51,7 +51,7 @@ requireStock ctx =
 
 isStockEvent :: DomainEvent -> Bool
 isStockEvent (StockEvt _) = True
-isStockEvent _            = False
+isStockEvent _ = False
 
 runStockEff ::
   AppEnv ->
@@ -70,21 +70,22 @@ runStockEff env action = do
       . runEff
       . runErrorNoCallStack @ServerError
       . runEventEmitterProd
-          (envDbPool env)
-          (envDomainBroadcaster env)
-          Nothing
-          Nothing
-          Nothing
+        (envDbPool env)
+        (envDomainBroadcaster env)
+        Nothing
+        Nothing
+        Nothing
       . runClockIO
       . runStockDbIO (envDbPool env)
       $ action
   either Servant.throwError pure result
 
--- | Return pending pull requests for a location.
--- Resolution order for locationId:
---   1. Explicit query param (useful for admin/manager overrides)
---   2. The authenticated user's own location (normal stock room flow)
---   3. 400 if neither is available
+{- | Return pending pull requests for a location.
+Resolution order for locationId:
+  1. Explicit query param (useful for admin/manager overrides)
+  2. The authenticated user's own location (normal stock room flow)
+  3. 400 if neither is available
+-}
 queueHandler :: AppEnv -> Maybe Text -> Maybe LocationId -> Handler [PullRequest]
 queueHandler env mHeader mLocId = do
   ctx <- authCtx env mHeader
@@ -170,17 +171,17 @@ messageHandler env pullId mHeader msg = do
   requireStock ctx
   let
     senderId = auUserId (scUser ctx)
-    role     = pack $ show (auRole (scUser ctx))
+    role = pack $ show (auRole (scUser ctx))
   msgId <- liftIO nextRandom
-  now   <- liftIO getCurrentTime
+  now <- liftIO getCurrentTime
   let pm =
         PullMessage
-          { pmId            = msgId
+          { pmId = msgId
           , pmPullRequestId = pullId
-          , pmFromRole      = role
-          , pmSenderId      = senderId
-          , pmMessage       = nmMessage msg
-          , pmCreatedAt     = now
+          , pmFromRole = role
+          , pmSenderId = senderId
+          , pmMessage = nmMessage msg
+          , pmCreatedAt = now
           }
   liftIO $ DBS.insertPullMessage (envDbPool env) pullId pm
   pure $ MutationResponse True "Message added"

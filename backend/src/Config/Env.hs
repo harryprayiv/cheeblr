@@ -15,6 +15,7 @@ module Config.Env (
 ) where
 
 import Control.Exception (throwIO)
+import qualified Data.Maybe
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
@@ -26,9 +27,7 @@ import Text.Read (readMaybe)
 envInt :: String -> Int -> IO Int
 envInt name def = do
   mv <- lookupEnv name
-  pure $ case mv >>= readMaybe of
-    Just v -> v
-    Nothing -> def
+  pure $ Data.Maybe.fromMaybe def (mv >>= readMaybe)
 
 envText :: String -> Text -> IO Text
 envText name def = do
@@ -41,7 +40,7 @@ envSecs name defSecs = fromIntegral <$> envInt name defSecs
 envPath :: String -> FilePath -> IO FilePath
 envPath name def = do
   mv <- lookupEnv name
-  pure $ maybe def id mv
+  pure $ Data.Maybe.fromMaybe def mv
 
 envList :: String -> [Text] -> IO [Text]
 envList name def = do
@@ -52,12 +51,10 @@ envList name def = do
       filter (not . T.null) $
         map T.strip (T.splitOn "," (T.pack v))
 
-envEnum :: forall a. (Show a, Read a) => String -> a -> IO a
+envEnum :: forall a. (Read a) => String -> a -> IO a
 envEnum name def = do
   mv <- lookupEnv name
-  pure $ case mv >>= readMaybe of
-    Just v -> v
-    Nothing -> def
+  pure $ Data.Maybe.fromMaybe def (mv >>= readMaybe)
 
 envBool :: String -> Bool -> IO Bool
 envBool name def = do
@@ -74,9 +71,7 @@ envBool name def = do
 envUUID :: String -> UUID -> IO UUID
 envUUID name def = do
   mv <- lookupEnv name
-  pure $ case mv >>= UUID.fromString of
-    Just v -> v
-    Nothing -> def
+  pure $ Data.Maybe.fromMaybe def (mv >>= UUID.fromString)
 
 envMaybe :: String -> IO (Maybe Text)
 envMaybe name = do

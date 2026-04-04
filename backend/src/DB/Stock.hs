@@ -70,21 +70,21 @@ createStockTables pool = runSession pool $ do
       \ON stock_pull_messages (pull_request_id, created_at)"
 
 vertexToText :: PullVertex -> Text
-vertexToText PullPending   = "PullPending"
-vertexToText PullAccepted  = "PullAccepted"
-vertexToText PullPulling   = "PullPulling"
+vertexToText PullPending = "PullPending"
+vertexToText PullAccepted = "PullAccepted"
+vertexToText PullPulling = "PullPulling"
 vertexToText PullFulfilled = "PullFulfilled"
 vertexToText PullCancelled = "PullCancelled"
-vertexToText PullIssue     = "PullIssue"
+vertexToText PullIssue = "PullIssue"
 
 textToVertex :: Text -> PullVertex
-textToVertex "PullPending"   = PullPending
-textToVertex "PullAccepted"  = PullAccepted
-textToVertex "PullPulling"   = PullPulling
+textToVertex "PullPending" = PullPending
+textToVertex "PullAccepted" = PullAccepted
+textToVertex "PullPulling" = PullPulling
 textToVertex "PullFulfilled" = PullFulfilled
 textToVertex "PullCancelled" = PullCancelled
-textToVertex "PullIssue"     = PullIssue
-textToVertex _               = PullPending
+textToVertex "PullIssue" = PullIssue
+textToVertex _ = PullPending
 
 decodePullRequest :: Decoders.Row PullRequest
 decodePullRequest =
@@ -161,7 +161,7 @@ getPullRequest pool pullId = do
           False
   case rows of
     [r] -> pure (Just r)
-    _   -> pure Nothing
+    _ -> pure Nothing
 
 updatePullStatus :: DBPool -> UUID -> PullVertex -> Maybe Text -> IO ()
 updatePullStatus pool pullId newStatus _mNote = do

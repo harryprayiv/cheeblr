@@ -89,9 +89,10 @@ persistStatusChange tx nextState = do
 -- Pull request creation helper
 -- ---------------------------------------------------------------------------
 
--- | Create a stock pull request after a transaction item is committed.
--- Failure is non-fatal: the item is already in the DB and the stock room
--- can recover on its next queue poll.
+{- | Create a stock pull request after a transaction item is committed.
+Failure is non-fatal: the item is already in the DB and the stock room
+can recover on its next queue poll.
+-}
 createStockPull ::
   ( StockDb.StockDb :> es
   , EffInv.InventoryDb :> es
@@ -105,29 +106,30 @@ createStockPull ::
 createStockPull tx ti now = do
   pullId <- nextUUID
   Inventory invVec <- EffInv.getAllMenuItems
-  let itemSku  = transactionItemMenuItemSku ti
-      itemName =
-        maybe (T.pack $ show itemSku) TI.name $
-          V.find (\m -> TI.sku m == itemSku) invVec
-      pr =
-        PullRequest
-          { prId             = pullId
-          , prTransactionId  = transactionItemTransactionId ti
-          , prItemSku        = itemSku
-          , prItemName       = itemName
-          , prQuantityNeeded = transactionItemQuantity ti
-          , prStatus         = PullPending
-          , prCashierId      = Just (transactionEmployeeId tx)
-          , prRegisterId     = Just (transactionRegisterId tx)
-          , prLocationId     = transactionLocationId tx
-          , prCreatedAt      = now
-          , prUpdatedAt      = now
-          , prFulfilledAt    = Nothing
-          }
+  let
+    itemSku = transactionItemMenuItemSku ti
+    itemName =
+      maybe (T.pack $ show itemSku) TI.name $
+        V.find (\m -> TI.sku m == itemSku) invVec
+    pr =
+      PullRequest
+        { prId = pullId
+        , prTransactionId = transactionItemTransactionId ti
+        , prItemSku = itemSku
+        , prItemName = itemName
+        , prQuantityNeeded = transactionItemQuantity ti
+        , prStatus = PullPending
+        , prCashierId = Just (transactionEmployeeId tx)
+        , prRegisterId = Just (transactionRegisterId tx)
+        , prLocationId = transactionLocationId tx
+        , prCreatedAt = now
+        , prUpdatedAt = now
+        , prFulfilledAt = Nothing
+        }
   prResult <- StockDb.createPullRequest pr
   case prResult of
     Right () -> emit $ StockEvt $ PullRequestCreated {sePull = pr, seTimestamp = now}
-    Left _   -> pure ()
+    Left _ -> pure ()
 
 -- ---------------------------------------------------------------------------
 -- Service functions
@@ -246,12 +248,13 @@ removeItem itemId = do
               pulls
       StockDb.cancelPullsForItem txId itemSku "Item removed from transaction"
       forM_ itemPulls $ \pr ->
-        emit $ StockEvt $
-          PullRequestCancelled
-            { sePullId    = prId pr
-            , seReason    = "Item removed from transaction"
-            , seTimestamp = now
-            }
+        emit $
+          StockEvt $
+            PullRequestCancelled
+              { sePullId = prId pr
+              , seReason = "Item removed from transaction"
+              , seTimestamp = now
+              }
     Nothing -> pure ()
 
 addPayment ::
@@ -351,12 +354,13 @@ voidTx txId reason = do
   StockDb.cancelPullsForTransaction txId reason
   forM_ pulls $ \pr ->
     when (prStatus pr `notElem` [PullFulfilled, PullCancelled]) $
-      emit $ StockEvt $
-        PullRequestCancelled
-          { sePullId    = prId pr
-          , seReason    = reason
-          , seTimestamp = now
-          }
+      emit $
+        StockEvt $
+          PullRequestCancelled
+            { sePullId = prId pr
+            , seReason = reason
+            , seTimestamp = now
+            }
   pure result
 
 refundTx ::
