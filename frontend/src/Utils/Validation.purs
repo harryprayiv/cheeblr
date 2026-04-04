@@ -7,7 +7,8 @@ import Data.Either (Either(..))
 import Data.Int (fromString)
 import Data.Maybe (Maybe(..))
 import Data.Number (fromString) as Number
-import Data.String (length, toLower, trim) as String
+-- import Data.String (length, toLower, trim) as String
+import Data.String (length, take, toLower, trim) as String
 import Data.String.Regex (Regex, regex, test)
 import Data.String.Regex.Flags (RegexFlags, noFlags)
 import Data.Validation.Semigroup (V, invalid)
@@ -39,7 +40,13 @@ percentage :: ValidationRule
 percentage = ValidationRule \str ->
   case regex "^\\d{1,3}(\\.\\d{1,2})?%$" noFlags of
     Left _ -> false
-    Right validRegex -> test validRegex str
+    Right validRegex ->
+      if not (test validRegex str) then false
+      else
+        let numStr = String.take (String.length str - 1) str
+        in case Number.fromString numStr of
+          Just n -> n >= 0.0 && n <= 100.0
+          Nothing -> false
 
 dollarAmount :: ValidationRule
 dollarAmount = ValidationRule \str -> case Number.fromString str of
@@ -77,7 +84,7 @@ validUrl :: ValidationRule
 validUrl = ValidationRule \str ->
   case
     regex
-      "^(https?:\\/\\/)?(www\\.)?[a-zA-Z0-9][a-zA-Z0-9-]*(\\.[a-zA-Z0-9][a-zA-Z0-9-]*)+(\\/[\\w\\-\\.~:\\/?#[\\]@!$&'()*+,;=]*)*$"
+      "^https?:\\/\\/(www\\.)?[a-zA-Z0-9][a-zA-Z0-9-]*(\\.[a-zA-Z0-9][a-zA-Z0-9-]*)+(\\/[\\w\\-\\.~:\\/?#[\\]@!$&'()*+,;=]*)*$"
       noFlags
     of
     Left _ -> false
@@ -215,10 +222,16 @@ validateString fieldName str =
 
 validatePercentage :: String -> String -> V (Array String) String
 validatePercentage fieldName str =
-  if String.trim str == "" then invalid [ fieldName <> " is required" ]
-  else if not (test (unsafeRegex "^\\d{1,3}(\\.\\d{1,2})?%$" noFlags) str) then
-    invalid [ fieldName <> " must be in the format XX.XX%" ]
-  else pure str
+  let trimmed = String.trim str
+  in
+    if trimmed == "" then invalid [ fieldName <> " is required" ]
+    else if not (test (unsafeRegex "^\\d{1,3}(\\.\\d{1,2})?%$" noFlags) trimmed) then
+      invalid [ fieldName <> " must be in the format XX.XX%" ]
+    else
+      let numStr = String.take (String.length trimmed - 1) trimmed
+      in case Number.fromString numStr of
+        Just n | n >= 0.0 && n <= 100.0 -> pure str
+        _ -> invalid [ fieldName <> " must be between 0% and 100%" ]
 
 validateNumber :: String -> String -> V (Array String) Number
 validateNumber fieldName str =
@@ -239,11 +252,11 @@ validateUrl fieldName str =
     not
       ( test
           ( unsafeRegex
-              "^(https?:\\/\\/)?(www\\.)?[a-zA-Z0-9][a-zA-Z0-9-]*(\\.[a-zA-Z0-9][a-zA-Z0-9-]*)+(\\/[\\w\\-\\.~:\\/?#[\\]@!$&'()*+,;=]*)*$"
+              "^https?:\\/\\/(www\\.)?[a-zA-Z0-9][a-zA-Z0-9-]*(\\.[a-zA-Z0-9][a-zA-Z0-9-]*)+(\\/[\\w\\-\\.~:\\/?#[\\]@!$&'()*+,;=]*)*$"
               noFlags
           )
           str
-      ) then invalid [ fieldName <> " must be a valid URL" ]
+      ) then invalid [ fieldName <> " must be a valid URL starting with http:// or https://" ]
   else pure str
 
 unsafeRegex :: String -> RegexFlags -> Regex

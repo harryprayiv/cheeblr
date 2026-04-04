@@ -126,7 +126,7 @@ spec = describe "Utils.Validation" do
     it "accepts url with path" do
       runValidation validUrl "https://leafly.com/strains/og-kush" `shouldEqual` true
     it "accepts www prefix" do
-      runValidation validUrl "www.example.com" `shouldEqual` true
+      runValidation validUrl "https://www.example.com" `shouldEqual` true
     it "rejects plain text" do
       runValidation validUrl "not a url" `shouldEqual` false
 
