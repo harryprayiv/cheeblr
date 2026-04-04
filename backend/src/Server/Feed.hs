@@ -37,7 +37,7 @@ import Infrastructure.Broadcast (
   subscribe,
  )
 import Server.Env (AppEnv (..))
-import Types.Events.Availability (AvailabilityUpdate)
+import Types.Events.Availability (AvailabilityUpdate (..))
 import Types.Public.AvailableItem (AvailableItem, aiInStock)
 import Types.Public.FeedFrame (FeedStatus (..), mkFeedFrame)
 
@@ -67,15 +67,27 @@ wsHandler :: AppEnv -> Maybe Int64 -> WS.ServerApp
 wsHandler env cursor pending = do
   conn <- WS.acceptRequest pending
 
-  history <- case cursor of
-    Nothing -> pure mempty
-    Just c  -> historyFrom (envAvailabilityBroadcaster env) c
-
   let sendFrame :: Int64 -> AvailabilityUpdate -> IO ()
       sendFrame s u = WS.sendTextData conn (Aeson.encode (mkFeedFrame s u))
 
-  mapM_ (uncurry sendFrame) (toList history)
+  case cursor of
+    -- Reconnect: replay broadcaster history since the given sequence number.
+    Just c -> do
+      history <- historyFrom (envAvailabilityBroadcaster env) c
+      mapM_ (uncurry sendFrame) (toList history)
 
+    -- Fresh connect: send the full current snapshot so the monitor shows
+    -- live data immediately rather than waiting for the next inventory
+    -- change to trigger a broadcaster event. Without this, the page is
+    -- empty until something in the inventory changes.
+    Nothing -> do
+      st   <- readTVarIO (envAvailabilityState env)
+      now  <- getCurrentTime
+      seq' <- currentSeq (envAvailabilityBroadcaster env)
+      let upds = map (`AvailabilityUpdate` now) (allAvailableItems st now)
+      mapM_ (sendFrame seq') upds
+
+  -- Subscribe to live events and stream them indefinitely.
   sub <- subscribe (envAvailabilityBroadcaster env)
   WS.withPingThread conn 30 (pure ()) $
     let loop = do
@@ -110,16 +122,17 @@ feedStatusHandler env = liftIO $ do
       }
 
 -- ---------------------------------------------------------------------------
--- Snapshot endpoint
+-- Snapshot endpoint (polling fallback)
 -- ---------------------------------------------------------------------------
 
 feedSnapshotHandler :: AppEnv -> Handler [AvailableItem]
 feedSnapshotHandler env = liftIO $ do
-  st <- readTVarIO (envAvailabilityState env)
-  allAvailableItems st <$> getCurrentTime
+  st  <- readTVarIO (envAvailabilityState env)
+  now <- getCurrentTime
+  pure (allAvailableItems st now)
 
 -- ---------------------------------------------------------------------------
--- Lexicons
+-- Lexicons (embedded ATProto schema definitions)
 -- ---------------------------------------------------------------------------
 
 lexiconsApp :: Tagged Handler Application
@@ -134,80 +147,17 @@ lexiconsApp = Tagged $ \req resp ->
     _ ->
       resp $ responseLBS status404 [] "Lexicon not found"
   where
-    jsonResponse = responseLBS status200 [(hContentType, "application/json")]
+    jsonResponse body =
+      responseLBS status200 [(hContentType, "application/json")] body
 
 availableItemLexicon :: LBS.ByteString
 availableItemLexicon =
-  "{\
-  \\"lexicon\":1,\
-  \\"id\":\"app.cheeblr.inventory.availableItem\",\
-  \\"defs\":{\
-  \\"main\":{\
-  \\"type\":\"object\",\
-  \\"description\":\"The current publicly available state of one inventory item at one location.\",\
-  \\"required\":[\"publicSku\",\"name\",\"brand\",\"category\",\"subcategory\",\"measureUnit\",\"perPackage\",\"thc\",\"cbg\",\"strain\",\"species\",\"dominantTerpene\",\"tags\",\"effects\",\"pricePerUnit\",\"availableQty\",\"inStock\",\"locationId\",\"locationName\",\"updatedAt\"],\
-  \\"properties\":{\
-  \\"publicSku\":{\"type\":\"string\",\"description\":\"Opaque public identifier for this item at this location.\"},\
-  \\"name\":{\"type\":\"string\"},\
-  \\"brand\":{\"type\":\"string\"},\
-  \\"category\":{\"type\":\"string\",\"description\":\"Flower, Edibles, Vaporizers, etc.\"},\
-  \\"subcategory\":{\"type\":\"string\"},\
-  \\"measureUnit\":{\"type\":\"string\"},\
-  \\"perPackage\":{\"type\":\"string\"},\
-  \\"thc\":{\"type\":\"string\",\"description\":\"e.g. '25%'\"},\
-  \\"cbg\":{\"type\":\"string\"},\
-  \\"strain\":{\"type\":\"string\"},\
-  \\"species\":{\"type\":\"string\",\"description\":\"Indica, Sativa, Hybrid, etc.\"},\
-  \\"dominantTerpene\":{\"type\":\"string\"},\
-  \\"tags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\
-  \\"effects\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\
-  \\"pricePerUnit\":{\"type\":\"integer\",\"description\":\"Price in cents.\"},\
-  \\"availableQty\":{\"type\":\"integer\",\"description\":\"Units currently available to purchase. Never negative.\"},\
-  \\"inStock\":{\"type\":\"boolean\"},\
-  \\"locationId\":{\"type\":\"string\",\"description\":\"Stable public identifier for this location.\"},\
-  \\"locationName\":{\"type\":\"string\"},\
-  \\"updatedAt\":{\"type\":\"string\",\"format\":\"datetime\"}\
-  \}}}}"
+  "{\"lexicon\":1,\"id\":\"app.cheeblr.inventory.availableItem\",\"defs\":{\"main\":{\"type\":\"object\",\"description\":\"The current publicly available state of one inventory item at one location.\",\"required\":[\"publicSku\",\"name\",\"brand\",\"category\",\"subcategory\",\"measureUnit\",\"perPackage\",\"thc\",\"cbg\",\"strain\",\"species\",\"dominantTerpene\",\"tags\",\"effects\",\"pricePerUnit\",\"availableQty\",\"inStock\",\"locationId\",\"locationName\",\"updatedAt\"],\"properties\":{\"publicSku\":{\"type\":\"string\",\"description\":\"Opaque public identifier for this item at this location.\"},\"name\":{\"type\":\"string\"},\"brand\":{\"type\":\"string\"},\"category\":{\"type\":\"string\",\"description\":\"Flower, Edibles, Vaporizers, etc.\"},\"subcategory\":{\"type\":\"string\"},\"measureUnit\":{\"type\":\"string\"},\"perPackage\":{\"type\":\"string\"},\"thc\":{\"type\":\"string\",\"description\":\"e.g. '25%'\"},\"cbg\":{\"type\":\"string\"},\"strain\":{\"type\":\"string\"},\"species\":{\"type\":\"string\",\"description\":\"Indica, Sativa, Hybrid, etc.\"},\"dominantTerpene\":{\"type\":\"string\"},\"tags\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"effects\":{\"type\":\"array\",\"items\":{\"type\":\"string\"}},\"pricePerUnit\":{\"type\":\"integer\",\"description\":\"Price in cents.\"},\"availableQty\":{\"type\":\"integer\",\"description\":\"Units currently available to purchase. Never negative.\"},\"inStock\":{\"type\":\"boolean\"},\"locationId\":{\"type\":\"string\",\"description\":\"Stable public identifier for this location.\"},\"locationName\":{\"type\":\"string\"},\"updatedAt\":{\"type\":\"string\",\"format\":\"datetime\"}}}}}"
 
 subscribeLexicon :: LBS.ByteString
 subscribeLexicon =
-  "{\
-  \\"lexicon\":1,\
-  \\"id\":\"app.cheeblr.feed.subscribe\",\
-  \\"defs\":{\
-  \\"main\":{\
-  \\"type\":\"query\",\
-  \\"description\":\"Subscribe to the real-time inventory availability feed for this location.\",\
-  \\"parameters\":{\"type\":\"params\",\"properties\":{\"cursor\":{\"type\":\"integer\",\"description\":\"Resume from this sequence number. Omit to start from current position.\"}}},\
-  \\"output\":{\"encoding\":\"application/json\",\"schema\":{\"$ref\":\"#/defs/frame\"}}\
-  \},\
-  \\"frame\":{\
-  \\"type\":\"object\",\
-  \\"required\":[\"seq\",\"type\",\"payload\",\"timestamp\"],\
-  \\"properties\":{\
-  \\"seq\":{\"type\":\"integer\"},\
-  \\"type\":{\"type\":\"string\",\"const\":\"app.cheeblr.inventory.availableItem\"},\
-  \\"payload\":{\"$ref\":\"app.cheeblr.inventory.availableItem#main\"},\
-  \\"timestamp\":{\"type\":\"string\",\"format\":\"datetime\"}\
-  \}}}}"
+  "{\"lexicon\":1,\"id\":\"app.cheeblr.feed.subscribe\",\"defs\":{\"main\":{\"type\":\"query\",\"description\":\"Subscribe to the real-time inventory availability feed for this location.\",\"parameters\":{\"type\":\"params\",\"properties\":{\"cursor\":{\"type\":\"integer\",\"description\":\"Resume from this sequence number. Omit to start from current position.\"}}},\"output\":{\"encoding\":\"application/json\",\"schema\":{\"$ref\":\"#/defs/frame\"}}},\"frame\":{\"type\":\"object\",\"required\":[\"seq\",\"type\",\"payload\",\"timestamp\"],\"properties\":{\"seq\":{\"type\":\"integer\"},\"type\":{\"type\":\"string\",\"const\":\"app.cheeblr.inventory.availableItem\"},\"payload\":{\"$ref\":\"app.cheeblr.inventory.availableItem#main\"},\"timestamp\":{\"type\":\"string\",\"format\":\"datetime\"}}}}}"
 
 statusLexicon :: LBS.ByteString
 statusLexicon =
-  "{\
-  \\"lexicon\":1,\
-  \\"id\":\"app.cheeblr.feed.status\",\
-  \\"defs\":{\
-  \\"main\":{\
-  \\"type\":\"query\",\
-  \\"description\":\"Current status of this location's inventory feed.\",\
-  \\"output\":{\"encoding\":\"application/json\",\"schema\":{\
-  \\"type\":\"object\",\
-  \\"required\":[\"locationId\",\"locationName\",\"currentSeq\",\"itemCount\"],\
-  \\"properties\":{\
-  \\"locationId\":{\"type\":\"string\"},\
-  \\"locationName\":{\"type\":\"string\"},\
-  \\"currentSeq\":{\"type\":\"integer\"},\
-  \\"itemCount\":{\"type\":\"integer\"},\
-  \\"inStockCount\":{\"type\":\"integer\"},\
-  \\"oldestSeq\":{\"type\":\"integer\"}\
-  \}}}}}}"
+  "{\"lexicon\":1,\"id\":\"app.cheeblr.feed.status\",\"defs\":{\"main\":{\"type\":\"query\",\"description\":\"Current status of this location's inventory feed.\",\"output\":{\"encoding\":\"application/json\",\"schema\":{\"type\":\"object\",\"required\":[\"locationId\",\"locationName\",\"currentSeq\",\"itemCount\"],\"properties\":{\"locationId\":{\"type\":\"string\"},\"locationName\":{\"type\":\"string\"},\"currentSeq\":{\"type\":\"integer\"},\"itemCount\":{\"type\":\"integer\"},\"inStockCount\":{\"type\":\"integer\"},\"oldestSeq\":{\"type\":\"integer\"}}}}}}}"

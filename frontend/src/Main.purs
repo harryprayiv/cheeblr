@@ -33,6 +33,7 @@ import Pages.CreateItem as Pages.CreateItem
 import Pages.CreateTransaction as Pages.CreateTransaction
 import Pages.DeleteItem as Pages.DeleteItem
 import Pages.EditItem as Pages.EditItem
+import Pages.Feed.Monitor as Pages.Feed.Monitor
 import Pages.LiveView as Pages.LiveView
 import Pages.Login as Pages.Login
 import Pages.TransactionHistory as Pages.TransactionHistory
@@ -169,11 +170,6 @@ main = do
 
   prevAction <- Ref.new (pure unit)
 
-  -- In real-auth mode matchesWith fires the initial route synchronously before
-  -- the async session restore has written the token into tokenRef. readyRef
-  -- suppresses that first automatic fire so the route only runs once the real
-  -- token is available. Subsequent hash-change fires (prev == Just _) always
-  -- pass through regardless of the flag.
   readyRef <- Ref.new devMode
 
   let
@@ -214,7 +210,8 @@ main = do
                     liftEffect $ for_ mcaps backendCaps.push
                 ]
               Stock -> []
-              _ -> []
+              Feed  -> []
+              _     -> []
 
           Ref.write newAction prevAction
 
@@ -234,6 +231,9 @@ main = do
 
             Stock ->
               pure $ Pages.Stock.Interface.page authPoll userId
+
+            Feed ->
+              pure $ Pages.Feed.Monitor.page authPoll userId
 
             Create -> do
               uuid <- genUUID
@@ -266,8 +266,6 @@ main = do
         ]
     )
 
-  -- Restore session, then mark ready and fire the initial route.
-  -- This ensures tokenRef holds the real token before loadInventory runs.
   launchAff_ do
     initialRoute <- if devMode
       then pure LiveView

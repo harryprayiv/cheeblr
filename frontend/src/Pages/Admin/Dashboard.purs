@@ -15,7 +15,8 @@ import Deku.Hooks (useHot, (<#~>))
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import FRP.Poll (Poll)
-import Pages.Admin.State (AdminTab(..), SnapshotStatus(..), allTabs)
+import Pages.Admin.State (AdminTab (..), SnapshotStatus (..), allTabs)
+import Pages.Admin.Tabs.FeedMonitor (feedMonitor)
 import Pages.Admin.Tabs.LogViewer (logViewer)
 import Pages.Admin.Tabs.Overview (overview)
 import Services.AuthService (AuthState, UserId)
@@ -25,11 +26,10 @@ page _authPoll userId = Deku.do
   setTab      /\ tabValue      <- useHot TabOverview
   setSnapshot /\ snapshotValue <- useHot SnapshotLoading
 
-  -- Load snapshot immediately
   let loadSnapshot = launchAff_ do
         result <- getSnapshot userId
         liftEffect $ case result of
-          Left err  -> setSnapshot (SnapshotError err)
+          Left err   -> setSnapshot (SnapshotError err)
           Right snap -> setSnapshot (SnapshotLoaded snap)
 
   D.div
@@ -48,19 +48,22 @@ page _authPoll userId = Deku.do
         ]
 
     , D.div [ DA.klass_ "admin-tabs" ]
-        ( map (\t ->
-            D.button
-              [ DA.klass $ tabValue <#> \active ->
-                  "admin-tab" <> if active == t then " active" else ""
-              , DL.click_ \_ -> setTab t
-              ]
-              [ text_ (show t) ]
-          ) allTabs
+        ( map
+            ( \t ->
+                D.button
+                  [ DA.klass $ tabValue <#> \active ->
+                      "admin-tab" <> if active == t then " active" else ""
+                  , DL.click_ \_ -> setTab t
+                  ]
+                  [ text_ (show t) ]
+            )
+            allTabs
         )
 
     , tabValue <#~> case _ of
         TabOverview     -> overview snapshotValue
         TabLogViewer    -> logViewer userId
+        TabFeedMonitor  -> feedMonitor userId
         TabEventStream  -> D.div_ [ text_ "Event stream — coming soon" ]
         TabTransactions -> D.div_ [ text_ "Transactions — coming soon" ]
         TabSessions     -> D.div_ [ text_ "Sessions — coming soon" ]

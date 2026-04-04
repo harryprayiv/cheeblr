@@ -2084,3 +2084,225 @@ a.text-blue-600:hover,
     height: calc(100vh - 200px);
   }
 }
+
+/* ============================================= */
+/* PUBLIC INVENTORY FEED MONITOR                 */
+/* ============================================= */
+
+.feed-monitor {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.feed-monitor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--blue-bright);
+}
+
+.feed-monitor-header h3 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--fg-light);
+}
+
+/* Status indicator row */
+.feed-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.feed-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  transition: background-color var(--transition-normal);
+}
+
+.feed-status-dot.connected    { background-color: var(--green-light); box-shadow: 0 0 6px var(--green-light); }
+.feed-status-dot.disconnected { background-color: var(--fg-muted); }
+
+.feed-status-text {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+/* Controls */
+.feed-controls {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* Empty state */
+.feed-empty {
+  padding: 3rem;
+  text-align: center;
+  color: var(--fg-muted);
+  background-color: var(--bg-medium);
+  border-radius: var(--border-radius);
+  border: 1px dashed var(--bg-light);
+  font-size: 0.9rem;
+}
+
+/* Frame list — scrollable column */
+.feed-frames {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  max-height: calc(100vh - 260px);
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+/* Individual frame card */
+.feed-frame {
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--bg-light);
+  border-left: 4px solid var(--blue-bright);
+  border-radius: var(--border-radius);
+  padding: 0.7rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.feed-frame:hover {
+  border-color: var(--blue-bright);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Frame header — name, badges in a row */
+.feed-frame-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.feed-seq {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  min-width: 2.5rem;
+}
+
+.feed-name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--fg-light);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.feed-brand {
+  font-size: 0.78rem;
+  color: var(--brown-light);
+  font-weight: 600;
+}
+
+.feed-category {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  background-color: var(--bg-medium);
+  padding: 0.15rem 0.45rem;
+  border-radius: 20px;
+  border: 1px solid var(--bg-light);
+}
+
+.feed-sku {
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  margin-left: auto;
+  opacity: 0.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 12rem;
+}
+
+/* Stock badge */
+.feed-stock-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+  border-radius: 20px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.feed-stock-badge.in-stock {
+  background-color: rgba(184, 187, 38, 0.15);
+  color: var(--green-light);
+  border: 1px solid var(--green-dark);
+}
+
+.feed-stock-badge.out-of-stock {
+  background-color: rgba(192, 120, 118, 0.15);
+  color: var(--red);
+  border: 1px solid var(--red);
+}
+
+/* Frame body — detail fields in a compact 2-col grid */
+.feed-frame-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.2rem 1rem;
+  font-size: 0.8rem;
+  color: var(--fg-dark);
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--bg-light);
+}
+
+.feed-frame-body div {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Highlight the price in green, qty in aqua */
+.feed-frame-body div:nth-child(1) { color: var(--aqua);        font-weight: 600; } /* Qty */
+.feed-frame-body div:nth-child(2) { color: var(--green-light); font-weight: 600; } /* Price */
+.feed-frame-body div:nth-child(3) { color: var(--fg-muted); }                       /* THC/CBG */
+.feed-frame-body div:nth-child(4) { color: var(--fg-muted); }                       /* Strain */
+.feed-frame-body div:nth-child(5) { color: var(--fg-muted); font-size: 0.72rem; }  /* Location */
+.feed-frame-body div:nth-child(6) { color: var(--fg-muted); font-size: 0.68rem;    /* Updated */
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  opacity: 0.7;
+}
+
+@media (max-width: 768px) {
+  .feed-monitor-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .feed-frame-body {
+    grid-template-columns: 1fr;
+  }
+
+  .feed-sku {
+    display: none;
+  }
+}

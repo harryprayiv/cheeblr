@@ -32,6 +32,7 @@ data Route
   | Admin
   | Manager
   | Stock
+  | Feed
 
 derive instance Eq Route
 derive instance Ord Route
@@ -49,9 +50,10 @@ route = root $ G.sum
   , "Delete":             "delete"      / (string segment)
   , "CreateTransaction":  "transaction" / "create"  / G.noArgs
   , "TransactionHistory": "transaction" / "history" / G.noArgs
-  , "Admin": "admin" / G.noArgs
-  , "Manager": "manager" / G.noArgs
-  , "Stock": "stock" / G.noArgs
+  , "Admin":              "admin"       / G.noArgs
+  , "Manager":            "manager"     / G.noArgs
+  , "Stock":              "stock"       / G.noArgs
+  , "Feed":               "feed"        / G.noArgs
   }
 
 nav
@@ -68,9 +70,10 @@ nav currentRoute authPoll pushAuth =
             , navItem Create            "/#/create"             "Create Item"     currentRoute
             , navItem CreateTransaction "/#/transaction/create" "New Transaction" currentRoute
             , authPoll <#~> authButton
-            , navItem Admin "/#/admin" "Admin" currentRoute
-            , navItem Manager "/#/manager" "Manager" currentRoute
-            , navItem Stock "/#/stock" "Stock Room" currentRoute
+            , navItem Admin   "/#/admin"   "Admin"      currentRoute
+            , navItem Manager "/#/manager" "Manager"    currentRoute
+            , navItem Stock   "/#/stock"   "Stock Room" currentRoute
+            , navItem Feed    "/#/feed"    "Feed"       currentRoute
             ]
         ]
     ]
@@ -82,7 +85,6 @@ nav currentRoute authPoll pushAuth =
       , DA.klass_ "nav-link nav-auth-link"
       ]
       [ text_ "Login" ]
-  -- The second field is the session token; we don't need it here.
   authButton (SignedIn _ _) =
     D.button
       [ DA.klass_ "nav-link nav-auth-link nav-logout-btn"
