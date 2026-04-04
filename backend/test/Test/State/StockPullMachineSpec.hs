@@ -3,143 +3,131 @@
 module Test.State.StockPullMachineSpec (spec) where
 
 import Data.UUID (UUID)
+import Hedgehog
+import qualified Hedgehog.Gen as Gen
+import qualified Hedgehog.Range as Range
 import Test.Hspec
+import Test.Hspec.Hedgehog (hedgehog)
 
 import State.StockPullMachine
 
 actorId :: UUID
-actorId = read "11111111-1111-1111-1111-111111111111"
+actorId = read "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
--- actorId2 :: UUID
--- actorId2 = read "22222222-2222-2222-2222-222222222222"
+-- | Run a command from a vertex and return (event, resulting vertex).
+step :: PullVertex -> PullCommand -> (PullEvent, PullVertex)
+step v cmd =
+  let (evt, next) = runPullCommand (fromVertex v) cmd
+  in (evt, toPullVertex next)
 
-pendingSt :: SomePullState
-pendingSt = fromVertex PullPending
+isInvalid :: PullEvent -> Bool
+isInvalid (InvalidPullCmd _) = True
+isInvalid _                  = False
 
-accepted :: SomePullState
-accepted = fromVertex PullAccepted
-
-pulling :: SomePullState
-pulling = fromVertex PullPulling
-
-fulfilled :: SomePullState
-fulfilled = fromVertex PullFulfilled
-
-cancelled :: SomePullState
-cancelled = fromVertex PullCancelled
-
-issue :: SomePullState
-issue = fromVertex PullIssue
+genCommand :: Gen PullCommand
+genCommand = Gen.choice
+  [ pure (AcceptCmd actorId)
+  , pure (StartPullCmd actorId)
+  , pure (FulfillCmd actorId)
+  , ReportIssueCmd <$> Gen.text (Range.linear 1 20) Gen.alphaNum <*> pure actorId
+  , pure (RetryCmd actorId)
+  , CancelCmd <$> Gen.text (Range.linear 1 20) Gen.alphaNum <*> pure actorId
+  ]
 
 spec :: Spec
-spec = describe "State.StockPullMachine" $ do
-  describe "fromVertex / toPullVertex roundtrip" $ do
-    it "Pending" $ toPullVertex (fromVertex PullPending) `shouldBe` PullPending
-    it "Accepted" $ toPullVertex (fromVertex PullAccepted) `shouldBe` PullAccepted
-    it "Pulling" $ toPullVertex (fromVertex PullPulling) `shouldBe` PullPulling
-    it "Fulfilled" $ toPullVertex (fromVertex PullFulfilled) `shouldBe` PullFulfilled
-    it "Cancelled" $ toPullVertex (fromVertex PullCancelled) `shouldBe` PullCancelled
-    it "Issue" $ toPullVertex (fromVertex PullIssue) `shouldBe` PullIssue
+spec = describe "StockPullMachine" $ do
 
   describe "valid transitions" $ do
-    it "Pending + AcceptCmd → Accepted" $ do
-      let (evt, next) = runPullCommand pendingSt (AcceptCmd actorId)
-      toPullVertex next `shouldBe` PullAccepted
-      case evt of
-        PullWasAccepted a -> a `shouldBe` actorId
-        _ -> expectationFailure $ "Expected PullWasAccepted, got: " <> show evt
+    it "PullPending + Accept  → PullAccepted" $ do
+      let (evt, next) = step PullPending (AcceptCmd actorId)
+      evt  `shouldBe` PullWasAccepted actorId
+      next `shouldBe` PullAccepted
 
-    it "Pending + CancelCmd → Cancelled" $ do
-      let (evt, next) = runPullCommand pendingSt (CancelCmd "No stock" actorId)
-      toPullVertex next `shouldBe` PullCancelled
-      case evt of
-        PullWasCancelled r _ -> r `shouldBe` "No stock"
-        _ -> expectationFailure $ "Expected PullWasCancelled, got: " <> show evt
+    it "PullPending + Cancel  → PullCancelled" $ do
+      let (evt, next) = step PullPending (CancelCmd "reason" actorId)
+      evt  `shouldBe` PullWasCancelled "reason" actorId
+      next `shouldBe` PullCancelled
 
-    it "Accepted + StartPullCmd → Pulling" $ do
-      let (_, next) = runPullCommand accepted (StartPullCmd actorId)
-      toPullVertex next `shouldBe` PullPulling
+    it "PullAccepted + Start  → PullPulling" $ do
+      let (evt, next) = step PullAccepted (StartPullCmd actorId)
+      evt  `shouldBe` PullingWasStarted actorId
+      next `shouldBe` PullPulling
 
-    it "Accepted + CancelCmd → Cancelled" $ do
-      let (_, next) = runPullCommand accepted (CancelCmd "Changed mind" actorId)
-      toPullVertex next `shouldBe` PullCancelled
+    it "PullAccepted + Cancel → PullCancelled" $ do
+      let (evt, next) = step PullAccepted (CancelCmd "reason" actorId)
+      evt  `shouldBe` PullWasCancelled "reason" actorId
+      next `shouldBe` PullCancelled
 
-    it "Pulling + FulfillCmd → Fulfilled" $ do
-      let (evt, next) = runPullCommand pulling (FulfillCmd actorId)
-      toPullVertex next `shouldBe` PullFulfilled
-      case evt of
-        PullWasFulfilled a -> a `shouldBe` actorId
-        _ -> expectationFailure $ "Expected PullWasFulfilled, got: " <> show evt
+    it "PullPulling + Fulfill → PullFulfilled" $ do
+      let (evt, next) = step PullPulling (FulfillCmd actorId)
+      evt  `shouldBe` PullWasFulfilled actorId
+      next `shouldBe` PullFulfilled
 
-    it "Pulling + ReportIssueCmd → Issue" $ do
-      let (evt, next) = runPullCommand pulling (ReportIssueCmd "Out of stock" actorId)
-      toPullVertex next `shouldBe` PullIssue
-      case evt of
-        IssueWasReported note _ -> note `shouldBe` "Out of stock"
-        _ -> expectationFailure $ "Expected IssueWasReported, got: " <> show evt
+    it "PullPulling + Issue   → PullIssue" $ do
+      let (evt, next) = step PullPulling (ReportIssueCmd "broken" actorId)
+      evt  `shouldBe` IssueWasReported "broken" actorId
+      next `shouldBe` PullIssue
 
-    it "Issue + RetryCmd → Accepted" $ do
-      let (_, next) = runPullCommand issue (RetryCmd actorId)
-      toPullVertex next `shouldBe` PullAccepted
+    it "PullIssue + Retry     → PullAccepted" $ do
+      let (evt, next) = step PullIssue (RetryCmd actorId)
+      evt  `shouldBe` PullWasRetried actorId
+      next `shouldBe` PullAccepted
 
-    it "Issue + CancelCmd → Cancelled" $ do
-      let (_, next) = runPullCommand issue (CancelCmd "Give up" actorId)
-      toPullVertex next `shouldBe` PullCancelled
-
-  describe "sink states reject all commands" $ do
-    it "Fulfilled rejects AcceptCmd" $ do
-      let (evt, next) = runPullCommand fulfilled (AcceptCmd actorId)
-      toPullVertex next `shouldBe` PullFulfilled
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
-
-    it "Fulfilled rejects FulfillCmd" $ do
-      let (evt, next) = runPullCommand fulfilled (FulfillCmd actorId)
-      toPullVertex next `shouldBe` PullFulfilled
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
-
-    it "Cancelled rejects AcceptCmd" $ do
-      let (evt, next) = runPullCommand cancelled (AcceptCmd actorId)
-      toPullVertex next `shouldBe` PullCancelled
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
-
-    it "Cancelled rejects RetryCmd" $ do
-      let (evt, next) = runPullCommand cancelled (RetryCmd actorId)
-      toPullVertex next `shouldBe` PullCancelled
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+    it "PullIssue + Cancel    → PullCancelled" $ do
+      let (evt, next) = step PullIssue (CancelCmd "reason" actorId)
+      evt  `shouldBe` PullWasCancelled "reason" actorId
+      next `shouldBe` PullCancelled
 
   describe "invalid transitions" $ do
-    it "Pending rejects StartPullCmd" $ do
-      let (evt, next) = runPullCommand pendingSt (StartPullCmd actorId)
-      toPullVertex next `shouldBe` PullPending
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+    it "PullPending rejects StartPullCmd" $ do
+      let (evt, next) = step PullPending (StartPullCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullPending
 
-    it "Pending rejects FulfillCmd" $ do
-      let (evt, next) = runPullCommand pendingSt (FulfillCmd actorId)
-      toPullVertex next `shouldBe` PullPending
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+    it "PullPending rejects FulfillCmd" $ do
+      let (evt, next) = step PullPending (FulfillCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullPending
 
-    it "Accepted rejects FulfillCmd" $ do
-      let (evt, next) = runPullCommand accepted (FulfillCmd actorId)
-      toPullVertex next `shouldBe` PullAccepted
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+    it "PullPending rejects RetryCmd" $ do
+      let (evt, next) = step PullPending (RetryCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullPending
 
-    it "Pulling rejects AcceptCmd" $ do
-      let (evt, next) = runPullCommand pulling (AcceptCmd actorId)
-      toPullVertex next `shouldBe` PullPulling
-      case evt of
-        InvalidPullCmd _ -> pure ()
-        _ -> expectationFailure $ "Expected InvalidPullCmd, got: " <> show evt
+    it "PullAccepted rejects FulfillCmd" $ do
+      let (evt, next) = step PullAccepted (FulfillCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullAccepted
+
+    it "PullAccepted rejects AcceptCmd" $ do
+      let (evt, next) = step PullAccepted (AcceptCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullAccepted
+
+    it "PullPulling rejects AcceptCmd" $ do
+      let (evt, next) = step PullPulling (AcceptCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullPulling
+
+    it "PullPulling rejects CancelCmd" $ do
+      let (evt, next) = step PullPulling (CancelCmd "r" actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullPulling
+
+    it "PullIssue rejects FulfillCmd" $ do
+      let (evt, next) = step PullIssue (FulfillCmd actorId)
+      evt  `shouldSatisfy` isInvalid
+      next `shouldBe` PullIssue
+
+  describe "sink state invariants (property)" $ do
+    it "PullFulfilled absorbs every command" $ hedgehog $ do
+      cmd <- forAll genCommand
+      let (evt, next) = step PullFulfilled cmd
+      assert (isInvalid evt)
+      next === PullFulfilled
+
+    it "PullCancelled absorbs every command" $ hedgehog $ do
+      cmd <- forAll genCommand
+      let (evt, next) = step PullCancelled cmd
+      assert (isInvalid evt)
+      next === PullCancelled

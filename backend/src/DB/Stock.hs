@@ -11,6 +11,7 @@ module DB.Stock (
   insertPullMessage,
   getPullMessages,
   cancelPullsForTransaction,
+  cancelPullsForItem,
 ) where
 
 import Data.Functor.Contravariant ((>$<))
@@ -69,21 +70,21 @@ createStockTables pool = runSession pool $ do
       \ON stock_pull_messages (pull_request_id, created_at)"
 
 vertexToText :: PullVertex -> Text
-vertexToText PullPending = "PullPending"
-vertexToText PullAccepted = "PullAccepted"
-vertexToText PullPulling = "PullPulling"
+vertexToText PullPending   = "PullPending"
+vertexToText PullAccepted  = "PullAccepted"
+vertexToText PullPulling   = "PullPulling"
 vertexToText PullFulfilled = "PullFulfilled"
 vertexToText PullCancelled = "PullCancelled"
-vertexToText PullIssue = "PullIssue"
+vertexToText PullIssue     = "PullIssue"
 
 textToVertex :: Text -> PullVertex
-textToVertex "PullPending" = PullPending
-textToVertex "PullAccepted" = PullAccepted
-textToVertex "PullPulling" = PullPulling
+textToVertex "PullPending"   = PullPending
+textToVertex "PullAccepted"  = PullAccepted
+textToVertex "PullPulling"   = PullPulling
 textToVertex "PullFulfilled" = PullFulfilled
 textToVertex "PullCancelled" = PullCancelled
-textToVertex "PullIssue" = PullIssue
-textToVertex _ = PullPending
+textToVertex "PullIssue"     = PullIssue
+textToVertex _               = PullPending
 
 decodePullRequest :: Decoders.Row PullRequest
 decodePullRequest =
@@ -160,19 +161,18 @@ getPullRequest pool pullId = do
           False
   case rows of
     [r] -> pure (Just r)
-    _ -> pure Nothing
+    _   -> pure Nothing
 
 updatePullStatus :: DBPool -> UUID -> PullVertex -> Maybe Text -> IO ()
-updatePullStatus pool pullId newStatus mNote = do
+updatePullStatus pool pullId newStatus _mNote = do
   now <- getCurrentTime
   runSession pool $
-    Session.statement (vertexToText newStatus, now, mNote, pullId) $
+    Session.statement (vertexToText newStatus, now, pullId) $
       Statement.Statement
-        "UPDATE stock_pull_requests SET status = $1, updated_at = $2 WHERE id = $4"
-        ( ((\(a, _, _, _) -> a) >$< Encoders.param (Encoders.nonNullable Encoders.text))
-            <> ((\(_, b, _, _) -> b) >$< Encoders.param (Encoders.nonNullable Encoders.timestamptz))
-            <> ((\(_, _, c, _) -> c) >$< Encoders.param (Encoders.nullable Encoders.text))
-            <> ((\(_, _, _, d) -> d) >$< Encoders.param (Encoders.nonNullable Encoders.uuid))
+        "UPDATE stock_pull_requests SET status = $1, updated_at = $2 WHERE id = $3"
+        ( ((\(a, _, _) -> a) >$< Encoders.param (Encoders.nonNullable Encoders.text))
+            <> ((\(_, b, _) -> b) >$< Encoders.param (Encoders.nonNullable Encoders.timestamptz))
+            <> ((\(_, _, c) -> c) >$< Encoders.param (Encoders.nonNullable Encoders.uuid))
         )
         Decoders.noResult
         False
@@ -256,6 +256,27 @@ cancelPullsForTransaction pool txId _reason = do
         ( ((\(a, _, _) -> a) >$< Encoders.param (Encoders.nonNullable Encoders.text))
             <> ((\(_, b, _) -> b) >$< Encoders.param (Encoders.nonNullable Encoders.timestamptz))
             <> ((\(_, _, c) -> c) >$< Encoders.param (Encoders.nonNullable Encoders.uuid))
+        )
+        Decoders.noResult
+        False
+
+-- Cancel pulls for a specific item within a transaction.
+-- Used when a single item is removed rather than the whole transaction voided.
+cancelPullsForItem :: DBPool -> UUID -> UUID -> IO ()
+cancelPullsForItem pool txId itemSku = do
+  now <- getCurrentTime
+  runSession pool $
+    Session.statement (vertexToText PullCancelled, now, txId, itemSku) $
+      Statement.Statement
+        "UPDATE stock_pull_requests \
+        \SET status = $1, updated_at = $2 \
+        \WHERE transaction_id = $3 \
+        \  AND item_sku = $4 \
+        \  AND status NOT IN ('PullFulfilled', 'PullCancelled')"
+        ( ((\(a, _, _, _) -> a) >$< Encoders.param (Encoders.nonNullable Encoders.text))
+            <> ((\(_, b, _, _) -> b) >$< Encoders.param (Encoders.nonNullable Encoders.timestamptz))
+            <> ((\(_, _, c, _) -> c) >$< Encoders.param (Encoders.nonNullable Encoders.uuid))
+            <> ((\(_, _, _, d) -> d) >$< Encoders.param (Encoders.nonNullable Encoders.uuid))
         )
         Decoders.noResult
         False

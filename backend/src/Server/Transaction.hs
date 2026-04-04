@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
-
 {-# HLINT ignore "Redundant return" #-}
 
 module Server.Transaction where
@@ -14,7 +13,6 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text, pack)
 import qualified Data.Text as T
 
--- import Data.UUID                  (UUID)
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack, throwError)
@@ -26,17 +24,27 @@ import Data.UUID (UUID)
 import Effect.Clock
 import Effect.EventEmitter
 import Effect.GenUUID
+import Effect.InventoryDb (InventoryDb, runInventoryDbIO)
 import Effect.RegisterDb
+import Effect.StockDb (StockDb, runStockDbIO)
 import Effect.TransactionDb
 import Logging
 import Server.Env (AppEnv (..))
 import qualified Service.Register as SvcReg
 import qualified Service.Transaction as SvcTx
 
+-- ---------------------------------------------------------------------------
+-- Effect stacks
+-- ---------------------------------------------------------------------------
+
+-- StockDb and InventoryDb are included so addItem and voidTx can create and
+-- cancel pull requests without leaving the effect stack.
 type TxEffs =
   '[ GenUUID
    , Clock
    , TransactionDb
+   , StockDb
+   , InventoryDb
    , EventEmitter
    , Error ServerError
    , IOE
@@ -58,11 +66,13 @@ runTxEff env action = do
       . runEff
       . runErrorNoCallStack @ServerError
       . runEventEmitterProd
-        (envDbPool env)
-        (envDomainBroadcaster env)
-        Nothing
-        Nothing
-        Nothing
+          (envDbPool env)
+          (envDomainBroadcaster env)
+          Nothing
+          Nothing
+          Nothing
+      . runInventoryDbIO (envDbPool env)
+      . runStockDbIO (envDbPool env)
       . runTransactionDbIO (envDbPool env)
       . runClockIO
       . runGenUUIDIO
@@ -76,11 +86,11 @@ runRegEff env action = do
       . runEff
       . runErrorNoCallStack @ServerError
       . runEventEmitterProd
-        (envDbPool env)
-        (envDomainBroadcaster env)
-        Nothing
-        Nothing
-        Nothing
+          (envDbPool env)
+          (envDomainBroadcaster env)
+          Nothing
+          Nothing
+          Nothing
       . runRegisterDbIO (envDbPool env)
       . runClockIO
       . runGenUUIDIO
@@ -104,6 +114,10 @@ withComplianceLog logIt action = do
 stringToLBS :: String -> LBS.ByteString
 stringToLBS = LBS.pack
 
+-- ---------------------------------------------------------------------------
+-- Transaction server
+-- ---------------------------------------------------------------------------
+
 transactionServer :: AppEnv -> Server TransactionAPI
 transactionServer env =
   getAllTransactionsHandler
@@ -122,7 +136,7 @@ transactionServer env =
     :<|> reserveInventoryHandler
     :<|> releaseInventoryHandler
   where
-    pool = envDbPool env
+    pool   = envDbPool env
     logEnv = envLogEnv env
 
     requireAuth :: Maybe Text -> Handler ()
@@ -149,7 +163,7 @@ transactionServer env =
       requireAuth mHeader
       let
         empId = transactionEmployeeId tx
-        lctx = empLogCtx logEnv empId
+        lctx  = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" "/transaction" (showT empId)
       withComplianceLog (logTransactionCreate lctx (transactionId tx)) $
         runTxEff env (SvcTx.createTransactionSvc tx)
@@ -182,16 +196,16 @@ transactionServer env =
     addTransactionItemHandler mHeader item = do
       requireAuth mHeader
       let
-        txId = transactionItemTransactionId item
+        txId  = transactionItemTransactionId item
         skuId = transactionItemMenuItemSku item
-        qty = transactionItemQuantity item
+        qty   = transactionItemQuantity item
       liftIO $ logHttpRequest logEnv "POST" "/transaction/item" "system"
       mEmpId <- runTxEff env $ do
         mTx <- getTransactionById txId
         pure $ fmap (showT . transactionEmployeeId) mTx
       let lctx = case mEmpId of
             Just empIdT -> LogCtx logEnv empIdT "employee"
-            Nothing -> LogCtx logEnv "system" "system"
+            Nothing     -> LogCtx logEnv "system" "system"
       withComplianceLog
         (\outcome -> logTransactionAddItem lctx txId skuId qty outcome)
         $ runTxEff env (SvcTx.addItem item)
@@ -206,8 +220,8 @@ transactionServer env =
     addPaymentTransactionHandler mHeader payment = do
       requireAuth mHeader
       let
-        txId = paymentTransactionId payment
-        amt = paymentAmount payment
+        txId   = paymentTransactionId payment
+        amt    = paymentAmount payment
         method = T.pack (show (paymentMethod payment))
       liftIO $ logHttpRequest logEnv "POST" "/transaction/payment" "system"
       mEmpId <- runTxEff env $ do
@@ -215,7 +229,7 @@ transactionServer env =
         pure $ fmap (showT . transactionEmployeeId) mTx
       let lctx = case mEmpId of
             Just empIdT -> LogCtx logEnv empIdT "employee"
-            Nothing -> LogCtx logEnv "system" "system"
+            Nothing     -> LogCtx logEnv "system" "system"
       withComplianceLog
         (\outcome -> logTransactionAddPayment lctx txId amt method outcome)
         $ runTxEff env (SvcTx.addPayment payment)
@@ -260,7 +274,7 @@ transactionServer env =
         pure $ fmap (showT . transactionEmployeeId) mTx
       let lctx = case mEmpId of
             Just empIdT -> LogCtx logEnv empIdT "employee"
-            Nothing -> LogCtx logEnv "system" "system"
+            Nothing     -> LogCtx logEnv "system" "system"
       withComplianceLog (logTransactionClear lctx txId) $
         runTxEff env (clearTransaction txId) >> pure NoContent
 
@@ -275,9 +289,9 @@ transactionServer env =
           Just (total, reserved) ->
             pure
               AvailableInventory
-                { availableTotal = total
+                { availableTotal    = total
                 , availableReserved = reserved
-                , availableActual = total - reserved
+                , availableActual   = total - reserved
                 }
 
     reserveInventoryHandler :: Maybe Text -> ReservationRequest -> Handler InventoryReservation
@@ -307,10 +321,10 @@ transactionServer env =
               now
             pure
               InventoryReservation
-                { reservationItemSku = reserveItemSku request
-                , reservationTransactionId = reserveTransactionId request
-                , reservationQuantity = reserveQuantity request
-                , reservationStatus = "Reserved"
+                { reservationItemSku        = reserveItemSku request
+                , reservationTransactionId  = reserveTransactionId request
+                , reservationQuantity       = reserveQuantity request
+                , reservationStatus         = "Reserved"
                 }
 
     releaseInventoryHandler :: Maybe Text -> UUID -> Handler NoContent
@@ -323,6 +337,10 @@ transactionServer env =
           then pure NoContent
           else throwError err404 {errBody = "Reservation not found or already released"}
 
+-- ---------------------------------------------------------------------------
+-- Register server
+-- ---------------------------------------------------------------------------
+
 registerServer :: AppEnv -> Server RegisterAPI
 registerServer env =
   getAllRegistersHandler
@@ -332,7 +350,7 @@ registerServer env =
     :<|> openRegisterHandler
     :<|> closeRegisterHandler
   where
-    pool = envDbPool env
+    pool   = envDbPool env
     logEnv = envLogEnv env
 
     requireAuth :: Maybe Text -> Handler ()
@@ -352,7 +370,7 @@ registerServer env =
         maybeReg <- getRegisterById regId
         case maybeReg of
           Just reg -> pure reg
-          Nothing -> throwError err404 {errBody = "Register not found"}
+          Nothing  -> throwError err404 {errBody = "Register not found"}
 
     createRegisterHandler :: Maybe Text -> Register -> Handler Register
     createRegisterHandler mHeader register = do
@@ -373,9 +391,9 @@ registerServer env =
     openRegisterHandler mHeader regId request = do
       requireAuth mHeader
       let
-        empId = openRegisterEmployeeId request
+        empId     = openRegisterEmployeeId request
         startCash = openRegisterStartingCash request
-        lctx = empLogCtx logEnv empId
+        lctx      = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" ("/register/open/" <> showT regId) (showT empId)
       withComplianceLog
         (\outcome -> logRegisterOpen lctx regId startCash outcome)
@@ -385,9 +403,9 @@ registerServer env =
     closeRegisterHandler mHeader regId request = do
       requireAuth mHeader
       let
-        empId = closeRegisterEmployeeId request
+        empId       = closeRegisterEmployeeId request
         countedCash = closeRegisterCountedCash request
-        lctx = empLogCtx logEnv empId
+        lctx        = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" ("/register/close/" <> showT regId) (showT empId)
       result <- liftIO (runHandler (runRegEff env (SvcReg.closeRegister regId request)))
       case result of
@@ -409,6 +427,10 @@ registerServer env =
               (closeRegisterResultVariance closeResult)
               LogSuccess
           pure closeResult
+
+-- ---------------------------------------------------------------------------
+-- Ledger server (stubs)
+-- ---------------------------------------------------------------------------
 
 ledgerServer :: AppEnv -> Server LedgerAPI
 ledgerServer env =
@@ -446,6 +468,10 @@ ledgerServer env =
     dailyReportHandler mHeader _ =
       requireAuth mHeader >> pure (DailyReportResult 0 0 0 0 0)
 
+-- ---------------------------------------------------------------------------
+-- Compliance server (stubs)
+-- ---------------------------------------------------------------------------
+
 complianceServer :: AppEnv -> Server ComplianceAPI
 complianceServer env =
   verificationHandler
@@ -467,6 +493,10 @@ complianceServer env =
     reportHandler :: Maybe Text -> ComplianceReportRequest -> Handler ComplianceReportResult
     reportHandler mHeader _ =
       requireAuth mHeader >> pure (ComplianceReportResult (pack "Not implemented"))
+
+-- ---------------------------------------------------------------------------
+-- Combined POS server
+-- ---------------------------------------------------------------------------
 
 posServerImpl :: AppEnv -> Server PosAPI
 posServerImpl env =

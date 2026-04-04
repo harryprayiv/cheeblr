@@ -14,11 +14,14 @@ module Service.Transaction (
   refundTx,
 ) where
 
-import Control.Monad (void)
+import Control.Monad (forM_, void, when)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text, pack)
+import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time (UTCTime)
 import Data.UUID (UUID)
+import qualified Data.Vector as V
 import Effectful
 import Effectful.Error.Static
 import Servant (ServerError (..), err400, err404, err409)
@@ -27,11 +30,22 @@ import DB.Transaction (InventoryException (..))
 import Effect.Clock
 import Effect.EventEmitter
 import Effect.GenUUID
+import qualified Effect.InventoryDb as EffInv
+import qualified Effect.StockDb as StockDb
 import Effect.TransactionDb
+import State.StockPullMachine (PullVertex (..))
 import State.TransactionMachine
 import Types.Events.Domain
+import Types.Events.Stock
 import Types.Events.Transaction
+import Types.Inventory (Inventory (..))
+import qualified Types.Inventory as TI
+import Types.Stock (PullRequest (..))
 import Types.Transaction
+
+-- ---------------------------------------------------------------------------
+-- Internal helpers
+-- ---------------------------------------------------------------------------
 
 loadTx ::
   (TransactionDb :> es, Error ServerError :> es) =>
@@ -71,6 +85,54 @@ persistStatusChange tx nextState = do
     then pure ()
     else void $ updateTransaction (transactionId tx) tx {transactionStatus = nextStatus}
 
+-- ---------------------------------------------------------------------------
+-- Pull request creation helper
+-- ---------------------------------------------------------------------------
+
+-- | Create a stock pull request after a transaction item is committed.
+-- Failure is non-fatal: the item is already in the DB and the stock room
+-- can recover on its next queue poll.
+createStockPull ::
+  ( StockDb.StockDb :> es
+  , EffInv.InventoryDb :> es
+  , EventEmitter :> es
+  , GenUUID :> es
+  ) =>
+  Transaction ->
+  TransactionItem ->
+  UTCTime ->
+  Eff es ()
+createStockPull tx ti now = do
+  pullId <- nextUUID
+  Inventory invVec <- EffInv.getAllMenuItems
+  let itemSku  = transactionItemMenuItemSku ti
+      itemName =
+        maybe (T.pack $ show itemSku) TI.name $
+          V.find (\m -> TI.sku m == itemSku) invVec
+      pr =
+        PullRequest
+          { prId             = pullId
+          , prTransactionId  = transactionItemTransactionId ti
+          , prItemSku        = itemSku
+          , prItemName       = itemName
+          , prQuantityNeeded = transactionItemQuantity ti
+          , prStatus         = PullPending
+          , prCashierId      = Just (transactionEmployeeId tx)
+          , prRegisterId     = Just (transactionRegisterId tx)
+          , prLocationId     = transactionLocationId tx
+          , prCreatedAt      = now
+          , prUpdatedAt      = now
+          , prFulfilledAt    = Nothing
+          }
+  prResult <- StockDb.createPullRequest pr
+  case prResult of
+    Right () -> emit $ StockEvt $ PullRequestCreated {sePull = pr, seTimestamp = now}
+    Left _   -> pure ()
+
+-- ---------------------------------------------------------------------------
+-- Service functions
+-- ---------------------------------------------------------------------------
+
 createTransactionSvc ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -91,8 +153,11 @@ createTransactionSvc tx = do
 
 addItem ::
   ( TransactionDb :> es
+  , StockDb.StockDb :> es
+  , EffInv.InventoryDb :> es
   , EventEmitter :> es
   , Clock :> es
+  , GenUUID :> es
   , Error ServerError :> es
   ) =>
   TransactionItem ->
@@ -113,6 +178,7 @@ addItem item = do
             , teItem = ti
             , teTimestamp = now
             }
+      createStockPull tx ti now
       pure ti
     Left (ItemNotFound sku) ->
       throwError
@@ -137,6 +203,7 @@ addItem item = do
 
 removeItem ::
   ( TransactionDb :> es
+  , StockDb.StockDb :> es
   , EventEmitter :> es
   , Clock :> es
   , Error ServerError :> es
@@ -146,7 +213,6 @@ removeItem ::
 removeItem itemId = do
   txId <- requireTxId getTxIdByItemId "Item not found" itemId
   (_, someState) <- loadTx txId
-  -- fetch item before deletion for the event payload
   mTx <- getTransactionById txId
   let mItem =
         mTx >>= \t ->
@@ -159,15 +225,32 @@ removeItem itemId = do
   deleteTransactionItem itemId
   now <- currentTime
   case mItem of
-    Just item ->
+    Just item -> do
+      let itemSku = transactionItemMenuItemSku item
       emit $
         TransactionEvt $
           TransactionItemRemoved
             { teTxId = txId
             , teItemId = itemId
-            , teItemSku = transactionItemMenuItemSku item
+            , teItemSku = itemSku
             , teQty = transactionItemQuantity item
             , teTimestamp = now
+            }
+      pulls <- StockDb.getPullsByTransaction txId
+      let itemPulls =
+            filter
+              ( \pr ->
+                  prItemSku pr == itemSku
+                    && prStatus pr `notElem` [PullFulfilled, PullCancelled]
+              )
+              pulls
+      StockDb.cancelPullsForItem txId itemSku "Item removed from transaction"
+      forM_ itemPulls $ \pr ->
+        emit $ StockEvt $
+          PullRequestCancelled
+            { sePullId    = prId pr
+            , seReason    = "Item removed from transaction"
+            , seTimestamp = now
             }
     Nothing -> pure ()
 
@@ -242,6 +325,7 @@ finalizeTx txId = do
 
 voidTx ::
   ( TransactionDb :> es
+  , StockDb.StockDb :> es
   , EventEmitter :> es
   , Clock :> es
   , Error ServerError :> es
@@ -253,6 +337,7 @@ voidTx txId reason = do
   (tx, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState (VoidCmd reason)
   guardTxEvent evt
+  pulls <- StockDb.getPullsByTransaction txId
   result <- voidTransaction txId reason
   now <- currentTime
   emit $
@@ -263,6 +348,15 @@ voidTx txId reason = do
         , teActorId = transactionEmployeeId tx
         , teTimestamp = now
         }
+  StockDb.cancelPullsForTransaction txId reason
+  forM_ pulls $ \pr ->
+    when (prStatus pr `notElem` [PullFulfilled, PullCancelled]) $
+      emit $ StockEvt $
+        PullRequestCancelled
+          { sePullId    = prId pr
+          , seReason    = reason
+          , seTimestamp = now
+          }
   pure result
 
 refundTx ::

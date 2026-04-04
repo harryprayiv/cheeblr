@@ -14,10 +14,14 @@ import Types.UUID (UUID)
 pullCard
   :: PullRequest
   -> (UUID -> PullAction -> Effect Unit)
+  -> (UUID -> Effect Unit)
   -> Nut
-pullCard pr onAction =
+pullCard pr onAction onSelect =
   D.div
-    [ DA.klass_ $ "pull-card " <> statusClass pr.prStatus ]
+    -- id="pull-<uuid>" is the scroll target used by notification onclick
+    [ DA.klass_ $ "pull-card " <> statusClass pr.prStatus
+    , DA.id_ $ "pull-" <> show pr.prId
+    ]
     [ D.div [ DA.klass_ "pull-card-header" ]
         [ D.span [ DA.klass_ "pull-item-name" ] [ text_ pr.prItemName ]
         , D.span [ DA.klass_ $ "pull-status " <> statusClass pr.prStatus ]
@@ -28,13 +32,22 @@ pullCard pr onAction =
         , D.div_ [ text_ $ "TX: " <> show pr.prTransactionId ]
         ]
     , D.div [ DA.klass_ "pull-card-actions" ]
-        ( map (\action ->
-            D.button
-              [ DA.klass_ $ "btn btn-sm " <> actionBtnClass action
-              , DL.click_ \_ -> onAction pr.prId action
+        ( [ D.button
+              [ DA.klass_ "btn btn-sm btn-info"
+              , DL.click_ \_ -> onSelect pr.prId
               ]
-              [ text_ (actionLabel action) ]
-          ) (validActions pr.prStatus)
+              [ text_ "Messages" ]
+          ]
+          <>
+          map
+            ( \action ->
+                D.button
+                  [ DA.klass_ $ "btn btn-sm " <> actionBtnClass action
+                  , DL.click_ \_ -> onAction pr.prId action
+                  ]
+                  [ text_ (actionLabel action) ]
+            )
+            (validActions pr.prStatus)
         )
     ]
 

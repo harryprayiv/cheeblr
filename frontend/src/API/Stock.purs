@@ -2,52 +2,98 @@ module API.Stock where
 
 import Prelude
 
-import API.Request as Request
-import Data.Either (Either)
-import Effect.Aff (Aff)
-import Services.AuthService (UserId)
+import Config.Network (currentConfig)
+import Data.Either (Either(..))
+import Data.Maybe (Maybe(..), fromMaybe)
+import Effect (Effect)
+import Effect.Aff (Aff, makeAff, nonCanceler)
+import Foreign (Foreign)
+import Yoga.JSON (class ReadForeign, read_, writeJSON)
 import Types.Inventory (MutationResponse)
-import Types.Stock (PullRequest, PullRequestDetail, PullMessage)
+import Types.Location (LocationId)
+import Types.Stock (PullMessage, PullRequest)
 import Types.UUID (UUID)
-import Data.Maybe (Maybe, fromMaybe)
 
-getQueue :: UserId -> Maybe String -> Aff (Either String (Array PullRequest))
-getQueue userId mLocId =
-  let path = "/stock/queue" <> fromMaybe "" (map ("?locationId=" <> _) mLocId)
-  in Request.authGet userId path
+type UserId = String
 
-getPullDetail :: UserId -> UUID -> Aff (Either String PullRequestDetail)
-getPullDetail userId pullId =
-  Request.authGet userId ("/stock/pull/" <> show pullId)
+-- FFI: see API/Stock.js. body is "" to signal no-body (GET / empty POST).
+foreign import fetchCb
+  :: String                   -- URL
+  -> String                   -- method
+  -> String                   -- auth token
+  -> String                   -- body ("" = none)
+  -> (Foreign -> Effect Unit) -- success
+  -> (String -> Effect Unit)  -- error
+  -> Effect Unit
+
+-- | Core fetch wrapper using makeAff + callback FFI.
+-- Matches the pattern of RegisterService and other modules in this codebase.
+apiRequest :: forall a. ReadForeign a => String -> String -> String -> Maybe String -> Aff (Either String a)
+apiRequest url method token mBody =
+  makeAff \cb -> do
+    fetchCb url method token (fromMaybe "" mBody)
+      ( \f -> cb $ Right $ case read_ f of
+          Nothing -> Left "Failed to decode response"
+          Just a  -> Right a
+      )
+      (\err -> cb (Right (Left err)))
+    pure nonCanceler
+
+base :: String
+base = currentConfig.apiBaseUrl
+
+-- ---------------------------------------------------------------------------
+-- Queue
+-- ---------------------------------------------------------------------------
+
+getQueue :: UserId -> Maybe LocationId -> Aff (Either String (Array PullRequest))
+getQueue token _ =
+  apiRequest (base <> "/stock/queue") "GET" token Nothing
+
+-- ---------------------------------------------------------------------------
+-- Transitions
+-- ---------------------------------------------------------------------------
 
 acceptPull :: UserId -> UUID -> Aff (Either String MutationResponse)
-acceptPull userId pullId =
-  Request.authPostUnit userId ("/stock/pull/" <> show pullId <> "/accept")
-    >>= \r -> pure (map (const { success: true, message: "Accepted" }) r)
+acceptPull token pullId =
+  apiRequest (base <> "/stock/pull/" <> show pullId <> "/accept") "POST" token (Just "{}")
 
 startPull :: UserId -> UUID -> Aff (Either String MutationResponse)
-startPull userId pullId =
-  Request.authPostUnit userId ("/stock/pull/" <> show pullId <> "/start")
-    >>= \r -> pure (map (const { success: true, message: "Started" }) r)
+startPull token pullId =
+  apiRequest (base <> "/stock/pull/" <> show pullId <> "/start") "POST" token (Just "{}")
 
 fulfillPull :: UserId -> UUID -> Aff (Either String MutationResponse)
-fulfillPull userId pullId =
-  Request.authPostUnit userId ("/stock/pull/" <> show pullId <> "/fulfill")
-    >>= \r -> pure (map (const { success: true, message: "Fulfilled" }) r)
-
-reportIssue :: UserId -> UUID -> String -> Aff (Either String MutationResponse)
-reportIssue userId pullId note =
-  Request.authPost userId ("/stock/pull/" <> show pullId <> "/issue") { irNote: note }
+fulfillPull token pullId =
+  apiRequest (base <> "/stock/pull/" <> show pullId <> "/fulfill") "POST" token (Just "{}")
 
 retryPull :: UserId -> UUID -> Aff (Either String MutationResponse)
-retryPull userId pullId =
-  Request.authPostUnit userId ("/stock/pull/" <> show pullId <> "/retry")
-    >>= \r -> pure (map (const { success: true, message: "Retried" }) r)
+retryPull token pullId =
+  apiRequest (base <> "/stock/pull/" <> show pullId <> "/retry") "POST" token (Just "{}")
 
-sendMessage :: UserId -> UUID -> String -> Aff (Either String MutationResponse)
-sendMessage userId pullId msg =
-  Request.authPost userId ("/stock/pull/" <> show pullId <> "/message") { nmMessage: msg }
+reportIssue :: UserId -> UUID -> String -> Aff (Either String MutationResponse)
+reportIssue token pullId note =
+  apiRequest
+    (base <> "/stock/pull/" <> show pullId <> "/issue")
+    "POST"
+    token
+    (Just (writeJSON { irNote: note }))
+
+-- ---------------------------------------------------------------------------
+-- Messages (new)
+-- ---------------------------------------------------------------------------
 
 getMessages :: UserId -> UUID -> Aff (Either String (Array PullMessage))
-getMessages userId pullId =
-  Request.authGet userId ("/stock/pull/" <> show pullId <> "/messages")
+getMessages token pullId =
+  apiRequest
+    (base <> "/stock/pull/" <> show pullId <> "/messages")
+    "GET"
+    token
+    Nothing
+
+sendMessage :: UserId -> UUID -> String -> Aff (Either String MutationResponse)
+sendMessage token pullId msg =
+  apiRequest
+    (base <> "/stock/pull/" <> show pullId <> "/message")
+    "POST"
+    token
+    (Just (writeJSON { nmMessage: msg }))

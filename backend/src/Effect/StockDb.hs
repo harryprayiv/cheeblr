@@ -17,6 +17,7 @@ module Effect.StockDb (
   addPullMessage,
   getPullMessages,
   cancelPullsForTransaction,
+  cancelPullsForItem,
   runStockDbIO,
   StockStore (..),
   emptyStockStore,
@@ -38,14 +39,15 @@ import Types.Location (LocationId)
 import Types.Stock
 
 data StockDb :: Effect where
-  CreatePullRequest :: PullRequest -> StockDb m (Either Text ())
-  GetPullRequest :: UUID -> StockDb m (Maybe PullRequest)
-  UpdatePullStatus :: UUID -> PullVertex -> Maybe Text -> StockDb m (Either Text ())
-  GetPendingPulls :: LocationId -> StockDb m [PullRequest]
-  GetPullsByTransaction :: UUID -> StockDb m [PullRequest]
-  AddPullMessage :: UUID -> PullMessage -> StockDb m (Either Text ())
-  GetPullMessages :: UUID -> StockDb m [PullMessage]
+  CreatePullRequest         :: PullRequest -> StockDb m (Either Text ())
+  GetPullRequest            :: UUID -> StockDb m (Maybe PullRequest)
+  UpdatePullStatus          :: UUID -> PullVertex -> Maybe Text -> StockDb m (Either Text ())
+  GetPendingPulls           :: LocationId -> StockDb m [PullRequest]
+  GetPullsByTransaction     :: UUID -> StockDb m [PullRequest]
+  AddPullMessage            :: UUID -> PullMessage -> StockDb m (Either Text ())
+  GetPullMessages           :: UUID -> StockDb m [PullMessage]
   CancelPullsForTransaction :: UUID -> Text -> StockDb m ()
+  CancelPullsForItem        :: UUID -> UUID -> Text -> StockDb m ()
 
 type instance DispatchOf StockDb = Dynamic
 
@@ -73,23 +75,32 @@ getPullMessages = send . GetPullMessages
 cancelPullsForTransaction :: (StockDb :> es) => UUID -> Text -> Eff es ()
 cancelPullsForTransaction txId reason = send (CancelPullsForTransaction txId reason)
 
+cancelPullsForItem :: (StockDb :> es) => UUID -> UUID -> Text -> Eff es ()
+cancelPullsForItem txId itemSku reason = send (CancelPullsForItem txId itemSku reason)
+
 runStockDbIO :: (IOE :> es) => DBPool -> Eff (StockDb : es) a -> Eff es a
 runStockDbIO pool = interpret $ \_ -> \case
   CreatePullRequest pr -> liftIO $ do
     DBS.insertPullRequest pool pr
     pure (Right ())
-  GetPullRequest pid -> liftIO $ DBS.getPullRequest pool pid
+  GetPullRequest pid ->
+    liftIO $ DBS.getPullRequest pool pid
   UpdatePullStatus pid v mNote -> liftIO $ do
     DBS.updatePullStatus pool pid v mNote
     pure (Right ())
-  GetPendingPulls locId -> liftIO $ DBS.getPendingPulls pool locId
-  GetPullsByTransaction txId -> liftIO $ DBS.getPullsByTransaction pool txId
+  GetPendingPulls locId ->
+    liftIO $ DBS.getPendingPulls pool locId
+  GetPullsByTransaction txId ->
+    liftIO $ DBS.getPullsByTransaction pool txId
   AddPullMessage pid msg -> liftIO $ do
     DBS.insertPullMessage pool pid msg
     pure (Right ())
-  GetPullMessages pid -> liftIO $ DBS.getPullMessages pool pid
+  GetPullMessages pid ->
+    liftIO $ DBS.getPullMessages pool pid
   CancelPullsForTransaction txId reason ->
     liftIO $ DBS.cancelPullsForTransaction pool txId reason
+  CancelPullsForItem txId itemSku _reason ->
+    liftIO $ DBS.cancelPullsForItem pool txId itemSku
 
 data StockStore = StockStore
   { ssRequests :: Map UUID PullRequest
@@ -114,9 +125,7 @@ runStockDbPure initial = reinterpret (runState initial) $ \_ -> \case
       Nothing -> pure (Left "Pull request not found")
       Just pr -> do
         put @StockStore
-          st
-            { ssRequests = Map.insert pid pr {prStatus = newVertex} (ssRequests st)
-            }
+          st {ssRequests = Map.insert pid pr {prStatus = newVertex} (ssRequests st)}
         pure (Right ())
   GetPendingPulls locId ->
     gets @StockStore $
@@ -143,6 +152,20 @@ runStockDbPure initial = reinterpret (runState initial) $ \_ -> \case
             Map.map
               ( \pr ->
                   if prTransactionId pr == txId
+                    && prStatus pr `notElem` [PullFulfilled, PullCancelled]
+                    then pr {prStatus = PullCancelled}
+                    else pr
+              )
+              (ssRequests st)
+        }
+  CancelPullsForItem txId itemSku _reason ->
+    modify @StockStore $ \st ->
+      st
+        { ssRequests =
+            Map.map
+              ( \pr ->
+                  if prTransactionId pr == txId
+                    && prItemSku pr == itemSku
                     && prStatus pr `notElem` [PullFulfilled, PullCancelled]
                     then pr {prStatus = PullCancelled}
                     else pr
