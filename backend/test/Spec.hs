@@ -29,6 +29,8 @@ import qualified Test.State.TransactionMachineSpec
 import qualified Test.Types.AuthSpec
 import qualified Test.Types.InventorySpec
 import qualified Test.Types.Public.AvailableItemSpec
+import qualified Test.Types.Public.FeedFrameSpec
+import qualified Test.Types.Public.FeedPrivacySpec
 import qualified Test.Types.TraceSpec
 import qualified Test.Types.TransactionSpec
 
@@ -40,6 +42,8 @@ main = hspec $ do
     Test.Types.TransactionSpec.spec
     Test.Types.InventorySpec.spec
     Test.Types.Public.AvailableItemSpec.spec
+    Test.Types.Public.FeedFrameSpec.spec
+    Test.Types.Public.FeedPrivacySpec.spec
     Test.Auth.SimpleSpec.spec
     Test.API.TransactionSpec.spec
     Test.API.OpenApiSpec.spec

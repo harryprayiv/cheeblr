@@ -7,8 +7,11 @@
 module Server where
 
 import API.Admin (AdminAPI)
+import API.Feed (FeedAPI)
 import API.Inventory
+import API.Manager (ManagerAPI)
 import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
+import API.Stock (StockAPI)
 import Auth.Session (SessionContext (..), resolveSession)
 import Control.Monad.IO.Class (liftIO)
 import Data.Morpheus (interpreter)
@@ -21,8 +24,6 @@ import Effectful.Error.Static (Error, runErrorNoCallStack)
 import Servant hiding (throwError)
 import qualified Servant (throwError)
 
-import API.Manager (ManagerAPI)
-import API.Stock (StockAPI)
 import DB.Database (DBPool)
 import Effect.InventoryDb
 import GraphQL.Resolvers (rootResolver)
@@ -30,6 +31,7 @@ import Logging
 import Server.Admin (adminServerImpl)
 import Server.Auth (authServerImpl)
 import Server.Env (AppEnv (..))
+import Server.Feed (feedServerImpl)
 import Server.Manager (managerServerImpl)
 import Server.Stock (stockServerImpl)
 import Server.Transaction (posServerImpl)
@@ -44,14 +46,18 @@ import Types.Auth (
  )
 import Types.Inventory
 
-type FullAPI = CheeblrAPI :<|> AdminAPI :<|> ManagerAPI :<|> StockAPI
+-- FeedAPI is first so its public routes are checked before the authenticated
+-- CheeblrAPI. The /xrpc/..., /lexicons/..., and /feed/... prefixes do not
+-- overlap with any existing route.
+type FullAPI = FeedAPI :<|> CheeblrAPI :<|> AdminAPI :<|> ManagerAPI :<|> StockAPI
 
 fullAPI :: Proxy FullAPI
 fullAPI = Proxy
 
 fullServer :: AppEnv -> Server FullAPI
 fullServer env =
-  combinedServer env
+  feedServerImpl env
+    :<|> combinedServer env
     :<|> adminServerImpl env
     :<|> managerServerImpl env
     :<|> stockServerImpl env

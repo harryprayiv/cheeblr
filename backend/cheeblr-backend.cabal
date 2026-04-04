@@ -60,6 +60,8 @@ common shared-properties
                 , vault
                 , tagged
                 , http-api-data
+                , websockets
+                , wai-websockets
 library
     import: shared-properties
     exposed-modules: App
@@ -99,16 +101,19 @@ library
                    , Infrastructure.SSE
                    , Server.Env
                    , Server.Metrics
+                   , Server.Feed
                    , Types.Events.Availability
                    , Types.Events.Domain
                    , Types.Events.Log
                    , Types.Events.Stock
+                   , Types.Public.FeedFrame
                    , Effect.EventEmitter
                    , Types.Events.Inventory
                    , Types.Events.Register
                    , Types.Events.Session
                    , Types.Events.Transaction
                    , DB.Events
+                   , API.Feed
                    , Logging.BroadcastScribe
                    , Server.Middleware.Tracing
                    , Server.Admin
@@ -187,6 +192,8 @@ test-suite cheeblr-unit-tests
         Test.Effect.StockDbSpec
         Test.State.StockPullMachineSpec
         Test.Service.StockSpec
+        Test.Types.Public.FeedFrameSpec
+        Test.Types.Public.FeedPrivacySpec
     build-depends:
         cheeblr-backend
         , hspec

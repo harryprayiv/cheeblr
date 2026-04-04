@@ -8,7 +8,15 @@ module Types.Public.AvailableItem (
   mkAvailableItem,
 ) where
 
-import Data.Aeson (FromJSON, ToJSON)
+import Data.Aeson (
+  FromJSON,
+  Options (..),
+  ToJSON (toJSON),
+  defaultOptions,
+  genericParseJSON,
+  genericToJSON,
+ )
+import Data.Char (toLower)
 import Data.Text (Text, pack)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
@@ -18,6 +26,7 @@ import GHC.Generics (Generic)
 
 import Types.Inventory (MenuItem)
 import qualified Types.Inventory as TI
+import Data.Aeson.Types (parseJSON)
 
 newtype PublicSku = PublicSku Text
   deriving (Show, Eq, Ord, Generic)
@@ -55,8 +64,23 @@ data AvailableItem = AvailableItem
   }
   deriving (Show, Eq, Generic)
 
-instance ToJSON AvailableItem
-instance FromJSON AvailableItem
+-- Strip the two-character "ai" prefix and lowercase the first remaining
+-- character so that JSON field names match the lexicon exactly.
+-- e.g. aiPublicSku -> publicSku, aiInStock -> inStock
+availableItemOptions :: Options
+availableItemOptions =
+  defaultOptions
+    { fieldLabelModifier = \label ->
+        case drop 2 label of
+          [] -> label
+          (c : cs) -> toLower c : cs
+    }
+
+instance ToJSON AvailableItem where
+  toJSON = genericToJSON availableItemOptions
+
+instance FromJSON AvailableItem where
+  parseJSON = genericParseJSON availableItemOptions
 
 mkAvailableItem ::
   MenuItem ->
