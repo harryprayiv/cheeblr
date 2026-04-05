@@ -22,6 +22,11 @@ module DB.Auth (
   listActiveSessions,
   getSessionById,
   clearRateLimitForIp,
+  -- Token rotation
+  getSessionRotatedAt,
+  rotateSessionToken,
+  -- Maintenance
+  cleanupExpiredSessions,
 ) where
 
 import Crypto.Error (
@@ -65,12 +70,12 @@ import Types.Location (
  )
 
 data NewUser = NewUser
-  { newUserName :: Text
+  { newUserName    :: Text
   , newDisplayName :: Text
-  , newEmail :: Maybe Text
-  , newRole :: UserRole
-  , newLocationId :: Maybe LocationId
-  , newPassword :: Text
+  , newEmail       :: Maybe Text
+  , newRole        :: UserRole
+  , newLocationId  :: Maybe LocationId
+  , newPassword    :: Text
   }
 
 type SessionToken = Text
@@ -78,11 +83,11 @@ type SessionToken = Text
 argonOpts :: Argon2.Options
 argonOpts =
   Argon2.Options
-    { Argon2.iterations = 3
-    , Argon2.memory = 65536
-    , Argon2.parallelism = 4
-    , Argon2.variant = Argon2.Argon2id
-    , Argon2.version = Argon2.Version13
+    { Argon2.iterations   = 3
+    , Argon2.memory       = 65536
+    , Argon2.parallelism  = 4
+    , Argon2.variant      = Argon2.Argon2id
+    , Argon2.version      = Argon2.Version13
     }
 
 argonOutputLen :: Int
@@ -129,7 +134,7 @@ verifyPassword stored plaintext =
           let pw = TE.encodeUtf8 plaintext
            in case (Argon2.hash argonOpts pw salt argonOutputLen :: CryptoFailable ByteString) of
                 CryptoPassed derived -> (derived :: ByteString) == expected
-                CryptoFailed _ -> False
+                CryptoFailed _       -> False
         _ -> False
     _ -> False
 
@@ -149,20 +154,20 @@ decodeTokenText t =
 
 parseRole :: Text -> UserRole
 parseRole "Customer" = Customer
-parseRole "Cashier" = Cashier
-parseRole "Manager" = Manager
-parseRole "Admin" = Admin
-parseRole _ = Cashier
+parseRole "Cashier"  = Cashier
+parseRole "Manager"  = Manager
+parseRole "Admin"    = Admin
+parseRole _          = Cashier
 
 userRowToAuthUser :: UserRow Result -> AuthenticatedUser
 userRowToAuthUser row =
   AuthenticatedUser
-    { auUserId = userId row
-    , auUserName = displayName row
-    , auEmail = email row
-    , auRole = parseRole (userRole row)
+    { auUserId     = userId row
+    , auUserName   = displayName row
+    , auEmail      = email row
+    , auRole       = parseRole (userRole row)
     , auLocationId = fmap LocationId (userLocationId row)
-    , auCreatedAt = userCreatedAt row
+    , auCreatedAt  = userCreatedAt row
     }
 
 createAuthTables :: DBPool -> IO ()
@@ -184,23 +189,32 @@ createAuthTables pool = runSession pool $ do
   Session.statement () $
     ddl
       "CREATE TABLE IF NOT EXISTS sessions (\
-      \  id            UUID PRIMARY KEY,\
-      \  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,\
-      \  token_hash    TEXT NOT NULL UNIQUE,\
-      \  register_id   UUID,\
-      \  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-      \  last_seen_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
-      \  expires_at    TIMESTAMPTZ NOT NULL,\
-      \  revoked       BOOLEAN NOT NULL DEFAULT FALSE,\
-      \  revoked_at    TIMESTAMPTZ,\
-      \  revoked_by    UUID REFERENCES users(id),\
-      \  user_agent    TEXT,\
-      \  ip_address    TEXT\
+      \  id               UUID PRIMARY KEY,\
+      \  user_id          UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,\
+      \  token_hash       TEXT NOT NULL UNIQUE,\
+      \  register_id      UUID,\
+      \  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+      \  last_seen_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+      \  expires_at       TIMESTAMPTZ NOT NULL,\
+      \  revoked          BOOLEAN NOT NULL DEFAULT FALSE,\
+      \  revoked_at       TIMESTAMPTZ,\
+      \  revoked_by       UUID REFERENCES users(id),\
+      \  user_agent       TEXT,\
+      \  ip_address       TEXT,\
+      \  token_rotated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
       \)"
+  -- Safe migration: adds the column to existing deployments without data loss.
+  -- DEFAULT NOW() back-fills all existing rows with a sane value so the NOT
+  -- NULL constraint is immediately satisfied.
   Session.statement () $
     ddl
-      "CREATE INDEX IF NOT EXISTS sessions_token_hash_idx ON sessions (token_hash)\
-      \ WHERE NOT revoked"
+      "ALTER TABLE sessions \
+      \ADD COLUMN IF NOT EXISTS \
+      \token_rotated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+  Session.statement () $
+    ddl
+      "CREATE INDEX IF NOT EXISTS sessions_token_hash_idx \
+      \ON sessions (token_hash) WHERE NOT revoked"
   Session.statement () $
     ddl
       "CREATE INDEX IF NOT EXISTS sessions_user_id_idx ON sessions (user_id)"
@@ -215,17 +229,17 @@ createAuthTables pool = runSession pool $ do
       \)"
   Session.statement () $
     ddl
-      "CREATE INDEX IF NOT EXISTS login_attempts_ip_idx\
-      \ ON login_attempts (ip_address, attempted_at DESC)"
+      "CREATE INDEX IF NOT EXISTS login_attempts_ip_idx \
+      \ON login_attempts (ip_address, attempted_at DESC)"
   Session.statement () $
     ddl
-      "CREATE INDEX IF NOT EXISTS login_attempts_username_idx\
-      \ ON login_attempts (username, attempted_at DESC)"
+      "CREATE INDEX IF NOT EXISTS login_attempts_username_idx \
+      \ON login_attempts (username, attempted_at DESC)"
 
 createUser :: DBPool -> NewUser -> IO UUID
 createUser pool nu = do
-  uid <- nextRandom
-  now <- getCurrentTime
+  uid  <- nextRandom
+  now  <- getCurrentTime
   hashed <- hashPassword (newPassword nu)
   runSession pool $
     Session.statement () $
@@ -236,20 +250,20 @@ createUser pool nu = do
             , rows =
                 values
                   [ UserRow
-                      { userId = lit uid
-                      , userName = lit (newUserName nu)
-                      , displayName = lit (newDisplayName nu)
-                      , email = lit (newEmail nu)
-                      , userRole = lit $ T.pack $ show (newRole nu)
+                      { userId         = lit uid
+                      , userName       = lit (newUserName nu)
+                      , displayName    = lit (newDisplayName nu)
+                      , email          = lit (newEmail nu)
+                      , userRole       = lit $ T.pack $ show (newRole nu)
                       , userLocationId = lit (fmap locationIdToUUID (newLocationId nu))
-                      , passwordHash = lit hashed
-                      , isActive = lit True
-                      , userCreatedAt = lit now
-                      , userUpdatedAt = lit now
+                      , passwordHash   = lit hashed
+                      , isActive       = lit True
+                      , userCreatedAt  = lit now
+                      , userUpdatedAt  = lit now
                       }
                   ]
             , onConflict = Abort
-            , returning = NoReturning
+            , returning  = NoReturning
             }
   pure uid
 
@@ -257,13 +271,11 @@ lookupUserByUsername :: DBPool -> Text -> IO (Maybe (UserRow Result))
 lookupUserByUsername pool username = do
   userRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
     u <- each userSchema
-    where_ $
-      userName u ==. lit username
-        &&. isActive u
+    where_ $ userName u ==. lit username &&. isActive u
     pure u
   case userRows of
     [u] -> pure (Just u)
-    _ -> pure Nothing
+    _   -> pure Nothing
 
 createSession ::
   DBPool ->
@@ -278,7 +290,7 @@ createSession pool uid mRegisterId ua ip = do
   raw <- getEntropy 32
   let
     tokenText = encodeTokenBytes raw
-    tHash = hashTokenBytes raw
+    tHash     = hashTokenBytes raw
     expiresAt = addUTCTime (8 * 3600) now
   runSession pool $
     Session.statement () $
@@ -289,22 +301,23 @@ createSession pool uid mRegisterId ua ip = do
             , rows =
                 values
                   [ SessionRow
-                      { sessId = lit sid
-                      , sessUserId = lit uid
-                      , sessTokenHash = lit tHash
-                      , sessRegisterId = lit mRegisterId
-                      , sessCreatedAt = lit now
-                      , sessLastSeenAt = lit now
-                      , sessExpiresAt = lit expiresAt
-                      , sessRevoked = lit False
-                      , sessRevokedAt = lit Nothing
-                      , sessRevokedBy = lit Nothing
-                      , sessUserAgent = lit (Just ua)
-                      , sessIpAddress = lit (Just ip)
+                      { sessId             = lit sid
+                      , sessUserId         = lit uid
+                      , sessTokenHash      = lit tHash
+                      , sessRegisterId     = lit mRegisterId
+                      , sessCreatedAt      = lit now
+                      , sessLastSeenAt     = lit now
+                      , sessExpiresAt      = lit expiresAt
+                      , sessRevoked        = lit False
+                      , sessRevokedAt      = lit Nothing
+                      , sessRevokedBy      = lit Nothing
+                      , sessUserAgent      = lit (Just ua)
+                      , sessIpAddress      = lit (Just ip)
+                      , sessTokenRotatedAt = lit now
                       }
                   ]
             , onConflict = Abort
-            , returning = NoReturning
+            , returning  = NoReturning
             }
   pure (tokenText, expiresAt)
 
@@ -335,14 +348,80 @@ lookupSession pool rawToken = do
               run_ $
                 Rel8.update $
                   Update
-                    { target = sessionSchema
-                    , from = pure ()
-                    , set = \() row -> row {sessLastSeenAt = lit now}
+                    { target      = sessionSchema
+                    , from        = pure ()
+                    , set         = \() row -> row { sessLastSeenAt = lit now }
                     , updateWhere = \() row -> sessTokenHash row ==. lit tHash
-                    , returning = NoReturning
+                    , returning   = NoReturning
                     }
           pure (Just (sess, user))
         _ -> pure Nothing
+
+-- | Read-only check used by the rotation middleware. Returns the session ID
+-- and the timestamp of the last token rotation without updating last_seen_at
+-- (that is left to the handler's own lookupSession call).
+getSessionRotatedAt :: DBPool -> Text -> IO (Maybe (UUID, UTCTime))
+getSessionRotatedAt pool rawToken = do
+  now <- getCurrentTime
+  case decodeTokenText rawToken of
+    Left _ -> pure Nothing
+    Right raw -> do
+      let tHash = hashTokenBytes raw
+      rotRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+        sess <- each sessionSchema
+        where_ $
+          sessTokenHash sess ==. lit tHash
+            &&. Rel8.not_ (sessRevoked sess)
+            &&. sessExpiresAt sess >. lit now
+        pure (sessId sess, sessTokenRotatedAt sess)
+      case rotRows of
+        [(sid, rotatedAt)] -> pure (Just (sid, rotatedAt))
+        _                  -> pure Nothing
+
+-- | Generate a fresh token for an existing session row, extending the
+-- expiry window. The old token hash is overwritten atomically; a stolen
+-- cookie that arrives after rotation is immediately invalid.
+rotateSessionToken :: DBPool -> UUID -> IO (SessionToken, UTCTime)
+rotateSessionToken pool sid = do
+  now <- getCurrentTime
+  raw <- getEntropy 32
+  let
+    tokenText = encodeTokenBytes raw
+    tHash     = hashTokenBytes raw
+    expiresAt = addUTCTime (8 * 3600) now
+  runSession pool $
+    Session.statement () $
+      run_ $
+        Rel8.update $
+          Update
+            { target = sessionSchema
+            , from   = pure ()
+            , set    = \() row ->
+                row
+                  { sessTokenHash      = lit tHash
+                  , sessExpiresAt      = lit expiresAt
+                  , sessTokenRotatedAt = lit now
+                  , sessLastSeenAt     = lit now
+                  }
+            , updateWhere = \() row -> sessId row ==. lit sid
+            , returning   = NoReturning
+            }
+  pure (tokenText, expiresAt)
+
+-- | Remove expired sessions and revoked sessions older than the audit
+-- retention window (24 h). Called hourly by the cleanup worker in App.hs.
+-- Revoked sessions are retained briefly so that concurrent in-flight
+-- requests carrying the old cookie receive a clean 401 rather than a
+-- confusing "session not found" error.
+cleanupExpiredSessions :: DBPool -> IO ()
+cleanupExpiredSessions pool = runSession pool $ do
+  Session.statement () $
+    ddl "DELETE FROM sessions WHERE expires_at < NOW()"
+  Session.statement () $
+    ddl
+      "DELETE FROM sessions \
+      \WHERE revoked = TRUE \
+      \  AND revoked_at < NOW() - INTERVAL '24 hours'"
 
 revokeSession :: DBPool -> UUID -> Maybe UUID -> IO ()
 revokeSession pool sid mRevokedBy = do
@@ -353,15 +432,15 @@ revokeSession pool sid mRevokedBy = do
         Rel8.update $
           Update
             { target = sessionSchema
-            , from = pure ()
-            , set = \() row ->
+            , from   = pure ()
+            , set    = \() row ->
                 row
-                  { sessRevoked = lit True
+                  { sessRevoked   = lit True
                   , sessRevokedAt = lit (Just now)
                   , sessRevokedBy = lit mRevokedBy
                   }
             , updateWhere = \() row -> sessId row ==. lit sid
-            , returning = NoReturning
+            , returning   = NoReturning
             }
 
 revokeAllUserSessions :: DBPool -> UUID -> IO ()
@@ -373,10 +452,10 @@ revokeAllUserSessions pool uid = do
         Rel8.update $
           Update
             { target = sessionSchema
-            , from = pure ()
-            , set = \() row ->
+            , from   = pure ()
+            , set    = \() row ->
                 row
-                  { sessRevoked = lit True
+                  { sessRevoked   = lit True
                   , sessRevokedAt = lit (Just now)
                   }
             , updateWhere = \() row ->
@@ -398,25 +477,22 @@ recordLoginAttempt pool username ip success = do
             , rows =
                 values
                   [ LoginAttemptRow
-                      { attemptId = lit aid
-                      , attemptUsername = lit username
+                      { attemptId        = lit aid
+                      , attemptUsername  = lit username
                       , attemptIpAddress = lit ip
-                      , attemptSuccess = lit success
-                      , attemptedAt = lit now
+                      , attemptSuccess   = lit success
+                      , attemptedAt      = lit now
                       }
                   ]
             , onConflict = Abort
-            , returning = NoReturning
+            , returning  = NoReturning
             }
 
-{- | Count recent failed logins for a specific username+IP pair.
-Used to lock out a single credential pair after repeated failures.
--}
 recentFailedAttempts :: DBPool -> Text -> Text -> NominalDiffTime -> IO Int
 recentFailedAttempts pool username ip windowSecs = do
   now <- getCurrentTime
   let cutoff = addUTCTime (negate windowSecs) now
-  attemptRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+  rowses <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
     a <- each loginAttemptSchema
     where_ $
       attemptUsername a ==. lit username
@@ -424,24 +500,20 @@ recentFailedAttempts pool username ip windowSecs = do
         &&. Rel8.not_ (attemptSuccess a)
         &&. attemptedAt a >. lit cutoff
     pure a
-  pure (length attemptRows)
+  pure (length rowses)
 
-{- | Count recent failed logins from an IP across all usernames.
-Used to catch distributed credential-stuffing from a single IP that
-rotates across multiple usernames to evade per-credential limits.
--}
 recentFailedAttemptsByIp :: DBPool -> Text -> NominalDiffTime -> IO Int
 recentFailedAttemptsByIp pool ip windowSecs = do
   now <- getCurrentTime
   let cutoff = addUTCTime (negate windowSecs) now
-  attemptRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+  rowses <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
     a <- each loginAttemptSchema
     where_ $
       attemptIpAddress a ==. lit ip
         &&. Rel8.not_ (attemptSuccess a)
         &&. attemptedAt a >. lit cutoff
     pure a
-  pure (length attemptRows)
+  pure (length rowses)
 
 getSessionById :: DBPool -> UUID -> IO (Maybe (SessionRow Result))
 getSessionById pool sid = do
@@ -451,7 +523,7 @@ getSessionById pool sid = do
     pure sess
   case sessRows of
     [s] -> pure (Just s)
-    _ -> pure Nothing
+    _   -> pure Nothing
 
 listActiveSessions :: DBPool -> IO [(SessionRow Result, UserRow Result)]
 listActiveSessions pool = do
@@ -473,8 +545,8 @@ clearRateLimitForIp pool ip =
       run_ $
         Rel8.delete $
           Delete
-            { from = loginAttemptSchema
-            , using = pure ()
+            { from        = loginAttemptSchema
+            , using       = pure ()
             , deleteWhere = \() row -> attemptIpAddress row ==. lit ip
-            , returning = NoReturning
+            , returning   = NoReturning
             }

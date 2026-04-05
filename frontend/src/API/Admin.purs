@@ -7,7 +7,7 @@ import Data.Either (Either)
 import Data.Maybe (Maybe)
 import Effect.Aff (Aff)
 import Services.AuthService (UserId)
-import Types.Admin
+import Types.Admin (AdminAction, AdminSnapshot, DomainEventPage, LogPage, Register, SessionInfo, TransactionPage)
 import Types.Inventory (MutationResponse)
 import Types.UUID (UUID)
 

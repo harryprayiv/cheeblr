@@ -10,54 +10,51 @@ import Effect (Effect)
 import FRP.Poll (Poll)
 import Types.Auth (AuthenticatedUser, UserCapabilities, UserRole, emptyCapabilities)
 import Types.UUID (UUID)
-import Web.HTML (window)
-import Web.HTML.Window (localStorage)
-import Web.Storage.Storage (getItem, removeItem, setItem)
 
--- | The session token carried inside SignedIn is what gets sent as the
--- | Authorization: Bearer header. In dev mode it is the UUID string of the
--- | selected dev user. In real-auth mode it is the opaque token returned by
--- | POST /auth/login.
+-- | SignedIn DevUser String — the String is the user's UUID (ActorId),
+-- | used for logging and capability resolution. It is NOT the session token.
+-- | The session token lives exclusively in the HttpOnly cookie set by the
+-- | server and is never accessible to JavaScript.
 data AuthState = SignedIn DevUser String | SignedOut
 
-derive instance eqAuthState :: Eq AuthState
+instance showAuthState :: Show AuthState where
+  show SignedOut           = "SignedOut"
+  show (SignedIn _ actorId) = "SignedIn <user> " <> actorId
 
-type UserId = String
+-- | ActorId is the UUID of the authenticated user, used for logging.
+-- | Named UserId for backward compatibility with the API call-graph.
+type UserId  = String
+type ActorId = String
 
 tokenKey :: String
 tokenKey = "cheeblr_session_token"
 
+-- | No-op. The session cookie is HttpOnly and cannot be written from JS.
+-- | Retained so that call sites do not require changes.
 persistToken :: String -> Effect Unit
-persistToken token = do
-  w <- window
-  storage <- localStorage w
-  setItem tokenKey token storage
+persistToken _ = pure unit
 
+-- | No-op. Always returns Nothing. Session validity is checked by calling
+-- | GET /auth/me; the browser sends the HttpOnly cookie automatically.
 loadToken :: Effect (Maybe String)
-loadToken = do
-  w <- window
-  storage <- localStorage w
-  getItem tokenKey storage
+loadToken = pure Nothing
 
+-- | No-op. The server clears the cookie on POST /auth/logout.
 clearToken :: Effect Unit
-clearToken = do
-  w <- window
-  storage <- localStorage w
-  removeItem tokenKey storage
+clearToken = pure unit
 
 mostRecentUser :: Poll AuthState -> Poll DevUser
 mostRecentUser = filterMap case _ of
   SignedIn user _ -> Just user
   SignedOut       -> Nothing
 
-getUserId :: AuthState -> Maybe String
-getUserId (SignedIn _ token) = Just token
+getUserId :: AuthState -> Maybe ActorId
+getUserId (SignedIn user _) = Just (show user.userId)
 getUserId SignedOut           = Nothing
 
--- | Returns the token/userId to use in Authorization: Bearer headers.
--- | Dev mode: UUID string. Real mode: opaque session token.
-userIdFromAuth :: AuthState -> String
-userIdFromAuth (SignedIn _ token) = token
+-- | Returns the user's UUID string for logging. NOT the session token.
+userIdFromAuth :: AuthState -> ActorId
+userIdFromAuth (SignedIn user _) = show user.userId
 userIdFromAuth SignedOut           = ""
 
 getCapabilities :: AuthState -> Maybe UserCapabilities
@@ -83,9 +80,8 @@ isSignedIn SignedOut       = false
 defaultAuthState :: AuthState
 defaultAuthState = SignedOut
 
--- | In dev mode the "token" is the UUID string of the default dev user.
--- | The backend's Auth.Simple.lookupUser accepts UUIDs as auth values, so
--- | this round-trips correctly when USE_REAL_AUTH=false.
+-- | devModeAuthState stores the user's UUID as the ActorId slot.
+-- | The Nix-based production guard is a follow-on task.
 devModeAuthState :: AuthState
 devModeAuthState = SignedIn defaultDevUser (show defaultDevUser.userId)
 

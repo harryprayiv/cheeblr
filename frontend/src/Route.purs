@@ -4,7 +4,6 @@ import Prelude hiding ((/))
 
 import API.Auth (logout)
 import Data.Generic.Rep (class Generic)
-import Data.Maybe (Maybe(..))
 import Data.Show.Generic (genericShow)
 import Deku.Control (text_)
 import Deku.Core (Nut)
@@ -19,7 +18,7 @@ import FRP.Poll (Poll)
 import Routing.Duplex (RouteDuplex', root, segment, string)
 import Routing.Duplex.Generic as G
 import Routing.Duplex.Generic.Syntax ((/))
-import Services.AuthService (AuthState(..), clearToken, loadToken)
+import Services.AuthService (AuthState(..), clearToken)
 
 data Route
   = Login
@@ -90,10 +89,9 @@ nav currentRoute authPoll pushAuth =
       [ DA.klass_ "nav-link nav-auth-link nav-logout-btn"
       , DL.click_ \_ ->
           launchAff_ do
-            mToken <- liftEffect loadToken
-            case mToken of
-              Just token -> void $ logout token
-              Nothing    -> pure unit
+            -- The browser sends the HttpOnly cookie automatically.
+            -- No token needs to be read from localStorage.
+            void logout
             liftEffect do
               clearToken
               pushAuth SignedOut

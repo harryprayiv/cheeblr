@@ -5,6 +5,7 @@ import Prelude
 import Effect (Effect)
 import Test.AdminTypes as AdminTypes
 import Test.Auth as Auth
+import Test.AuthCookie as AuthCookie
 import Test.Cart as Cart
 import Test.EnumInstances as EnumInstances
 import Test.FeedTypes as FeedTypes
@@ -37,6 +38,7 @@ main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" d
 
   -- Auth and session
   Auth.spec
+  AuthCookie.spec
   Session.spec
 
   -- Business logic
@@ -48,7 +50,7 @@ main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" d
   GraphQL.spec
   TransactionJson.spec
 
-  -- New: type-specific coverage
+  -- Type-specific coverage
   Stock.spec
   WebUtils.spec
   AdminTypes.spec

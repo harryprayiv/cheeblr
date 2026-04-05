@@ -62,6 +62,7 @@ common shared-properties
                 , http-api-data
                 , websockets
                 , wai-websockets
+                , cookie
 library
     import: shared-properties
     exposed-modules: App
@@ -102,6 +103,7 @@ library
                    , Server.Env
                    , Server.Metrics
                    , Server.Feed
+                   , Server.Cookie
                    , Types.Events.Availability
                    , Types.Events.Domain
                    , Types.Events.Log
@@ -194,6 +196,9 @@ test-suite cheeblr-unit-tests
         Test.Service.StockSpec
         Test.Types.Public.FeedFrameSpec
         Test.Types.Public.FeedPrivacySpec
+        Test.Server.CookieSpec
+        Test.App.CspSpec
+        Test.App.MiddlewareSpec
     build-depends:
         cheeblr-backend
         , hspec

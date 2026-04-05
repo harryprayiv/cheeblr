@@ -5,7 +5,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE StandaloneDeriving #-}
--- {-# LANGUAGE StandaloneKindSignatures #-}
+{-# LANGUAGE StandaloneKindSignatures #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
@@ -19,19 +19,19 @@ import GHC.Generics (Generic)
 import Rel8
 
 data MenuItemRow f = MenuItemRow
-  { menuSort :: Column f Int32
-  , menuSku :: Column f UUID
-  , menuBrand :: Column f Text
-  , menuName :: Column f Text
-  , menuPrice :: Column f Int32
+  { menuSort        :: Column f Int32
+  , menuSku         :: Column f UUID
+  , menuBrand       :: Column f Text
+  , menuName        :: Column f Text
+  , menuPrice       :: Column f Int32
   , menuMeasureUnit :: Column f Text
-  , menuPerPackage :: Column f Text
-  , menuQuantity :: Column f Int32
-  , menuCategory :: Column f Text
+  , menuPerPackage  :: Column f Text
+  , menuQuantity    :: Column f Int32
+  , menuCategory    :: Column f Text
   , menuSubcategory :: Column f Text
   , menuDescription :: Column f Text
-  , menuTags :: Column f [Text]
-  , menuEffects :: Column f [Text]
+  , menuTags        :: Column f [Text]
+  , menuEffects     :: Column f [Text]
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -44,34 +44,34 @@ menuItemSchema =
     { name = "menu_items"
     , columns =
         MenuItemRow
-          { menuSort = "sort"
-          , menuSku = "sku"
-          , menuBrand = "brand"
-          , menuName = "name"
-          , menuPrice = "price"
+          { menuSort        = "sort"
+          , menuSku         = "sku"
+          , menuBrand       = "brand"
+          , menuName        = "name"
+          , menuPrice       = "price"
           , menuMeasureUnit = "measure_unit"
-          , menuPerPackage = "per_package"
-          , menuQuantity = "quantity"
-          , menuCategory = "category"
+          , menuPerPackage  = "per_package"
+          , menuQuantity    = "quantity"
+          , menuCategory    = "category"
           , menuSubcategory = "subcategory"
           , menuDescription = "description"
-          , menuTags = "tags"
-          , menuEffects = "effects"
+          , menuTags        = "tags"
+          , menuEffects     = "effects"
           }
     }
 
 data StrainLineageRow f = StrainLineageRow
-  { slSku :: Column f UUID
-  , slThc :: Column f Text
-  , slCbg :: Column f Text
-  , slStrain :: Column f Text
-  , slCreator :: Column f Text
-  , slSpecies :: Column f Text
+  { slSku           :: Column f UUID
+  , slThc           :: Column f Text
+  , slCbg           :: Column f Text
+  , slStrain        :: Column f Text
+  , slCreator       :: Column f Text
+  , slSpecies       :: Column f Text
   , slDominantTerpene :: Column f Text
-  , slTerpenes :: Column f [Text]
-  , slLineage :: Column f [Text]
-  , slLeaflyUrl :: Column f Text
-  , slImg :: Column f Text
+  , slTerpenes      :: Column f [Text]
+  , slLineage       :: Column f [Text]
+  , slLeaflyUrl     :: Column f Text
+  , slImg           :: Column f Text
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -84,40 +84,40 @@ strainLineageSchema =
     { name = "strain_lineage"
     , columns =
         StrainLineageRow
-          { slSku = "sku"
-          , slThc = "thc"
-          , slCbg = "cbg"
-          , slStrain = "strain"
-          , slCreator = "creator"
-          , slSpecies = "species"
+          { slSku             = "sku"
+          , slThc             = "thc"
+          , slCbg             = "cbg"
+          , slStrain          = "strain"
+          , slCreator         = "creator"
+          , slSpecies         = "species"
           , slDominantTerpene = "dominant_terpene"
-          , slTerpenes = "terpenes"
-          , slLineage = "lineage"
-          , slLeaflyUrl = "leafly_url"
-          , slImg = "img"
+          , slTerpenes        = "terpenes"
+          , slLineage         = "lineage"
+          , slLeaflyUrl       = "leafly_url"
+          , slImg             = "img"
           }
     }
 
 data TransactionRow f = TransactionRow
-  { txId :: Column f UUID
-  , txStatus :: Column f Text
-  , txCreated :: Column f UTCTime
-  , txCompleted :: Column f (Maybe UTCTime)
-  , txCustomerId :: Column f (Maybe UUID)
-  , txEmployeeId :: Column f UUID
-  , txRegisterId :: Column f UUID
-  , txLocationId :: Column f UUID
-  , txSubtotal :: Column f Int32
-  , txDiscountTotal :: Column f Int32
-  , txTaxTotal :: Column f Int32
-  , txTotal :: Column f Int32
-  , txTransactionType :: Column f Text
-  , txIsVoided :: Column f Bool
-  , txVoidReason :: Column f (Maybe Text)
-  , txIsRefunded :: Column f Bool
-  , txRefundReason :: Column f (Maybe Text)
-  , txReferenceTransactionId :: Column f (Maybe UUID)
-  , txNotes :: Column f (Maybe Text)
+  { txId                       :: Column f UUID
+  , txStatus                   :: Column f Text
+  , txCreated                  :: Column f UTCTime
+  , txCompleted                :: Column f (Maybe UTCTime)
+  , txCustomerId               :: Column f (Maybe UUID)
+  , txEmployeeId               :: Column f UUID
+  , txRegisterId               :: Column f UUID
+  , txLocationId               :: Column f UUID
+  , txSubtotal                 :: Column f Int32
+  , txDiscountTotal            :: Column f Int32
+  , txTaxTotal                 :: Column f Int32
+  , txTotal                    :: Column f Int32
+  , txTransactionType          :: Column f Text
+  , txIsVoided                 :: Column f Bool
+  , txVoidReason               :: Column f (Maybe Text)
+  , txIsRefunded               :: Column f Bool
+  , txRefundReason             :: Column f (Maybe Text)
+  , txReferenceTransactionId   :: Column f (Maybe UUID)
+  , txNotes                    :: Column f (Maybe Text)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -130,36 +130,36 @@ transactionSchema =
     { name = "transaction"
     , columns =
         TransactionRow
-          { txId = "id"
-          , txStatus = "status"
-          , txCreated = "created"
-          , txCompleted = "completed"
-          , txCustomerId = "customer_id"
-          , txEmployeeId = "employee_id"
-          , txRegisterId = "register_id"
-          , txLocationId = "location_id"
-          , txSubtotal = "subtotal"
-          , txDiscountTotal = "discount_total"
-          , txTaxTotal = "tax_total"
-          , txTotal = "total"
-          , txTransactionType = "transaction_type"
-          , txIsVoided = "is_voided"
-          , txVoidReason = "void_reason"
-          , txIsRefunded = "is_refunded"
-          , txRefundReason = "refund_reason"
+          { txId                     = "id"
+          , txStatus                 = "status"
+          , txCreated                = "created"
+          , txCompleted              = "completed"
+          , txCustomerId             = "customer_id"
+          , txEmployeeId             = "employee_id"
+          , txRegisterId             = "register_id"
+          , txLocationId             = "location_id"
+          , txSubtotal               = "subtotal"
+          , txDiscountTotal          = "discount_total"
+          , txTaxTotal               = "tax_total"
+          , txTotal                  = "total"
+          , txTransactionType        = "transaction_type"
+          , txIsVoided               = "is_voided"
+          , txVoidReason             = "void_reason"
+          , txIsRefunded             = "is_refunded"
+          , txRefundReason           = "refund_reason"
           , txReferenceTransactionId = "reference_transaction_id"
-          , txNotes = "notes"
+          , txNotes                  = "notes"
           }
     }
 
 data TransactionItemRow f = TransactionItemRow
-  { tiId :: Column f UUID
+  { tiId            :: Column f UUID
   , tiTransactionId :: Column f UUID
-  , tiMenuItemSku :: Column f UUID
-  , tiQuantity :: Column f Int32
-  , tiPricePerUnit :: Column f Int32
-  , tiSubtotal :: Column f Int32
-  , tiTotal :: Column f Int32
+  , tiMenuItemSku   :: Column f UUID
+  , tiQuantity      :: Column f Int32
+  , tiPricePerUnit  :: Column f Int32
+  , tiSubtotal      :: Column f Int32
+  , tiTotal         :: Column f Int32
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -172,23 +172,23 @@ transactionItemSchema =
     { name = "transaction_item"
     , columns =
         TransactionItemRow
-          { tiId = "id"
+          { tiId            = "id"
           , tiTransactionId = "transaction_id"
-          , tiMenuItemSku = "menu_item_sku"
-          , tiQuantity = "quantity"
-          , tiPricePerUnit = "price_per_unit"
-          , tiSubtotal = "subtotal"
-          , tiTotal = "total"
+          , tiMenuItemSku   = "menu_item_sku"
+          , tiQuantity      = "quantity"
+          , tiPricePerUnit  = "price_per_unit"
+          , tiSubtotal      = "subtotal"
+          , tiTotal         = "total"
           }
     }
 
 data TaxRow f = TaxRow
-  { taxRowId :: Column f UUID
+  { taxRowId                :: Column f UUID
   , taxRowTransactionItemId :: Column f UUID
-  , taxRowCategory :: Column f Text
-  , taxRowRate :: Column f Double
-  , taxRowAmount :: Column f Int32
-  , taxRowDescription :: Column f Text
+  , taxRowCategory          :: Column f Text
+  , taxRowRate              :: Column f Double
+  , taxRowAmount            :: Column f Int32
+  , taxRowDescription       :: Column f Text
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -201,24 +201,24 @@ taxSchema =
     { name = "transaction_tax"
     , columns =
         TaxRow
-          { taxRowId = "id"
+          { taxRowId                = "id"
           , taxRowTransactionItemId = "transaction_item_id"
-          , taxRowCategory = "category"
-          , taxRowRate = "rate"
-          , taxRowAmount = "amount"
-          , taxRowDescription = "description"
+          , taxRowCategory          = "category"
+          , taxRowRate              = "rate"
+          , taxRowAmount            = "amount"
+          , taxRowDescription       = "description"
           }
     }
 
 data DiscountRow f = DiscountRow
-  { discRowId :: Column f UUID
+  { discRowId                :: Column f UUID
   , discRowTransactionItemId :: Column f (Maybe UUID)
-  , discRowTransactionId :: Column f (Maybe UUID)
-  , discRowType :: Column f Text
-  , discRowAmount :: Column f Int32
-  , discRowPercent :: Column f (Maybe Double)
-  , discRowReason :: Column f Text
-  , discRowApprovedBy :: Column f (Maybe UUID)
+  , discRowTransactionId     :: Column f (Maybe UUID)
+  , discRowType              :: Column f Text
+  , discRowAmount            :: Column f Int32
+  , discRowPercent           :: Column f (Maybe Double)
+  , discRowReason            :: Column f Text
+  , discRowApprovedBy        :: Column f (Maybe UUID)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -231,26 +231,26 @@ discountSchema =
     { name = "discount"
     , columns =
         DiscountRow
-          { discRowId = "id"
+          { discRowId                = "id"
           , discRowTransactionItemId = "transaction_item_id"
-          , discRowTransactionId = "transaction_id"
-          , discRowType = "type"
-          , discRowAmount = "amount"
-          , discRowPercent = "percent"
-          , discRowReason = "reason"
-          , discRowApprovedBy = "approved_by"
+          , discRowTransactionId     = "transaction_id"
+          , discRowType              = "type"
+          , discRowAmount            = "amount"
+          , discRowPercent           = "percent"
+          , discRowReason            = "reason"
+          , discRowApprovedBy        = "approved_by"
           }
     }
 
 data PaymentRow f = PaymentRow
-  { pymtId :: Column f UUID
-  , pymtTransactionId :: Column f UUID
-  , pymtMethod :: Column f Text
-  , pymtAmount :: Column f Int32
-  , pymtTendered :: Column f Int32
-  , pymtChange :: Column f Int32
-  , pymtReference :: Column f (Maybe Text)
-  , pymtApproved :: Column f Bool
+  { pymtId                :: Column f UUID
+  , pymtTransactionId     :: Column f UUID
+  , pymtMethod            :: Column f Text
+  , pymtAmount            :: Column f Int32
+  , pymtTendered          :: Column f Int32
+  , pymtChange            :: Column f Int32
+  , pymtReference         :: Column f (Maybe Text)
+  , pymtApproved          :: Column f Bool
   , pymtAuthorizationCode :: Column f (Maybe Text)
   }
   deriving stock (Generic)
@@ -264,25 +264,25 @@ paymentSchema =
     { name = "payment_transaction"
     , columns =
         PaymentRow
-          { pymtId = "id"
-          , pymtTransactionId = "transaction_id"
-          , pymtMethod = "method"
-          , pymtAmount = "amount"
-          , pymtTendered = "tendered"
-          , pymtChange = "change_amount"
-          , pymtReference = "reference"
-          , pymtApproved = "approved"
+          { pymtId                = "id"
+          , pymtTransactionId     = "transaction_id"
+          , pymtMethod            = "method"
+          , pymtAmount            = "amount"
+          , pymtTendered          = "tendered"
+          , pymtChange            = "change_amount"
+          , pymtReference         = "reference"
+          , pymtApproved          = "approved"
           , pymtAuthorizationCode = "authorization_code"
           }
     }
 
 data ReservationRow f = ReservationRow
-  { resId :: Column f UUID
-  , resItemSku :: Column f UUID
+  { resId            :: Column f UUID
+  , resItemSku       :: Column f UUID
   , resTransactionId :: Column f UUID
-  , resQuantity :: Column f Int32
-  , resStatus :: Column f Text
-  , resCreatedAt :: Column f UTCTime
+  , resQuantity      :: Column f Int32
+  , resStatus        :: Column f Text
+  , resCreatedAt     :: Column f UTCTime
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -295,25 +295,25 @@ reservationSchema =
     { name = "inventory_reservation"
     , columns =
         ReservationRow
-          { resId = "id"
-          , resItemSku = "item_sku"
+          { resId            = "id"
+          , resItemSku       = "item_sku"
           , resTransactionId = "transaction_id"
-          , resQuantity = "quantity"
-          , resStatus = "status"
-          , resCreatedAt = "created_at"
+          , resQuantity      = "quantity"
+          , resStatus        = "status"
+          , resCreatedAt     = "created_at"
           }
     }
 
 data RegisterRow f = RegisterRow
-  { regId :: Column f UUID
-  , regName :: Column f Text
-  , regLocationId :: Column f UUID
-  , regIsOpen :: Column f Bool
-  , regCurrentDrawerAmount :: Column f Int32
-  , regExpectedDrawerAmount :: Column f Int32
-  , regOpenedAt :: Column f (Maybe UTCTime)
-  , regOpenedBy :: Column f (Maybe UUID)
-  , regLastTransactionTime :: Column f (Maybe UTCTime)
+  { regId                    :: Column f UUID
+  , regName                  :: Column f Text
+  , regLocationId            :: Column f UUID
+  , regIsOpen                :: Column f Bool
+  , regCurrentDrawerAmount   :: Column f Int32
+  , regExpectedDrawerAmount  :: Column f Int32
+  , regOpenedAt              :: Column f (Maybe UTCTime)
+  , regOpenedBy              :: Column f (Maybe UUID)
+  , regLastTransactionTime   :: Column f (Maybe UTCTime)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -326,27 +326,27 @@ registerSchema =
     { name = "register"
     , columns =
         RegisterRow
-          { regId = "id"
-          , regName = "name"
-          , regLocationId = "location_id"
-          , regIsOpen = "is_open"
-          , regCurrentDrawerAmount = "current_drawer_amount"
+          { regId                   = "id"
+          , regName                 = "name"
+          , regLocationId           = "location_id"
+          , regIsOpen               = "is_open"
+          , regCurrentDrawerAmount  = "current_drawer_amount"
           , regExpectedDrawerAmount = "expected_drawer_amount"
-          , regOpenedAt = "opened_at"
-          , regOpenedBy = "opened_by"
-          , regLastTransactionTime = "last_transaction_time"
+          , regOpenedAt             = "opened_at"
+          , regOpenedBy             = "opened_by"
+          , regLastTransactionTime  = "last_transaction_time"
           }
     }
 
 data UserRow f = UserRow
-  { userId :: Column f UUID
-  , userName :: Column f Text -- login username (unique)
-  , displayName :: Column f Text -- shown in UI, maps to auUserName
-  , email :: Column f (Maybe Text)
-  , userRole :: Column f Text -- "Customer" | "Cashier" | "Manager" | "Admin"
+  { userId        :: Column f UUID
+  , userName      :: Column f Text
+  , displayName   :: Column f Text
+  , email         :: Column f (Maybe Text)
+  , userRole      :: Column f Text
   , userLocationId :: Column f (Maybe UUID)
-  , passwordHash :: Column f Text -- Argon2id encoded string including salt
-  , isActive :: Column f Bool
+  , passwordHash  :: Column f Text
+  , isActive      :: Column f Bool
   , userCreatedAt :: Column f UTCTime
   , userUpdatedAt :: Column f UTCTime
   }
@@ -361,32 +361,37 @@ userSchema =
     { name = "users"
     , columns =
         UserRow
-          { userId = "id"
-          , userName = "username"
-          , displayName = "display_name"
-          , email = "email"
-          , userRole = "role"
+          { userId         = "id"
+          , userName       = "username"
+          , displayName    = "display_name"
+          , email          = "email"
+          , userRole       = "role"
           , userLocationId = "location_id"
-          , passwordHash = "password_hash"
-          , isActive = "is_active"
-          , userCreatedAt = "created_at"
-          , userUpdatedAt = "updated_at"
+          , passwordHash   = "password_hash"
+          , isActive       = "is_active"
+          , userCreatedAt  = "created_at"
+          , userUpdatedAt  = "updated_at"
           }
     }
 
+-- sessTokenRotatedAt tracks when the token was last rotated, distinct from
+-- sessLastSeenAt (updated every request) and sessCreatedAt (set once).
+-- The middleware checks this and issues a fresh token when the threshold
+-- is exceeded, limiting the damage window of a stolen cookie.
 data SessionRow f = SessionRow
-  { sessId :: Column f UUID
-  , sessUserId :: Column f UUID
-  , sessTokenHash :: Column f Text -- hex(SHA256(raw_token_bytes))
-  , sessRegisterId :: Column f (Maybe UUID)
-  , sessCreatedAt :: Column f UTCTime
-  , sessLastSeenAt :: Column f UTCTime
-  , sessExpiresAt :: Column f UTCTime
-  , sessRevoked :: Column f Bool
-  , sessRevokedAt :: Column f (Maybe UTCTime)
-  , sessRevokedBy :: Column f (Maybe UUID)
-  , sessUserAgent :: Column f (Maybe Text)
-  , sessIpAddress :: Column f (Maybe Text)
+  { sessId             :: Column f UUID
+  , sessUserId         :: Column f UUID
+  , sessTokenHash      :: Column f Text
+  , sessRegisterId     :: Column f (Maybe UUID)
+  , sessCreatedAt      :: Column f UTCTime
+  , sessLastSeenAt     :: Column f UTCTime
+  , sessExpiresAt      :: Column f UTCTime
+  , sessRevoked        :: Column f Bool
+  , sessRevokedAt      :: Column f (Maybe UTCTime)
+  , sessRevokedBy      :: Column f (Maybe UUID)
+  , sessUserAgent      :: Column f (Maybe Text)
+  , sessIpAddress      :: Column f (Maybe Text)
+  , sessTokenRotatedAt :: Column f UTCTime
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -399,27 +404,28 @@ sessionSchema =
     { name = "sessions"
     , columns =
         SessionRow
-          { sessId = "id"
-          , sessUserId = "user_id"
-          , sessTokenHash = "token_hash"
-          , sessRegisterId = "register_id"
-          , sessCreatedAt = "created_at"
-          , sessLastSeenAt = "last_seen_at"
-          , sessExpiresAt = "expires_at"
-          , sessRevoked = "revoked"
-          , sessRevokedAt = "revoked_at"
-          , sessRevokedBy = "revoked_by"
-          , sessUserAgent = "user_agent"
-          , sessIpAddress = "ip_address"
+          { sessId             = "id"
+          , sessUserId         = "user_id"
+          , sessTokenHash      = "token_hash"
+          , sessRegisterId     = "register_id"
+          , sessCreatedAt      = "created_at"
+          , sessLastSeenAt     = "last_seen_at"
+          , sessExpiresAt      = "expires_at"
+          , sessRevoked        = "revoked"
+          , sessRevokedAt      = "revoked_at"
+          , sessRevokedBy      = "revoked_by"
+          , sessUserAgent      = "user_agent"
+          , sessIpAddress      = "ip_address"
+          , sessTokenRotatedAt = "token_rotated_at"
           }
     }
 
 data LoginAttemptRow f = LoginAttemptRow
-  { attemptId :: Column f UUID
-  , attemptUsername :: Column f Text
+  { attemptId        :: Column f UUID
+  , attemptUsername  :: Column f Text
   , attemptIpAddress :: Column f Text
-  , attemptSuccess :: Column f Bool
-  , attemptedAt :: Column f UTCTime
+  , attemptSuccess   :: Column f Bool
+  , attemptedAt      :: Column f UTCTime
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -432,10 +438,10 @@ loginAttemptSchema =
     { name = "login_attempts"
     , columns =
         LoginAttemptRow
-          { attemptId = "id"
-          , attemptUsername = "username"
+          { attemptId        = "id"
+          , attemptUsername  = "username"
           , attemptIpAddress = "ip_address"
-          , attemptSuccess = "success"
-          , attemptedAt = "attempted_at"
+          , attemptSuccess   = "success"
+          , attemptedAt      = "attempted_at"
           }
     }

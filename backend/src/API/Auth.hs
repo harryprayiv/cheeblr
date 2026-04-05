@@ -16,53 +16,42 @@ import Servant
 import Types.Auth (SessionResponse, UserRole)
 import Types.Location (LocationId)
 
--- The Authorization header used by all session-protected endpoints.
--- Format: "Bearer <token>"
 type SessionHeader = Header "Authorization" Text
 
-------------------------------------------------------------------------
--- Request / response types
-------------------------------------------------------------------------
-
 data LoginRequest = LoginRequest
-  { loginUsername :: Text
-  , loginPassword :: Text
+  { loginUsername   :: Text
+  , loginPassword   :: Text
   , loginRegisterId :: Maybe UUID
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
+-- loginToken removed: the token is carried exclusively in the HttpOnly
+-- Set-Cookie header. JS never sees it.
 data LoginResponse = LoginResponse
-  { loginToken :: Text
-  , loginExpiresAt :: UTCTime
-  , loginUser :: SessionResponse
+  { loginExpiresAt :: UTCTime
+  , loginUser      :: SessionResponse
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
--- Outward-facing user summary (no password hash, no internal fields).
 data UserSummary = UserSummary
-  { summaryId :: UUID
-  , summaryUsername :: Text
+  { summaryId          :: UUID
+  , summaryUsername    :: Text
   , summaryDisplayName :: Text
-  , summaryEmail :: Maybe Text
-  , summaryRole :: UserRole
-  , summaryIsActive :: Bool
+  , summaryEmail       :: Maybe Text
+  , summaryRole        :: UserRole
+  , summaryIsActive    :: Bool
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
--- API request for creating a new user (admin only).
 data NewUserRequest = NewUserRequest
-  { newReqUsername :: Text
+  { newReqUsername    :: Text
   , newReqDisplayName :: Text
-  , newReqEmail :: Maybe Text
-  , newReqRole :: UserRole
-  , newReqLocationId :: Maybe LocationId
-  , newReqPassword :: Text
+  , newReqEmail       :: Maybe Text
+  , newReqRole        :: UserRole
+  , newReqLocationId  :: Maybe LocationId
+  , newReqPassword    :: Text
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
-
-------------------------------------------------------------------------
--- API type
-------------------------------------------------------------------------
 
 type AuthAPI =
   "auth"
@@ -70,11 +59,11 @@ type AuthAPI =
     :> Header "User-Agent" Text
     :> Header "X-Real-IP" Text
     :> ReqBody '[JSON] LoginRequest
-    :> Post '[JSON] LoginResponse
+    :> Post '[JSON] (Headers '[Header "Set-Cookie" Text] LoginResponse)
     :<|> "auth"
       :> "logout"
       :> SessionHeader
-      :> Post '[JSON] NoContent
+      :> Post '[JSON] (Headers '[Header "Set-Cookie" Text] NoContent)
     :<|> "auth"
       :> "me"
       :> SessionHeader

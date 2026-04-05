@@ -5,6 +5,8 @@ import Test.Hspec
 import qualified Test.API.AdminSpec
 import qualified Test.API.OpenApiSpec
 import qualified Test.API.TransactionSpec
+import qualified Test.App.CspSpec
+import qualified Test.App.MiddlewareSpec
 import qualified Test.Auth.SimpleSpec
 import qualified Test.DB.PureFunctionsSpec
 import qualified Test.Effect.EventEmitterSpec
@@ -19,6 +21,7 @@ import qualified Test.Props.JsonRoundtripSpec
 import qualified Test.Props.NegateSpec
 import qualified Test.Props.ParseShowSpec
 import qualified Test.Props.StateMachineSpec
+import qualified Test.Server.CookieSpec
 import qualified Test.Server.Middleware.TracingSpec
 import qualified Test.Service.RegisterSpec
 import qualified Test.Service.StockSpec
@@ -55,7 +58,10 @@ main = hspec $ do
     Test.State.RegisterMachineSpec.spec
     Test.Effect.InventoryDbSpec.spec
     Test.Effect.EventEmitterSpec.spec
+    Test.Server.CookieSpec.spec
     Test.Server.Middleware.TracingSpec.spec
+    Test.App.CspSpec.spec
+    Test.App.MiddlewareSpec.spec
     Test.Service.TransactionSpec.spec
     Test.Service.RegisterSpec.spec
     Test.Props.JsonRoundtripSpec.spec

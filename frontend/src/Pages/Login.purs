@@ -18,7 +18,7 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Services.AuthService (AuthState(..), persistToken)
+import Services.AuthService (AuthState(..))
 import Web.Event.Event (target)
 import Web.HTML (window)
 import Web.HTML.HTMLInputElement (fromEventTarget, value) as Input
@@ -96,14 +96,12 @@ page pushAuth _ = Deku.do
                                 setErrorMessage $ "Login failed: " <> err
                                 setSubmitting false
                               Right resp -> do
-                                let token = resp.loginToken
-                                persistToken token
+                                -- The session cookie is set by the server (HttpOnly).
+                                -- We store the user UUID as the ActorId in SignedIn.
                                 let devUser = case findDevUserByRole resp.loginUser.sessionRole of
                                       Just u  -> u
                                       Nothing -> defaultDevUser
-                                -- The token is the real opaque session token.
-                                -- userIdFromAuth will return it for all API calls.
-                                pushAuth (SignedIn devUser token)
+                                pushAuth (SignedIn devUser (show devUser.userId))
                                 Console.log $ "Logged in as: " <> resp.loginUser.sessionUserName
                                 setSubmitting false
                                 w <- window

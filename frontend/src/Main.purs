@@ -40,7 +40,7 @@ import Pages.TransactionHistory as Pages.TransactionHistory
 import Route (Route(..), nav, route)
 import Routing.Duplex (parse)
 import Routing.Hash (matchesWith)
-import Services.AuthService (AuthState(..), clearToken, defaultAuthState, devModeAuthState, loadToken, userIdFromAuth)
+import Services.AuthService (AuthState(..), defaultAuthState, devModeAuthState, userIdFromAuth)
 import Services.RegisterService as RegisterService
 import Services.TransactionService as TransactionService
 import Types.Auth (UserCapabilities)
@@ -266,34 +266,36 @@ main = do
         ]
     )
 
+  -- Session restore: validateSession sends the HttpOnly cookie automatically.
+  -- No token is read from localStorage. If the cookie is present and valid,
+  -- the server returns the session; otherwise we land on Login.
+  --
+  -- RegisterService.initLocalRegister is only called after confirmed auth so
+  -- it never fires unauthenticated (which caused the 401s on mount).
   launchAff_ do
-    initialRoute <- if devMode
-      then pure LiveView
-      else do
-        mToken <- liftEffect loadToken
-        case mToken of
-          Nothing -> pure Login
-          Just token -> do
-            result <- validateSession token
-            liftEffect $ case result of
-              Left err -> do
-                Console.warn $ "Session restore failed: " <> err
-                clearToken
-                pure Login
-              Right sessionResp -> do
-                let devUser = case findDevUserByRole sessionResp.sessionRole of
-                      Just u  -> u
-                      Nothing -> defaultDevUser
-                pushAuth (SignedIn devUser token)
-                Console.log $ "Session restored for " <> sessionResp.sessionUserName
-                pure LiveView
+    initialRoute <- do
+      result <- validateSession
+      liftEffect $ case result of
+        Left err -> do
+          Console.warn $ "Session restore failed: " <> err
+          pure Login
+        Right sessionResp -> do
+          let devUser = case findDevUserByRole sessionResp.sessionRole of
+                Just u  -> u
+                Nothing -> defaultDevUser
+          pushAuth (SignedIn devUser (show devUser.userId))
+          Console.log $ "Session restored for " <> sessionResp.sessionUserName
+          pure LiveView
+
     liftEffect do
       userId <- Ref.read tokenRef
-      RegisterService.initLocalRegister
-        userId
-        dummyLocationId
-        dummyEmployeeId
-        (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
-        (\err      -> Console.error $ "Register pre-init failed: " <> err)
+      -- Only pre-init register when we have a real authenticated user.
+      when (userId /= "") $
+        RegisterService.initLocalRegister
+          userId
+          dummyLocationId
+          dummyEmployeeId
+          (\register -> Console.log $ "Register pre-initialized: " <> register.registerName)
+          (\err      -> Console.error $ "Register pre-init failed: " <> err)
       Ref.write true readyRef
       matcher Nothing initialRoute

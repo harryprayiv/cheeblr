@@ -4,12 +4,10 @@ import Prelude
 
 import API.Request as Request
 import Data.Either (Either)
-import Data.Maybe (Maybe)
 import Effect.Aff (Aff)
 import Services.AuthService (UserId)
 import Types.Manager (ActivitySummary, ManagerAlertRaw, DailyReportResult)
 import Types.Inventory (MutationResponse)
-import Config.Network (currentConfig)
 
 getActivity :: UserId -> Aff (Either String ActivitySummary)
 getActivity userId = Request.authGet userId "/manager/activity"

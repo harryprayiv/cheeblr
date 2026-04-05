@@ -440,3 +440,30 @@ spec = describe "Auth" do
     it "preserves userName" do
       let au = toAuthenticatedUser devCashier
       au.auUserName `shouldEqual` devCashier.userName
+    
+  describe "ActorId slot invariants (cookie migration)" do
+    it "SignedIn second slot equals show userId for customer" do
+      case customerState of
+        SignedOut -> false `shouldEqual` true
+        SignedIn _ actorId -> actorId `shouldEqual` show devCustomer.userId
+
+    it "SignedIn second slot equals show userId for cashier" do
+      case cashierState of
+        SignedOut -> false `shouldEqual` true
+        SignedIn _ actorId -> actorId `shouldEqual` show devCashier.userId
+
+    it "SignedIn second slot equals show userId for manager" do
+      case managerState of
+        SignedOut -> false `shouldEqual` true
+        SignedIn _ actorId -> actorId `shouldEqual` show devManager.userId
+
+    it "SignedIn second slot equals show userId for admin" do
+      case adminState of
+        SignedOut -> false `shouldEqual` true
+        SignedIn _ actorId -> actorId `shouldEqual` show devAdmin.userId
+
+    it "userIdFromAuth matches the user's UUID for each role" do
+      userIdFromAuth customerState `shouldEqual` show devCustomer.userId
+      userIdFromAuth cashierState  `shouldEqual` show devCashier.userId
+      userIdFromAuth managerState  `shouldEqual` show devManager.userId
+      userIdFromAuth adminState    `shouldEqual` show devAdmin.userId
