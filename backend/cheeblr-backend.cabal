@@ -158,6 +158,25 @@ executable cheeblr-bootstrap-admin
                  , memory
     pkgconfig-depends: libpq
 
+executable cheeblr-e2e-driver
+  main-is:          E2EDriver.hs
+  hs-source-dirs:   app
+  ghc-options:      -Wall -threaded -rtsopts -with-rtsopts=-N
+
+  build-depends:
+      base              >= 4.14
+    , aeson             >= 2.0
+    , bytestring
+    , http-client       >= 0.7
+    , http-client-tls   >= 0.3
+    , http-types
+    , text
+    , uuid
+    , uuid-types
+    , ansi-terminal
+    , time
+    , random
+
 test-suite cheeblr-unit-tests
     import:         shared-properties
     type:           exitcode-stdio-1.0
