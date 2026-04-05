@@ -115,9 +115,10 @@ let
       legacyPackages = pkgs;
 
       packages = backendFlake.packages // {
-        default       = backendPackage;
-        backend       = backendPackage;
-        frontend      = frontendProject;
+        default        = backendPackage;
+        backend        = backendPackage;
+        frontend       = frontendProject;
+        frontendStatic = containersModule.frontendStatic;
 
         backendImage  = containersModule.backendImage;
         frontendImage = containersModule.frontendImage;

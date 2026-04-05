@@ -126,6 +126,87 @@ let
     fi
   '';
 
+  # Serves a pre-built static directory with nginx.
+  # Reads USE_TLS / TLS_CERT_FILE / TLS_KEY_FILE from the environment.
+  # Usage: serve-frontend-static <static-dir>
+  serve-frontend-static = pkgs.writeShellScript "${name}-serve-static" ''
+    set -euo pipefail
+    STATIC_DIR="''${1:?Usage: ${name}-serve-static <static-dir>}"
+    NGINX_BIN="${pkgs.nginx}/bin/nginx"
+    NGINX_CONF_DIR="${pkgs.nginx}/conf"
+    NGINX_TMPDIR=$(mktemp -d)
+    mkdir -p "$NGINX_TMPDIR"/{client,proxy,fastcgi,uwsgi,scgi}
+
+    _USE_TLS="''${USE_TLS:-false}"
+    _CERT="''${TLS_CERT_FILE:-}"
+    _KEY="''${TLS_KEY_FILE:-}"
+
+    if [ "$_USE_TLS" = "true" ] && [ -f "$_CERT" ] && [ -f "$_KEY" ]; then
+      cat > "$NGINX_TMPDIR/nginx.conf" <<NGINXEOF
+daemon off;
+error_log /dev/stderr info;
+pid $NGINX_TMPDIR/nginx.pid;
+events { worker_connections 64; }
+http {
+  include $NGINX_CONF_DIR/mime.types;
+  default_type application/octet-stream;
+  access_log /dev/stdout;
+  sendfile on;
+  client_body_temp_path $NGINX_TMPDIR/client;
+  proxy_temp_path       $NGINX_TMPDIR/proxy;
+  fastcgi_temp_path     $NGINX_TMPDIR/fastcgi;
+  uwsgi_temp_path       $NGINX_TMPDIR/uwsgi;
+  scgi_temp_path        $NGINX_TMPDIR/scgi;
+  server {
+    listen ${frontendPort} ssl;
+    ssl_certificate     $_CERT;
+    ssl_certificate_key $_KEY;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    root  $STATIC_DIR;
+    index index.html;
+    location / { try_files \$uri \$uri/ /index.html; }
+    location ~* \.(js|css|png|ico|svg|woff|woff2|map)\$ {
+      expires 1y;
+      add_header Cache-Control "public, immutable";
+    }
+  }
+}
+NGINXEOF
+    else
+      cat > "$NGINX_TMPDIR/nginx.conf" <<NGINXEOF
+daemon off;
+error_log /dev/stderr info;
+pid $NGINX_TMPDIR/nginx.pid;
+events { worker_connections 64; }
+http {
+  include $NGINX_CONF_DIR/mime.types;
+  default_type application/octet-stream;
+  access_log /dev/stdout;
+  sendfile on;
+  client_body_temp_path $NGINX_TMPDIR/client;
+  proxy_temp_path       $NGINX_TMPDIR/proxy;
+  fastcgi_temp_path     $NGINX_TMPDIR/fastcgi;
+  uwsgi_temp_path       $NGINX_TMPDIR/uwsgi;
+  scgi_temp_path        $NGINX_TMPDIR/scgi;
+  server {
+    listen ${frontendPort};
+    root  $STATIC_DIR;
+    index index.html;
+    location / { try_files \$uri \$uri/ /index.html; }
+    location ~* \.(js|css|png|ico|svg|woff|woff2|map)\$ {
+      expires 1y;
+      add_header Cache-Control "public, immutable";
+    }
+  }
+}
+NGINXEOF
+    fi
+
+    echo "Serving $STATIC_DIR on ${protocol}://${host}:${frontendPort} (TLS: $_USE_TLS)"
+    exec "$NGINX_BIN" -c "$NGINX_TMPDIR/nginx.conf"
+  '';
+
   deploy = pkgs.writeShellScriptBin "deploy" ''
     set -euo pipefail
 
@@ -162,7 +243,7 @@ let
     fi
     tmux send-keys -t ${name}:Services.0 \
       '${tlsEnvPrefix}export USE_REAL_AUTH=true; export LOG_FILE="'"$LOG_FILE"'"; export ALLOWED_ORIGIN="'"$ALLOWED_ORIGIN_VAL"'"; cd ${backendDir} && with-db cabal run ${name}-backend' C-m
-        
+
     echo "Waiting for backend..."
     RETRIES=0
     while ! ${pkgs.curl}/bin/curl -sk "${protocol}://${host}:${backendPort}/inventory" > /dev/null 2>&1; do
@@ -403,10 +484,12 @@ let
     set -euo pipefail
     echo "Building ${name}..."
     nix build .
+    echo "Building frontend static bundle..."
+    nix build ".#frontendStatic" -o result-frontend
     echo ""
     echo "Build complete."
-    echo "  Binary:   ./result/bin/${name}-backend"
-    echo "  Frontend: ./result-frontend"
+    echo "  Binary:         ./result/bin/${name}-backend"
+    echo "  Frontend static: ./result-frontend"
   '';
 
   deploy-nix = pkgs.writeShellScriptBin "deploy-nix" ''
@@ -417,7 +500,11 @@ let
     BACKUP_DIR="$(echo "${dataDir}" | envsubst)/backups"
     mkdir -p "$LOGDIR" "$PIDDIR" "$BACKUP_DIR"
 
-    [ ! -f "./result/bin/${name}-backend" ] && { echo "Binary not found, building..."; nix build .; }
+    echo "Building backend (haskell.nix)..."
+    nix build "." -o result
+
+    echo "Building frontend (purs-nix → esbuild)..."
+    nix build ".#frontendStatic" -o result-frontend
 
     echo "Starting PostgreSQL on port ${dbPort}..."
     LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
@@ -439,6 +526,7 @@ let
       USE_TLS=true TLS_CERT_FILE="$TLS_CERT_FILE" TLS_KEY_FILE="$TLS_KEY_FILE" \
       USE_REAL_AUTH=true \
       LOG_FILE="$LOG_FILE" \
+      PGHOST="$PGDATA" PGPORT="${dbPort}" \
       PGPASSWORD="$(sops-get db_password)" \
       ALLOWED_ORIGIN="$_ALLOWED_ORIGIN" \
       ./result/bin/${name}-backend > "$LOGDIR/stdout.log" 2>&1 &
@@ -446,6 +534,7 @@ let
       USE_TLS=false \
       USE_REAL_AUTH=true \
       LOG_FILE="$LOG_FILE" \
+      PGHOST="$PGDATA" PGPORT="${dbPort}" \
       PGPASSWORD="$(sops-get db_password)" \
       ALLOWED_ORIGIN="$_ALLOWED_ORIGIN" \
       ./result/bin/${name}-backend > "$LOGDIR/stdout.log" 2>&1 &
@@ -455,15 +544,13 @@ let
     echo "Waiting for backend..."
     for i in $(seq 1 30); do
       ${pkgs.curl}/bin/curl -s ${if tlsConfig.enable then "-k" else ""} \
-        ${protocol}://${host}:${backendPort}/inventory > /dev/null 2>&1 && { echo "Backend ready."; break; }
+        ${protocol}://${host}:${backendPort}/inventory > /dev/null 2>&1 && { echo "  Backend ready."; break; }
       sleep 1
     done
 
-    echo "Starting frontend..."
-    cd ${frontendDir}
-    ${pkgs.nodejs}/bin/npx vite --host ${bindAddress} --port ${frontendPort} > "$LOGDIR/vite.log" 2>&1 &
+    echo "Starting frontend (nginx → result-frontend)..."
+    ${serve-frontend-static} "$(pwd)/result-frontend" > "$LOGDIR/frontend.log" 2>&1 &
     echo $! > "$PIDDIR/frontend.pid"
-    cd ..
 
     echo ""
     echo "Services started."
@@ -472,6 +559,7 @@ let
     echo "  Postgres: ${host}:${dbPort}"
     echo "  Log:      $LOG_FILE"
     echo "  Stdout:   $LOGDIR/stdout.log"
+    echo "  Nginx:    $LOGDIR/frontend.log"
     if [ -n "$_ALLOWED_ORIGIN" ]; then
       echo "  CORS: locked to $_ALLOWED_ORIGIN"
     else
@@ -486,7 +574,11 @@ let
     LOG_DIR="$(echo "${logDir}" | envsubst)"
     mkdir -p "$BACKUP_DIR" "$LOG_DIR"
 
-    [ ! -f "./result/bin/${name}-backend" ] && { echo "Binary not found, building..."; nix build .; }
+    echo "Building backend (haskell.nix)..."
+    nix build "." -o result
+
+    echo "Building frontend (purs-nix → esbuild)..."
+    nix build ".#frontendStatic" -o result-frontend
 
     LATEST_BACKUP="$(find "$BACKUP_DIR" -type f -name '*.sql' -printf '%T@ %p\n' 2>/dev/null | sort -nr | head -n1 | cut -d' ' -f2- || true)"
     pg-start
@@ -503,9 +595,9 @@ let
 
     ${tmuxLayout}
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefixNix}USE_REAL_AUTH=true LOG_FILE="'"$LOG_FILE"'" PGPASSWORD=$(sops-get db_password) ALLOWED_ORIGIN="'"$_ALLOWED_ORIGIN"'" ./result/bin/${name}-backend' C-m
+      '${tlsEnvPrefixNix}USE_REAL_AUTH=true LOG_FILE="'"$LOG_FILE"'" PGHOST="$PGDATA" PGPORT="${dbPort}" PGPASSWORD=$(sops-get db_password) ALLOWED_ORIGIN="'"$_ALLOWED_ORIGIN"'" ./result/bin/${name}-backend' C-m
     tmux send-keys -t ${name}:Services.1 \
-      'cd ${frontendDir} && vite --host ${bindAddress} --port ${frontendPort} --open' C-m
+      '${tlsEnvPrefixNix}${serve-frontend-static} "$(pwd)/result-frontend"' C-m
     ${tmuxAttach}
   '';
 
