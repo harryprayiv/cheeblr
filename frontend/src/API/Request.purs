@@ -6,7 +6,7 @@ import Data.Either (Either(..))
 import Effect.Aff (Aff, attempt, error, throwError)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Fetch (Method(..), fetch)
+import Fetch (Method(..), RequestCredentials(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import Config.Network (currentConfig)
 import Services.AuthService (UserId)
@@ -27,12 +27,12 @@ derive instance eqServiceError  :: Eq ServiceError
 derive instance ordServiceError :: Ord ServiceError
 
 instance showServiceError :: Show ServiceError where
-  show (APIError msg)              = "API Error: "           <> msg
-  show (ServiceValidationError msg) = "Validation Error: "  <> msg
-  show (NotFoundError msg)         = "Not Found: "           <> msg
-  show (AuthorizationError msg)    = "Authorization Error: " <> msg
-  show (NetworkError msg)          = "Network Error: "       <> msg
-  show (UnknownError msg)          = "Unknown Error: "       <> msg
+  show (APIError msg)               = "API Error: "           <> msg
+  show (ServiceValidationError msg) = "Validation Error: "    <> msg
+  show (NotFoundError msg)          = "Not Found: "           <> msg
+  show (AuthorizationError msg)     = "Authorization Error: " <> msg
+  show (NetworkError msg)           = "Network Error: "       <> msg
+  show (UnknownError msg)           = "Unknown Error: "       <> msg
 
 type URL = String
 
@@ -50,11 +50,11 @@ runRequest label action = do
     Right value ->
       pure $ Right value
 
-------------------------------------------------------------------------
--- All authenticated helpers now send "Authorization: Bearer <token>"
--- instead of "X-User-Id: <uuid>".  The UserId type alias is kept as
--- String so call sites need no changes — it just carries the token now.
-------------------------------------------------------------------------
+-- All requests use credentials: Include so the browser sends the HttpOnly
+-- session cookie. The cookieAuthMiddleware on the backend extracts the cookie
+-- and injects Authorization: Bearer <real_token> before the handler runs.
+-- The Authorization header with the userId UUID is kept as a fallback for
+-- dev mode (USE_REAL_AUTH=false) where Auth.Simple.lookupUser accepts UUIDs.
 
 authGet
   :: forall a
@@ -72,6 +72,7 @@ authGet token url =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     fromJSON response.json
 
@@ -91,6 +92,7 @@ authGetFullUrl token fullUrl =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     fromJSON response.json
 
@@ -113,6 +115,7 @@ authPost token url body =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     fromJSON response.json
 
@@ -135,6 +138,7 @@ authPut token url body =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     fromJSON response.json
 
@@ -154,6 +158,7 @@ authDelete token url =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     fromJSON response.json
 
@@ -171,6 +176,7 @@ authDeleteUnit token url =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     pure unit
 
@@ -188,6 +194,7 @@ authPostUnit token url =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     pure unit
 
@@ -207,6 +214,7 @@ authPostEmpty token url =
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     fromJSON response.json
 
@@ -229,6 +237,7 @@ authPostChecked token url body = do
           , "Origin":        currentConfig.appOrigin
           , "Authorization": "Bearer " <> token
           }
+      , credentials: Include
       }
     if response.status >= 200 && response.status < 300 then
       fromJSON response.json

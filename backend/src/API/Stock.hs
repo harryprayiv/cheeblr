@@ -57,6 +57,12 @@ type StockAPI =
              :> Post '[JSON] MutationResponse
            :<|> "pull"
              :> Capture "id" UUID
+             :> "cancel"
+             :> AuthHeader
+             :> ReqBody '[JSON] IssueReport
+             :> Post '[JSON] MutationResponse
+           :<|> "pull"
+             :> Capture "id" UUID
              :> "message"
              :> AuthHeader
              :> ReqBody '[JSON] NewMessage

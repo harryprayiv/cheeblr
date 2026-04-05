@@ -202,5 +202,13 @@ stockServerImpl env =
     :<|> fulfillHandler env
     :<|> issueHandler env
     :<|> retryHandler env
+    :<|> cancelHandler env
     :<|> messageHandler env
     :<|> messagesHandler env
+
+cancelHandler :: AppEnv -> UUID -> Maybe Text -> IssueReport -> Handler MutationResponse
+cancelHandler env pullId mHeader report = do
+  ctx <- authCtx env mHeader
+  requireStock ctx
+  _ <- runStockEff env (Svc.cancelPull pullId (irNote report) (auUserId (scUser ctx)))
+  pure $ MutationResponse True "Pull cancelled"

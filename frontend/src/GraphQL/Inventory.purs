@@ -9,7 +9,7 @@ import Prelude
 
 import Data.Either (Either(..))
 import Effect.Aff (Aff, attempt)
-import Fetch (Method(..), fetch)
+import Fetch (Method(..), RequestCredentials(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
 import Config.Network (currentConfig)
 import Services.AuthService (UserId)
@@ -17,10 +17,8 @@ import Types.Inventory (Inventory, MenuItem, MutationResponse)
 import Yoga.JSON (class ReadForeign, writeJSON)
 
 type GqlResponse a = { data :: a }
-
 type InventoryData = { inventory :: Inventory }
-
-type MutationData = { result :: MutationResponse }
+type MutationData  = { result :: MutationResponse }
 
 gqlPost
   :: forall a
@@ -34,10 +32,11 @@ gqlPost userId query = do
       { method: POST
       , body: writeJSON { query }
       , headers:
-          { "Content-Type": "application/json"
-          , "Accept":       "application/json"
+          { "Content-Type":  "application/json"
+          , "Accept":        "application/json"
           , "Authorization": "Bearer " <> userId
           }
+      , credentials: Include
       }
     (r :: GqlResponse a) <- fromJSON response.json
     pure r.data
@@ -61,7 +60,7 @@ readInventoryGql :: UserId -> Aff (Either String Inventory)
 readInventoryGql userId = do
   result <- gqlPost userId inventoryQuery
   pure $ case result of
-    Left err         -> Left err
+    Left err             -> Left err
     Right (d :: InventoryData) -> Right d.inventory
 
 writeInventoryGql :: UserId -> MenuItem -> Aff (Either String MutationResponse)

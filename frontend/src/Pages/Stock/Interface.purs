@@ -31,6 +31,8 @@ import Types.Stock (PullAction(..), PullMessage, PullRequest)
 import Types.UUID (UUID)
 import Utils.Audio (AlertSound(..), playSound)
 import Utils.SSE (SSEConnection, openSSE)
+import Config.Entity (dummyLocationId)
+import Types.Location (LocationId(..))
 
 -- | Create a Ref once per component instantiation.
 -- Safe: IORef creation has no observable global side effects.
@@ -61,7 +63,7 @@ page _authPoll userId = Deku.do
     loadQueue :: Effect Unit
     loadQueue = launchAff_ do
       liftEffect $ setLoading true
-      result <- API.getQueue userId Nothing
+      result <- API.getQueue userId (Just (LocationId dummyLocationId))
       liftEffect $ case result of
         Left err -> do
           setStatus $ "Error loading queue: " <> err
@@ -99,7 +101,7 @@ page _authPoll userId = Deku.do
         ActionStart       -> API.startPull   userId pullId
         ActionFulfill     -> API.fulfillPull userId pullId
         ActionRetry       -> API.retryPull   userId pullId
-        ActionCancel      -> API.reportIssue userId pullId "Cancelled"
+        ActionCancel      -> API.cancelPull  userId pullId "Cancelled"
         ActionReportIssue -> API.reportIssue userId pullId "Issue reported"
       liftEffect $ case result of
         Left err -> setStatus $ "Error: " <> err
