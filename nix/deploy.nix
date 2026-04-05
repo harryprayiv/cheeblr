@@ -155,9 +155,14 @@ let
     ${tmuxLayout}
 
     echo "Starting backend..."
+    ALLOWED_ORIGIN_VAL=$(sops-get allowed_origin 2>/dev/null || true)
+    if [ -z "$ALLOWED_ORIGIN_VAL" ]; then
+      echo "⚠ allowed_origin not in sops — defaulting to https://localhost:5173"
+      ALLOWED_ORIGIN_VAL="https://localhost:5173"
+    fi
     tmux send-keys -t ${name}:Services.0 \
-      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export LOG_FILE="'"$LOG_FILE"'"; ALLOWED_ORIGIN=$(sops-get allowed_origin 2>/dev/null || true) cd ${backendDir} && with-db cabal run ${name}-backend' C-m
-
+      '${tlsEnvPrefix}export USE_REAL_AUTH=true; export LOG_FILE="'"$LOG_FILE"'"; export ALLOWED_ORIGIN="'"$ALLOWED_ORIGIN_VAL"'"; cd ${backendDir} && with-db cabal run ${name}-backend' C-m
+        
     echo "Waiting for backend..."
     RETRIES=0
     while ! ${pkgs.curl}/bin/curl -sk "${protocol}://${host}:${backendPort}/inventory" > /dev/null 2>&1; do
@@ -208,22 +213,29 @@ let
     LOG_FILE="$(echo "${logFile}" | envsubst)"
     mkdir -p "$LOG_DIR"
 
+    _ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
+    if [ -z "$_ALLOWED_ORIGIN" ]; then
+      echo "⚠ allowed_origin not in sops — defaulting to https://localhost:5173"
+      _ALLOWED_ORIGIN="https://localhost:5173"
+    fi
+
     _ENV_FILE="$(mktemp /tmp/${name}-env-XXXXXX.sh)"
     cat > "$_ENV_FILE" <<EOF
-export USE_TLS="${if tlsConfig.enable then "true" else "false"}"
-${if tlsConfig.enable then ''
-export TLS_CERT_FILE="$TLS_CERT"
-export TLS_KEY_FILE="$TLS_KEY"
-'' else ""}
-export USE_REAL_AUTH="true"
-export LOG_FILE="$LOG_FILE"
-EOF
+    export USE_TLS="${if tlsConfig.enable then "true" else "false"}"
+    ${if tlsConfig.enable then ''
+    export TLS_CERT_FILE="$TLS_CERT"
+    export TLS_KEY_FILE="$TLS_KEY"
+    '' else ""}
+    export USE_REAL_AUTH="true"
+    export LOG_FILE="$LOG_FILE"
+    export ALLOWED_ORIGIN="$_ALLOWED_ORIGIN"
+    EOF
 
     ${firewallOpen}
     echo "Launching ${name} in separate Alacritty windows..."
     echo "Project: $PROJECT_DIR"
     echo "Log:     $LOG_FILE"
-    echo "Note: CORS is open in dev mode (ALLOWED_ORIGIN not set)"
+    echo "CORS:    locked to $_ALLOWED_ORIGIN"
 
     ${pkgs.alacritty}/bin/alacritty \
       --title "${name} - Database" \
@@ -314,6 +326,10 @@ EOF
     export USE_REAL_AUTH="true"
     export LOG_FILE="$LOG_FILE"
     export ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
+    if [ -z "$ALLOWED_ORIGIN" ]; then
+      echo "⚠ allowed_origin not in sops — defaulting ALLOWED_ORIGIN=https://localhost:5173"
+      export ALLOWED_ORIGIN="https://localhost:5173"
+    fi
 
     echo "Starting backend on ${protocol}://${host}:${backendPort}..."
     echo "  Log: $LOG_FILE"
@@ -412,6 +428,10 @@ EOF
     ${firewallOpen}
 
     _ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
+    if [ -z "$_ALLOWED_ORIGIN" ]; then
+      echo "⚠ allowed_origin not in sops — defaulting to https://localhost:5173"
+      _ALLOWED_ORIGIN="https://localhost:5173"
+    fi
 
     echo "Starting backend..."
     echo "  Log: $LOG_FILE"
@@ -476,6 +496,10 @@ EOF
     ${firewallOpen}
 
     _ALLOWED_ORIGIN="$(sops-get allowed_origin 2>/dev/null || true)"
+    if [ -z "$_ALLOWED_ORIGIN" ]; then
+      echo "⚠ allowed_origin not in sops — defaulting to https://localhost:5173"
+      _ALLOWED_ORIGIN="https://localhost:5173"
+    fi
 
     ${tmuxLayout}
     tmux send-keys -t ${name}:Services.0 \
