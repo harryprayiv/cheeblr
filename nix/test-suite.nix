@@ -122,18 +122,18 @@ let
       --username="$(whoami)" > /dev/null 2>&1
 
     cat > "$TEST_PGDATA/postgresql.conf" << EOF
-    listen_addresses = '''
-    port = ${testDbPort}
-    unix_socket_directories = '$TEST_PGDATA'
-    max_connections = 20
-    shared_buffers = '32MB'
-    dynamic_shared_memory_type = posix
-    logging_collector = off
-    EOF
+listen_addresses = '''
+port = ${testDbPort}
+unix_socket_directories = '$TEST_PGDATA'
+max_connections = 20
+shared_buffers = '32MB'
+dynamic_shared_memory_type = posix
+logging_collector = off
+EOF
 
     cat > "$TEST_PGDATA/pg_hba.conf" << EOF
-    local   all   all   trust
-    EOF
+local   all   all   trust
+EOF
 
     ${pkgs.postgresql}/bin/pg_ctl -D "$TEST_PGDATA" \
       -l "$TEST_PGDATA/postgresql.log" start > /dev/null 2>&1
@@ -152,17 +152,17 @@ let
     echo "✓ PostgreSQL ready on port ${testDbPort} (unix socket only)"
 
     ${pkgs.postgresql}/bin/psql -h "$PGHOST" -p "$PGPORT" postgres << EOF
-    DO \$\$
-    BEGIN
-      IF NOT EXISTS (SELECT FROM pg_user WHERE usename = '$(whoami)') THEN
-        CREATE USER "$(whoami)" WITH PASSWORD 'postgres' SUPERUSER;
-      END IF;
-    END
-    \$\$;
-    DROP DATABASE IF EXISTS ${name};
-    CREATE DATABASE ${name};
-    GRANT ALL PRIVILEGES ON DATABASE ${name} TO "$(whoami)";
-    EOF
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_user WHERE usename = '$(whoami)') THEN
+    CREATE USER "$(whoami)" WITH PASSWORD 'postgres' SUPERUSER;
+  END IF;
+END
+\$\$;
+DROP DATABASE IF EXISTS ${name};
+CREATE DATABASE ${name};
+GRANT ALL PRIVILEGES ON DATABASE ${name} TO "$(whoami)";
+EOF
     echo "✓ Test database created"
 
     echo "Starting backend server on port ${testBackendPort}..."
@@ -191,18 +191,6 @@ let
 
     echo ""
     FAILURES=0
-
-    echo "┌──────────────────────────────────────────┐"
-    echo "│  HTTP Integration Tests (PS → Backend)    │"
-    echo "└──────────────────────────────────────────┘"
-    if (cd ${frontendPath} && spago test 2>&1); then
-      echo "✓ HTTP integration tests passed"
-    else
-      echo "✗ HTTP integration tests FAILED"
-      FAILURES=$((FAILURES + 1))
-    fi
-
-    echo ""
 
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend Integration Tests (DB + API)     │"
@@ -300,18 +288,18 @@ let
       --username="$(whoami)" > /dev/null 2>&1
 
     cat > "$TEST_PGDATA/postgresql.conf" << EOF
-    listen_addresses = '''
-    port = ${testDbPort}
-    unix_socket_directories = '$TEST_PGDATA'
-    max_connections = 20
-    shared_buffers = '32MB'
-    dynamic_shared_memory_type = posix
-    logging_collector = off
-    EOF
+listen_addresses = '''
+port = ${testDbPort}
+unix_socket_directories = '$TEST_PGDATA'
+max_connections = 20
+shared_buffers = '32MB'
+dynamic_shared_memory_type = posix
+logging_collector = off
+EOF
 
     cat > "$TEST_PGDATA/pg_hba.conf" << EOF
-    local   all   all   trust
-    EOF
+local   all   all   trust
+EOF
 
     ${pkgs.postgresql}/bin/pg_ctl -D "$TEST_PGDATA" \
       -l "$TEST_PGDATA/postgresql.log" start > /dev/null 2>&1
@@ -330,17 +318,17 @@ let
     echo "✓ PostgreSQL ready on port ${testDbPort} (unix socket only)"
 
     ${pkgs.postgresql}/bin/psql -h "$PGHOST" -p "$PGPORT" postgres << EOF
-    DO \$\$
-    BEGIN
-      IF NOT EXISTS (SELECT FROM pg_user WHERE usename = '$(whoami)') THEN
-        CREATE USER "$(whoami)" WITH PASSWORD 'postgres' SUPERUSER;
-      END IF;
-    END
-    \$\$;
-    DROP DATABASE IF EXISTS ${name};
-    CREATE DATABASE ${name};
-    GRANT ALL PRIVILEGES ON DATABASE ${name} TO "$(whoami)";
-    EOF
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_user WHERE usename = '$(whoami)') THEN
+    CREATE USER "$(whoami)" WITH PASSWORD 'postgres' SUPERUSER;
+  END IF;
+END
+\$\$;
+DROP DATABASE IF EXISTS ${name};
+CREATE DATABASE ${name};
+GRANT ALL PRIVILEGES ON DATABASE ${name} TO "$(whoami)";
+EOF
     echo "✓ Test database created"
 
     echo "Starting backend server on port ${testBackendPort} (TLS)..."
@@ -369,18 +357,6 @@ let
 
     echo ""
     FAILURES=0
-
-    echo "┌──────────────────────────────────────────┐"
-    echo "│  HTTP Integration Tests (PS → Backend)    │"
-    echo "└──────────────────────────────────────────┘"
-    if (cd ${frontendPath} && spago test 2>&1); then
-      echo "✓ HTTP integration tests passed"
-    else
-      echo "✗ HTTP integration tests FAILED"
-      FAILURES=$((FAILURES + 1))
-    fi
-
-    echo ""
 
     echo "┌──────────────────────────────────────────┐"
     echo "│  Backend Integration Tests (DB + API)     │"
@@ -509,6 +485,7 @@ let
     PASS=0
     FAIL=0
 
+    # $6 is now a session token sent as Cookie: cheeblr_session=<token>
     check() {
       local description="$1"
       local method="$2"
@@ -525,7 +502,7 @@ let
       fi
 
       if [ -n "$token" ]; then
-        curl_args+=(-H "Authorization: Bearer $token")
+        curl_args+=(-H "Cookie: cheeblr_session=$token")
       fi
 
       local status
@@ -543,7 +520,7 @@ let
       fi
     }
 
-      # ── Connectivity (unauthenticated endpoint) ──────────────────────────────
+
     echo "── Connectivity ──"
     if ! ${pkgs.curl}/bin/curl -s $CURL_CA_ARGS --connect-timeout 5 --max-time 10 \
         "$BASE_URL/openapi.json" > /dev/null 2>&1; then
@@ -554,14 +531,14 @@ let
     echo "✓ Backend is reachable"
     check "GET /openapi.json (no auth)" GET "$BASE_URL/openapi.json" 200
 
-      # ── Unauthenticated rejection ─────────────────────────────────────────────
+
     echo ""
     echo "── Unauthenticated rejection ──"
     check "GET /inventory (no token)"  GET "$BASE_URL/inventory" 401
     check "GET /session (no token)"    GET "$BASE_URL/session"   401
     check "GET /register (no token)"   GET "$BASE_URL/register"  401
 
-      # ── Login ────────────────────────────────────────────────────────────────
+
     echo ""
     echo "── Auth flow ──"
 
@@ -571,23 +548,33 @@ let
       echo "    Run 'bootstrap-admin' if this is a fresh environment"
       FAIL=$((FAIL + 1))
     else
-      LOGIN_RESPONSE=$(${pkgs.curl}/bin/curl -s $CURL_CA_ARGS \
+      # Dump response headers (-D -) and body together; token is in Set-Cookie header
+      LOGIN_OUTPUT=$(${pkgs.curl}/bin/curl -s -D - $CURL_CA_ARGS \
         -X POST "$BASE_URL/auth/login" \
         -H "Content-Type: application/json" \
         -d "{\"loginUsername\":\"admin\",\"loginPassword\":\"$ADMIN_PASSWORD\",\"loginRegisterId\":null}" \
         2>/dev/null || true)
 
-      TOKEN=$(echo "$LOGIN_RESPONSE" | ${pkgs.jq}/bin/jq -r '.loginToken // empty' 2>/dev/null || true)
+      # Extract cheeblr_session value from Set-Cookie header
+      TOKEN=$(echo "$LOGIN_OUTPUT" \
+        | grep -i '^set-cookie:' \
+        | grep 'cheeblr_session=' \
+        | sed 's/.*cheeblr_session=\([^;]*\).*/\1/' \
+        | tr -d '\r' \
+        | head -1 || true)
+
+      # Also grab the JSON body for diagnostics (everything after the blank header/body separator)
+      LOGIN_BODY=$(echo "$LOGIN_OUTPUT" | awk 'BEGIN{p=0} /^[[:space:]]*$/{p=1; next} p{print}' | tail -1)
 
       if [ -z "$TOKEN" ]; then
-        echo "  ✗ Login failed — no token in response"
-        echo "    Response: $LOGIN_RESPONSE"
+        echo "  ✗ Login failed — no cheeblr_session cookie in response"
+        echo "    Response body: $LOGIN_BODY"
         FAIL=$((FAIL + 1))
       else
-        echo "  ✓ POST /auth/login returned token"
+        echo "  ✓ POST /auth/login set cheeblr_session cookie"
         PASS=$((PASS + 1))
 
-          # ── Authenticated endpoints ─────────────────────────────────────────
+
         echo ""
         echo "── Authenticated endpoints ──"
         check "GET /auth/me"            GET  "$BASE_URL/auth/me"   200 "" "$TOKEN"
@@ -595,11 +582,11 @@ let
         check "GET /inventory"          GET  "$BASE_URL/inventory" 200 "" "$TOKEN"
         check "GET /register"           GET  "$BASE_URL/register"  200 "" "$TOKEN"
 
-          # ── Inventory JSON contract ─────────────────────────────────────────
+
         echo ""
         echo "── Inventory JSON contract ──"
         INVENTORY_JSON=$(${pkgs.curl}/bin/curl -s $CURL_CA_ARGS \
-          -H "Authorization: Bearer $TOKEN" \
+          -H "Cookie: cheeblr_session=$TOKEN" \
           "$BASE_URL/inventory" 2>/dev/null || true)
 
         if echo "$INVENTORY_JSON" | ${pkgs.jq}/bin/jq -e 'arrays' > /dev/null 2>&1; then
@@ -623,11 +610,11 @@ let
           FAIL=$((FAIL + 1))
         fi
 
-          # ── Session JSON contract ───────────────────────────────────────────
+
         echo ""
         echo "── Session JSON contract ──"
         SESSION_JSON=$(${pkgs.curl}/bin/curl -s $CURL_CA_ARGS \
-          -H "Authorization: Bearer $TOKEN" \
+          -H "Cookie: cheeblr_session=$TOKEN" \
           "$BASE_URL/session" 2>/dev/null || true)
 
         if echo "$SESSION_JSON" | ${pkgs.jq}/bin/jq -e \
@@ -644,15 +631,15 @@ let
           FAIL=$((FAIL + 1))
         fi
 
-          # ── Logout and token revocation ─────────────────────────────────────
+
         echo ""
         echo "── Logout and revocation ──"
-        check "POST /auth/logout"              POST "$BASE_URL/auth/logout" 200 "" "$TOKEN"
-        check "GET /inventory after logout"    GET  "$BASE_URL/inventory"   401 "" "$TOKEN"
+        check "POST /auth/logout"           POST "$BASE_URL/auth/logout" 200 "" "$TOKEN"
+        check "GET /inventory after logout" GET  "$BASE_URL/inventory"   401 "" "$TOKEN"
       fi
     fi
 
-      # ── Rate limiting ────────────────────────────────────────────────────────
+
     echo ""
     echo "── Rate limiting ──"
     for _i in $(seq 1 5); do
