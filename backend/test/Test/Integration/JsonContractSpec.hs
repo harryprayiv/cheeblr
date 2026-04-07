@@ -33,7 +33,7 @@ import API.Transaction (
   Register (..),
  )
 -- import Auth.Simple (lookupUser)
-import DB.Transaction (showPaymentMethod)
+import DB.Transaction (showPaymentMethod, parsePaymentMethod)
 import Types.Auth (
   SessionResponse (
     SessionResponse,
