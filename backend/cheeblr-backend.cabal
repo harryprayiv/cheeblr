@@ -58,6 +58,7 @@ common shared-properties
                 , base64-bytestring
                 , stm
                 , vault
+                , mtl
                 , tagged
                 , http-api-data
                 , websockets
@@ -70,6 +71,8 @@ library
                    , DB.Transaction
                    , DB.Auth
                    , DB.Schema
+                   , DB.Register 
+                   , DB.Reservation
                    , Logging
                    , Server
                    , Server.Transaction
@@ -78,7 +81,6 @@ library
                    , Types.Inventory
                    , Types.Transaction
                    , Types.Auth
-                   , Auth.Simple
                    , API.Auth
                    , API.Inventory
                    , API.Transaction
@@ -104,16 +106,12 @@ library
                    , Server.Metrics
                    , Server.Feed
                    , Server.Cookie
+                   , Types.Events
                    , Types.Events.Availability
                    , Types.Events.Domain
                    , Types.Events.Log
-                   , Types.Events.Stock
                    , Types.Public.FeedFrame
                    , Effect.EventEmitter
-                   , Types.Events.Inventory
-                   , Types.Events.Register
-                   , Types.Events.Session
-                   , Types.Events.Transaction
                    , DB.Events
                    , API.Feed
                    , Logging.BroadcastScribe
@@ -167,7 +165,6 @@ test-suite cheeblr-unit-tests
         Test.Types.AuthSpec
         Test.Types.TransactionSpec
         Test.Types.InventorySpec
-        Test.Auth.SimpleSpec
         Test.API.TransactionSpec
         Test.API.OpenApiSpec
         Test.API.AdminSpec

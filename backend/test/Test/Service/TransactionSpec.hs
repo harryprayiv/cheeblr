@@ -23,8 +23,7 @@ import Effect.StockDb (StockDb, emptyStockStore, runStockDbPure)
 import Effect.TransactionDb
 import qualified Service.Transaction as Svc
 import Types.Events.Domain
-import Types.Events.Stock
-import Types.Events.Transaction
+import Types.Events
 import Types.Location (LocationId (..))
 import Types.Transaction
 

@@ -86,7 +86,7 @@ import Server.Middleware.Tracing (tracingMiddleware)
 import Types.Events.Availability (AvailabilityUpdate)
 import Types.Events.Domain (DomainEvent)
 import Types.Events.Log (LogEvent)
-import Types.Events.Stock (StockEvent)
+import Types.Events (StockEvent)
 import Types.Location (locationIdToUUID)
 import Types.Public.AvailableItem (PublicLocationId (..))
 
@@ -97,14 +97,14 @@ run = do
 
 buildEnv :: AppConfig -> IO AppEnv
 buildEnv config = do
-  startTime <- Data.Time.getCurrentTime
-  logBc     <- newBroadcaster (cfgLogBroadcastSize config) :: IO (Broadcaster LogEvent)
-  domainBc  <- newBroadcaster (cfgDomainBroadcastSize config) :: IO (Broadcaster DomainEvent)
-  stockBc   <- newBroadcaster (cfgStockBroadcastSize config) :: IO (Broadcaster StockEvent)
-  availBc   <- newBroadcaster (cfgAvailabilityBroadcastSize config) :: IO (Broadcaster AvailabilityUpdate)
-  metrics   <- newMetrics
-  logEnv    <- initLogging (cfgLogFile config)
-  pool      <- initializeDB (toDBConfig config)
+  startTime  <- Data.Time.getCurrentTime
+  logBc      <- newBroadcaster (cfgLogBroadcastSize config)         :: IO (Broadcaster LogEvent)
+  domainBc   <- newBroadcaster (cfgDomainBroadcastSize config)      :: IO (Broadcaster DomainEvent)
+  stockBc    <- newBroadcaster (cfgStockBroadcastSize config)       :: IO (Broadcaster StockEvent)
+  availBc    <- newBroadcaster (cfgAvailabilityBroadcastSize config) :: IO (Broadcaster AvailabilityUpdate)
+  metrics    <- newMetrics
+  logEnv     <- initLogging (cfgLogFile config)
+  pool       <- initializeDB (toDBConfig config)
   availState <- newTVarIO $
     AvailabilityState
       { asItems       = Map.empty
@@ -113,20 +113,19 @@ buildEnv config = do
       , asLocName     = cfgPublicLocationName config
       }
   pure AppEnv
-    { envStartTime            = startTime
-    , envBuildInfo            = currentBuildInfo
-    , envConfig               = config
-    , envDbPool               = pool
-    , envSessionStore         = pool
-    , envLogEnv               = logEnv
-    , envLogNS                = mempty
-    , envLogContext           = mempty
-    , envLogBroadcaster       = logBc
-    , envDomainBroadcaster    = domainBc
-    , envStockBroadcaster     = stockBc
+    { envStartTime               = startTime
+    , envBuildInfo               = currentBuildInfo
+    , envConfig                  = config
+    , envDbPool                  = pool
+    , envLogEnv                  = logEnv
+    , envLogNS                   = mempty
+    , envLogContext              = mempty
+    , envLogBroadcaster          = logBc
+    , envDomainBroadcaster       = domainBc
+    , envStockBroadcaster        = stockBc
     , envAvailabilityBroadcaster = availBc
-    , envAvailabilityState    = availState
-    , envMetrics              = metrics
+    , envAvailabilityState       = availState
+    , envMetrics                 = metrics
     }
 
 runWithEnv :: AppEnv -> IO ()
@@ -159,14 +158,11 @@ runWithEnv env = do
     "Token rotation interval: "
       <> T.pack (show (cfgTokenRotationSecs cfg)) <> "s"
 
-  -- Availability relay
   _ <- forkIO $
     runAvailabilityRelay env
       `catch` (\(e :: SomeException) ->
         hPutStrLn stderr $ "AvailabilityRelay stopped: " <> show e)
 
-  -- Session cleanup worker: removes expired and stale-revoked rows so the
-  -- sessions table does not grow unboundedly.
   _ <- forkIO $
     sessionCleanupWorker pool (cfgSessionCleanupIntervalHours cfg)
 
@@ -183,9 +179,9 @@ runWithEnv env = do
             [ hContentType, hAccept, hAuthorization, hOrigin
             , hContentLength, hXRequestedWith, hXUserId
             ]
-        , corsMethods    = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
-        , corsMaxAge     = Just 86400
-        , corsVaryOrigin = False
+        , corsMethods        = [methodGet, methodPost, methodPut, methodDelete, methodOptions]
+        , corsMaxAge         = Just 86400
+        , corsVaryOrigin     = False
         , corsExposedHeaders = Just [hContentType]
         , corsRequireOrigin  = False
         , corsIgnoreFailures = True
@@ -196,8 +192,8 @@ runWithEnv env = do
     app =
       tracingMiddleware
         . securityHeadersMiddleware (cfgApiPublicUrl cfg) (cfgImgSrcDomain cfg)
-        . handleOptionsMiddleware
-        . reflectOriginMiddleware          -- ← add this
+        . handleOptionsMiddleware mAllowed   -- now enforces cfgAllowedOrigin
+        . reflectOriginMiddleware
         . cookieAuthMiddleware pool (cfgTokenRotationSecs cfg)
         $ coreApp
     warpSettings =
@@ -229,28 +225,10 @@ runWithEnv env = do
   logAppShutdown logEnv
   closeLogging logEnv
 
--- ---------------------------------------------------------------------------
--- Cookie + token rotation middleware
--- ---------------------------------------------------------------------------
-
--- | Extracts the session cookie, injects it as a Bearer Authorization header
--- (so all existing handlers work unchanged), and transparently rotates the
--- token when it is older than the configured threshold.
---
--- Rotation flow:
---   1. Read-only peek at sessions table to get token_rotated_at.
---   2. If older than threshold: generate new token, UPDATE sessions row,
---      set Set-Cookie on the response.
---   3. Inject the effective token (old or new) as Authorization header.
---   4. Handler calls resolveSession as normal using that header.
---
--- Two DB queries per authenticated request (peek + handler's lookupSession).
--- Rotation adds one UPDATE, occurring at most once per threshold window.
 cookieAuthMiddleware :: DBPool -> Data.Time.NominalDiffTime -> Middleware
 cookieAuthMiddleware pool rotationThreshold app req rspnd =
   case extractCookieToken req of
     Nothing ->
-      -- No cookie present; let the handler reject with 401 if auth is required.
       app req rspnd
     Just tokenText -> do
       mRotation <- checkAndRotate pool rotationThreshold tokenText
@@ -261,7 +239,7 @@ cookieAuthMiddleware pool rotationThreshold app req rspnd =
         newHdrs =
           (hAuthorization, "Bearer " <> TE.encodeUtf8 effectiveToken)
             : requestHeaders req
-      app req { requestHeaders = newHdrs } $ \response ->
+      app req {requestHeaders = newHdrs} $ \response ->
         rspnd $ case mNewCookieHdr of
           Nothing  -> response
           Just hdr ->
@@ -275,7 +253,6 @@ extractCookieToken req = do
   tokenBS   <- lookup "cheeblr_session" (parseCookies cookieHdr)
   pure (TE.decodeUtf8 tokenBS)
 
--- | Returns (newToken, expiresAt) if the token was rotated, Nothing otherwise.
 checkAndRotate
   :: DBPool
   -> Data.Time.NominalDiffTime
@@ -291,13 +268,6 @@ checkAndRotate pool threshold tokenText = do
           Just <$> rotateSessionToken pool sid
       | otherwise -> pure Nothing
 
--- ---------------------------------------------------------------------------
--- Session cleanup worker
--- ---------------------------------------------------------------------------
-
--- | Runs in a background thread, deleting expired and old revoked sessions
--- at the configured interval. Errors are caught and logged to stderr so
--- a transient DB blip does not crash the worker.
 sessionCleanupWorker :: DBPool -> Int -> IO ()
 sessionCleanupWorker pool intervalHours = loop
   where
@@ -308,22 +278,6 @@ sessionCleanupWorker pool intervalHours = loop
           hPutStrLn stderr $ "Session cleanup error: " <> show e)
       loop
 
--- ---------------------------------------------------------------------------
--- Security headers
--- ---------------------------------------------------------------------------
-
--- | Builds the Content-Security-Policy header value.
---
--- No 'unsafe-inline' on style-src: inline style="" attributes are blocked.
--- Any DA.style_ calls in PureScript will be blocked by this policy; use
--- CSS classes via DA.klass_ instead.
---
--- connect-src includes both the HTTPS and WSS forms of cfgApiPublicUrl so
--- that fetch() calls and WebSocket/SSE connections are permitted.
---
--- img-src defaults to the broad "https:" because inventory images come from
--- arbitrary external URLs (Leafly, etc.). Set IMG_SRC_DOMAIN to a specific
--- CDN origin if you control all image URLs.
 buildCsp :: T.Text -> Maybe T.Text -> T.Text
 buildCsp apiPublicUrl mImgDomain =
   T.intercalate "; "
@@ -339,7 +293,7 @@ buildCsp apiPublicUrl mImgDomain =
   where
     toWsUrl url
       | "https://" `T.isPrefixOf` url = "wss://" <> T.drop 8 url
-      | "http://" `T.isPrefixOf` url  = "ws://"  <> T.drop 7 url
+      | "http://"  `T.isPrefixOf` url = "ws://"  <> T.drop 7 url
       | otherwise                      = url
 
 securityHeadersMiddleware :: T.Text -> Maybe T.Text -> Middleware
@@ -348,44 +302,43 @@ securityHeadersMiddleware apiPublicUrl mImgDomain app req sendResponse =
     sendResponse $
       mapResponseHeaders
         ( <>
-          [
-            ( CI.mk $ B8.pack "Strict-Transport-Security"
+          [ ( CI.mk $ B8.pack "Strict-Transport-Security"
             , B8.pack "max-age=31536000; includeSubDomains"
             )
-          ,
-            ( CI.mk $ B8.pack "X-Content-Type-Options"
+          , ( CI.mk $ B8.pack "X-Content-Type-Options"
             , B8.pack "nosniff"
             )
-          ,
-            -- frame-ancestors in CSP supersedes X-Frame-Options in modern
-            -- browsers, but we send both for defence-in-depth.
-            ( CI.mk $ B8.pack "X-Frame-Options"
+          , ( CI.mk $ B8.pack "X-Frame-Options"
             , B8.pack "DENY"
             )
-          ,
-            ( CI.mk $ B8.pack "Referrer-Policy"
+          , ( CI.mk $ B8.pack "Referrer-Policy"
             , B8.pack "strict-origin-when-cross-origin"
             )
-          ,
-            ( CI.mk $ B8.pack "Content-Security-Policy"
+          , ( CI.mk $ B8.pack "Content-Security-Policy"
             , TE.encodeUtf8 (buildCsp apiPublicUrl mImgDomain)
             )
           ]
         )
         response
 
--- | Handles OPTIONS pre-flight. Echoes the request Origin back rather
--- than using *, which is required when credentials: "include" is set.
-handleOptionsMiddleware :: Middleware
-handleOptionsMiddleware app req responder =
+-- | Previously reflected any origin the client sent unconditionally,
+-- overriding the CORS policy set by the wai-cors middleware above it.
+-- Now accepts the configured allowed origin and enforces it:
+--   Just origin → always respond with that origin (browser rejects mismatches)
+--   Nothing     → open mode: reflect whatever the client sent (dev default)
+handleOptionsMiddleware :: Maybe T.Text -> Middleware
+handleOptionsMiddleware mAllowed app req responder =
   if requestMethod req == methodOptions
     then do
-      let origin = fromMaybe (B8.pack "*") $
-            lookup hOrigin (requestHeaders req)
+      let
+        requestOrigin  = lookup hOrigin (requestHeaders req)
+        responseOrigin = case mAllowed of
+          Just allowed -> TE.encodeUtf8 allowed
+          Nothing      -> fromMaybe (B8.pack "*") requestOrigin
       responder $
         responseBuilder status200
           [ (hContentType, B8.pack "text/plain")
-          , (CI.mk (B8.pack "Access-Control-Allow-Origin"),      origin)
+          , (CI.mk (B8.pack "Access-Control-Allow-Origin"),      responseOrigin)
           , (CI.mk (B8.pack "Access-Control-Allow-Credentials"), B8.pack "true")
           , (CI.mk (B8.pack "Access-Control-Allow-Methods"),
               B8.pack "GET, POST, PUT, DELETE, OPTIONS")

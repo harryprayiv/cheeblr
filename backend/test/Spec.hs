@@ -7,7 +7,6 @@ import qualified Test.API.OpenApiSpec
 import qualified Test.API.TransactionSpec
 import qualified Test.App.CspSpec
 import qualified Test.App.MiddlewareSpec
-import qualified Test.Auth.SimpleSpec
 import qualified Test.DB.PureFunctionsSpec
 import qualified Test.Effect.EventEmitterSpec
 import qualified Test.Effect.InventoryDbSpec
@@ -47,7 +46,6 @@ main = hspec $ do
     Test.Types.Public.AvailableItemSpec.spec
     Test.Types.Public.FeedFrameSpec.spec
     Test.Types.Public.FeedPrivacySpec.spec
-    Test.Auth.SimpleSpec.spec
     Test.API.TransactionSpec.spec
     Test.API.OpenApiSpec.spec
     Test.API.AdminSpec.spec

@@ -36,16 +36,11 @@ import Effect.TransactionDb
 import State.StockPullMachine (PullVertex (..))
 import State.TransactionMachine
 import Types.Events.Domain
-import Types.Events.Stock
-import Types.Events.Transaction
+import Types.Events
 import Types.Inventory (Inventory (..))
 import qualified Types.Inventory as TI
 import Types.Stock (PullRequest (..))
 import Types.Transaction
-
--- ---------------------------------------------------------------------------
--- Internal helpers
--- ---------------------------------------------------------------------------
 
 loadTx ::
   (TransactionDb :> es, Error ServerError :> es) =>
@@ -71,7 +66,7 @@ requireTxId ::
 requireTxId lookupFn notFoundMsg entityId = do
   mTxId <- lookupFn entityId
   case mTxId of
-    Nothing -> throwError err404 {errBody = notFoundMsg}
+    Nothing  -> throwError err404 {errBody = notFoundMsg}
     Just txId -> pure txId
 
 persistStatusChange ::
@@ -85,14 +80,6 @@ persistStatusChange tx nextState = do
     then pure ()
     else void $ updateTransaction (transactionId tx) tx {transactionStatus = nextStatus}
 
--- ---------------------------------------------------------------------------
--- Pull request creation helper
--- ---------------------------------------------------------------------------
-
-{- | Create a stock pull request after a transaction item is committed.
-Failure is non-fatal: the item is already in the DB and the stock room
-can recover on its next queue poll.
--}
 createStockPull ::
   ( StockDb.StockDb :> es
   , EffInv.InventoryDb :> es
@@ -107,33 +94,29 @@ createStockPull tx ti now = do
   pullId <- nextUUID
   Inventory invVec <- EffInv.getAllMenuItems
   let
-    itemSku = transactionItemMenuItemSku ti
+    itemSku  = transactionItemMenuItemSku ti
     itemName =
       maybe (T.pack $ show itemSku) TI.name $
         V.find (\m -> TI.sku m == itemSku) invVec
     pr =
       PullRequest
-        { prId = pullId
-        , prTransactionId = transactionItemTransactionId ti
-        , prItemSku = itemSku
-        , prItemName = itemName
-        , prQuantityNeeded = transactionItemQuantity ti
-        , prStatus = PullPending
-        , prCashierId = Just (transactionEmployeeId tx)
-        , prRegisterId = Just (transactionRegisterId tx)
-        , prLocationId = transactionLocationId tx
-        , prCreatedAt = now
-        , prUpdatedAt = now
-        , prFulfilledAt = Nothing
+        { prId              = pullId
+        , prTransactionId   = transactionItemTransactionId ti
+        , prItemSku         = itemSku
+        , prItemName        = itemName
+        , prQuantityNeeded  = transactionItemQuantity ti
+        , prStatus          = PullPending
+        , prCashierId       = Just (transactionEmployeeId tx)
+        , prRegisterId      = Just (transactionRegisterId tx)
+        , prLocationId      = transactionLocationId tx
+        , prCreatedAt       = now
+        , prUpdatedAt       = now
+        , prFulfilledAt     = Nothing
         }
   prResult <- StockDb.createPullRequest pr
   case prResult of
     Right () -> emit $ StockEvt $ PullRequestCreated {sePull = pr, seTimestamp = now}
-    Left _ -> pure ()
-
--- ---------------------------------------------------------------------------
--- Service functions
--- ---------------------------------------------------------------------------
+    Left _   -> pure ()
 
 createTransactionSvc ::
   ( TransactionDb :> es
@@ -148,7 +131,7 @@ createTransactionSvc tx = do
   emit $
     TransactionEvt $
       TransactionCreated
-        { teTx = result
+        { teTx        = result
         , teTimestamp = now
         }
   pure result
@@ -176,8 +159,8 @@ addItem item = do
       emit $
         TransactionEvt $
           TransactionItemAdded
-            { teTxId = transactionItemTransactionId item
-            , teItem = ti
+            { teTxId      = transactionItemTransactionId item
+            , teItem      = ti
             , teTimestamp = now
             }
       createStockPull tx ti now
@@ -213,7 +196,7 @@ removeItem ::
   UUID ->
   Eff es ()
 removeItem itemId = do
-  txId <- requireTxId getTxIdByItemId "Item not found" itemId
+  txId  <- requireTxId getTxIdByItemId "Item not found" itemId
   (_, someState) <- loadTx txId
   mTx <- getTransactionById txId
   let mItem =
@@ -232,10 +215,10 @@ removeItem itemId = do
       emit $
         TransactionEvt $
           TransactionItemRemoved
-            { teTxId = txId
-            , teItemId = itemId
-            , teItemSku = itemSku
-            , teQty = transactionItemQuantity item
+            { teTxId      = txId
+            , teItemId    = itemId
+            , teItemSku   = itemSku
+            , teQty       = transactionItemQuantity item
             , teTimestamp = now
             }
       pulls <- StockDb.getPullsByTransaction txId
@@ -251,8 +234,8 @@ removeItem itemId = do
         emit $
           StockEvt $
             PullRequestCancelled
-              { sePullId = prId pr
-              , seReason = "Item removed from transaction"
+              { sePullId    = prId pr
+              , seReason    = "Item removed from transaction"
               , seTimestamp = now
               }
     Nothing -> pure ()
@@ -274,8 +257,8 @@ addPayment payment = do
   emit $
     TransactionEvt $
       TransactionPaymentAdded
-        { teTxId = paymentTransactionId payment
-        , tePayment = result
+        { teTxId      = paymentTransactionId payment
+        , tePayment   = result
         , teTimestamp = now
         }
   pure result
@@ -298,7 +281,7 @@ removePayment pymtId = do
   emit $
     TransactionEvt $
       TransactionPaymentRemoved
-        { teTxId = txId
+        { teTxId      = txId
         , tePaymentId = pymtId
         , teTimestamp = now
         }
@@ -320,8 +303,8 @@ finalizeTx txId = do
   emit $
     TransactionEvt $
       TransactionFinalized
-        { teTxId = txId
-        , teTx = result
+        { teTxId      = txId
+        , teTx        = result
         , teTimestamp = now
         }
   pure result
@@ -340,15 +323,15 @@ voidTx txId reason = do
   (tx, someState) <- loadTx txId
   let (evt, _) = runTxCommand someState (VoidCmd reason)
   guardTxEvent evt
-  pulls <- StockDb.getPullsByTransaction txId
+  pulls  <- StockDb.getPullsByTransaction txId
   result <- voidTransaction txId reason
-  now <- currentTime
+  now    <- currentTime
   emit $
     TransactionEvt $
       TransactionVoided
-        { teTxId = txId
-        , teReason = reason
-        , teActorId = transactionEmployeeId tx
+        { teTxId      = txId
+        , teReason    = reason
+        , teActorId   = transactionEmployeeId tx
         , teTimestamp = now
         }
   StockDb.cancelPullsForTransaction txId reason
@@ -357,12 +340,15 @@ voidTx txId reason = do
       emit $
         StockEvt $
           PullRequestCancelled
-            { sePullId = prId pr
-            , seReason = reason
+            { sePullId    = prId pr
+            , seReason    = reason
             , seTimestamp = now
             }
   pure result
 
+-- | Previously generated a refundId via nextUUID but then discarded it,
+-- letting DB.Transaction.refundTransaction generate a different one internally.
+-- The state machine guard and the DB record now share the same refundId.
 refundTx ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -378,15 +364,16 @@ refundTx txId reason = do
   refundId <- nextUUID
   let (evt, _) = runTxCommand someState (RefundCmd reason refundId)
   guardTxEvent evt
-  result <- refundTransaction txId reason
-  now <- currentTime
+  -- Thread refundId into the DB call so the record UUID matches the event.
+  result <- refundTransaction txId refundId reason
+  now    <- currentTime
   emit $
     TransactionEvt $
       TransactionRefunded
-        { teTxId = txId
-        , teReason = reason
-        , teActorId = transactionEmployeeId tx
-        , teRefTxId = transactionId result
+        { teTxId      = txId
+        , teReason    = reason
+        , teActorId   = transactionEmployeeId tx
+        , teRefTxId   = refundId
         , teTimestamp = now
         }
   pure result

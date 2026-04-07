@@ -22,10 +22,8 @@ module DB.Auth (
   listActiveSessions,
   getSessionById,
   clearRateLimitForIp,
-  -- Token rotation
   getSessionRotatedAt,
   rotateSessionToken,
-  -- Maintenance
   cleanupExpiredSessions,
 ) where
 
@@ -63,6 +61,7 @@ import DB.Schema
 import Types.Auth (
   AuthenticatedUser (..),
   UserRole (..),
+  parseUserRole,
  )
 import Types.Location (
   LocationId (..),
@@ -83,11 +82,11 @@ type SessionToken = Text
 argonOpts :: Argon2.Options
 argonOpts =
   Argon2.Options
-    { Argon2.iterations   = 3
-    , Argon2.memory       = 65536
-    , Argon2.parallelism  = 4
-    , Argon2.variant      = Argon2.Argon2id
-    , Argon2.version      = Argon2.Version13
+    { Argon2.iterations  = 3
+    , Argon2.memory      = 65536
+    , Argon2.parallelism = 4
+    , Argon2.variant     = Argon2.Argon2id
+    , Argon2.version     = Argon2.Version13
     }
 
 argonOutputLen :: Int
@@ -152,20 +151,16 @@ decodeTokenText t =
   let padded = T.unpack t <> replicate ((4 - T.length t `mod` 4) `mod` 4) '='
    in B64U.decode (TE.encodeUtf8 (T.pack padded))
 
-parseRole :: Text -> UserRole
-parseRole "Customer" = Customer
-parseRole "Cashier"  = Cashier
-parseRole "Manager"  = Manager
-parseRole "Admin"    = Admin
-parseRole _          = Cashier
-
+-- | Convert a DB user row to the domain AuthenticatedUser.
+-- Uses Types.Auth.parseUserRole (the single canonical parser) instead of a
+-- local duplicate.
 userRowToAuthUser :: UserRow Result -> AuthenticatedUser
 userRowToAuthUser row =
   AuthenticatedUser
     { auUserId     = userId row
     , auUserName   = displayName row
     , auEmail      = email row
-    , auRole       = parseRole (userRole row)
+    , auRole       = parseUserRole (userRole row)
     , auLocationId = fmap LocationId (userLocationId row)
     , auCreatedAt  = userCreatedAt row
     }
@@ -203,9 +198,6 @@ createAuthTables pool = runSession pool $ do
       \  ip_address       TEXT,\
       \  token_rotated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
       \)"
-  -- Safe migration: adds the column to existing deployments without data loss.
-  -- DEFAULT NOW() back-fills all existing rows with a sane value so the NOT
-  -- NULL constraint is immediately satisfied.
   Session.statement () $
     ddl
       "ALTER TABLE sessions \
@@ -238,8 +230,8 @@ createAuthTables pool = runSession pool $ do
 
 createUser :: DBPool -> NewUser -> IO UUID
 createUser pool nu = do
-  uid  <- nextRandom
-  now  <- getCurrentTime
+  uid    <- nextRandom
+  now    <- getCurrentTime
   hashed <- hashPassword (newPassword nu)
   runSession pool $
     Session.statement () $
@@ -350,16 +342,13 @@ lookupSession pool rawToken = do
                   Update
                     { target      = sessionSchema
                     , from        = pure ()
-                    , set         = \() row -> row { sessLastSeenAt = lit now }
+                    , set         = \() row -> row {sessLastSeenAt = lit now}
                     , updateWhere = \() row -> sessTokenHash row ==. lit tHash
                     , returning   = NoReturning
                     }
           pure (Just (sess, user))
         _ -> pure Nothing
 
--- | Read-only check used by the rotation middleware. Returns the session ID
--- and the timestamp of the last token rotation without updating last_seen_at
--- (that is left to the handler's own lookupSession call).
 getSessionRotatedAt :: DBPool -> Text -> IO (Maybe (UUID, UTCTime))
 getSessionRotatedAt pool rawToken = do
   now <- getCurrentTime
@@ -378,9 +367,6 @@ getSessionRotatedAt pool rawToken = do
         [(sid, rotatedAt)] -> pure (Just (sid, rotatedAt))
         _                  -> pure Nothing
 
--- | Generate a fresh token for an existing session row, extending the
--- expiry window. The old token hash is overwritten atomically; a stolen
--- cookie that arrives after rotation is immediately invalid.
 rotateSessionToken :: DBPool -> UUID -> IO (SessionToken, UTCTime)
 rotateSessionToken pool sid = do
   now <- getCurrentTime
@@ -408,11 +394,6 @@ rotateSessionToken pool sid = do
             }
   pure (tokenText, expiresAt)
 
--- | Remove expired sessions and revoked sessions older than the audit
--- retention window (24 h). Called hourly by the cleanup worker in App.hs.
--- Revoked sessions are retained briefly so that concurrent in-flight
--- requests carrying the old cookie receive a clean 401 rather than a
--- confusing "session not found" error.
 cleanupExpiredSessions :: DBPool -> IO ()
 cleanupExpiredSessions pool = runSession pool $ do
   Session.statement () $

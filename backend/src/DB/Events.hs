@@ -6,7 +6,7 @@ module DB.Events (
   queryDomainEvents,
 ) where
 
-import Data.Aeson (Value, decode)
+import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Functor.Contravariant ((>$<))
@@ -24,11 +24,7 @@ import qualified Hasql.Statement as Statement
 import DB.Database (DBPool, ddl, runSession)
 import Types.Admin (DomainEventRow (..))
 import qualified Types.Events.Domain as D
-import qualified Types.Events.Inventory as IE
-import qualified Types.Events.Register as RE
-import qualified Types.Events.Session as SE
-import qualified Types.Events.Stock as StE
-import qualified Types.Events.Transaction as TE
+import Types.Events
 import qualified Types.Inventory as TI
 import Types.Location (LocationId, locationIdToUUID)
 import Types.Stock
@@ -108,19 +104,13 @@ insertDomainEvent pool mTraceId mActorId mLocationId evt = do
   let
     (evtType, aggId) = eventMeta evt
     mTraceUUID = (\(TraceId u) -> u) <$> mTraceId
-    mLocUUID = locationIdToUUID <$> mLocationId
-    -- Encode as UTF-8 text; the SQL casts it directly to jsonb.
-    -- Using bytea here causes double-encoding and breaks the jsonb cast.
-    payload = TE.decodeUtf8 $ LBS.toStrict (Aeson.encode evt)
+    mLocUUID   = locationIdToUUID <$> mLocationId
+    payload    = TE.decodeUtf8 $ LBS.toStrict (Aeson.encode evt)
   runSession pool $
     Session.statement
       (eid, evtType, aggId, mTraceUUID, mActorId, mLocUUID, payload, now)
       insertStmt
 
--- Payload is Text; the SQL does $7::jsonb, not $7::text::jsonb.
--- The former parses the text value as JSON.
--- The latter casts bytea->text first, yielding a hex-escaped string that
--- is not valid JSON and causes "invalid input syntax for type json".
 type Row = (UUID, Text, UUID, Maybe UUID, Maybe UUID, Maybe UUID, Text, UTCTime)
 
 insertStmt :: Statement.Statement Row ()
@@ -129,7 +119,7 @@ insertStmt = Statement.Statement sql encoder Decoders.noResult False
     sql =
       "INSERT INTO domain_events \
       \  (id, type, aggregate_id, trace_id, actor_id, location_id, payload, occurred_at) \
-      \VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)"
+      \VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8)"
     encoder =
       ((\(a, _, _, _, _, _, _, _) -> a) >$< Encoders.param (Encoders.nonNullable Encoders.uuid))
         <> ((\(_, b, _, _, _, _, _, _) -> b) >$< Encoders.param (Encoders.nonNullable Encoders.text))
@@ -158,7 +148,7 @@ queryStmt = Statement.Statement sql encoder decoder False
   where
     sql =
       "SELECT seq, id, type, aggregate_id, trace_id, actor_id, location_id, \
-      \       payload::text, occurred_at \
+      \       payload, occurred_at \
       \FROM domain_events \
       \WHERE ($1::uuid IS NULL OR aggregate_id = $1) \
       \  AND ($2::text IS NULL OR trace_id::text = $2) \
@@ -180,49 +170,45 @@ queryStmt = Statement.Statement sql encoder decoder False
         <*> Decoders.column (Decoders.nullable Decoders.uuid)
         <*> Decoders.column (Decoders.nullable Decoders.uuid)
         <*> Decoders.column (Decoders.nullable Decoders.uuid)
-        <*> fmap decodePayload (Decoders.column (Decoders.nonNullable Decoders.text))
+        <*> Decoders.column (Decoders.nonNullable Decoders.jsonb)
         <*> Decoders.column (Decoders.nonNullable Decoders.timestamptz)
 
-decodePayload :: Text -> Value
-decodePayload t =
-  case decode (LBS.fromStrict (TE.encodeUtf8 t)) of
-    Just v -> v
-    Nothing -> Aeson.Null
-
 eventMeta :: D.DomainEvent -> (Text, UUID)
-eventMeta (D.InventoryEvt ie) = invMeta ie
+eventMeta (D.InventoryEvt ie)   = invMeta ie
 eventMeta (D.TransactionEvt te) = txMeta te
-eventMeta (D.RegisterEvt re) = regMeta re
-eventMeta (D.SessionEvt se) = sessMeta se
-eventMeta (D.StockEvt se) = stockMeta se
+eventMeta (D.RegisterEvt re)    = regMeta re
+eventMeta (D.SessionEvt se)     = sessMeta se
+eventMeta (D.StockEvt se)       = stockMeta se
 
-invMeta :: IE.InventoryEvent -> (Text, UUID)
-invMeta IE.ItemCreated {IE.ieItem = item} = ("inventory.item_created", TI.sku item)
-invMeta IE.ItemUpdated {IE.ieNewItem = item} = ("inventory.item_updated", TI.sku item)
-invMeta IE.ItemDeleted {IE.ieSku = u} = ("inventory.item_deleted", u)
-invMeta IE.QuantityChanged {IE.ieItemSku = u} = ("inventory.quantity_changed", u)
+-- All constructors now unqualified from Types.Events.
 
-txMeta :: TE.TransactionEvent -> (Text, UUID)
-txMeta TE.TransactionCreated {TE.teTx = tx} = ("transaction.created", TT.transactionId tx)
-txMeta TE.TransactionItemAdded {TE.teTxId = u} = ("transaction.item_added", u)
-txMeta TE.TransactionItemRemoved {TE.teTxId = u} = ("transaction.item_removed", u)
-txMeta TE.TransactionPaymentAdded {TE.teTxId = u} = ("transaction.payment_added", u)
-txMeta TE.TransactionPaymentRemoved {TE.teTxId = u} = ("transaction.payment_removed", u)
-txMeta TE.TransactionFinalized {TE.teTxId = u} = ("transaction.finalized", u)
-txMeta TE.TransactionVoided {TE.teTxId = u} = ("transaction.voided", u)
-txMeta TE.TransactionRefunded {TE.teTxId = u} = ("transaction.refunded", u)
+invMeta :: InventoryEvent -> (Text, UUID)
+invMeta ItemCreated    {ieItem = item}    = ("inventory.item_created",     TI.sku item)
+invMeta ItemUpdated    {ieNewItem = item} = ("inventory.item_updated",     TI.sku item)
+invMeta ItemDeleted    {ieSku = u}        = ("inventory.item_deleted",     u)
+invMeta QuantityChanged {ieItemSku = u}  = ("inventory.quantity_changed", u)
 
-regMeta :: RE.RegisterEvent -> (Text, UUID)
-regMeta RE.RegisterOpened {RE.reRegId = u} = ("register.opened", u)
-regMeta RE.RegisterClosed {RE.reRegId = u} = ("register.closed", u)
+txMeta :: TransactionEvent -> (Text, UUID)
+txMeta TransactionCreated        {teTx = tx}    = ("transaction.created",         TT.transactionId tx)
+txMeta TransactionItemAdded      {teTxId = u}   = ("transaction.item_added",      u)
+txMeta TransactionItemRemoved    {teTxId = u}   = ("transaction.item_removed",    u)
+txMeta TransactionPaymentAdded   {teTxId = u}   = ("transaction.payment_added",   u)
+txMeta TransactionPaymentRemoved {teTxId = u}   = ("transaction.payment_removed", u)
+txMeta TransactionFinalized      {teTxId = u}   = ("transaction.finalized",       u)
+txMeta TransactionVoided         {teTxId = u}   = ("transaction.voided",          u)
+txMeta TransactionRefunded       {teTxId = u}   = ("transaction.refunded",        u)
 
-sessMeta :: SE.SessionEvent -> (Text, UUID)
-sessMeta SE.SessionCreated {SE.sesUserId = u} = ("session.created", u)
-sessMeta SE.SessionExpired {SE.sesUserId = u} = ("session.expired", u)
-sessMeta SE.SessionRevoked {SE.sesUserId = u} = ("session.revoked", u)
+regMeta :: RegisterEvent -> (Text, UUID)
+regMeta RegisterOpened {reRegId = u} = ("register.opened", u)
+regMeta RegisterClosed {reRegId = u} = ("register.closed", u)
 
-stockMeta :: StE.StockEvent -> (Text, UUID)
-stockMeta StE.PullRequestCreated {StE.sePull = pr} = ("stock.pull_created", Types.Stock.prId pr)
-stockMeta StE.PullStatusChanged {StE.sePullId = u} = ("stock.status_changed", u)
-stockMeta StE.PullMessageAdded {StE.sePullId = u} = ("stock.message_added", u)
-stockMeta StE.PullRequestCancelled {StE.sePullId = u} = ("stock.pull_cancelled", u)
+sessMeta :: SessionEvent -> (Text, UUID)
+sessMeta SessionCreated {sesUserId = u} = ("session.created", u)
+sessMeta SessionExpired {sesUserId = u} = ("session.expired", u)
+sessMeta SessionRevoked {sesUserId = u} = ("session.revoked", u)
+
+stockMeta :: StockEvent -> (Text, UUID)
+stockMeta PullRequestCreated  {sePull = pr}  = ("stock.pull_created",   Types.Stock.prId pr)
+stockMeta PullStatusChanged   {sePullId = u} = ("stock.status_changed", u)
+stockMeta PullMessageAdded    {sePullId = u} = ("stock.message_added",  u)
+stockMeta PullRequestCancelled {sePullId = u} = ("stock.pull_cancelled", u)

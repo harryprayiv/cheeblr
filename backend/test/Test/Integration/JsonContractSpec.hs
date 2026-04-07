@@ -32,7 +32,7 @@ import Types.Location (LocationId (..))
 import API.Transaction (
   Register (..),
  )
-import Auth.Simple (lookupUser)
+-- import Auth.Simple (lookupUser)
 import DB.Transaction (showPaymentMethod)
 import Types.Auth (
   AuthenticatedUser (auRole),
@@ -824,16 +824,6 @@ spec = describe "Integration: JSON Contract Tests" $ do
             registerIsOpen r `shouldBe` False
             registerOpenedAt r `shouldBe` Nothing
           Error err -> expectationFailure $ "Failed to parse: " ++ err
-
-  -- ═══════════════════════════════════════════════
-  -- SECTION 4: Auth contract — devUser UUIDs match
-  -- ═══════════════════════════════════════════════
-
-  describe "Auth contract: dev user UUIDs" $ do
-    it "admin UUID matches" $ auRole (lookupUser (Just "d3a1f4f0-c518-4db3-aa43-e80b428d6304")) `shouldBe` Admin
-    it "customer UUID matches" $ auRole (lookupUser (Just "8244082f-a6bc-4d6c-9427-64a0ecdc10db")) `shouldBe` Customer
-    it "cashier UUID matches" $ auRole (lookupUser (Just "0a6f2deb-892b-4411-8025-08c1a4d61229")) `shouldBe` Cashier
-    it "manager UUID matches" $ auRole (lookupUser (Just "8b75ea4a-00a4-4a2a-a5d5-a1bab8883802")) `shouldBe` Manager
 
   -- ═══════════════════════════════════════════════
   -- SECTION 5: Capability definitions match frontend

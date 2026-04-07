@@ -7,8 +7,7 @@
 module Types.Transaction where
 
 import Data.Aeson
-import Data.List (isPrefixOf)
-import Data.OpenApi (ToSchema)
+import Data.OpenApi (ToParamSchema, ToSchema)
 import Data.Scientific (Scientific)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,10 +29,10 @@ instance ToJSON TransactionStatus
 instance FromJSON TransactionStatus
 
 data InventoryReservation = InventoryReservation
-  { reservationItemSku :: UUID
+  { reservationItemSku       :: UUID
   , reservationTransactionId :: UUID
-  , reservationQuantity :: Int
-  , reservationStatus :: Text
+  , reservationQuantity      :: Int
+  , reservationStatus        :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -94,9 +93,7 @@ instance ToJSON DiscountType where
       , "amount" .= amt
       ]
   toJSON BuyOneGetOne =
-    object
-      [ "discountType" .= ("BUY_ONE_GET_ONE" :: Text)
-      ]
+    object ["discountType" .= ("BUY_ONE_GET_ONE" :: Text)]
   toJSON (Custom name amt) =
     object
       [ "discountType" .= ("CUSTOM" :: Text)
@@ -108,16 +105,16 @@ instance FromJSON DiscountType where
   parseJSON = withObject "DiscountType" $ \v -> do
     typ <- v .: "discountType"
     case (typ :: Text) of
-      "PERCENT_OFF" -> PercentOff <$> v .: "percent"
-      "AMOUNT_OFF" -> AmountOff <$> v .: "amount"
+      "PERCENT_OFF"     -> PercentOff <$> v .: "percent"
+      "AMOUNT_OFF"      -> AmountOff  <$> v .: "amount"
       "BUY_ONE_GET_ONE" -> pure BuyOneGetOne
-      "CUSTOM" -> Custom <$> v .: "name" <*> v .: "amount"
-      other -> fail $ "Unknown DiscountType: " ++ T.unpack other
+      "CUSTOM"          -> Custom <$> v .: "name" <*> v .: "amount"
+      other             -> fail $ "Unknown DiscountType: " ++ T.unpack other
 
 data TaxRecord = TaxRecord
-  { taxCategory :: TaxCategory
-  , taxRate :: Scientific
-  , taxAmount :: Int
+  { taxCategory    :: TaxCategory
+  , taxRate        :: Scientific
+  , taxAmount      :: Int
   , taxDescription :: Text
   }
   deriving (Show, Eq, Generic)
@@ -126,9 +123,9 @@ instance ToJSON TaxRecord
 instance FromJSON TaxRecord
 
 data DiscountRecord = DiscountRecord
-  { discountType :: DiscountType
-  , discountAmount :: Int
-  , discountReason :: Text
+  { discountType       :: DiscountType
+  , discountAmount     :: Int
+  , discountReason     :: Text
   , discountApprovedBy :: Maybe UUID
   }
   deriving (Show, Eq, Generic)
@@ -137,15 +134,15 @@ instance ToJSON DiscountRecord
 instance FromJSON DiscountRecord
 
 data TransactionItem = TransactionItem
-  { transactionItemId :: UUID
-  , transactionItemTransactionId :: UUID
-  , transactionItemMenuItemSku :: UUID
-  , transactionItemQuantity :: Int
-  , transactionItemPricePerUnit :: Int
-  , transactionItemDiscounts :: [DiscountRecord]
-  , transactionItemTaxes :: [TaxRecord]
-  , transactionItemSubtotal :: Int
-  , transactionItemTotal :: Int
+  { transactionItemId              :: UUID
+  , transactionItemTransactionId   :: UUID
+  , transactionItemMenuItemSku     :: UUID
+  , transactionItemQuantity        :: Int
+  , transactionItemPricePerUnit    :: Int
+  , transactionItemDiscounts       :: [DiscountRecord]
+  , transactionItemTaxes           :: [TaxRecord]
+  , transactionItemSubtotal        :: Int
+  , transactionItemTotal           :: Int
   }
   deriving (Show, Eq, Generic)
 
@@ -153,85 +150,85 @@ instance ToJSON TransactionItem
 instance FromJSON TransactionItem
 
 data PaymentTransaction = PaymentTransaction
-  { paymentId :: UUID
-  , paymentTransactionId :: UUID
-  , paymentMethod :: PaymentMethod
-  , paymentAmount :: Int
-  , paymentTendered :: Int
-  , paymentChange :: Int
-  , paymentReference :: Maybe Text
-  , paymentApproved :: Bool
+  { paymentId               :: UUID
+  , paymentTransactionId    :: UUID
+  , paymentMethod           :: PaymentMethod
+  , paymentAmount           :: Int
+  , paymentTendered         :: Int
+  , paymentChange           :: Int
+  , paymentReference        :: Maybe Text
+  , paymentApproved         :: Bool
   , paymentAuthorizationCode :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
 instance ToJSON PaymentMethod where
-  toJSON Cash = String "Cash"
-  toJSON Debit = String "Debit"
-  toJSON Credit = String "Credit"
-  toJSON ACH = String "ACH"
-  toJSON GiftCard = String "GiftCard"
+  toJSON Cash        = String "Cash"
+  toJSON Debit       = String "Debit"
+  toJSON Credit      = String "Credit"
+  toJSON ACH         = String "ACH"
+  toJSON GiftCard    = String "GiftCard"
   toJSON StoredValue = String "StoredValue"
-  toJSON Mixed = String "Mixed"
-  toJSON (Other t) = String ("Other:" <> t)
+  toJSON Mixed       = String "Mixed"
+  toJSON (Other t)   = String ("Other:" <> t)
 
 instance ToJSON PaymentTransaction
 
 instance FromJSON PaymentMethod where
   parseJSON = withText "PaymentMethod" $ \case
-    "Cash" -> pure Cash
-    "CASH" -> pure Cash
-    "Debit" -> pure Debit
-    "DEBIT" -> pure Debit
-    "Credit" -> pure Credit
-    "CREDIT" -> pure Credit
-    "ACH" -> pure ACH
-    "GiftCard" -> pure GiftCard
-    "GIFT_CARD" -> pure GiftCard
-    "StoredValue" -> pure StoredValue
+    "Cash"         -> pure Cash
+    "CASH"         -> pure Cash
+    "Debit"        -> pure Debit
+    "DEBIT"        -> pure Debit
+    "Credit"       -> pure Credit
+    "CREDIT"       -> pure Credit
+    "ACH"          -> pure ACH
+    "GiftCard"     -> pure GiftCard
+    "GIFT_CARD"    -> pure GiftCard
+    "StoredValue"  -> pure StoredValue
     "STORED_VALUE" -> pure StoredValue
-    "Mixed" -> pure Mixed
-    "MIXED" -> pure Mixed
+    "Mixed"        -> pure Mixed
+    "MIXED"        -> pure Mixed
     other
       | "Other:" `T.isPrefixOf` other -> pure $ Other (T.drop 6 other)
       | "OTHER:" `T.isPrefixOf` other -> pure $ Other (T.drop 6 other)
-      | otherwise -> pure $ Other other
+      | otherwise                      -> pure $ Other other
 
 instance FromJSON PaymentTransaction where
   parseJSON = withObject "PaymentTransaction" $ \v ->
     PaymentTransaction
-      <$> v .: "paymentId"
-      <*> v .: "paymentTransactionId"
-      <*> v .: "paymentMethod"
-      <*> v .: "paymentAmount"
-      <*> v .: "paymentTendered"
-      <*> v .: "paymentChange"
+      <$> v .:  "paymentId"
+      <*> v .:  "paymentTransactionId"
+      <*> v .:  "paymentMethod"
+      <*> v .:  "paymentAmount"
+      <*> v .:  "paymentTendered"
+      <*> v .:  "paymentChange"
       <*> v .:? "paymentReference"
-      <*> v .: "paymentApproved"
+      <*> v .:  "paymentApproved"
       <*> v .:? "paymentAuthorizationCode"
 
 data Transaction = Transaction
-  { transactionId :: UUID
-  , transactionStatus :: TransactionStatus
-  , transactionCreated :: UTCTime
-  , transactionCompleted :: Maybe UTCTime
-  , transactionCustomerId :: Maybe UUID
-  , transactionEmployeeId :: UUID
-  , transactionRegisterId :: UUID
-  , transactionLocationId :: LocationId
-  , transactionItems :: [TransactionItem]
-  , transactionPayments :: [PaymentTransaction]
-  , transactionSubtotal :: Int
-  , transactionDiscountTotal :: Int
-  , transactionTaxTotal :: Int
-  , transactionTotal :: Int
-  , transactionType :: TransactionType
-  , transactionIsVoided :: Bool
-  , transactionVoidReason :: Maybe Text
-  , transactionIsRefunded :: Bool
-  , transactionRefundReason :: Maybe Text
+  { transactionId                     :: UUID
+  , transactionStatus                 :: TransactionStatus
+  , transactionCreated                :: UTCTime
+  , transactionCompleted              :: Maybe UTCTime
+  , transactionCustomerId             :: Maybe UUID
+  , transactionEmployeeId             :: UUID
+  , transactionRegisterId             :: UUID
+  , transactionLocationId             :: LocationId
+  , transactionItems                  :: [TransactionItem]
+  , transactionPayments               :: [PaymentTransaction]
+  , transactionSubtotal               :: Int
+  , transactionDiscountTotal          :: Int
+  , transactionTaxTotal               :: Int
+  , transactionTotal                  :: Int
+  , transactionType                   :: TransactionType
+  , transactionIsVoided               :: Bool
+  , transactionVoidReason             :: Maybe Text
+  , transactionIsRefunded             :: Bool
+  , transactionRefundReason           :: Maybe Text
   , transactionReferenceTransactionId :: Maybe UUID
-  , transactionNotes :: Maybe Text
+  , transactionNotes                  :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -240,24 +237,24 @@ instance ToJSON Transaction
 instance FromJSON Transaction where
   parseJSON = withObject "Transaction" $ \v ->
     Transaction
-      <$> v .: "transactionId"
-      <*> v .: "transactionStatus"
-      <*> v .: "transactionCreated"
+      <$> v .:  "transactionId"
+      <*> v .:  "transactionStatus"
+      <*> v .:  "transactionCreated"
       <*> v .:? "transactionCompleted"
       <*> v .:? "transactionCustomerId"
-      <*> v .: "transactionEmployeeId"
-      <*> v .: "transactionRegisterId"
-      <*> v .: "transactionLocationId"
-      <*> v .: "transactionItems"
-      <*> v .: "transactionPayments"
-      <*> v .: "transactionSubtotal"
-      <*> v .: "transactionDiscountTotal"
-      <*> v .: "transactionTaxTotal"
-      <*> v .: "transactionTotal"
-      <*> v .: "transactionType"
-      <*> v .: "transactionIsVoided"
+      <*> v .:  "transactionEmployeeId"
+      <*> v .:  "transactionRegisterId"
+      <*> v .:  "transactionLocationId"
+      <*> v .:  "transactionItems"
+      <*> v .:  "transactionPayments"
+      <*> v .:  "transactionSubtotal"
+      <*> v .:  "transactionDiscountTotal"
+      <*> v .:  "transactionTaxTotal"
+      <*> v .:  "transactionTotal"
+      <*> v .:  "transactionType"
+      <*> v .:  "transactionIsVoided"
       <*> v .:? "transactionVoidReason"
-      <*> v .: "transactionIsRefunded"
+      <*> v .:  "transactionIsRefunded"
       <*> v .:? "transactionRefundReason"
       <*> v .:? "transactionReferenceTransactionId"
       <*> v .:? "transactionNotes"
@@ -288,12 +285,12 @@ instance ToJSON AccountType
 instance FromJSON AccountType
 
 data Account = Account
-  { accountId :: UUID
-  , accountCode :: Text
-  , accountName :: Text
-  , accountIsDebitNormal :: Bool
+  { accountId             :: UUID
+  , accountCode           :: Text
+  , accountName           :: Text
+  , accountIsDebitNormal  :: Bool
   , accountParentAccountId :: Maybe UUID
-  , accountType :: AccountType
+  , accountType           :: AccountType
   }
   deriving (Show, Eq, Generic)
 
@@ -301,14 +298,14 @@ instance ToJSON Account
 instance FromJSON Account
 
 data LedgerEntry = LedgerEntry
-  { ledgerEntryId :: UUID
+  { ledgerEntryId            :: UUID
   , ledgerEntryTransactionId :: UUID
-  , ledgerEntryAccountId :: UUID
-  , ledgerEntryAmount :: Int
-  , ledgerEntryIsDebit :: Bool
-  , ledgerEntryTimestamp :: UTCTime
-  , ledgerEntryType :: LedgerEntryType
-  , ledgerEntryDescription :: Text
+  , ledgerEntryAccountId     :: UUID
+  , ledgerEntryAmount        :: Int
+  , ledgerEntryIsDebit       :: Bool
+  , ledgerEntryTimestamp     :: UTCTime
+  , ledgerEntryType          :: LedgerEntryType
+  , ledgerEntryDescription   :: Text
   }
   deriving (Show, Eq, Generic)
 
@@ -338,15 +335,15 @@ instance ToJSON VerificationStatus
 instance FromJSON VerificationStatus
 
 data CustomerVerification = CustomerVerification
-  { customerVerificationId :: UUID
-  , customerVerificationCustomerId :: UUID
-  , customerVerificationType :: VerificationType
-  , customerVerificationStatus :: VerificationStatus
-  , customerVerificationVerifiedBy :: UUID
-  , customerVerificationVerifiedAt :: UTCTime
-  , customerVerificationExpiresAt :: Maybe UTCTime
-  , customerVerificationNotes :: Maybe Text
-  , customerVerificationDocumentId :: Maybe Text
+  { customerVerificationId           :: UUID
+  , customerVerificationCustomerId   :: UUID
+  , customerVerificationType         :: VerificationType
+  , customerVerificationStatus       :: VerificationStatus
+  , customerVerificationVerifiedBy   :: UUID
+  , customerVerificationVerifiedAt   :: UTCTime
+  , customerVerificationExpiresAt    :: Maybe UTCTime
+  , customerVerificationNotes        :: Maybe Text
+  , customerVerificationDocumentId   :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -365,15 +362,15 @@ instance ToJSON ReportingStatus
 instance FromJSON ReportingStatus
 
 data ComplianceRecord = ComplianceRecord
-  { complianceRecordId :: UUID
-  , complianceRecordTransactionId :: UUID
-  , complianceRecordVerifications :: [CustomerVerification]
-  , complianceRecordIsCompliant :: Bool
+  { complianceRecordId                    :: UUID
+  , complianceRecordTransactionId         :: UUID
+  , complianceRecordVerifications         :: [CustomerVerification]
+  , complianceRecordIsCompliant           :: Bool
   , complianceRecordRequiresStateReporting :: Bool
-  , complianceRecordReportingStatus :: ReportingStatus
-  , complianceRecordReportedAt :: Maybe UTCTime
-  , complianceRecordReferenceId :: Maybe Text
-  , complianceRecordNotes :: Maybe Text
+  , complianceRecordReportingStatus       :: ReportingStatus
+  , complianceRecordReportedAt            :: Maybe UTCTime
+  , complianceRecordReferenceId           :: Maybe Text
+  , complianceRecordNotes                 :: Maybe Text
   }
   deriving (Show, Eq, Generic)
 
@@ -401,8 +398,9 @@ instance FromHttpApiData TransactionStatus where
 deriving instance Bounded TransactionStatus
 deriving instance Enum TransactionStatus
 
--- ToSchema instances
+-- OpenAPI schema instances
 deriving instance ToSchema TransactionStatus
+deriving instance ToParamSchema TransactionStatus
 deriving instance ToSchema TransactionType
 deriving instance ToSchema PaymentMethod
 deriving instance ToSchema TaxCategory
@@ -423,55 +421,3 @@ deriving instance ToSchema CustomerVerification
 deriving instance ToSchema ReportingStatus
 deriving instance ToSchema ComplianceRecord
 deriving instance ToSchema InventoryStatus
-
--- Parse helpers (used by DB.Transaction row conversions)
-parseTransactionStatus :: String -> TransactionStatus
-parseTransactionStatus "CREATED" = Created
-parseTransactionStatus "IN_PROGRESS" = InProgress
-parseTransactionStatus "COMPLETED" = Completed
-parseTransactionStatus "VOIDED" = Voided
-parseTransactionStatus "REFUNDED" = Refunded
-parseTransactionStatus s = error $ "Invalid transaction status: " ++ s
-
-parseTransactionType :: String -> TransactionType
-parseTransactionType "SALE" = Sale
-parseTransactionType "RETURN" = Return
-parseTransactionType "EXCHANGE" = Exchange
-parseTransactionType "INVENTORY_ADJUSTMENT" = InventoryAdjustment
-parseTransactionType "MANAGER_COMP" = ManagerComp
-parseTransactionType "ADMINISTRATIVE" = Administrative
-parseTransactionType s = error $ "Invalid transaction type: " ++ s
-
-parsePaymentMethod :: String -> PaymentMethod
-parsePaymentMethod "CASH" = Cash
-parsePaymentMethod "Cash" = Cash
-parsePaymentMethod "DEBIT" = Debit
-parsePaymentMethod "Debit" = Debit
-parsePaymentMethod "CREDIT" = Credit
-parsePaymentMethod "Credit" = Credit
-parsePaymentMethod "ACH" = ACH
-parsePaymentMethod "GIFT_CARD" = GiftCard
-parsePaymentMethod "GiftCard" = GiftCard
-parsePaymentMethod "STORED_VALUE" = StoredValue
-parsePaymentMethod "StoredValue" = StoredValue
-parsePaymentMethod "MIXED" = Mixed
-parsePaymentMethod "Mixed" = Mixed
-parsePaymentMethod s
-  | "OTHER:" `isPrefixOf` s = Other (T.pack $ drop 6 s)
-  | "Other:" `isPrefixOf` s = Other (T.pack $ drop 6 s)
-  | otherwise = Other (T.pack s)
-
-parseTaxCategory :: String -> TaxCategory
-parseTaxCategory "REGULAR_SALES_TAX" = RegularSalesTax
-parseTaxCategory "RegularSalesTax" = RegularSalesTax
-parseTaxCategory "EXCISE_TAX" = ExciseTax
-parseTaxCategory "ExciseTax" = ExciseTax
-parseTaxCategory "CANNABIS_TAX" = CannabisTax
-parseTaxCategory "CannabisTax" = CannabisTax
-parseTaxCategory "LOCAL_TAX" = LocalTax
-parseTaxCategory "LocalTax" = LocalTax
-parseTaxCategory "MEDICAL_TAX" = MedicalTax
-parseTaxCategory "MedicalTax" = MedicalTax
-parseTaxCategory "NO_TAX" = NoTax
-parseTaxCategory "NoTax" = NoTax
-parseTaxCategory s = error $ "Unknown TaxCategory: " ++ s

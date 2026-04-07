@@ -27,7 +27,7 @@ import Effect.EventEmitter
 import Effect.RegisterDb
 import qualified Service.Register as Svc
 import Types.Events.Domain
-import Types.Events.Register
+import Types.Events
 
 regUUID, empUUID, locUUID :: UUID
 regUUID = read "11111111-1111-1111-1111-111111111111"

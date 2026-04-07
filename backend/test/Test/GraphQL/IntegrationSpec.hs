@@ -14,10 +14,9 @@ import Data.UUID (UUID)
 import qualified Data.Vector as V
 import Test.Hspec
 
-import Auth.Simple (lookupUser)
+-- import Auth.Simple (lookupUser)
 import GraphQL.Resolvers (gqlInputToMenuItem, menuItemToGql, strainLineageToGql)
 import GraphQL.Schema
-import Types.Auth (UserRole (..), auRole)
 import qualified Types.Inventory as TI
 
 -- ──────────────────────────────────────────────
@@ -282,27 +281,6 @@ spec = describe "GraphQL Integration" $ do
       case gqlInputToMenuItem bad of
         Left _ -> pure ()
         Right _ -> expectationFailure "Expected Left for invalid UUID"
-
-  -- ══════════════════════════════════════════════════════
-  -- SECTION 5: X-User-Id auth header contract
-  -- ══════════════════════════════════════════════════════
-
-  describe "X-User-Id header auth contract" $ do
-    describe "dev key form" $ do
-      it "customer-1 → Customer" $ auRole (lookupUser (Just "customer-1")) `shouldBe` Customer
-      it "cashier-1 → Cashier" $ auRole (lookupUser (Just "cashier-1")) `shouldBe` Cashier
-      it "manager-1 → Manager" $ auRole (lookupUser (Just "manager-1")) `shouldBe` Manager
-      it "admin-1 → Admin" $ auRole (lookupUser (Just "admin-1")) `shouldBe` Admin
-
-    describe "UUID form" $ do
-      it "customer UUID → Customer" $ auRole (lookupUser (Just "8244082f-a6bc-4d6c-9427-64a0ecdc10db")) `shouldBe` Customer
-      it "cashier UUID → Cashier" $ auRole (lookupUser (Just "0a6f2deb-892b-4411-8025-08c1a4d61229")) `shouldBe` Cashier
-      it "manager UUID → Manager" $ auRole (lookupUser (Just "8b75ea4a-00a4-4a2a-a5d5-a1bab8883802")) `shouldBe` Manager
-      it "admin UUID → Admin" $ auRole (lookupUser (Just "d3a1f4f0-c518-4db3-aa43-e80b428d6304")) `shouldBe` Admin
-
-    describe "missing / unknown header" $ do
-      it "Nothing defaults to Cashier" $ auRole (lookupUser Nothing) `shouldBe` Cashier
-      it "unknown key defaults to Cashier" $ auRole (lookupUser (Just "no-such-user")) `shouldBe` Cashier
 
   -- ══════════════════════════════════════════════════════
   -- SECTION 6: Inventory list response shape

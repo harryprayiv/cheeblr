@@ -21,7 +21,7 @@ import Effect.StockDb
 import qualified Service.Stock as Svc
 import State.StockPullMachine (PullVertex (..))
 import Types.Events.Domain
-import Types.Events.Stock
+import Types.Events
 import Types.Location (LocationId (..))
 import Types.Stock
 

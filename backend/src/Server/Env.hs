@@ -16,24 +16,22 @@ import Server.Metrics (Metrics)
 import Types.Events.Availability (AvailabilityUpdate)
 import Types.Events.Domain (DomainEvent)
 import Types.Events.Log (LogEvent)
-import Types.Events.Stock (StockEvent)
+import Types.Events (StockEvent)
 
 data AppEnv = AppEnv
-  { envStartTime :: UTCTime
-  , envBuildInfo :: BuildInfo
-  , envConfig :: AppConfig
-  , envDbPool :: Pool
-  , -- Sessions live in the same PostgreSQL pool.
-    -- Kept as a distinct field so a future phase can swap in a dedicated
-    -- store without touching every call site.
-    envSessionStore :: Pool
-  , envLogEnv :: LogEnv
-  , envLogNS :: Namespace
-  , envLogContext :: LogContexts
-  , envLogBroadcaster :: Broadcaster LogEvent
-  , envDomainBroadcaster :: Broadcaster DomainEvent
-  , envStockBroadcaster :: Broadcaster StockEvent
+  { envStartTime   :: UTCTime
+  , envBuildInfo   :: BuildInfo
+  , envConfig      :: AppConfig
+  , envDbPool      :: Pool
+  -- envSessionStore removed: was always set to the same Pool as envDbPool
+  -- and had no call sites.
+  , envLogEnv      :: LogEnv
+  , envLogNS       :: Namespace
+  , envLogContext  :: LogContexts
+  , envLogBroadcaster          :: Broadcaster LogEvent
+  , envDomainBroadcaster       :: Broadcaster DomainEvent
+  , envStockBroadcaster        :: Broadcaster StockEvent
   , envAvailabilityBroadcaster :: Broadcaster AvailabilityUpdate
-  , envAvailabilityState :: TVar AvailabilityState
-  , envMetrics :: Metrics
+  , envAvailabilityState       :: TVar AvailabilityState
+  , envMetrics                 :: Metrics
   }

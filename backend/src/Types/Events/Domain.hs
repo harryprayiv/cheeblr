@@ -6,18 +6,15 @@ module Types.Events.Domain (
 
 import Data.Aeson (FromJSON, ToJSON)
 import GHC.Generics (Generic)
-import Types.Events.Inventory (InventoryEvent)
-import Types.Events.Register (RegisterEvent)
-import Types.Events.Session (SessionEvent)
-import Types.Events.Stock (StockEvent)
-import Types.Events.Transaction (TransactionEvent)
+
+import Types.Events
 
 data DomainEvent
-  = InventoryEvt InventoryEvent
+  = InventoryEvt  InventoryEvent
   | TransactionEvt TransactionEvent
-  | RegisterEvt RegisterEvent
-  | SessionEvt SessionEvent
-  | StockEvt StockEvent
+  | RegisterEvt   RegisterEvent
+  | SessionEvt    SessionEvent
+  | StockEvt      StockEvent
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainEvent

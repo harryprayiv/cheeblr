@@ -8,9 +8,10 @@ module Types.Location (
 ) where
 
 import Data.Aeson (FromJSON (..), ToJSON (..))
-import Data.OpenApi (ToSchema)
+import Data.OpenApi (ToParamSchema (toParamSchema), ToSchema)
 import Data.UUID (UUID, fromText, toText)
 import GHC.Generics (Generic)
+import Data.Proxy (Proxy (..))
 import Web.HttpApiData (FromHttpApiData (..), ToHttpApiData (..))
 
 newtype LocationId = LocationId UUID
@@ -23,6 +24,9 @@ instance FromJSON LocationId where
   parseJSON v = LocationId <$> parseJSON v
 
 instance ToSchema LocationId
+
+instance ToParamSchema LocationId where
+  toParamSchema _ = toParamSchema (Proxy :: Proxy UUID)
 
 instance FromHttpApiData LocationId where
   parseUrlPiece t = case fromText t of

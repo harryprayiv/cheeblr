@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
-{-# LANGUAGE OverloadedStrings #-}
+-- {-# LANGUAGE OverloadedStrings #-}
 
 module Types.Stock (
   PullRequest (..),
@@ -60,7 +60,14 @@ data PullRequestDetail = PullRequestDetail
   }
   deriving (Show, Generic)
 
+-- instance ToSchema PullRequestDetail where
+--   declareNamedSchema _ = return $ NamedSchema (Just "PullRequestDetail") mempty
+
+-- instance ToSchema IssueReport
+-- instance ToSchema NewMessage
+
 instance ToJSON PullRequestDetail
+instance ToSchema PullRequestDetail
 
 newtype IssueReport = IssueReport
   { irNote :: Text
@@ -69,6 +76,7 @@ newtype IssueReport = IssueReport
 
 instance ToJSON IssueReport
 instance FromJSON IssueReport
+instance ToSchema IssueReport
 
 newtype NewMessage = NewMessage
   { nmMessage :: Text
@@ -77,3 +85,4 @@ newtype NewMessage = NewMessage
 
 instance ToJSON NewMessage
 instance FromJSON NewMessage
+instance ToSchema NewMessage

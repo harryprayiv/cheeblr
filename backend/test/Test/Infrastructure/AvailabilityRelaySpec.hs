@@ -15,10 +15,7 @@ import Infrastructure.AvailabilityRelay (updateAvailability)
 import Infrastructure.AvailabilityState
 import Types.Auth (UserRole (..))
 import Types.Events.Domain (DomainEvent (..))
-import Types.Events.Inventory (InventoryEvent (..))
-import Types.Events.Register (RegisterEvent (..))
-import Types.Events.Session (SessionEvent (..))
-import Types.Events.Transaction (TransactionEvent (..))
+import Types.Events
 import Types.Inventory
 import Types.Public.AvailableItem
 import Types.Transaction

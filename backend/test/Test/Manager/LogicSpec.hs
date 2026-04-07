@@ -20,10 +20,7 @@ import Types.Events.Domain (
     TransactionEvt
   ),
  )
-import Types.Events.Inventory (InventoryEvent (..))
-import Types.Events.Register (RegisterEvent (..))
-import Types.Events.Session (SessionEvent (..))
-import Types.Events.Transaction (TransactionEvent (..))
+import Types.Events
 import Types.Location (LocationId (..))
 import Types.Transaction (
   Transaction (..),

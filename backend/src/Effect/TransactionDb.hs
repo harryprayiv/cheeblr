@@ -51,31 +51,33 @@ import Effectful.State.Static.Local
 import DB.Database (DBPool)
 import DB.Transaction (InventoryException (..))
 import qualified DB.Transaction as DBT
+import qualified DB.Reservation as DBRes
 import Effect.Clock
 import Effect.GenUUID
 import Types.Location (LocationId)
 import Types.Transaction
 
 data TransactionDb :: Effect where
-  GetAllTransactions :: TransactionDb m [Transaction]
+  GetAllTransactions        :: TransactionDb m [Transaction]
   GetTransactionsByLocation :: LocationId -> TransactionDb m [Transaction]
-  GetTransactionById :: UUID -> TransactionDb m (Maybe Transaction)
-  CreateTransaction :: Transaction -> TransactionDb m Transaction
-  UpdateTransaction :: UUID -> Transaction -> TransactionDb m Transaction
-  VoidTransaction :: UUID -> Text -> TransactionDb m Transaction
-  RefundTransaction :: UUID -> Text -> TransactionDb m Transaction
-  ClearTransaction :: UUID -> TransactionDb m ()
-  FinalizeTransaction :: UUID -> TransactionDb m Transaction
-  AddTransactionItem :: TransactionItem -> TransactionDb m (Either InventoryException TransactionItem)
-  DeleteTransactionItem :: UUID -> TransactionDb m ()
-  AddPayment :: PaymentTransaction -> TransactionDb m PaymentTransaction
-  DeletePayment :: UUID -> TransactionDb m ()
-  GetTxIdByItemId :: UUID -> TransactionDb m (Maybe UUID)
-  GetTxIdByPaymentId :: UUID -> TransactionDb m (Maybe UUID)
-  GetInventoryAvailability :: UUID -> TransactionDb m (Maybe (Int, Int))
-  CreateReservation :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
-  ReleaseReservation :: UUID -> TransactionDb m Bool
-  GetAllActiveReservations :: TransactionDb m [InventoryReservation]
+  GetTransactionById        :: UUID -> TransactionDb m (Maybe Transaction)
+  CreateTransaction         :: Transaction -> TransactionDb m Transaction
+  UpdateTransaction         :: UUID -> Transaction -> TransactionDb m Transaction
+  VoidTransaction           :: UUID -> Text -> TransactionDb m Transaction
+  -- refundId threaded through so DB record and domain event share the same UUID.
+  RefundTransaction         :: UUID -> UUID -> Text -> TransactionDb m Transaction
+  ClearTransaction          :: UUID -> TransactionDb m ()
+  FinalizeTransaction       :: UUID -> TransactionDb m Transaction
+  AddTransactionItem        :: TransactionItem -> TransactionDb m (Either InventoryException TransactionItem)
+  DeleteTransactionItem     :: UUID -> TransactionDb m ()
+  AddPayment                :: PaymentTransaction -> TransactionDb m PaymentTransaction
+  DeletePayment             :: UUID -> TransactionDb m ()
+  GetTxIdByItemId           :: UUID -> TransactionDb m (Maybe UUID)
+  GetTxIdByPaymentId        :: UUID -> TransactionDb m (Maybe UUID)
+  GetInventoryAvailability  :: UUID -> TransactionDb m (Maybe (Int, Int))
+  CreateReservation         :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
+  ReleaseReservation        :: UUID -> TransactionDb m Bool
+  GetAllActiveReservations  :: TransactionDb m [InventoryReservation]
 
 type instance DispatchOf TransactionDb = Dynamic
 
@@ -97,8 +99,8 @@ updateTransaction txId tx = send (UpdateTransaction txId tx)
 voidTransaction :: (TransactionDb :> es) => UUID -> Text -> Eff es Transaction
 voidTransaction txId reason = send (VoidTransaction txId reason)
 
-refundTransaction :: (TransactionDb :> es) => UUID -> Text -> Eff es Transaction
-refundTransaction txId reason = send (RefundTransaction txId reason)
+refundTransaction :: (TransactionDb :> es) => UUID -> UUID -> Text -> Eff es Transaction
+refundTransaction txId refundId reason = send (RefundTransaction txId refundId reason)
 
 clearTransaction :: (TransactionDb :> es) => UUID -> Eff es ()
 clearTransaction = send . ClearTransaction
@@ -139,42 +141,42 @@ getAllActiveReservations = send GetAllActiveReservations
 
 runTransactionDbIO :: (IOE :> es) => DBPool -> Eff (TransactionDb : es) a -> Eff es a
 runTransactionDbIO pool = interpret $ \_ -> \case
-  GetAllTransactions -> liftIO $ DBT.getAllTransactions pool
-  GetTransactionById u -> liftIO $ DBT.getTransactionById pool u
+  GetAllTransactions              -> liftIO $ DBT.getAllTransactions pool
+  GetTransactionById u            -> liftIO $ DBT.getTransactionById pool u
   GetTransactionsByLocation locId -> liftIO $ do
     txs <- DBT.getAllTransactions pool
     pure (filter (\tx -> transactionLocationId tx == locId) txs)
-  CreateTransaction tx -> liftIO $ DBT.createTransaction pool tx
-  UpdateTransaction u tx -> liftIO $ DBT.updateTransaction pool u tx
-  VoidTransaction u r -> liftIO $ DBT.voidTransaction pool u r
-  RefundTransaction u r -> liftIO $ DBT.refundTransaction pool u r
-  ClearTransaction u -> liftIO $ DBT.clearTransaction pool u
-  FinalizeTransaction u -> liftIO $ DBT.finalizeTransaction pool u
-  AddTransactionItem ti -> liftIO $ try @InventoryException $ DBT.addTransactionItem pool ti
-  DeleteTransactionItem u -> liftIO $ DBT.deleteTransactionItem pool u
-  AddPayment p -> liftIO $ DBT.addPaymentTransaction pool p
-  DeletePayment u -> liftIO $ DBT.deletePaymentTransaction pool u
-  GetTxIdByItemId u -> liftIO $ DBT.getTransactionIdByItemId pool u
-  GetTxIdByPaymentId u -> liftIO $ DBT.getTransactionIdByPaymentId pool u
-  GetInventoryAvailability u -> liftIO $ DBT.getInventoryAvailability pool u
-  CreateReservation a b c d e -> liftIO $ DBT.createInventoryReservation pool a b c d e
-  ReleaseReservation u -> liftIO $ DBT.releaseInventoryReservation pool u
-  GetAllActiveReservations -> liftIO $ DBT.getAllActiveReservations pool
+  CreateTransaction tx            -> liftIO $ DBT.createTransaction pool tx
+  UpdateTransaction u tx          -> liftIO $ DBT.updateTransaction pool u tx
+  VoidTransaction u r             -> liftIO $ DBT.voidTransaction pool u r
+  RefundTransaction u rid r       -> liftIO $ DBT.refundTransaction pool u rid r
+  ClearTransaction u              -> liftIO $ DBT.clearTransaction pool u
+  FinalizeTransaction u           -> liftIO $ DBT.finalizeTransaction pool u
+  AddTransactionItem ti           -> liftIO $ try @InventoryException $ DBT.addTransactionItem pool ti
+  DeleteTransactionItem u         -> liftIO $ DBT.deleteTransactionItem pool u
+  AddPayment p                    -> liftIO $ DBT.addPaymentTransaction pool p
+  DeletePayment u                 -> liftIO $ DBT.deletePaymentTransaction pool u
+  GetTxIdByItemId u               -> liftIO $ DBT.getTransactionIdByItemId pool u
+  GetTxIdByPaymentId u            -> liftIO $ DBT.getTransactionIdByPaymentId pool u
+  GetInventoryAvailability u      -> liftIO $ DBT.getInventoryAvailability pool u
+  CreateReservation a b c d e     -> liftIO $ DBRes.createInventoryReservation pool a b c d e
+  ReleaseReservation u            -> liftIO $ DBRes.releaseInventoryReservation pool u
+  GetAllActiveReservations        -> liftIO $ DBRes.getAllActiveReservations pool
 
 data ReservationEntry = ReservationEntry
-  { reSku :: UUID
-  , reTxId :: UUID
-  , reQty :: Int
+  { reSku    :: UUID
+  , reTxId   :: UUID
+  , reQty    :: Int
   , reStatus :: Text
   }
   deriving (Show, Eq)
 
 data TxStore = TxStore
-  { tsTxs :: Map UUID Transaction
-  , tsItemToTx :: Map UUID UUID
-  , tsPaymentToTx :: Map UUID UUID
+  { tsTxs          :: Map UUID Transaction
+  , tsItemToTx     :: Map UUID UUID
+  , tsPaymentToTx  :: Map UUID UUID
   , tsReservations :: Map UUID ReservationEntry
-  , tsInventory :: Map UUID Int
+  , tsInventory    :: Map UUID Int
   }
   deriving (Show, Eq)
 
@@ -223,43 +225,42 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
       Just tx -> do
         let voided =
               tx
-                { transactionStatus = Voided
-                , transactionIsVoided = True
+                { transactionStatus     = Voided
+                , transactionIsVoided   = True
                 , transactionVoidReason = Just reason
                 }
         put @TxStore st {tsTxs = Map.insert txId voided (tsTxs st)}
         pure voided
-  RefundTransaction txId reason -> do
+  RefundTransaction txId refundId reason -> do
     st <- get @TxStore
     case Map.lookup txId (tsTxs st) of
       Nothing -> error $ "RefundTransaction: not found: " <> show txId
       Just orig -> do
-        refundId <- nextUUID
         now <- currentTime
         let
           refund =
             orig
-              { transactionId = refundId
-              , transactionStatus = Completed
-              , transactionCreated = now
-              , transactionCompleted = Just now
-              , transactionSubtotal = negate (transactionSubtotal orig)
-              , transactionDiscountTotal = negate (transactionDiscountTotal orig)
-              , transactionTaxTotal = negate (transactionTaxTotal orig)
-              , transactionTotal = negate (transactionTotal orig)
-              , transactionType = Return
-              , transactionIsVoided = False
-              , transactionVoidReason = Nothing
-              , transactionIsRefunded = False
-              , transactionRefundReason = Nothing
+              { transactionId                     = refundId
+              , transactionStatus                 = Completed
+              , transactionCreated                = now
+              , transactionCompleted              = Just now
+              , transactionSubtotal               = negate (transactionSubtotal orig)
+              , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
+              , transactionTaxTotal               = negate (transactionTaxTotal orig)
+              , transactionTotal                  = negate (transactionTotal orig)
+              , transactionType                   = Return
+              , transactionIsVoided               = False
+              , transactionVoidReason             = Nothing
+              , transactionIsRefunded             = False
+              , transactionRefundReason           = Nothing
               , transactionReferenceTransactionId = Just txId
-              , transactionNotes = Just $ "Refund: " <> T.pack (show txId)
-              , transactionItems = []
-              , transactionPayments = []
+              , transactionNotes                  = Just $ "Refund: " <> T.pack (show txId)
+              , transactionItems                  = []
+              , transactionPayments               = []
               }
           origUpdated =
             orig
-              { transactionIsRefunded = True
+              { transactionIsRefunded   = True
               , transactionRefundReason = Just reason
               }
         put @TxStore
@@ -277,13 +278,13 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
             Map.adjust
               ( \tx ->
                   tx
-                    { transactionStatus = Created
-                    , transactionSubtotal = 0
+                    { transactionStatus        = Created
+                    , transactionSubtotal      = 0
                     , transactionDiscountTotal = 0
-                    , transactionTaxTotal = 0
-                    , transactionTotal = 0
-                    , transactionItems = []
-                    , transactionPayments = []
+                    , transactionTaxTotal      = 0
+                    , transactionTotal         = 0
+                    , transactionItems         = []
+                    , transactionPayments      = []
                     }
               )
               txId
@@ -298,7 +299,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
               (tsReservations st)
         }
   FinalizeTransaction txId -> do
-    st <- get @TxStore
+    st  <- get @TxStore
     now <- currentTime
     case Map.lookup txId (tsTxs st) of
       Nothing -> error $ "FinalizeTransaction: not found: " <> show txId
@@ -322,9 +323,9 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
         let finalized = tx {transactionStatus = Completed, transactionCompleted = Just now}
         put @TxStore
           st
-            { tsTxs = Map.insert txId finalized (tsTxs st)
+            { tsTxs          = Map.insert txId finalized (tsTxs st)
             , tsReservations = newReservations
-            , tsInventory = newInventory
+            , tsInventory    = newInventory
             }
         pure finalized
   AddTransactionItem ti -> do
@@ -336,21 +337,21 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
       then pure $ Left (ItemNotFound sku)
       else do
         let
-          total = fromMaybe 0 (Map.lookup sku (tsInventory st))
-          reserved = activeReservedQty sku (tsReservations st)
+          total     = fromMaybe 0 (Map.lookup sku (tsInventory st))
+          reserved  = activeReservedQty sku (tsReservations st)
           available = total - reserved
         if available < qty
           then pure $ Left (InsufficientInventory sku qty available)
           else do
             resId <- nextUUID
             let
-              txId = transactionItemTransactionId ti
+              txId   = transactionItemTransactionId ti
               newRes = ReservationEntry sku txId qty "Reserved"
             modify @TxStore $ \s ->
               s
-                { tsItemToTx = Map.insert (transactionItemId ti) txId (tsItemToTx s)
+                { tsItemToTx     = Map.insert (transactionItemId ti) txId (tsItemToTx s)
                 , tsReservations = Map.insert resId newRes (tsReservations s)
-                , tsTxs =
+                , tsTxs          =
                     Map.adjust
                       (\tx -> tx {transactionItems = ti : transactionItems tx})
                       txId
@@ -360,18 +361,18 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
   DeleteTransactionItem itemId -> do
     st <- get @TxStore
     case Map.lookup itemId (tsItemToTx st) of
-      Nothing -> pure ()
+      Nothing   -> pure ()
       Just txId -> do
         let mItem =
               Map.lookup txId (tsTxs st) >>= \tx ->
                 find (\i -> transactionItemId i == itemId) (transactionItems tx)
         case mItem of
-          Nothing -> pure ()
+          Nothing   -> pure ()
           Just item -> do
             let sku = transactionItemMenuItemSku item
             modify @TxStore $ \s ->
               s
-                { tsItemToTx = Map.delete itemId (tsItemToTx s)
+                { tsItemToTx     = Map.delete itemId (tsItemToTx s)
                 , tsReservations =
                     Map.map
                       ( \r ->
@@ -380,7 +381,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                             else r
                       )
                       (tsReservations s)
-                , tsTxs =
+                , tsTxs          =
                     Map.adjust
                       ( \tx ->
                           tx
@@ -396,7 +397,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
     modify @TxStore $ \st ->
       st
         { tsPaymentToTx = Map.insert (paymentId p) txId (tsPaymentToTx st)
-        , tsTxs =
+        , tsTxs         =
             Map.adjust
               (\tx -> tx {transactionPayments = p : transactionPayments tx})
               txId
@@ -406,12 +407,12 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
   DeletePayment pymtId -> do
     st <- get @TxStore
     case Map.lookup pymtId (tsPaymentToTx st) of
-      Nothing -> pure ()
+      Nothing   -> pure ()
       Just txId ->
         modify @TxStore $ \s ->
           s
             { tsPaymentToTx = Map.delete pymtId (tsPaymentToTx s)
-            , tsTxs =
+            , tsTxs         =
                 Map.adjust
                   ( \tx ->
                       tx
@@ -429,7 +430,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
   GetInventoryAvailability sku -> do
     st <- get @TxStore
     case Map.lookup sku (tsInventory st) of
-      Nothing -> pure Nothing
+      Nothing    -> pure Nothing
       Just total -> pure $ Just (total, activeReservedQty sku (tsReservations st))
   CreateReservation resId itemSku txId qty _now ->
     modify @TxStore $ \st ->
@@ -444,26 +445,23 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
     st <- get @TxStore
     case Map.lookup resId (tsReservations st) of
       Nothing -> pure False
-      Just r ->
+      Just r  ->
         if reStatus r == "Reserved"
           then do
             put @TxStore
               st
                 { tsReservations =
-                    Map.insert
-                      resId
-                      r {reStatus = "Released"}
-                      (tsReservations st)
+                    Map.insert resId r {reStatus = "Released"} (tsReservations st)
                 }
             pure True
           else pure False
   GetAllActiveReservations ->
     gets @TxStore $ \st ->
       [ InventoryReservation
-          { reservationItemSku = reSku r
+          { reservationItemSku       = reSku r
           , reservationTransactionId = reTxId r
-          , reservationQuantity = reQty r
-          , reservationStatus = reStatus r
+          , reservationQuantity      = reQty r
+          , reservationStatus        = reStatus r
           }
       | r <- Map.elems (tsReservations st)
       , reStatus r == "Reserved"

@@ -8,47 +8,42 @@ module Infrastructure.AvailabilityRelay (
 
 import Control.Concurrent.STM
 import Control.Monad (forever)
-
--- import Data.Map.Strict         (Map)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, getCurrentTime)
-
--- import Data.UUID               (UUID)
 import qualified Data.Vector as V
 
 import qualified DB.Database as DB
-import qualified DB.Transaction as DBT
+import qualified DB.Reservation as DBRes
 import Infrastructure.AvailabilityState
 import Infrastructure.Broadcast (publish, subChan, subscribe)
 import Server.Env (AppEnv (..))
+import Types.Events
 import Types.Events.Availability (AvailabilityUpdate (..))
 import Types.Events.Domain (DomainEvent (..))
-import Types.Events.Inventory (InventoryEvent (..))
-import Types.Events.Transaction (TransactionEvent (..))
 import Types.Inventory (Inventory (..))
 import qualified Types.Inventory as TI
 import qualified Types.Transaction as TT
 
 runAvailabilityRelay :: AppEnv -> IO ()
 runAvailabilityRelay env = do
-  populateFromDb env (envAvailabilityState env)
+  populateFromDb env
   sub <- subscribe (envDomainBroadcaster env)
   forever $ do
-    evt <- atomically $ readTChan (subChan sub)
-    now <- getCurrentTime
+    evt  <- atomically $ readTChan (subChan sub)
+    now  <- getCurrentTime
     mUpd <- atomically $ updateAvailability (envAvailabilityState env) evt now
     case mUpd of
-      Nothing -> pure ()
+      Nothing  -> pure ()
       Just upd -> publish (envAvailabilityBroadcaster env) upd
 
-populateFromDb :: AppEnv -> TVar AvailabilityState -> IO ()
-populateFromDb env stVar = do
+populateFromDb :: AppEnv -> IO ()
+populateFromDb env = do
   Inventory itemVec <- DB.getAllMenuItems (envDbPool env)
-  let invItems = V.toList itemVec
-  reservations <- DBT.getAllActiveReservations (envDbPool env)
-  atomically $ modifyTVar' stVar $ \st ->
+  let invItems      = V.toList itemVec
+  reservations      <- DBRes.getAllActiveReservations (envDbPool env)
+  atomically $ modifyTVar' (envAvailabilityState env) $ \st ->
     st
-      { asItems = Map.fromList [(TI.sku i, i) | i <- invItems]
+      { asItems    = Map.fromList [(TI.sku i, i) | i <- invItems]
       , asReserved =
           Map.fromListWith
             (+)
@@ -74,14 +69,14 @@ updateAvailability stVar evt now = case evt of
   InventoryEvt (ItemDeleted {ieSku = skuId}) -> do
     modifyTVar' stVar $ \st ->
       st
-        { asItems = Map.delete skuId (asItems st)
+        { asItems    = Map.delete skuId (asItems st)
         , asReserved = Map.delete skuId (asReserved st)
         }
     pure Nothing
   TransactionEvt (TransactionItemAdded {teItem = item}) -> do
     let
       skuId = TT.transactionItemMenuItemSku item
-      qty = TT.transactionItemQuantity item
+      qty   = TT.transactionItemQuantity item
     modifyTVar' stVar $ \st ->
       st {asReserved = Map.insertWith (+) skuId qty (asReserved st)}
     publishFor skuId

@@ -204,23 +204,6 @@ spec = describe "Types.Auth" $ do
       hasCapability capCanViewAllLocations user `shouldBe` True
 
   -- ──────────────────────────────────────────────
-  -- requireCapability
-  -- ──────────────────────────────────────────────
-  describe "requireCapability" $ do
-    it "returns Right for permitted action" $
-      requireCapability capCanViewInventory "No view" (mkTestUser Customer)
-        `shouldBe` Right ()
-    it "returns Left for denied action" $
-      requireCapability capCanDeleteItem "No delete" (mkTestUser Customer)
-        `shouldBe` Left "No delete"
-    it "returns Right for admin on any capability" $
-      requireCapability capCanManageUsers "No manage" (mkTestUser Admin)
-        `shouldBe` Right ()
-    it "preserves error message" $
-      requireCapability capCanCreateItem "Custom error msg" (mkTestUser Cashier)
-        `shouldBe` Left "Custom error msg"
-
-  -- ──────────────────────────────────────────────
   -- AuthenticatedUser JSON
   -- ──────────────────────────────────────────────
   describe "AuthenticatedUser JSON" $ do

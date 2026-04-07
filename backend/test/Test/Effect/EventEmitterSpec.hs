@@ -11,8 +11,8 @@ import Test.Hspec
 
 import Effect.EventEmitter
 import Types.Auth (UserRole (..))
+import Types.Events
 import Types.Events.Domain
-import Types.Events.Session
 
 testUUID :: UUID
 testUUID = read "11111111-1111-1111-1111-111111111111"

@@ -41,13 +41,8 @@ data AppConfig = AppConfig
 
   , cfgSessionTtlSeconds :: Int
 
-  -- | How often to rotate the HttpOnly session cookie (seconds).
-  -- Shorter windows limit stolen-cookie exposure.
-  -- Default: 900 (15 minutes).
   , cfgTokenRotationSecs :: NominalDiffTime
 
-  -- | How often the session cleanup worker runs (hours).
-  -- Default: 1.
   , cfgSessionCleanupIntervalHours :: Int
 
   , cfgRateLimitWindow :: NominalDiffTime
@@ -57,16 +52,12 @@ data AppConfig = AppConfig
   , cfgTlsKeyPath  :: FilePath
   , cfgUseTls      :: Bool
 
-  , cfgCorsOrigins  :: [Text]
+  -- cfgCorsOrigins removed: was read from CORS_ORIGINS but never accessed;
+  -- CORS policy uses cfgAllowedOrigin (singular) exclusively.
   , cfgAllowedOrigin :: Maybe Text
 
-  -- | Public URL of the API as seen from the browser (e.g. https://api.example.com).
-  -- Used in the CSP connect-src directive so the frontend can fetch from it.
-  -- Default: https://localhost:8080
   , cfgApiPublicUrl :: Text
 
-  -- | Optional: lock img-src to a specific CDN domain instead of the broad
-  -- `https:`. Example: "https://cdn.example.com". Default: Nothing → "https:"
   , cfgImgSrcDomain :: Maybe Text
 
   , cfgLowStockThreshold    :: Int
@@ -78,7 +69,8 @@ data AppConfig = AppConfig
   , cfgAvailabilityBroadcastSize :: Int
 
   , cfgEnvironment :: Environment
-  , cfgUseRealAuth :: Bool
+  -- cfgUseRealAuth removed: was never read after dev-mode auth stub was
+  -- replaced with real session auth. All auth now goes through resolveSession.
   , cfgLogFile     :: FilePath
 
   , cfgPublicLocationId   :: LocationId
@@ -103,18 +95,17 @@ loadConfig = do
   poolTimeout <- envSecs "DB_POOL_TIMEOUT_SECS" 30
   sessionTtl  <- envInt  "SESSION_TTL_SECS"     3600
 
-  tokenRotationSecs          <- envSecs "TOKEN_ROTATION_SECS"           900
-  sessionCleanupIntervalHours <- envInt "SESSION_CLEANUP_INTERVAL_HOURS" 1
+  tokenRotationSecs           <- envSecs "TOKEN_ROTATION_SECS"            900
+  sessionCleanupIntervalHours <- envInt  "SESSION_CLEANUP_INTERVAL_HOURS" 1
 
   rlWindow   <- envSecs "RATE_LIMIT_WINDOW_SECS" 60
   rlMax      <- envInt  "RATE_LIMIT_MAX"          10
   certPath   <- envPath "TLS_CERT_FILE" "cert.pem"
   keyPath    <- envPath "TLS_KEY_FILE"  "key.pem"
   useTls     <- envBool "USE_TLS" False
-  corsOrigins <- envList "CORS_ORIGINS" []
   allowedOrig <- envMaybe "ALLOWED_ORIGIN"
 
-  apiPublicUrl <- envText "API_PUBLIC_URL" "https://localhost:8080"
+  apiPublicUrl  <- envText  "API_PUBLIC_URL" "https://localhost:8080"
   mImgSrcDomain <- envMaybe "IMG_SRC_DOMAIN"
 
   lowStock  <- envInt "LOW_STOCK_THRESHOLD"    5
@@ -125,9 +116,8 @@ loadConfig = do
   stockBcSize  <- envInt "STOCK_BROADCAST_SIZE"        200
   availBcSize  <- envInt "AVAILABILITY_BROADCAST_SIZE" 200
 
-  appEnv      <- envEnum "APP_ENVIRONMENT" Development
-  useRealAuth <- envBool "USE_REAL_AUTH"   False
-  logFile     <- envPath "LOG_FILE"        "cheeblr.log"
+  appEnv  <- envEnum "APP_ENVIRONMENT" Development
+  logFile <- envPath "LOG_FILE"        "cheeblr.log"
 
   pubLocId   <- LocationId <$> envUUID "PUBLIC_LOCATION_ID" nilUUID
   pubLocName <- envText "PUBLIC_LOCATION_NAME" "Main Location"
@@ -151,7 +141,6 @@ loadConfig = do
     , cfgTlsCertPath = certPath
     , cfgTlsKeyPath  = keyPath
     , cfgUseTls      = useTls
-    , cfgCorsOrigins   = corsOrigins
     , cfgAllowedOrigin = allowedOrig
     , cfgApiPublicUrl  = apiPublicUrl
     , cfgImgSrcDomain  = mImgSrcDomain
@@ -162,7 +151,6 @@ loadConfig = do
     , cfgStockBroadcastSize        = stockBcSize
     , cfgAvailabilityBroadcastSize = availBcSize
     , cfgEnvironment = appEnv
-    , cfgUseRealAuth = useRealAuth
     , cfgLogFile     = logFile
     , cfgPublicLocationId   = pubLocId
     , cfgPublicLocationName = pubLocName

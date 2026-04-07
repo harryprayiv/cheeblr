@@ -24,8 +24,8 @@ import Effect.Clock
 import Effect.EventEmitter
 import Effect.RegisterDb
 import State.RegisterMachine
+import Types.Events
 import Types.Events.Domain
-import Types.Events.Register
 
 loadReg ::
   (RegisterDb :> es, Error ServerError :> es) =>
@@ -34,7 +34,7 @@ loadReg ::
 loadReg regId = do
   maybeReg <- getRegisterById regId
   case maybeReg of
-    Nothing -> throwError err404 {errBody = "Register not found"}
+    Nothing  -> throwError err404 {errBody = "Register not found"}
     Just reg -> pure (reg, fromRegister reg)
 
 guardRegEvent :: (Error ServerError :> es) => RegEvent -> Eff es ()
@@ -62,10 +62,10 @@ openRegister regId req = do
   emit $
     RegisterEvt $
       RegisterOpened
-        { reRegId = regId
-        , reEmpId = openRegisterEmployeeId req
+        { reRegId       = regId
+        , reEmpId       = openRegisterEmployeeId req
         , reStartingCash = openRegisterStartingCash req
-        , reTimestamp = now
+        , reTimestamp   = now
         }
   pure result
 
@@ -89,10 +89,10 @@ closeRegister regId req = do
   emit $
     RegisterEvt $
       RegisterClosed
-        { reRegId = regId
-        , reEmpId = closeRegisterEmployeeId req
+        { reRegId      = regId
+        , reEmpId      = closeRegisterEmployeeId req
         , reCountedCash = closeRegisterCountedCash req
-        , reVariance = closeRegisterResultVariance result
-        , reTimestamp = now
+        , reVariance   = closeRegisterResultVariance result
+        , reTimestamp  = now
         }
   pure result

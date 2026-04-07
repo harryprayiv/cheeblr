@@ -13,8 +13,12 @@ import qualified Data.OpenApi as OpenApi
 import Servant (Get, JSON, Proxy (..), (:<|>), (:>))
 import Servant.OpenApi (toOpenApi)
 
+import API.Admin (AdminAPI)
 import API.Auth (AuthAPI)
+import API.Feed (FeedAPI)
 import API.Inventory (InventoryAPI)
+import API.Manager (ManagerAPI)
+import API.Stock (StockAPI)
 import API.Transaction (PosAPI)
 
 instance ToSchema GQLRequest where
@@ -30,6 +34,10 @@ type CheeblrAPI =
   InventoryAPI
     :<|> PosAPI
     :<|> AuthAPI
+    :<|> AdminAPI
+    :<|> ManagerAPI
+    :<|> StockAPI
+    :<|> FeedAPI
     :<|> "openapi.json" :> Get '[JSON] OpenApi
 
 cheeblrAPI :: Proxy CheeblrAPI
@@ -40,4 +48,5 @@ cheeblrOpenApi =
   toOpenApi cheeblrAPI
     & OpenApi.info . OpenApi.title .~ "Cheeblr API"
     & OpenApi.info . OpenApi.version .~ "1.0"
-    & OpenApi.info . OpenApi.description ?~ "Cannabis dispensary POS and inventory management API"
+    & OpenApi.info . OpenApi.description
+        ?~ "Cannabis dispensary POS and inventory management API"
