@@ -35,7 +35,6 @@ import API.Transaction (
 -- import Auth.Simple (lookupUser)
 import DB.Transaction (showPaymentMethod)
 import Types.Auth (
-  AuthenticatedUser (auRole),
   SessionResponse (
     SessionResponse,
     sessionCapabilities,
@@ -110,9 +109,7 @@ import Types.Transaction (
     ManagerComp,
     Return,
     Sale
-  ),
-  parsePaymentMethod,
- )
+  ) )
 
 -- ──────────────────────────────────────────────
 -- Fixtures
