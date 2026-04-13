@@ -126,7 +126,7 @@
     },
     "package_set": {
       "address": {
-        "registry": "75.8.0"
+        "registry": "75.9.1"
       },
       "compiler": ">=0.15.15 <0.16.0",
       "content": {
@@ -533,7 +533,7 @@
         "react-basic-dom": "7.0.0",
         "react-basic-dom-beta": "0.1.1",
         "react-basic-emotion": "7.1.0",
-        "react-basic-hooks": "9.0.0",
+        "react-basic-hooks": "9.1.1",
         "react-basic-storybook": "2.0.0",
         "react-dnd-kit": "0.6.0",
         "react-dom": "8.0.0",
@@ -753,7 +753,7 @@
         "yoga-redis": "0.1.0",
         "yoga-shadcn": "1.0.5",
         "yoga-sql-types": "0.1.0",
-        "yoga-sqlite": "0.3.0",
+        "yoga-sqlite": "0.3.1",
         "yoga-sse": "0.1.1",
         "yoga-subtlecrypto": "0.1.0",
         "yoga-test-docker": "0.1.2",
