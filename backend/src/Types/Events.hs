@@ -1,9 +1,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 
--- | All domain event payload types in one place.
--- Types.Events.Log and Types.Events.Availability stay separate
--- (different concerns, different consumers).
+{- | All domain event payload types in one place.
+Types.Events.Log and Types.Events.Availability stay separate
+(different concerns, different consumers).
+-}
 module Types.Events (
   -- Inventory
   InventoryEvent (..),
@@ -36,29 +37,29 @@ import Types.Transaction (PaymentTransaction, Transaction, TransactionItem)
 
 data InventoryEvent
   = ItemCreated
-      { ieItem      :: MenuItem
+      { ieItem :: MenuItem
       , ieTimestamp :: UTCTime
-      , ieActorId   :: UUID
+      , ieActorId :: UUID
       }
   | ItemUpdated
-      { ieOldItem   :: MenuItem
-      , ieNewItem   :: MenuItem
+      { ieOldItem :: MenuItem
+      , ieNewItem :: MenuItem
       , ieTimestamp :: UTCTime
-      , ieActorId   :: UUID
+      , ieActorId :: UUID
       }
   | ItemDeleted
-      { ieSku       :: UUID
-      , ieItemName  :: Text
+      { ieSku :: UUID
+      , ieItemName :: Text
       , ieTimestamp :: UTCTime
-      , ieActorId   :: UUID
+      , ieActorId :: UUID
       }
   | QuantityChanged
-      { ieItemSku       :: UUID
-      , ieOldQty        :: Int
-      , ieNewQty        :: Int
+      { ieItemSku :: UUID
+      , ieOldQty :: Int
+      , ieNewQty :: Int
       , ieReservedDelta :: Int
-      , ieReason        :: QuantityChangeReason
-      , ieTimestamp     :: UTCTime
+      , ieReason :: QuantityChangeReason
+      , ieTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
 
@@ -82,17 +83,17 @@ instance FromJSON QuantityChangeReason
 
 data RegisterEvent
   = RegisterOpened
-      { reRegId       :: UUID
-      , reEmpId       :: UUID
+      { reRegId :: UUID
+      , reEmpId :: UUID
       , reStartingCash :: Int
-      , reTimestamp   :: UTCTime
+      , reTimestamp :: UTCTime
       }
   | RegisterClosed
-      { reRegId      :: UUID
-      , reEmpId      :: UUID
+      { reRegId :: UUID
+      , reEmpId :: UUID
       , reCountedCash :: Int
-      , reVariance   :: Int
-      , reTimestamp  :: UTCTime
+      , reVariance :: Int
+      , reTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
 
@@ -105,17 +106,17 @@ instance FromJSON RegisterEvent
 
 data SessionEvent
   = SessionCreated
-      { sesUserId    :: UUID
-      , sesRole      :: UserRole
+      { sesUserId :: UUID
+      , sesRole :: UserRole
       , sesTimestamp :: UTCTime
       }
   | SessionExpired
-      { sesUserId    :: UUID
+      { sesUserId :: UUID
       , sesTimestamp :: UTCTime
       }
   | SessionRevoked
-      { sesUserId    :: UUID
-      , sesActorId   :: UUID
+      { sesUserId :: UUID
+      , sesActorId :: UUID
       , sesTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
@@ -129,24 +130,24 @@ instance FromJSON SessionEvent
 
 data StockEvent
   = PullRequestCreated
-      { sePull      :: PullRequest
+      { sePull :: PullRequest
       , seTimestamp :: UTCTime
       }
   | PullStatusChanged
-      { sePullId    :: UUID
+      { sePullId :: UUID
       , seOldStatus :: PullVertex
       , seNewStatus :: PullVertex
-      , seActorId   :: UUID
+      , seActorId :: UUID
       , seTimestamp :: UTCTime
       }
   | PullMessageAdded
-      { sePullId    :: UUID
-      , seMessage   :: PullMessage
+      { sePullId :: UUID
+      , seMessage :: PullMessage
       , seTimestamp :: UTCTime
       }
   | PullRequestCancelled
-      { sePullId    :: UUID
-      , seReason    :: Text
+      { sePullId :: UUID
+      , seReason :: Text
       , seTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)
@@ -160,47 +161,47 @@ instance FromJSON StockEvent
 
 data TransactionEvent
   = TransactionCreated
-      { teTx        :: Transaction
+      { teTx :: Transaction
       , teTimestamp :: UTCTime
       }
   | TransactionItemAdded
-      { teTxId      :: UUID
-      , teItem      :: TransactionItem
+      { teTxId :: UUID
+      , teItem :: TransactionItem
       , teTimestamp :: UTCTime
       }
   | TransactionItemRemoved
-      { teTxId      :: UUID
-      , teItemId    :: UUID
-      , teItemSku   :: UUID
-      , teQty       :: Int
+      { teTxId :: UUID
+      , teItemId :: UUID
+      , teItemSku :: UUID
+      , teQty :: Int
       , teTimestamp :: UTCTime
       }
   | TransactionPaymentAdded
-      { teTxId      :: UUID
-      , tePayment   :: PaymentTransaction
+      { teTxId :: UUID
+      , tePayment :: PaymentTransaction
       , teTimestamp :: UTCTime
       }
   | TransactionPaymentRemoved
-      { teTxId      :: UUID
+      { teTxId :: UUID
       , tePaymentId :: UUID
       , teTimestamp :: UTCTime
       }
   | TransactionFinalized
-      { teTxId      :: UUID
-      , teTx        :: Transaction
+      { teTxId :: UUID
+      , teTx :: Transaction
       , teTimestamp :: UTCTime
       }
   | TransactionVoided
-      { teTxId      :: UUID
-      , teReason    :: Text
-      , teActorId   :: UUID
+      { teTxId :: UUID
+      , teReason :: Text
+      , teActorId :: UUID
       , teTimestamp :: UTCTime
       }
   | TransactionRefunded
-      { teTxId      :: UUID
-      , teReason    :: Text
-      , teActorId   :: UUID
-      , teRefTxId   :: UUID
+      { teTxId :: UUID
+      , teReason :: Text
+      , teActorId :: UUID
+      , teRefTxId :: UUID
       , teTimestamp :: UTCTime
       }
   deriving (Show, Eq, Generic)

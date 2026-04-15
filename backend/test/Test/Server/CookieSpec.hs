@@ -10,7 +10,6 @@ import Server.Cookie (clearSessionCookie, sessionCookie)
 
 spec :: Spec
 spec = describe "Server.Cookie" $ do
-
   describe "sessionCookie" $ do
     it "starts with cheeblr_session=<token>" $ do
       sessionCookie "tok123"

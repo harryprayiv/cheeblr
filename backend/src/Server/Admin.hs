@@ -31,6 +31,7 @@ import Config.App (
 import qualified DB.Auth as DBA
 import DB.Database (getAllMenuItems)
 import qualified DB.Events as DBE
+import qualified DB.Register as DBR
 import DB.Schema (
   sessCreatedAt,
   sessId,
@@ -38,7 +39,6 @@ import DB.Schema (
   sessUserId,
   userRole,
  )
-import qualified DB.Register as DBR
 import qualified DB.Transaction as DBT
 import Data.Foldable (toList)
 import Infrastructure.AvailabilityState (allAvailableItems)
@@ -60,9 +60,9 @@ import Types.Auth (
   capabilitiesForRole,
   parseUserRole,
  )
+import Types.Events (SessionEvent (..))
 import Types.Events.Domain (DomainEvent (..))
 import Types.Events.Log (LogEvent (..))
-import Types.Events (SessionEvent (..))
 import Types.Inventory (Inventory (..), MutationResponse (..))
 import qualified Types.Inventory as TI
 import Types.Public.AvailableItem (aiInStock)
@@ -91,7 +91,7 @@ snapshotHandler env mHeader = do
   now <- liftIO getCurrentTime
   let uptimeSecs = round (diffUTCTime now (envStartTime env)) :: Int
 
-  sessions  <- liftIO $ buildSessionInfos env
+  sessions <- liftIO $ buildSessionInfos env
   registers <- liftIO $ DBR.getAllRegisters (envDbPool env)
   let openRegs = filter registerIsOpen registers
 
@@ -100,12 +100,12 @@ snapshotHandler env mHeader = do
 
   Inventory itemVec <- liftIO $ getAllMenuItems (envDbPool env)
   let
-    invItems  = V.toList itemVec
+    invItems = V.toList itemVec
     threshold = cfgLowStockThreshold (envConfig env)
     invSummary =
       InventorySummary
-        { invItemCount    = length invItems
-        , invTotalValue   = sum [TI.price i * TI.quantity i | i <- invItems]
+        { invItemCount = length invItems
+        , invTotalValue = sum [TI.price i * TI.quantity i | i <- invItems]
         , invLowStockCount =
             length
               [ i
@@ -122,9 +122,9 @@ snapshotHandler env mHeader = do
     let ais = allAvailableItems st ts
     pure
       AvailabilitySummary
-        { avInStockCount    = length (filter aiInStock ais)
+        { avInStockCount = length (filter aiInStock ais)
         , avOutOfStockCount = length (filter (not . aiInStock) ais)
-        , avTotalItems      = length ais
+        , avTotalItems = length ais
         }
 
   (qCount, eCount) <-
@@ -135,40 +135,40 @@ snapshotHandler env mHeader = do
           <*> readTVar (mDbErrorCount (envMetrics env))
   let dbStats =
         DbStats
-          { dbPoolSize   = cfgDbPoolSize (envConfig env)
-          , dbPoolIdle   = 0
-          , dbPoolInUse  = 0
+          { dbPoolSize = cfgDbPoolSize (envConfig env)
+          , dbPoolIdle = 0
+          , dbPoolInUse = 0
           , dbQueryCount = qCount
           , dbErrorCount = eCount
           }
 
-  logD  <- liftIO $ historyDepth (envLogBroadcaster env)
-  domD  <- liftIO $ historyDepth (envDomainBroadcaster env)
+  logD <- liftIO $ historyDepth (envLogBroadcaster env)
+  domD <- liftIO $ historyDepth (envDomainBroadcaster env)
   stockD <- liftIO $ historyDepth (envStockBroadcaster env)
   availD <- liftIO $ historyDepth (envAvailabilityBroadcaster env)
   availS <- liftIO $ currentSeq (envAvailabilityBroadcaster env)
   let bcStats =
         BroadcasterStats
-          { bcLogDepth          = logD
-          , bcDomainDepth       = domD
-          , bcStockDepth        = stockD
+          { bcLogDepth = logD
+          , bcDomainDepth = domD
+          , bcStockDepth = stockD
           , bcAvailabilityDepth = availD
-          , bcAvailabilitySeq   = availS
+          , bcAvailabilitySeq = availS
           }
 
   pure
     AdminSnapshot
-      { snapshotTime                = now
-      , snapshotBuildInfo           = envBuildInfo env
-      , snapshotEnvironment         = cfgEnvironment (envConfig env)
-      , snapshotUptimeSeconds       = uptimeSecs
-      , snapshotActiveSessions      = sessions
-      , snapshotOpenRegisters       = openRegs
-      , snapshotLiveTransactions    = liveTxs
-      , snapshotInventorySummary    = invSummary
+      { snapshotTime = now
+      , snapshotBuildInfo = envBuildInfo env
+      , snapshotEnvironment = cfgEnvironment (envConfig env)
+      , snapshotUptimeSeconds = uptimeSecs
+      , snapshotActiveSessions = sessions
+      , snapshotOpenRegisters = openRegs
+      , snapshotLiveTransactions = liveTxs
+      , snapshotInventorySummary = invSummary
       , snapshotAvailabilitySummary = availSummary
-      , snapshotDbStats             = dbStats
-      , snapshotBroadcasterStats    = bcStats
+      , snapshotDbStats = dbStats
+      , snapshotBroadcasterStats = bcStats
       }
 
 -- | Uses Types.Auth.parseUserRole instead of the former local parseRoleText.
@@ -180,10 +180,10 @@ buildSessionInfos env = do
     toInfo (sess, user) =
       SessionInfo
         { siSessionId = sessId sess
-        , siUserId    = sessUserId sess
-        , siRole      = parseUserRole (userRole user)
+        , siUserId = sessUserId sess
+        , siRole = parseUserRole (userRole user)
         , siCreatedAt = sessCreatedAt sess
-        , siLastSeen  = sessLastSeenAt sess
+        , siLastSeen = sessLastSeenAt sess
         }
 
 sessionsHandler :: AppEnv -> Maybe Text -> Handler [SessionInfo]
@@ -206,8 +206,8 @@ revokeSessionHandler env sessionId mHeader = do
         publish (envDomainBroadcaster env) $
           SessionEvt
             SessionRevoked
-              { sesUserId    = sessUserId sess
-              , sesActorId   = actorId
+              { sesUserId = sessUserId sess
+              , sesActorId = actorId
               , sesTimestamp = now
               }
     Nothing -> pure ()
@@ -233,27 +233,27 @@ logsHandler env mHeader mSev mComp mTrace mLimit mCursor = do
   requireAdmin ctx
   let
     cursor = fromMaybe 0 mCursor
-    limit  = fromMaybe 100 mLimit
+    limit = fromMaybe 100 mLimit
   history <- liftIO $ historyFrom (envLogBroadcaster env) cursor
   let
-    entries  = toList history
+    entries = toList history
     filtered = filter (matchesLog mSev mComp mTrace . snd) entries
-    total    = length filtered
-    page     = take limit filtered
-    nextCur  =
+    total = length filtered
+    page = take limit filtered
+    nextCur =
       if total > limit && not (null page)
         then Just (fst (last page) + 1)
         else Nothing
   pure
     LogPage
-      { lpEntries    = map snd page
+      { lpEntries = map snd page
       , lpNextCursor = nextCur
-      , lpTotal      = total
+      , lpTotal = total
       }
 
 matchesLog :: Maybe Text -> Maybe Text -> Maybe Text -> LogEvent -> Bool
 matchesLog mSev mComp mTrace le =
-  maybe True (== leSeverity le)  mSev
+  maybe True (== leSeverity le) mSev
     && maybe True (== leComponent le) mComp
     && maybe True (\t -> leTraceId le == Just t) mTrace
 
@@ -287,18 +287,18 @@ transactionsHandler env mHeader mStatus mLimit = do
   txs <- liftIO $ DBT.getAllTransactions (envDbPool env)
   let
     filtered = maybe txs (\s -> filter ((== s) . transactionStatus) txs) mStatus
-    lim      = fromMaybe 50 mLimit
-    total    = length filtered
-    page     = take lim filtered
-    nextCur  =
+    lim = fromMaybe 50 mLimit
+    total = length filtered
+    page = take lim filtered
+    nextCur =
       if total > lim && not (null page)
         then Just (transactionId (last page))
         else Nothing
   pure
     TransactionPage
       { tpTransactions = page
-      , tpNextCursor   = nextCur
-      , tpTotal        = total
+      , tpNextCursor = nextCur
+      , tpTotal = total
       }
 
 transactionDetailHandler :: AppEnv -> UUID -> Maybe Text -> Handler TransactionDetail
@@ -312,7 +312,7 @@ transactionDetailHandler env txId mHeader = do
       events <- liftIO $ DBE.queryDomainEvents (envDbPool env) (Just txId) Nothing Nothing 100
       pure
         TransactionDetail
-          { tdTransaction  = tx
+          { tdTransaction = tx
           , tdDomainEvents = events
           }
 
@@ -337,7 +337,7 @@ domainEventsHandler env mHeader mAggId mTraceId mCursor mLimit = do
   events <- liftIO $ DBE.queryDomainEvents (envDbPool env) mAggId mTraceId mCursor lim
   pure
     DomainEventPage
-      { depEvents     = events
+      { depEvents = events
       , depNextCursor =
           if length events == lim && not (null events)
             then Just (derSeq (last events) + 1)
@@ -361,8 +361,8 @@ actionsHandler env mHeader action = do
             publish (envDomainBroadcaster env) $
               SessionEvt
                 SessionRevoked
-                  { sesUserId    = sessUserId sess
-                  , sesActorId   = actorId
+                  { sesUserId = sessUserId sess
+                  , sesActorId = actorId
                   , sesTimestamp = now
                   }
         Nothing -> pure ()

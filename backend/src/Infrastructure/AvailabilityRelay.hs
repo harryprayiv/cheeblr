@@ -29,21 +29,21 @@ runAvailabilityRelay env = do
   populateFromDb env
   sub <- subscribe (envDomainBroadcaster env)
   forever $ do
-    evt  <- atomically $ readTChan (subChan sub)
-    now  <- getCurrentTime
+    evt <- atomically $ readTChan (subChan sub)
+    now <- getCurrentTime
     mUpd <- atomically $ updateAvailability (envAvailabilityState env) evt now
     case mUpd of
-      Nothing  -> pure ()
+      Nothing -> pure ()
       Just upd -> publish (envAvailabilityBroadcaster env) upd
 
 populateFromDb :: AppEnv -> IO ()
 populateFromDb env = do
   Inventory itemVec <- DB.getAllMenuItems (envDbPool env)
-  let invItems      = V.toList itemVec
-  reservations      <- DBRes.getAllActiveReservations (envDbPool env)
+  let invItems = V.toList itemVec
+  reservations <- DBRes.getAllActiveReservations (envDbPool env)
   atomically $ modifyTVar' (envAvailabilityState env) $ \st ->
     st
-      { asItems    = Map.fromList [(TI.sku i, i) | i <- invItems]
+      { asItems = Map.fromList [(TI.sku i, i) | i <- invItems]
       , asReserved =
           Map.fromListWith
             (+)
@@ -69,14 +69,14 @@ updateAvailability stVar evt now = case evt of
   InventoryEvt (ItemDeleted {ieSku = skuId}) -> do
     modifyTVar' stVar $ \st ->
       st
-        { asItems    = Map.delete skuId (asItems st)
+        { asItems = Map.delete skuId (asItems st)
         , asReserved = Map.delete skuId (asReserved st)
         }
     pure Nothing
   TransactionEvt (TransactionItemAdded {teItem = item}) -> do
     let
       skuId = TT.transactionItemMenuItemSku item
-      qty   = TT.transactionItemQuantity item
+      qty = TT.transactionItemQuantity item
     modifyTVar' stVar $ \st ->
       st {asReserved = Map.insertWith (+) skuId qty (asReserved st)}
     publishFor skuId

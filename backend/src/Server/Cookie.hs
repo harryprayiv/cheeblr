@@ -13,7 +13,8 @@ import Data.Text (Text)
 -- Max-Age=28800  – 8 hours, matches session TTL
 sessionCookie :: Text -> Text
 sessionCookie token =
-  "cheeblr_session=" <> token
+  "cheeblr_session="
+    <> token
     <> "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800"
 
 -- Zero Max-Age evicts the cookie from the browser immediately on logout.

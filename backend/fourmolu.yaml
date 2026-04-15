@@ -4,8 +4,11 @@ column-limit: 170
 record-brace-space: true 
 indent-wheres: true
 respectful: true 
-let-style: mixed
+let-style: auto
 import-export-style: diff-friendly
 functioon-arrows: leading-args
 haddock-style: multi-line 
 newlines-between-decls: 1 
+in-style: right-align
+unicode: never
+fixities: []

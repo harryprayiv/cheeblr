@@ -50,7 +50,7 @@ requireStock ctx =
 
 isStockEvent :: DomainEvent -> Bool
 isStockEvent (StockEvt _) = True
-isStockEvent _            = False
+isStockEvent _ = False
 
 -- | GenUUID added so Svc.addMessage can generate unique message IDs.
 runStockEff ::
@@ -71,11 +71,11 @@ runStockEff env action = do
       . runEff
       . runErrorNoCallStack @ServerError
       . runEventEmitterProd
-          (envDbPool env)
-          (envDomainBroadcaster env)
-          Nothing
-          Nothing
-          Nothing
+        (envDbPool env)
+        (envDomainBroadcaster env)
+        Nothing
+        Nothing
+        Nothing
       . runGenUUIDIO
       . runClockIO
       . runStockDbIO (envDbPool env)
@@ -168,16 +168,17 @@ cancelHandler env pullId mHeader report = do
   _ <- runStockEff env (Svc.cancelPull pullId (irNote report) (auUserId (scUser ctx)))
   pure $ MutationResponse True "Pull cancelled"
 
--- | Previously bypassed the service layer entirely (called DBS.insertPullMessage
--- directly), so no domain event was emitted and SSE clients never saw messages.
--- Now routes through runStockEff so PullMessageAdded is published.
+{- | Previously bypassed the service layer entirely (called DBS.insertPullMessage
+directly), so no domain event was emitted and SSE clients never saw messages.
+Now routes through runStockEff so PullMessageAdded is published.
+-}
 messageHandler :: AppEnv -> UUID -> Maybe Text -> NewMessage -> Handler MutationResponse
 messageHandler env pullId mHeader msg = do
   ctx <- authCtx env mHeader
   requireStock ctx
   let
     senderId = auUserId (scUser ctx)
-    role     = pack $ show (auRole (scUser ctx))
+    role = pack $ show (auRole (scUser ctx))
   _ <- runStockEff env (Svc.addMessage pullId senderId role (nmMessage msg))
   pure $ MutationResponse True "Message added"
 

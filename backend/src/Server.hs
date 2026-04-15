@@ -5,8 +5,8 @@
 
 module Server (fullAPI, fullServer) where
 
-import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
 import API.Inventory
+import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
 import Auth.Session (SessionContext (..), resolveSession)
 import Control.Monad.IO.Class (liftIO)
 import Data.Morpheus (interpreter)
@@ -73,7 +73,7 @@ inventoryServer env =
     :<|> getSession
     :<|> graphqlInventory
   where
-    pool   = envDbPool env
+    pool = envDbPool env
     logEnv = envLogEnv env
 
     auth :: Maybe Text -> Handler AuthenticatedUser
@@ -104,12 +104,14 @@ inventoryServer env =
           result <- Effect.InventoryDb.insertMenuItem item
           liftIO $ case result of
             Right () -> logInventoryCreate lctx skuT LogSuccess
-            Left e   ->
-              logInventoryCreate lctx skuT
+            Left e ->
+              logInventoryCreate
+                lctx
+                skuT
                 (LogFailure (T.pack $ "insertMenuItem: " <> show e))
           pure $ case result of
             Right () -> MutationResponse True "Item added successfully"
-            Left e   -> MutationResponse False (pack $ "Error inserting item: " <> show e)
+            Left e -> MutationResponse False (pack $ "Error inserting item: " <> show e)
 
     updateInventoryItem :: Maybe Text -> MenuItem -> Handler MutationResponse
     updateInventoryItem mHeader item = do
@@ -127,12 +129,14 @@ inventoryServer env =
           result <- Effect.InventoryDb.updateMenuItem item
           liftIO $ case result of
             Right () -> logInventoryUpdate lctx skuT LogSuccess
-            Left e   ->
-              logInventoryUpdate lctx skuT
+            Left e ->
+              logInventoryUpdate
+                lctx
+                skuT
                 (LogFailure (T.pack $ "updateMenuItem: " <> show e))
           pure $ case result of
             Right () -> MutationResponse True "Item updated successfully"
-            Left e   -> MutationResponse False (pack $ "Error updating item: " <> show e)
+            Left e -> MutationResponse False (pack $ "Error updating item: " <> show e)
 
     deleteInventoryItem :: Maybe Text -> UUID -> Handler MutationResponse
     deleteInventoryItem mHeader uuid = do
@@ -141,8 +145,12 @@ inventoryServer env =
         caps = capabilitiesForRole (auRole user)
         lctx = makeLogCtx logEnv (Just (T.pack (show (auUserId user)))) (auRole user)
         skuT = T.pack (show uuid)
-      liftIO $ logHttpRequest logEnv "DELETE" ("/inventory/" <> skuT)
-        (T.pack (show (auUserId user)))
+      liftIO $
+        logHttpRequest
+          logEnv
+          "DELETE"
+          ("/inventory/" <> skuT)
+          (T.pack (show (auUserId user)))
       if not (capCanDeleteItem caps)
         then do
           liftIO $ logAuthDenied logEnv (T.pack (show (auUserId user))) "capCanDeleteItem"
@@ -166,15 +174,19 @@ inventoryServer env =
         logSessionAccess lctx
       pure
         SessionResponse
-          { sessionUserId       = auUserId user
-          , sessionUserName     = auUserName user
-          , sessionRole         = auRole user
+          { sessionUserId = auUserId user
+          , sessionUserName = auUserName user
+          , sessionRole = auRole user
           , sessionCapabilities = capabilitiesForRole (auRole user)
           }
 
     graphqlInventory :: Maybe Text -> GQLRequest -> Handler GQLResponse
     graphqlInventory mHeader req = do
       user <- auth mHeader
-      liftIO $ logHttpRequest logEnv "POST" "/graphql/inventory"
-        (T.pack (show (auUserId user)))
+      liftIO $
+        logHttpRequest
+          logEnv
+          "POST"
+          "/graphql/inventory"
+          (T.pack (show (auUserId user)))
       liftIO $ interpreter (rootResolver pool user) req

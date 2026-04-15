@@ -27,10 +27,10 @@ getAllActiveReservations pool = do
   where
     toReservation row =
       InventoryReservation
-        { reservationItemSku       = resItemSku row
+        { reservationItemSku = resItemSku row
         , reservationTransactionId = resTransactionId row
-        , reservationQuantity      = fromIntegral (resQuantity row)
-        , reservationStatus        = resStatus row
+        , reservationQuantity = fromIntegral (resQuantity row)
+        , reservationStatus = resStatus row
         }
 
 createInventoryReservation :: DBPool -> UUID -> UUID -> UUID -> Int -> UTCTime -> IO ()
@@ -40,20 +40,20 @@ createInventoryReservation pool reservationId itemSku trxId qty now =
       run_ $
         Rel8.insert $
           Insert
-            { into       = reservationSchema
-            , rows       =
+            { into = reservationSchema
+            , rows =
                 values
                   [ ReservationRow
-                      { resId            = lit reservationId
-                      , resItemSku       = lit itemSku
+                      { resId = lit reservationId
+                      , resItemSku = lit itemSku
                       , resTransactionId = lit trxId
-                      , resQuantity      = lit (fromIntegral qty)
-                      , resStatus        = lit "Reserved"
-                      , resCreatedAt     = lit now
+                      , resQuantity = lit (fromIntegral qty)
+                      , resStatus = lit "Reserved"
+                      , resCreatedAt = lit now
                       }
                   ]
             , onConflict = Abort
-            , returning  = NoReturning
+            , returning = NoReturning
             }
 
 releaseInventoryReservation :: DBPool -> UUID -> IO Bool
@@ -66,16 +66,16 @@ releaseInventoryReservation pool reservationId = do
     pure r
   case resRows of
     [] -> pure False
-    _  -> do
+    _ -> do
       runSession pool $
         Session.statement () $
           run_ $
             Rel8.update $
               Update
-                { target      = reservationSchema
-                , from        = pure ()
-                , set         = \() row -> row {resStatus = lit "Released"}
+                { target = reservationSchema
+                , from = pure ()
+                , set = \() row -> row {resStatus = lit "Released"}
                 , updateWhere = \() row -> DB.Schema.resId row ==. lit reservationId
-                , returning   = NoReturning
+                , returning = NoReturning
                 }
       pure True

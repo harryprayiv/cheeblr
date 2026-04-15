@@ -32,8 +32,9 @@ import Types.Location (LocationId (..))
 import API.Transaction (
   Register (..),
  )
+
 -- import Auth.Simple (lookupUser)
-import DB.Transaction (showPaymentMethod, parsePaymentMethod)
+import DB.Transaction (parsePaymentMethod, showPaymentMethod)
 import Types.Auth (
   SessionResponse (
     SessionResponse,
@@ -109,7 +110,8 @@ import Types.Transaction (
     ManagerComp,
     Return,
     Sale
-  ) )
+  ),
+ )
 
 -- ──────────────────────────────────────────────
 -- Fixtures

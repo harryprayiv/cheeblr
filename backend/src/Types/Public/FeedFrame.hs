@@ -22,9 +22,9 @@ import Types.Events.Availability (AvailabilityUpdate (..))
 import Types.Public.AvailableItem (AvailableItem, PublicLocationId)
 
 data FeedFrame = FeedFrame
-  { ffSeq       :: Int64
-  , ffType      :: Text
-  , ffPayload   :: AvailableItem
+  { ffSeq :: Int64
+  , ffType :: Text
+  , ffPayload :: AvailableItem
   , ffTimestamp :: UTCTime
   }
   deriving (Show, Eq, Generic)
@@ -32,7 +32,7 @@ data FeedFrame = FeedFrame
 $( deriveToJSON
      ( defaultOptions
          { fieldLabelModifier = \label -> case drop 2 label of
-             []       -> label
+             [] -> label
              (c : cs) -> toLower c : cs
          }
      )
@@ -45,19 +45,19 @@ instance ToSchema FeedFrame where
   declareNamedSchema _ = return $ NamedSchema (Just "FeedFrame") mempty
 
 data FeedStatus = FeedStatus
-  { fsLocationId   :: PublicLocationId
+  { fsLocationId :: PublicLocationId
   , fsLocationName :: Text
-  , fsCurrentSeq   :: Int64
-  , fsItemCount    :: Int
+  , fsCurrentSeq :: Int64
+  , fsItemCount :: Int
   , fsInStockCount :: Int
-  , fsOldestSeq    :: Maybe Int64
+  , fsOldestSeq :: Maybe Int64
   }
   deriving (Show, Eq, Generic)
 
 $( deriveToJSON
      ( defaultOptions
          { fieldLabelModifier = \label -> case drop 2 label of
-             []       -> label
+             [] -> label
              (c : cs) -> toLower c : cs
          }
      )
@@ -71,8 +71,8 @@ instance ToSchema FeedStatus where
 mkFeedFrame :: Int64 -> AvailabilityUpdate -> FeedFrame
 mkFeedFrame seq' upd =
   FeedFrame
-    { ffSeq       = seq'
-    , ffType      = "app.cheeblr.inventory.availableItem"
-    , ffPayload   = auItem upd
+    { ffSeq = seq'
+    , ffType = "app.cheeblr.inventory.availableItem"
+    , ffPayload = auItem upd
     , ffTimestamp = auTimestamp upd
     }

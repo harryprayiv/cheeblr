@@ -22,8 +22,8 @@ import Effect.InventoryDb (InventoryDb, runInventoryDbPure)
 import Effect.StockDb (StockDb, emptyStockStore, runStockDbPure)
 import Effect.TransactionDb
 import qualified Service.Transaction as Svc
-import Types.Events.Domain
 import Types.Events
+import Types.Events.Domain
 import Types.Location (LocationId (..))
 import Types.Transaction
 
@@ -32,13 +32,13 @@ import Types.Transaction
 -- ---------------------------------------------------------------------------
 
 txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
-txUUID  = read "11111111-1111-1111-1111-111111111111"
+txUUID = read "11111111-1111-1111-1111-111111111111"
 itemUUID = read "22222222-2222-2222-2222-222222222222"
 pymtUUID = read "33333333-3333-3333-3333-333333333333"
-skuUUID  = read "44444444-4444-4444-4444-444444444444"
-empUUID  = read "55555555-5555-5555-5555-555555555555"
-regUUID  = read "66666666-6666-6666-6666-666666666666"
-locUUID  = read "77777777-7777-7777-7777-777777777777"
+skuUUID = read "44444444-4444-4444-4444-444444444444"
+empUUID = read "55555555-5555-5555-5555-555555555555"
+regUUID = read "66666666-6666-6666-6666-666666666666"
+locUUID = read "77777777-7777-7777-7777-777777777777"
 
 freshUUID :: UUID
 freshUUID = read "88888888-8888-8888-8888-888888888888"
@@ -232,7 +232,7 @@ shouldFailWith code io = do
   result <- io
   case result of
     Left err -> errHTTPCode err `shouldBe` code
-    Right _  -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
+    Right _ -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
 
 -- ---------------------------------------------------------------------------
 -- Specs
@@ -240,7 +240,6 @@ shouldFailWith code io = do
 
 spec :: Spec
 spec = describe "Service.Transaction (pure interpreter)" $ do
-
   describe "addItem — state machine guards" $ do
     it "succeeds from Created (transitions tx to InProgress)" $ do
       item <- shouldSucceed $ runTest (storeWith Created) (Svc.addItem testItem)
@@ -389,17 +388,17 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
   describe "store state after successful operations" $ do
     it "addItem reserves inventory" $ do
       let
-        store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
+        store = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = Svc.addItem testItem >> getInventoryAvailability skuUUID
       result <- shouldSucceed $ runTest store action
       case result of
         Just (_, reserved) -> reserved `shouldBe` 1
-        Nothing            -> expectationFailure "Expected availability"
+        Nothing -> expectationFailure "Expected availability"
 
     it "two addItem calls consume two units" $ do
       let
-        item2  = testItem {transactionItemId = freshUUID}
-        store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
+        item2 = testItem {transactionItemId = freshUUID}
+        store = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
           _ <- Svc.addItem testItem
           _ <- Svc.addItem item2
@@ -407,11 +406,11 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       result <- shouldSucceed $ runTest store action
       case result of
         Just (_, reserved) -> reserved `shouldBe` 2
-        Nothing            -> expectationFailure "Expected availability"
+        Nothing -> expectationFailure "Expected availability"
 
     it "addItem followed by removeItem restores reserved count" $ do
       let
-        store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
+        store = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
           _ <- Svc.addItem testItem
           Svc.removeItem itemUUID
@@ -419,7 +418,7 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       result <- shouldSucceed $ runTest store action
       case result of
         Just (_, reserved) -> reserved `shouldBe` 0
-        Nothing            -> expectationFailure "Expected availability"
+        Nothing -> expectationFailure "Expected availability"
 
   describe "event emission" $ do
     -- addItem now emits two events: TransactionItemAdded and PullRequestCreated.
@@ -428,9 +427,9 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
     it "addItem emits TransactionItemAdded and PullRequestCreated on success" $ do
       (result, evts) <- runTestWithEvents (storeWith Created) (Svc.addItem testItem)
       result `shouldSatisfy` either (const False) (const True)
-      let txAdded   = [() | TransactionEvt (TransactionItemAdded {teTxId}) <- evts, teTxId == txUUID]
+      let txAdded = [() | TransactionEvt (TransactionItemAdded {teTxId}) <- evts, teTxId == txUUID]
           pullCreated = [() | StockEvt (PullRequestCreated {}) <- evts]
-      txAdded    `shouldSatisfy` (not . null)
+      txAdded `shouldSatisfy` (not . null)
       pullCreated `shouldSatisfy` (not . null)
 
     it "addItem emits no events on state machine rejection (Completed)" $ do
@@ -485,6 +484,6 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       result `shouldSatisfy` either (const False) (const True)
       case evts of
         [TransactionEvt (TransactionRefunded {teTxId, teReason})] -> do
-          teTxId  `shouldBe` txUUID
+          teTxId `shouldBe` txUUID
           teReason `shouldBe` "defective"
         _ -> expectationFailure $ "Expected [TransactionRefunded], got " <> show (length evts) <> " events"

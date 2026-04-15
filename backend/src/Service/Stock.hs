@@ -25,8 +25,8 @@ import Effect.EventEmitter
 import Effect.GenUUID
 import Effect.StockDb
 import State.StockPullMachine
-import Types.Events.Domain (DomainEvent (..))
 import Types.Events
+import Types.Events.Domain (DomainEvent (..))
 import Types.Stock
 
 loadPull ::
@@ -73,12 +73,12 @@ transition pullId cmd applyResult = do
       pure (applyResult pr evt next)
 
 actorFromCmd :: PullCommand -> UUID
-actorFromCmd (AcceptCmd a)        = a
-actorFromCmd (StartPullCmd a)     = a
-actorFromCmd (FulfillCmd a)       = a
+actorFromCmd (AcceptCmd a) = a
+actorFromCmd (StartPullCmd a) = a
+actorFromCmd (FulfillCmd a) = a
 actorFromCmd (ReportIssueCmd _ a) = a
-actorFromCmd (RetryCmd a)         = a
-actorFromCmd (CancelCmd _ a)      = a
+actorFromCmd (RetryCmd a) = a
+actorFromCmd (CancelCmd _ a) = a
 
 acceptPull ::
   (StockDb :> es, EventEmitter :> es, Clock :> es, Error ServerError :> es) =>
@@ -132,11 +132,12 @@ cancelPull pullId reason actorId = do
       emit $ StockEvt $ PullRequestCancelled pullId reason now
       pure pr {prStatus = newVertex}
 
--- | Add a message to a pull request and emit a domain event.
--- Previously this function used pullId as the message UUID (a primary-key
--- collision bug). GenUUID is now in the constraint so each message gets a
--- unique ID. The server handler must route through runStockEff for SSE
--- emission to work.
+{- | Add a message to a pull request and emit a domain event.
+Previously this function used pullId as the message UUID (a primary-key
+collision bug). GenUUID is now in the constraint so each message gets a
+unique ID. The server handler must route through runStockEff for SSE
+emission to work.
+-}
 addMessage ::
   ( StockDb :> es
   , EventEmitter :> es
@@ -147,17 +148,17 @@ addMessage ::
   UUID -> UUID -> Text -> Text -> Eff es PullMessage
 addMessage pullId senderId fromRole msg = do
   _ <- loadPull pullId
-  now   <- currentTime
-  msgId <- nextUUID          -- was: let msgId = pullId  (bug: PK collision)
+  now <- currentTime
+  msgId <- nextUUID -- was: let msgId = pullId  (bug: PK collision)
   let
     pm =
       PullMessage
-        { pmId            = msgId
+        { pmId = msgId
         , pmPullRequestId = pullId
-        , pmFromRole      = fromRole
-        , pmSenderId      = senderId
-        , pmMessage       = msg
-        , pmCreatedAt     = now
+        , pmFromRole = fromRole
+        , pmSenderId = senderId
+        , pmMessage = msg
+        , pmCreatedAt = now
         }
   result <- addPullMessage pullId pm
   case result of

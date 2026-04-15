@@ -19,8 +19,8 @@ import Types.Location (LocationId)
 type SessionHeader = Header "Authorization" Text
 
 data LoginRequest = LoginRequest
-  { loginUsername   :: Text
-  , loginPassword   :: Text
+  { loginUsername :: Text
+  , loginPassword :: Text
   , loginRegisterId :: Maybe UUID
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
@@ -29,27 +29,27 @@ data LoginRequest = LoginRequest
 -- Set-Cookie header. JS never sees it.
 data LoginResponse = LoginResponse
   { loginExpiresAt :: UTCTime
-  , loginUser      :: SessionResponse
+  , loginUser :: SessionResponse
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
 data UserSummary = UserSummary
-  { summaryId          :: UUID
-  , summaryUsername    :: Text
+  { summaryId :: UUID
+  , summaryUsername :: Text
   , summaryDisplayName :: Text
-  , summaryEmail       :: Maybe Text
-  , summaryRole        :: UserRole
-  , summaryIsActive    :: Bool
+  , summaryEmail :: Maybe Text
+  , summaryRole :: UserRole
+  , summaryIsActive :: Bool
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
 data NewUserRequest = NewUserRequest
-  { newReqUsername    :: Text
+  { newReqUsername :: Text
   , newReqDisplayName :: Text
-  , newReqEmail       :: Maybe Text
-  , newReqRole        :: UserRole
-  , newReqLocationId  :: Maybe LocationId
-  , newReqPassword    :: Text
+  , newReqEmail :: Maybe Text
+  , newReqRole :: UserRole
+  , newReqLocationId :: Maybe LocationId
+  , newReqPassword :: Text
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 

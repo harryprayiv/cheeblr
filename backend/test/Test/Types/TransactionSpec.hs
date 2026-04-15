@@ -3,13 +3,13 @@
 
 module Test.Types.TransactionSpec (spec) where
 
-import DB.Transaction
-  ( parseDiscountType
-  , parseTransactionStatus
-  , parseTransactionType
-  , parsePaymentMethod
-  , parseTaxCategory
-  )
+import DB.Transaction (
+  parseDiscountType,
+  parsePaymentMethod,
+  parseTaxCategory,
+  parseTransactionStatus,
+  parseTransactionType,
+ )
 import Data.Aeson (Result (..), decode, encode, fromJSON, toJSON)
 import Data.Scientific (fromFloatDigits)
 import Data.Time (UTCTime)

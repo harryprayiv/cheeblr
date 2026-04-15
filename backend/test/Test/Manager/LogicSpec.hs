@@ -12,6 +12,7 @@ import Types.Admin (
   TransactionSummary (..),
  )
 import Types.Auth (UserRole (..))
+import Types.Events
 import Types.Events.Domain (
   DomainEvent (
     InventoryEvt,
@@ -20,7 +21,6 @@ import Types.Events.Domain (
     TransactionEvt
   ),
  )
-import Types.Events
 import Types.Location (LocationId (..))
 import Types.Transaction (
   Transaction (..),

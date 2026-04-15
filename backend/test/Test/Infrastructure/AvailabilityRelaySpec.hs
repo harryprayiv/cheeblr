@@ -14,8 +14,8 @@ import Test.Hspec
 import Infrastructure.AvailabilityRelay (updateAvailability)
 import Infrastructure.AvailabilityState
 import Types.Auth (UserRole (..))
-import Types.Events.Domain (DomainEvent (..))
 import Types.Events
+import Types.Events.Domain (DomainEvent (..))
 import Types.Inventory
 import Types.Public.AvailableItem
 import Types.Transaction

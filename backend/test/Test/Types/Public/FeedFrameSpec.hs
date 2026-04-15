@@ -81,8 +81,8 @@ spec = describe "FeedFrame" $ do
       ffTimestamp testFrame `shouldBe` testTime
 
     it "seq is preserved across different values" $ do
-      ffSeq (mkFeedFrame 0   testUpdate) `shouldBe` 0
-      ffSeq (mkFeedFrame 42  testUpdate) `shouldBe` 42
+      ffSeq (mkFeedFrame 0 testUpdate) `shouldBe` 0
+      ffSeq (mkFeedFrame 42 testUpdate) `shouldBe` 42
       ffSeq (mkFeedFrame 999 testUpdate) `shouldBe` 999
 
   describe "JSON serialization" $ do

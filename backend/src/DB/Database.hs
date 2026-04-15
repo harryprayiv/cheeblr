@@ -31,12 +31,12 @@ import Types.Inventory (Inventory (..), MenuItem (..), MutationResponse (..), St
 import qualified Types.Inventory as TI
 
 data DBConfig = DBConfig
-  { dbHost     :: ByteString
-  , dbPort     :: Word
-  , dbName     :: ByteString
-  , dbUser     :: ByteString
+  { dbHost :: ByteString
+  , dbPort :: Word
+  , dbName :: ByteString
+  , dbUser :: ByteString
   , dbPassword :: ByteString
-  , poolSize   :: Int
+  , poolSize :: Int
   }
 
 type DBPool = Pool.Pool
@@ -60,11 +60,11 @@ initializeDB DBConfig {..} = do
         , PoolConfig.acquisitionTimeout 30
         , PoolConfig.staticConnectionSettings connSettings
         ]
-  pool   <- Pool.acquire cfg
+  pool <- Pool.acquire cfg
   result <- Pool.use pool (Session.statement () smokeTestStmt)
   case result of
     Left err -> throwIO $ userError $ "DB connection failed: " <> show err
-    Right _  -> pure pool
+    Right _ -> pure pool
   where
     smokeTestStmt :: Statement.Statement () ()
     smokeTestStmt = Statement.Statement "SELECT 1" Encoders.noParams Decoders.noResult False
@@ -73,7 +73,7 @@ runSession :: DBPool -> Session.Session a -> IO a
 runSession pool session = do
   result <- Pool.use pool session
   case result of
-    Left err  -> throwIO $ userError $ show err
+    Left err -> throwIO $ userError $ show err
     Right val -> pure val
 
 ddl :: ByteString -> Statement.Statement () ()
@@ -134,7 +134,7 @@ reservedBySkuQuery =
 
 getAllMenuItems :: DBPool -> IO Inventory
 getAllMenuItems pool = do
-  rows     <- runSession pool $ Session.statement () $ run $ Rel8.select menuItemsQuery
+  rows <- runSession pool $ Session.statement () $ run $ Rel8.select menuItemsQuery
   reserved <- runSession pool $ Session.statement () $ run $ Rel8.select reservedBySkuQuery
   let reservedMap :: Map UUID Int32 =
         Map.fromList [(sku, qty) | (sku, qty) <- reserved]
@@ -151,19 +151,19 @@ insertMenuItem pool item = runSession pool $ do
     run_ $
       Rel8.insert $
         Insert
-          { into        = menuItemSchema
-          , rows        = values [menuItemToRow item]
-          , onConflict  = Abort
-          , returning   = NoReturning
+          { into = menuItemSchema
+          , rows = values [menuItemToRow item]
+          , onConflict = Abort
+          , returning = NoReturning
           }
   Session.statement () $
     run_ $
       Rel8.insert $
         Insert
-          { into        = strainLineageSchema
-          , rows        = values [strainLineageToRow (TI.sku item) (TI.strain_lineage item)]
-          , onConflict  = Abort
-          , returning   = NoReturning
+          { into = strainLineageSchema
+          , rows = values [strainLineageToRow (TI.sku item) (TI.strain_lineage item)]
+          , onConflict = Abort
+          , returning = NoReturning
           }
 
 updateExistingMenuItem :: DBPool -> MenuItem -> IO ()
@@ -172,48 +172,48 @@ updateExistingMenuItem pool item = runSession pool $ do
     run_ $
       Rel8.update $
         Update
-          { target      = menuItemSchema
-          , from        = pure ()
-          , set         = \() row ->
+          { target = menuItemSchema
+          , from = pure ()
+          , set = \() row ->
               row
-                { menuSort        = lit $ fromIntegral (TI.sort item)
-                , menuBrand       = lit (TI.brand item)
-                , menuName        = lit (TI.name item)
-                , menuPrice       = lit $ fromIntegral (TI.price item)
+                { menuSort = lit $ fromIntegral (TI.sort item)
+                , menuBrand = lit (TI.brand item)
+                , menuName = lit (TI.name item)
+                , menuPrice = lit $ fromIntegral (TI.price item)
                 , menuMeasureUnit = lit (TI.measure_unit item)
-                , menuPerPackage  = lit (TI.per_package item)
-                , menuQuantity    = lit $ fromIntegral (TI.quantity item)
-                , menuCategory    = lit $ pack $ show (TI.category item)
+                , menuPerPackage = lit (TI.per_package item)
+                , menuQuantity = lit $ fromIntegral (TI.quantity item)
+                , menuCategory = lit $ pack $ show (TI.category item)
                 , menuSubcategory = lit (TI.subcategory item)
                 , menuDescription = lit (TI.description item)
-                , menuTags        = lit $ V.toList (TI.tags item)
-                , menuEffects     = lit $ V.toList (TI.effects item)
+                , menuTags = lit $ V.toList (TI.tags item)
+                , menuEffects = lit $ V.toList (TI.effects item)
                 }
           , updateWhere = \() row -> menuSku row ==. lit (TI.sku item)
-          , returning   = NoReturning
+          , returning = NoReturning
           }
   let sl = TI.strain_lineage item
   Session.statement () $
     run_ $
       Rel8.update $
         Update
-          { target      = strainLineageSchema
-          , from        = pure ()
-          , set         = \() row ->
+          { target = strainLineageSchema
+          , from = pure ()
+          , set = \() row ->
               row
-                { slThc             = lit (TI.thc sl)
-                , slCbg             = lit (TI.cbg sl)
-                , slStrain          = lit (TI.strain sl)
-                , slCreator         = lit (TI.creator sl)
-                , slSpecies         = lit $ pack $ show (TI.species sl)
+                { slThc = lit (TI.thc sl)
+                , slCbg = lit (TI.cbg sl)
+                , slStrain = lit (TI.strain sl)
+                , slCreator = lit (TI.creator sl)
+                , slSpecies = lit $ pack $ show (TI.species sl)
                 , slDominantTerpene = lit (TI.dominant_terpene sl)
-                , slTerpenes        = lit $ V.toList (TI.terpenes sl)
-                , slLineage         = lit $ V.toList (TI.lineage sl)
-                , slLeaflyUrl       = lit (TI.leafly_url sl)
-                , slImg             = lit (TI.img sl)
+                , slTerpenes = lit $ V.toList (TI.terpenes sl)
+                , slLineage = lit $ V.toList (TI.lineage sl)
+                , slLeaflyUrl = lit (TI.leafly_url sl)
+                , slImg = lit (TI.img sl)
                 }
           , updateWhere = \() row -> slSku row ==. lit (TI.sku item)
-          , returning   = NoReturning
+          , returning = NoReturning
           }
 
 deleteMenuItem :: DBPool -> UUID -> IO MutationResponse
@@ -223,22 +223,22 @@ deleteMenuItem pool uuid = do
       run_ $
         Rel8.delete $
           Delete
-            { from        = strainLineageSchema
-            , using       = pure ()
+            { from = strainLineageSchema
+            , using = pure ()
             , deleteWhere = \() row -> slSku row ==. lit uuid
-            , returning   = NoReturning
+            , returning = NoReturning
             }
     Session.statement () $
       runN $
         Rel8.delete $
           Delete
-            { from        = menuItemSchema
-            , using       = pure ()
+            { from = menuItemSchema
+            , using = pure ()
             , deleteWhere = \() row -> menuSku row ==. lit uuid
-            , returning   = NoReturning
+            , returning = NoReturning
             }
   case result of
-    Left e  -> pure $ MutationResponse False (pack $ "Error deleting item: " <> show e)
+    Left e -> pure $ MutationResponse False (pack $ "Error deleting item: " <> show e)
     Right n ->
       if n > 0
         then pure $ MutationResponse True "Item deleted successfully"
@@ -250,67 +250,67 @@ deleteMenuItem pool uuid = do
 menuItemToRow :: MenuItem -> MenuItemRow Expr
 menuItemToRow mi =
   MenuItemRow
-    { menuSort        = lit $ fromIntegral (TI.sort mi)
-    , menuSku         = lit (TI.sku mi)
-    , menuBrand       = lit (TI.brand mi)
-    , menuName        = lit (TI.name mi)
-    , menuPrice       = lit $ fromIntegral (TI.price mi)
+    { menuSort = lit $ fromIntegral (TI.sort mi)
+    , menuSku = lit (TI.sku mi)
+    , menuBrand = lit (TI.brand mi)
+    , menuName = lit (TI.name mi)
+    , menuPrice = lit $ fromIntegral (TI.price mi)
     , menuMeasureUnit = lit (TI.measure_unit mi)
-    , menuPerPackage  = lit (TI.per_package mi)
-    , menuQuantity    = lit $ fromIntegral (TI.quantity mi)
-    , menuCategory    = lit $ pack $ show (TI.category mi)
+    , menuPerPackage = lit (TI.per_package mi)
+    , menuQuantity = lit $ fromIntegral (TI.quantity mi)
+    , menuCategory = lit $ pack $ show (TI.category mi)
     , menuSubcategory = lit (TI.subcategory mi)
     , menuDescription = lit (TI.description mi)
-    , menuTags        = lit $ V.toList (TI.tags mi)
-    , menuEffects     = lit $ V.toList (TI.effects mi)
+    , menuTags = lit $ V.toList (TI.tags mi)
+    , menuEffects = lit $ V.toList (TI.effects mi)
     }
 
 strainLineageToRow :: UUID -> StrainLineage -> StrainLineageRow Expr
 strainLineageToRow u sl =
   StrainLineageRow
-    { slSku             = lit u
-    , slThc             = lit (TI.thc sl)
-    , slCbg             = lit (TI.cbg sl)
-    , slStrain          = lit (TI.strain sl)
-    , slCreator         = lit (TI.creator sl)
-    , slSpecies         = lit $ pack $ show (TI.species sl)
+    { slSku = lit u
+    , slThc = lit (TI.thc sl)
+    , slCbg = lit (TI.cbg sl)
+    , slStrain = lit (TI.strain sl)
+    , slCreator = lit (TI.creator sl)
+    , slSpecies = lit $ pack $ show (TI.species sl)
     , slDominantTerpene = lit (TI.dominant_terpene sl)
-    , slTerpenes        = lit $ V.toList (TI.terpenes sl)
-    , slLineage         = lit $ V.toList (TI.lineage sl)
-    , slLeaflyUrl       = lit (TI.leafly_url sl)
-    , slImg             = lit (TI.img sl)
+    , slTerpenes = lit $ V.toList (TI.terpenes sl)
+    , slLineage = lit $ V.toList (TI.lineage sl)
+    , slLeaflyUrl = lit (TI.leafly_url sl)
+    , slImg = lit (TI.img sl)
     }
 
 rowsToMenuItem :: MenuItemRow Result -> StrainLineageRow Result -> Int -> MenuItem
 rowsToMenuItem mi sl availQty =
   MenuItem
-    { TI.sort         = fromIntegral (menuSort mi)
-    , TI.sku          = menuSku mi
-    , TI.brand        = menuBrand mi
-    , TI.name         = menuName mi
-    , TI.price        = fromIntegral (menuPrice mi)
+    { TI.sort = fromIntegral (menuSort mi)
+    , TI.sku = menuSku mi
+    , TI.brand = menuBrand mi
+    , TI.name = menuName mi
+    , TI.price = fromIntegral (menuPrice mi)
     , TI.measure_unit = menuMeasureUnit mi
-    , TI.per_package  = menuPerPackage mi
-    , TI.quantity     = availQty
-    , TI.category     = read $ unpack (menuCategory mi)
-    , TI.subcategory  = menuSubcategory mi
-    , TI.description  = menuDescription mi
-    , TI.tags         = V.fromList (menuTags mi)
-    , TI.effects      = V.fromList (menuEffects mi)
+    , TI.per_package = menuPerPackage mi
+    , TI.quantity = availQty
+    , TI.category = read $ unpack (menuCategory mi)
+    , TI.subcategory = menuSubcategory mi
+    , TI.description = menuDescription mi
+    , TI.tags = V.fromList (menuTags mi)
+    , TI.effects = V.fromList (menuEffects mi)
     , TI.strain_lineage = rowToStrainLineage sl
     }
 
 rowToStrainLineage :: StrainLineageRow Result -> StrainLineage
 rowToStrainLineage sl =
   StrainLineage
-    { TI.thc             = slThc sl
-    , TI.cbg             = slCbg sl
-    , TI.strain          = slStrain sl
-    , TI.creator         = slCreator sl
-    , TI.species         = read $ unpack (slSpecies sl)
+    { TI.thc = slThc sl
+    , TI.cbg = slCbg sl
+    , TI.strain = slStrain sl
+    , TI.creator = slCreator sl
+    , TI.species = read $ unpack (slSpecies sl)
     , TI.dominant_terpene = slDominantTerpene sl
-    , TI.terpenes        = V.fromList (slTerpenes sl)
-    , TI.lineage         = V.fromList (slLineage sl)
-    , TI.leafly_url      = slLeaflyUrl sl
-    , TI.img             = slImg sl
+    , TI.terpenes = V.fromList (slTerpenes sl)
+    , TI.lineage = V.fromList (slLineage sl)
+    , TI.leafly_url = slLeaflyUrl sl
+    , TI.img = slImg sl
     }

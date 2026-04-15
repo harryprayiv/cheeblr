@@ -9,9 +9,9 @@ module Types.Location (
 
 import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.OpenApi (ToParamSchema (toParamSchema), ToSchema)
+import Data.Proxy (Proxy (..))
 import Data.UUID (UUID, fromText, toText)
 import GHC.Generics (Generic)
-import Data.Proxy (Proxy (..))
 import Web.HttpApiData (FromHttpApiData (..), ToHttpApiData (..))
 
 newtype LocationId = LocationId UUID

@@ -9,7 +9,6 @@ import App (buildCsp)
 
 spec :: Spec
 spec = describe "App.buildCsp" $ do
-
   describe "required directives are always present" $ do
     it "includes default-src 'self'" $
       buildCsp "https://api.example.com" Nothing

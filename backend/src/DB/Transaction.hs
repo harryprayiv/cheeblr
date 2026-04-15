@@ -33,8 +33,9 @@ data InventoryException
 
 instance Exception InventoryException
 
--- | DDL for all transaction-family tables (includes register and reservation
--- since they are logically part of the same group and set up once at startup).
+{- | DDL for all transaction-family tables (includes register and reservation
+since they are logically part of the same group and set up once at startup).
+-}
 createTransactionTables :: DBPool -> IO ()
 createTransactionTables pool = do
   runSession pool $ do
@@ -157,17 +158,17 @@ paymentsForTx txId = do
 
 hydrateTx :: DBPool -> TransactionRow Result -> IO Transaction
 hydrateTx pool txRow = do
-  let txId    = DB.Schema.txId txRow
-  itemRows   <- runSession pool $ Session.statement () $ run $ Rel8.select (itemsForTx txId)
-  items      <- mapM (hydrateItem pool) itemRows
-  pymtRows   <- runSession pool $ Session.statement () $ run $ Rel8.select (paymentsForTx txId)
+  let txId = DB.Schema.txId txRow
+  itemRows <- runSession pool $ Session.statement () $ run $ Rel8.select (itemsForTx txId)
+  items <- mapM (hydrateItem pool) itemRows
+  pymtRows <- runSession pool $ Session.statement () $ run $ Rel8.select (paymentsForTx txId)
   let payments = map paymentRowToDomain pymtRows
   pure $ txRowToDomain txRow items payments
 
 hydrateItem :: DBPool -> TransactionItemRow Result -> IO TransactionItem
 hydrateItem pool itemRow = do
-  let itemId    = tiId itemRow
-  taxRows      <- runSession pool $ Session.statement () $ run $ Rel8.select (taxesForItem itemId)
+  let itemId = tiId itemRow
+  taxRows <- runSession pool $ Session.statement () $ run $ Rel8.select (taxesForItem itemId)
   discountRows <- runSession pool $ Session.statement () $ run $ Rel8.select (discountsForItem itemId)
   pure $
     itemRowToDomain
@@ -188,7 +189,7 @@ getTransactionById pool txId = do
     pure tx
   case rows of
     [row] -> Just <$> hydrateTx pool row
-    _     -> pure Nothing
+    _ -> pure Nothing
 
 createTransaction :: DBPool -> Transaction -> IO Transaction
 createTransaction pool tx = do
@@ -197,12 +198,12 @@ createTransaction pool tx = do
       run_ $
         Rel8.insert $
           Insert
-            { into        = transactionSchema
-            , rows        = values [txDomainToRow tx]
-            , onConflict  = Abort
-            , returning   = NoReturning
+            { into = transactionSchema
+            , rows = values [txDomainToRow tx]
+            , onConflict = Abort
+            , returning = NoReturning
             }
-  items    <- mapM (insertTransactionItem pool) (transactionItems tx)
+  items <- mapM (insertTransactionItem pool) (transactionItems tx)
   payments <- mapM (insertPaymentTransaction pool) (transactionPayments tx)
   pure tx {transactionItems = items, transactionPayments = payments}
 
@@ -213,10 +214,10 @@ insertTransactionItem pool item = do
       run_ $
         Rel8.insert $
           Insert
-            { into        = transactionItemSchema
-            , rows        = values [tiDomainToRow item]
-            , onConflict  = Abort
-            , returning   = NoReturning
+            { into = transactionItemSchema
+            , rows = values [tiDomainToRow item]
+            , onConflict = Abort
+            , returning = NoReturning
             }
   discounts <-
     mapM
@@ -236,10 +237,10 @@ insertDiscount pool itemId mTxId discount = do
       run_ $
         Rel8.insert $
           Insert
-            { into        = discountSchema
-            , rows        = values [discountDomainToRow discId itemId mTxId discount]
-            , onConflict  = Abort
-            , returning   = NoReturning
+            { into = discountSchema
+            , rows = values [discountDomainToRow discId itemId mTxId discount]
+            , onConflict = Abort
+            , returning = NoReturning
             }
   pure discount
 
@@ -251,10 +252,10 @@ insertTax pool itemId tax = do
       run_ $
         Rel8.insert $
           Insert
-            { into        = taxSchema
-            , rows        = values [taxDomainToRow taxId itemId tax]
-            , onConflict  = Abort
-            , returning   = NoReturning
+            { into = taxSchema
+            , rows = values [taxDomainToRow taxId itemId tax]
+            , onConflict = Abort
+            , returning = NoReturning
             }
   pure tax
 
@@ -265,10 +266,10 @@ insertPaymentTransaction pool payment = do
       run_ $
         Rel8.insert $
           Insert
-            { into        = paymentSchema
-            , rows        = values [paymentDomainToRow payment]
-            , onConflict  = Abort
-            , returning   = NoReturning
+            { into = paymentSchema
+            , rows = values [paymentDomainToRow payment]
+            , onConflict = Abort
+            , returning = NoReturning
             }
   pure payment
 
@@ -279,16 +280,16 @@ updateTransaction pool txId tx = do
       run_ $
         Rel8.update $
           Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() _ -> txDomainToRow tx
+            { target = transactionSchema
+            , from = pure ()
+            , set = \() _ -> txDomainToRow tx
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
   mTx <- getTransactionById pool txId
   case mTx of
     Just updated -> pure updated
-    Nothing      -> throwIO $ userError $ "Transaction not found after update: " <> show txId
+    Nothing -> throwIO $ userError $ "Transaction not found after update: " <> show txId
 
 voidTransaction :: DBPool -> UUID -> Text -> IO Transaction
 voidTransaction pool txId reason = do
@@ -297,16 +298,16 @@ voidTransaction pool txId reason = do
       run_ $
         Rel8.update $
           Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
+            { target = transactionSchema
+            , from = pure ()
+            , set = \() row ->
                 row
-                  { txStatus     = lit "VOIDED"
-                  , txIsVoided   = lit True
+                  { txStatus = lit "VOIDED"
+                  , txIsVoided = lit True
                   , txVoidReason = lit (Just reason)
                   }
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
   mTx <- getTransactionById pool txId
   case mTx of
@@ -317,29 +318,29 @@ refundTransaction :: DBPool -> UUID -> UUID -> Text -> IO Transaction
 refundTransaction pool txId refundId reason = do
   mOrig <- getTransactionById pool txId
   case mOrig of
-    Nothing   -> throwIO $ userError $ "Original transaction not found: " <> show txId
+    Nothing -> throwIO $ userError $ "Original transaction not found: " <> show txId
     Just orig -> do
       now <- getCurrentTime
       let refund =
             orig
-              { transactionId                     = refundId
-              , transactionStatus                 = Completed
-              , transactionCreated                = now
-              , transactionCompleted              = Just now
-              , transactionSubtotal               = negate (transactionSubtotal orig)
-              , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
-              , transactionTaxTotal               = negate (transactionTaxTotal orig)
-              , transactionTotal                  = negate (transactionTotal orig)
-              , transactionType                   = Return
-              , transactionIsVoided               = False
-              , transactionVoidReason             = Nothing
-              , transactionIsRefunded             = False
-              , transactionRefundReason           = Nothing
+              { transactionId = refundId
+              , transactionStatus = Completed
+              , transactionCreated = now
+              , transactionCompleted = Just now
+              , transactionSubtotal = negate (transactionSubtotal orig)
+              , transactionDiscountTotal = negate (transactionDiscountTotal orig)
+              , transactionTaxTotal = negate (transactionTaxTotal orig)
+              , transactionTotal = negate (transactionTotal orig)
+              , transactionType = Return
+              , transactionIsVoided = False
+              , transactionVoidReason = Nothing
+              , transactionIsRefunded = False
+              , transactionRefundReason = Nothing
               , transactionReferenceTransactionId = Just txId
-              , transactionNotes                  =
+              , transactionNotes =
                   Just $
                     "Refund for transaction " <> pack (toString txId) <> ": " <> reason
-              , transactionItems    = map negateTransactionItem (transactionItems orig)
+              , transactionItems = map negateTransactionItem (transactionItems orig)
               , transactionPayments = map negatePaymentTransaction (transactionPayments orig)
               }
       newRefund <- createTransaction pool refund
@@ -348,15 +349,15 @@ refundTransaction pool txId refundId reason = do
           run_ $
             Rel8.update $
               Update
-                { target      = transactionSchema
-                , from        = pure ()
-                , set         = \() row ->
+                { target = transactionSchema
+                , from = pure ()
+                , set = \() row ->
                     row
-                      { txIsRefunded   = lit True
+                      { txIsRefunded = lit True
                       , txRefundReason = lit (Just reason)
                       }
                 , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-                , returning   = NoReturning
+                , returning = NoReturning
                 }
       pure newRefund
 
@@ -367,48 +368,48 @@ clearTransaction pool txId = do
       run_ $
         Rel8.update $
           Update
-            { target      = reservationSchema
-            , from        = pure ()
-            , set         = \() row -> row {resStatus = lit "Released"}
+            { target = reservationSchema
+            , from = pure ()
+            , set = \() row -> row {resStatus = lit "Released"}
             , updateWhere = \() row ->
                 resTransactionId row ==. lit txId
                   &&. resStatus row ==. lit "Reserved"
-            , returning   = NoReturning
+            , returning = NoReturning
             }
     Session.statement () $
       run_ $
         Rel8.delete $
           Delete
-            { from        = paymentSchema
-            , using       = pure ()
+            { from = paymentSchema
+            , using = pure ()
             , deleteWhere = \() row -> pymtTransactionId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
     Session.statement () $
       run_ $
         Rel8.delete $
           Delete
-            { from        = transactionItemSchema
-            , using       = pure ()
+            { from = transactionItemSchema
+            , using = pure ()
             , deleteWhere = \() row -> tiTransactionId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
     Session.statement () $
       run_ $
         Rel8.update $
           Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
+            { target = transactionSchema
+            , from = pure ()
+            , set = \() row ->
                 row
-                  { txSubtotal      = lit 0
+                  { txSubtotal = lit 0
                   , txDiscountTotal = lit 0
-                  , txTaxTotal      = lit 0
-                  , txTotal         = lit 0
-                  , txStatus        = lit "CREATED"
+                  , txTaxTotal = lit 0
+                  , txTotal = lit 0
+                  , txStatus = lit "CREATED"
                   }
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
 
 finalizeTransaction :: DBPool -> UUID -> IO Transaction
@@ -428,23 +429,23 @@ finalizeTransaction pool txId = do
         run_ $
           Rel8.update $
             Update
-              { target      = menuItemSchema
-              , from        = pure ()
-              , set         = \() row -> row {menuQuantity = menuQuantity row - lit qty}
+              { target = menuItemSchema
+              , from = pure ()
+              , set = \() row -> row {menuQuantity = menuQuantity row - lit qty}
               , updateWhere = \() row -> menuSku row ==. lit sku
-              , returning   = NoReturning
+              , returning = NoReturning
               }
       Session.statement () $
         run_ $
           Rel8.update $
             Update
-              { target      = reservationSchema
-              , from        = pure ()
-              , set         = \() row -> row {resStatus = lit "Completed"}
+              { target = reservationSchema
+              , from = pure ()
+              , set = \() row -> row {resStatus = lit "Completed"}
               , updateWhere = \() row ->
                   resTransactionId row ==. lit txId
                     &&. resItemSku row ==. lit sku
-              , returning   = NoReturning
+              , returning = NoReturning
               }
   now <- getCurrentTime
   runSession pool $
@@ -452,15 +453,15 @@ finalizeTransaction pool txId = do
       run_ $
         Rel8.update $
           Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
+            { target = transactionSchema
+            , from = pure ()
+            , set = \() row ->
                 row
-                  { txStatus    = lit "COMPLETED"
+                  { txStatus = lit "COMPLETED"
                   , txCompleted = lit (Just now)
                   }
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
   mTx <- getTransactionById pool txId
   case mTx of
@@ -490,17 +491,17 @@ addTransactionItem pool item = do
             pure r
 
   case totals of
-    []          -> throwIO $ ItemNotFound sku
+    [] -> throwIO $ ItemNotFound sku
     (total : _) -> do
       let
-        reserved  = case reservedSums of (r : _) -> r; _ -> 0
+        reserved = case reservedSums of (r : _) -> r; _ -> 0
         available = fromIntegral total - fromIntegral reserved :: Int
       if available < qty
         then throwIO $ InsufficientInventory sku qty available
         else do
           newItem <- insertTransactionItem pool item
-          resId   <- nextRandom
-          now     <- getCurrentTime
+          resId <- nextRandom
+          now <- getCurrentTime
           runSession pool $
             Session.statement () $
               run_ $
@@ -510,16 +511,16 @@ addTransactionItem pool item = do
                     , rows =
                         values
                           [ ReservationRow
-                              { resId            = lit resId
-                              , resItemSku       = lit sku
+                              { resId = lit resId
+                              , resItemSku = lit sku
                               , resTransactionId = lit (transactionItemTransactionId item)
-                              , resQuantity      = lit (fromIntegral qty)
-                              , resStatus        = lit "Reserved"
-                              , resCreatedAt     = lit now
+                              , resQuantity = lit (fromIntegral qty)
+                              , resStatus = lit "Reserved"
+                              , resCreatedAt = lit now
                               }
                           ]
                     , onConflict = Abort
-                    , returning  = NoReturning
+                    , returning = NoReturning
                     }
           pure newItem
 
@@ -536,13 +537,13 @@ deleteTransactionItem pool itemId = do
           run_ $
             Rel8.update $
               Update
-                { target      = reservationSchema
-                , from        = pure ()
-                , set         = \() row -> row {resStatus = lit "Released"}
+                { target = reservationSchema
+                , from = pure ()
+                , set = \() row -> row {resStatus = lit "Released"}
                 , updateWhere = \() row ->
                     resItemSku row ==. lit (tiMenuItemSku item)
                       &&. resTransactionId row ==. lit (tiTransactionId item)
-                , returning   = NoReturning
+                , returning = NoReturning
                 }
     _ -> pure ()
   runSession pool $
@@ -550,14 +551,14 @@ deleteTransactionItem pool itemId = do
       run_ $
         Rel8.delete $
           Delete
-            { from        = transactionItemSchema
-            , using       = pure ()
+            { from = transactionItemSchema
+            , using = pure ()
             , deleteWhere = \() row -> tiId row ==. lit itemId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
   case itemRows of
     [item] -> updateTransactionTotals pool (tiTransactionId item)
-    _      -> pure ()
+    _ -> pure ()
 
 addPaymentTransaction :: DBPool -> PaymentTransaction -> IO PaymentTransaction
 addPaymentTransaction pool payment = do
@@ -576,14 +577,14 @@ deletePaymentTransaction pool paymentId = do
       run_ $
         Rel8.delete $
           Delete
-            { from        = paymentSchema
-            , using       = pure ()
+            { from = paymentSchema
+            , using = pure ()
             , deleteWhere = \() row -> pymtId row ==. lit paymentId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
   case rows of
     [p] -> updateTransactionPaymentStatus pool (pymtTransactionId p)
-    _   -> pure ()
+    _ -> pure ()
 
 updateTransactionTotals :: DBPool -> UUID -> IO ()
 updateTransactionTotals pool txId = do
@@ -602,7 +603,7 @@ updateTransactionTotals pool txId = do
       run $
         Rel8.select $
           aggregate (sumOn discRowAmount) $ do
-            d  <- each discountSchema
+            d <- each discountSchema
             ti <- each transactionItemSchema
             where_ $
               discRowTransactionItemId d ==. nullify (tiId ti)
@@ -615,7 +616,7 @@ updateTransactionTotals pool txId = do
       run $
         Rel8.select $
           aggregate (sumOn taxRowAmount) $ do
-            t  <- each taxSchema
+            t <- each taxSchema
             ti <- each transactionItemSchema
             where_ $
               taxRowTransactionItemId t ==. tiId ti
@@ -629,22 +630,22 @@ updateTransactionTotals pool txId = do
       run_ $
         Rel8.update $
           Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
+            { target = transactionSchema
+            , from = pure ()
+            , set = \() row ->
                 row
-                  { txSubtotal      = lit subtotal
+                  { txSubtotal = lit subtotal
                   , txDiscountTotal = lit discountTotal
-                  , txTaxTotal      = lit taxTotal
-                  , txTotal         = lit total
+                  , txTaxTotal = lit taxTotal
+                  , txTotal = lit total
                   }
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
+            , returning = NoReturning
             }
 
 updateTransactionPaymentStatus :: DBPool -> UUID -> IO ()
 updateTransactionPaymentStatus pool txId = do
-  totals   <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+  totals <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
     tx <- each transactionSchema
     where_ $ DB.Schema.txId tx ==. lit txId
     pure (txTotal tx)
@@ -664,11 +665,11 @@ updateTransactionPaymentStatus pool txId = do
           run_ $
             Rel8.update $
               Update
-                { target      = transactionSchema
-                , from        = pure ()
-                , set         = \() row -> row {txStatus = lit status}
+                { target = transactionSchema
+                , from = pure ()
+                , set = \() row -> row {txStatus = lit status}
                 , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-                , returning   = NoReturning
+                , returning = NoReturning
                 }
     _ -> pure ()
 
@@ -680,7 +681,7 @@ getTransactionIdByItemId pool itemId = do
     pure (tiTransactionId ti)
   case rows of
     [txId] -> pure (Just txId)
-    _      -> pure Nothing
+    _ -> pure Nothing
 
 getTransactionIdByPaymentId :: DBPool -> UUID -> IO (Maybe UUID)
 getTransactionIdByPaymentId pool paymentId = do
@@ -690,7 +691,7 @@ getTransactionIdByPaymentId pool paymentId = do
     pure (pymtTransactionId p)
   case rows of
     [txId] -> pure (Just txId)
-    _      -> pure Nothing
+    _ -> pure Nothing
 
 getInventoryAvailability :: DBPool -> UUID -> IO (Maybe (Int, Int))
 getInventoryAvailability pool sku = do
@@ -709,7 +710,7 @@ getInventoryAvailability pool sku = do
                 &&. resStatus r ==. lit "Reserved"
             pure r
   case totals of
-    []          -> pure Nothing
+    [] -> pure Nothing
     (total : _) ->
       let reserved = case reservedSums of (r : _) -> r; _ -> 0
        in pure $ Just (fromIntegral total, fromIntegral reserved)
@@ -721,150 +722,150 @@ getInventoryAvailability pool sku = do
 txDomainToRow :: Transaction -> TransactionRow Expr
 txDomainToRow tx =
   TransactionRow
-    { txId                     = lit (transactionId tx)
-    , txStatus                 = lit $ showStatus (transactionStatus tx)
-    , txCreated                = lit (transactionCreated tx)
-    , txCompleted              = lit (transactionCompleted tx)
-    , txCustomerId             = lit (transactionCustomerId tx)
-    , txEmployeeId             = lit (transactionEmployeeId tx)
-    , txRegisterId             = lit (transactionRegisterId tx)
-    , txLocationId             = lit (locationIdToUUID (transactionLocationId tx))
-    , txSubtotal               = lit $ fromIntegral (transactionSubtotal tx)
-    , txDiscountTotal          = lit $ fromIntegral (transactionDiscountTotal tx)
-    , txTaxTotal               = lit $ fromIntegral (transactionTaxTotal tx)
-    , txTotal                  = lit $ fromIntegral (transactionTotal tx)
-    , txTransactionType        = lit $ showTransactionType (transactionType tx)
-    , txIsVoided               = lit (transactionIsVoided tx)
-    , txVoidReason             = lit (transactionVoidReason tx)
-    , txIsRefunded             = lit (transactionIsRefunded tx)
-    , txRefundReason           = lit (transactionRefundReason tx)
+    { txId = lit (transactionId tx)
+    , txStatus = lit $ showStatus (transactionStatus tx)
+    , txCreated = lit (transactionCreated tx)
+    , txCompleted = lit (transactionCompleted tx)
+    , txCustomerId = lit (transactionCustomerId tx)
+    , txEmployeeId = lit (transactionEmployeeId tx)
+    , txRegisterId = lit (transactionRegisterId tx)
+    , txLocationId = lit (locationIdToUUID (transactionLocationId tx))
+    , txSubtotal = lit $ fromIntegral (transactionSubtotal tx)
+    , txDiscountTotal = lit $ fromIntegral (transactionDiscountTotal tx)
+    , txTaxTotal = lit $ fromIntegral (transactionTaxTotal tx)
+    , txTotal = lit $ fromIntegral (transactionTotal tx)
+    , txTransactionType = lit $ showTransactionType (transactionType tx)
+    , txIsVoided = lit (transactionIsVoided tx)
+    , txVoidReason = lit (transactionVoidReason tx)
+    , txIsRefunded = lit (transactionIsRefunded tx)
+    , txRefundReason = lit (transactionRefundReason tx)
     , txReferenceTransactionId = lit (transactionReferenceTransactionId tx)
-    , txNotes                  = lit (transactionNotes tx)
+    , txNotes = lit (transactionNotes tx)
     }
 
 txRowToDomain :: TransactionRow Result -> [TransactionItem] -> [PaymentTransaction] -> Transaction
 txRowToDomain row items payments =
   Transaction
-    { transactionId                     = DB.Schema.txId row
-    , transactionStatus                 = parseTransactionStatus (T.unpack (txStatus row))
-    , transactionCreated                = txCreated row
-    , transactionCompleted              = txCompleted row
-    , transactionCustomerId             = txCustomerId row
-    , transactionEmployeeId             = txEmployeeId row
-    , transactionRegisterId             = txRegisterId row
-    , transactionLocationId             = LocationId (txLocationId row)
-    , transactionItems                  = items
-    , transactionPayments               = payments
-    , transactionSubtotal               = fromIntegral (txSubtotal row)
-    , transactionDiscountTotal          = fromIntegral (txDiscountTotal row)
-    , transactionTaxTotal               = fromIntegral (txTaxTotal row)
-    , transactionTotal                  = fromIntegral (txTotal row)
-    , transactionType                   = parseTransactionType (T.unpack (txTransactionType row))
-    , transactionIsVoided               = txIsVoided row
-    , transactionVoidReason             = txVoidReason row
-    , transactionIsRefunded             = txIsRefunded row
-    , transactionRefundReason           = txRefundReason row
+    { transactionId = DB.Schema.txId row
+    , transactionStatus = parseTransactionStatus (T.unpack (txStatus row))
+    , transactionCreated = txCreated row
+    , transactionCompleted = txCompleted row
+    , transactionCustomerId = txCustomerId row
+    , transactionEmployeeId = txEmployeeId row
+    , transactionRegisterId = txRegisterId row
+    , transactionLocationId = LocationId (txLocationId row)
+    , transactionItems = items
+    , transactionPayments = payments
+    , transactionSubtotal = fromIntegral (txSubtotal row)
+    , transactionDiscountTotal = fromIntegral (txDiscountTotal row)
+    , transactionTaxTotal = fromIntegral (txTaxTotal row)
+    , transactionTotal = fromIntegral (txTotal row)
+    , transactionType = parseTransactionType (T.unpack (txTransactionType row))
+    , transactionIsVoided = txIsVoided row
+    , transactionVoidReason = txVoidReason row
+    , transactionIsRefunded = txIsRefunded row
+    , transactionRefundReason = txRefundReason row
     , transactionReferenceTransactionId = txReferenceTransactionId row
-    , transactionNotes                  = txNotes row
+    , transactionNotes = txNotes row
     }
 
 tiDomainToRow :: TransactionItem -> TransactionItemRow Expr
 tiDomainToRow ti =
   TransactionItemRow
-    { tiId            = lit (transactionItemId ti)
+    { tiId = lit (transactionItemId ti)
     , tiTransactionId = lit (transactionItemTransactionId ti)
-    , tiMenuItemSku   = lit (transactionItemMenuItemSku ti)
-    , tiQuantity      = lit $ fromIntegral (transactionItemQuantity ti)
-    , tiPricePerUnit  = lit $ fromIntegral (transactionItemPricePerUnit ti)
-    , tiSubtotal      = lit $ fromIntegral (transactionItemSubtotal ti)
-    , tiTotal         = lit $ fromIntegral (transactionItemTotal ti)
+    , tiMenuItemSku = lit (transactionItemMenuItemSku ti)
+    , tiQuantity = lit $ fromIntegral (transactionItemQuantity ti)
+    , tiPricePerUnit = lit $ fromIntegral (transactionItemPricePerUnit ti)
+    , tiSubtotal = lit $ fromIntegral (transactionItemSubtotal ti)
+    , tiTotal = lit $ fromIntegral (transactionItemTotal ti)
     }
 
 itemRowToDomain :: TransactionItemRow Result -> [TaxRecord] -> [DiscountRecord] -> TransactionItem
 itemRowToDomain row taxes discounts =
   TransactionItem
-    { transactionItemId              = tiId row
-    , transactionItemTransactionId   = tiTransactionId row
-    , transactionItemMenuItemSku     = tiMenuItemSku row
-    , transactionItemQuantity        = fromIntegral (tiQuantity row)
-    , transactionItemPricePerUnit    = fromIntegral (tiPricePerUnit row)
-    , transactionItemDiscounts       = discounts
-    , transactionItemTaxes           = taxes
-    , transactionItemSubtotal        = fromIntegral (tiSubtotal row)
-    , transactionItemTotal           = fromIntegral (tiTotal row)
+    { transactionItemId = tiId row
+    , transactionItemTransactionId = tiTransactionId row
+    , transactionItemMenuItemSku = tiMenuItemSku row
+    , transactionItemQuantity = fromIntegral (tiQuantity row)
+    , transactionItemPricePerUnit = fromIntegral (tiPricePerUnit row)
+    , transactionItemDiscounts = discounts
+    , transactionItemTaxes = taxes
+    , transactionItemSubtotal = fromIntegral (tiSubtotal row)
+    , transactionItemTotal = fromIntegral (tiTotal row)
     }
 
 taxDomainToRow :: UUID -> UUID -> TaxRecord -> TaxRow Expr
 taxDomainToRow taxId itemId tax =
   TaxRow
-    { taxRowId                = lit taxId
+    { taxRowId = lit taxId
     , taxRowTransactionItemId = lit itemId
-    , taxRowCategory          = lit $ showTaxCategory (taxCategory tax)
-    , taxRowRate              = lit $ realToFrac (taxRate tax)
-    , taxRowAmount            = lit $ fromIntegral (taxAmount tax)
-    , taxRowDescription       = lit (taxDescription tax)
+    , taxRowCategory = lit $ showTaxCategory (taxCategory tax)
+    , taxRowRate = lit $ realToFrac (taxRate tax)
+    , taxRowAmount = lit $ fromIntegral (taxAmount tax)
+    , taxRowDescription = lit (taxDescription tax)
     }
 
 taxRowToDomain :: TaxRow Result -> TaxRecord
 taxRowToDomain row =
   TaxRecord
-    { taxCategory    = parseTaxCategory (T.unpack (taxRowCategory row))
-    , taxRate        = fromFloatDigits (taxRowRate row)
-    , taxAmount      = fromIntegral (taxRowAmount row)
+    { taxCategory = parseTaxCategory (T.unpack (taxRowCategory row))
+    , taxRate = fromFloatDigits (taxRowRate row)
+    , taxAmount = fromIntegral (taxRowAmount row)
     , taxDescription = taxRowDescription row
     }
 
 discountDomainToRow :: UUID -> UUID -> Maybe UUID -> DiscountRecord -> DiscountRow Expr
 discountDomainToRow discId itemId mTxId discount =
   DiscountRow
-    { discRowId                = lit discId
+    { discRowId = lit discId
     , discRowTransactionItemId = lit (Just itemId)
-    , discRowTransactionId     = lit mTxId
-    , discRowType              = lit $ showDiscountType (discountType discount)
-    , discRowAmount            = lit $ fromIntegral (discountAmount discount)
-    , discRowPercent           = lit $ getDiscountPercent (discountType discount)
-    , discRowReason            = lit (discountReason discount)
-    , discRowApprovedBy        = lit (discountApprovedBy discount)
+    , discRowTransactionId = lit mTxId
+    , discRowType = lit $ showDiscountType (discountType discount)
+    , discRowAmount = lit $ fromIntegral (discountAmount discount)
+    , discRowPercent = lit $ getDiscountPercent (discountType discount)
+    , discRowReason = lit (discountReason discount)
+    , discRowApprovedBy = lit (discountApprovedBy discount)
     }
 
 getDiscountPercent :: DiscountType -> Maybe Double
 getDiscountPercent (PercentOff pct) = Just (realToFrac pct)
-getDiscountPercent _                = Nothing
+getDiscountPercent _ = Nothing
 
 discountRowToDomain :: DiscountRow Result -> DiscountRecord
 discountRowToDomain row =
   DiscountRecord
-    { discountType       = parseDiscountType (discRowType row) (fmap round (discRowPercent row))
-    , discountAmount     = fromIntegral (discRowAmount row)
-    , discountReason     = discRowReason row
+    { discountType = parseDiscountType (discRowType row) (fmap round (discRowPercent row))
+    , discountAmount = fromIntegral (discRowAmount row)
+    , discountReason = discRowReason row
     , discountApprovedBy = discRowApprovedBy row
     }
 
 paymentDomainToRow :: PaymentTransaction -> PaymentRow Expr
 paymentDomainToRow p =
   PaymentRow
-    { pymtId                = lit (paymentId p)
-    , pymtTransactionId     = lit (paymentTransactionId p)
-    , pymtMethod            = lit $ showPaymentMethod (paymentMethod p)
-    , pymtAmount            = lit $ fromIntegral (paymentAmount p)
-    , pymtTendered          = lit $ fromIntegral (paymentTendered p)
-    , pymtChange            = lit $ fromIntegral (paymentChange p)
-    , pymtReference         = lit (paymentReference p)
-    , pymtApproved          = lit (paymentApproved p)
+    { pymtId = lit (paymentId p)
+    , pymtTransactionId = lit (paymentTransactionId p)
+    , pymtMethod = lit $ showPaymentMethod (paymentMethod p)
+    , pymtAmount = lit $ fromIntegral (paymentAmount p)
+    , pymtTendered = lit $ fromIntegral (paymentTendered p)
+    , pymtChange = lit $ fromIntegral (paymentChange p)
+    , pymtReference = lit (paymentReference p)
+    , pymtApproved = lit (paymentApproved p)
     , pymtAuthorizationCode = lit (paymentAuthorizationCode p)
     }
 
 paymentRowToDomain :: PaymentRow Result -> PaymentTransaction
 paymentRowToDomain row =
   PaymentTransaction
-    { paymentId               = pymtId row
-    , paymentTransactionId    = pymtTransactionId row
-    , paymentMethod           = parsePaymentMethod (T.unpack (pymtMethod row))
-    , paymentAmount           = fromIntegral (pymtAmount row)
-    , paymentTendered         = fromIntegral (pymtTendered row)
-    , paymentChange           = fromIntegral (pymtChange row)
-    , paymentReference        = pymtReference row
-    , paymentApproved         = pymtApproved row
+    { paymentId = pymtId row
+    , paymentTransactionId = pymtTransactionId row
+    , paymentMethod = parsePaymentMethod (T.unpack (pymtMethod row))
+    , paymentAmount = fromIntegral (pymtAmount row)
+    , paymentTendered = fromIntegral (pymtTendered row)
+    , paymentChange = fromIntegral (pymtChange row)
+    , paymentReference = pymtReference row
+    , paymentApproved = pymtApproved row
     , paymentAuthorizationCode = pymtAuthorizationCode row
     }
 
@@ -872,9 +873,9 @@ negateTransactionItem :: TransactionItem -> TransactionItem
 negateTransactionItem ti =
   ti
     { transactionItemDiscounts = map negateDiscountRecord (transactionItemDiscounts ti)
-    , transactionItemTaxes     = map negateTaxRecord (transactionItemTaxes ti)
-    , transactionItemSubtotal  = negate (transactionItemSubtotal ti)
-    , transactionItemTotal     = negate (transactionItemTotal ti)
+    , transactionItemTaxes = map negateTaxRecord (transactionItemTaxes ti)
+    , transactionItemSubtotal = negate (transactionItemSubtotal ti)
+    , transactionItemTotal = negate (transactionItemTotal ti)
     }
 
 negateDiscountRecord :: DiscountRecord -> DiscountRecord
@@ -886,9 +887,9 @@ negateTaxRecord t = t {taxAmount = negate (taxAmount t)}
 negatePaymentTransaction :: PaymentTransaction -> PaymentTransaction
 negatePaymentTransaction p =
   p
-    { paymentAmount   = negate (paymentAmount p)
+    { paymentAmount = negate (paymentAmount p)
     , paymentTendered = negate (paymentTendered p)
-    , paymentChange   = negate (paymentChange p)
+    , paymentChange = negate (paymentChange p)
     }
 
 -- ---------------------------------------------------------------------------
@@ -896,98 +897,98 @@ negatePaymentTransaction p =
 -- ---------------------------------------------------------------------------
 
 showStatus :: TransactionStatus -> Text
-showStatus Created    = "CREATED"
+showStatus Created = "CREATED"
 showStatus InProgress = "IN_PROGRESS"
-showStatus Completed  = "COMPLETED"
-showStatus Voided     = "VOIDED"
-showStatus Refunded   = "REFUNDED"
+showStatus Completed = "COMPLETED"
+showStatus Voided = "VOIDED"
+showStatus Refunded = "REFUNDED"
 
 showTransactionType :: TransactionType -> Text
-showTransactionType Sale                = "SALE"
-showTransactionType Return              = "RETURN"
-showTransactionType Exchange            = "EXCHANGE"
+showTransactionType Sale = "SALE"
+showTransactionType Return = "RETURN"
+showTransactionType Exchange = "EXCHANGE"
 showTransactionType InventoryAdjustment = "INVENTORY_ADJUSTMENT"
-showTransactionType ManagerComp         = "MANAGER_COMP"
-showTransactionType Administrative      = "ADMINISTRATIVE"
+showTransactionType ManagerComp = "MANAGER_COMP"
+showTransactionType Administrative = "ADMINISTRATIVE"
 
 showPaymentMethod :: PaymentMethod -> Text
-showPaymentMethod Cash        = "CASH"
-showPaymentMethod Debit       = "DEBIT"
-showPaymentMethod Credit      = "CREDIT"
-showPaymentMethod ACH         = "ACH"
-showPaymentMethod GiftCard    = "GIFT_CARD"
+showPaymentMethod Cash = "CASH"
+showPaymentMethod Debit = "DEBIT"
+showPaymentMethod Credit = "CREDIT"
+showPaymentMethod ACH = "ACH"
+showPaymentMethod GiftCard = "GIFT_CARD"
 showPaymentMethod StoredValue = "STORED_VALUE"
-showPaymentMethod Mixed       = "MIXED"
-showPaymentMethod (Other t)   = "OTHER:" <> t
+showPaymentMethod Mixed = "MIXED"
+showPaymentMethod (Other t) = "OTHER:" <> t
 
 showTaxCategory :: TaxCategory -> Text
 showTaxCategory RegularSalesTax = "REGULAR_SALES_TAX"
-showTaxCategory ExciseTax       = "EXCISE_TAX"
-showTaxCategory CannabisTax     = "CANNABIS_TAX"
-showTaxCategory LocalTax        = "LOCAL_TAX"
-showTaxCategory MedicalTax      = "MEDICAL_TAX"
-showTaxCategory NoTax           = "NO_TAX"
+showTaxCategory ExciseTax = "EXCISE_TAX"
+showTaxCategory CannabisTax = "CANNABIS_TAX"
+showTaxCategory LocalTax = "LOCAL_TAX"
+showTaxCategory MedicalTax = "MEDICAL_TAX"
+showTaxCategory NoTax = "NO_TAX"
 
 showDiscountType :: DiscountType -> Text
 showDiscountType (PercentOff _) = "PERCENT_OFF"
-showDiscountType (AmountOff _)  = "AMOUNT_OFF"
-showDiscountType BuyOneGetOne   = "BUY_ONE_GET_ONE"
-showDiscountType (Custom _ _)   = "CUSTOM"
+showDiscountType (AmountOff _) = "AMOUNT_OFF"
+showDiscountType BuyOneGetOne = "BUY_ONE_GET_ONE"
+showDiscountType (Custom _ _) = "CUSTOM"
 
 parseDiscountType :: Text -> Maybe Int -> DiscountType
-parseDiscountType "PERCENT_OFF"     (Just v) = PercentOff (fromIntegral v / 100)
-parseDiscountType "AMOUNT_OFF"      (Just v) = AmountOff v
-parseDiscountType "BUY_ONE_GET_ONE" _        = BuyOneGetOne
-parseDiscountType typ               (Just v) = Custom typ v
-parseDiscountType _                 _        = AmountOff 0
+parseDiscountType "PERCENT_OFF" (Just v) = PercentOff (fromIntegral v / 100)
+parseDiscountType "AMOUNT_OFF" (Just v) = AmountOff v
+parseDiscountType "BUY_ONE_GET_ONE" _ = BuyOneGetOne
+parseDiscountType typ (Just v) = Custom typ v
+parseDiscountType _ _ = AmountOff 0
 
 parseTransactionStatus :: String -> TransactionStatus
-parseTransactionStatus "CREATED"     = Created
+parseTransactionStatus "CREATED" = Created
 parseTransactionStatus "IN_PROGRESS" = InProgress
-parseTransactionStatus "COMPLETED"   = Completed
-parseTransactionStatus "VOIDED"      = Voided
-parseTransactionStatus "REFUNDED"    = Refunded
-parseTransactionStatus _             = Created
+parseTransactionStatus "COMPLETED" = Completed
+parseTransactionStatus "VOIDED" = Voided
+parseTransactionStatus "REFUNDED" = Refunded
+parseTransactionStatus _ = Created
 
 parseTransactionType :: String -> TransactionType
-parseTransactionType "SALE"                 = Sale
-parseTransactionType "RETURN"               = Return
-parseTransactionType "EXCHANGE"             = Exchange
+parseTransactionType "SALE" = Sale
+parseTransactionType "RETURN" = Return
+parseTransactionType "EXCHANGE" = Exchange
 parseTransactionType "INVENTORY_ADJUSTMENT" = InventoryAdjustment
-parseTransactionType "MANAGER_COMP"         = ManagerComp
-parseTransactionType "ADMINISTRATIVE"       = Administrative
-parseTransactionType _                      = Sale
+parseTransactionType "MANAGER_COMP" = ManagerComp
+parseTransactionType "ADMINISTRATIVE" = Administrative
+parseTransactionType _ = Sale
 
 parsePaymentMethod :: String -> PaymentMethod
-parsePaymentMethod "CASH"         = Cash
-parsePaymentMethod "Cash"         = Cash
-parsePaymentMethod "DEBIT"        = Debit
-parsePaymentMethod "Debit"        = Debit
-parsePaymentMethod "CREDIT"       = Credit
-parsePaymentMethod "Credit"       = Credit
-parsePaymentMethod "ACH"          = ACH
-parsePaymentMethod "GIFT_CARD"    = GiftCard
-parsePaymentMethod "GiftCard"     = GiftCard
+parsePaymentMethod "CASH" = Cash
+parsePaymentMethod "Cash" = Cash
+parsePaymentMethod "DEBIT" = Debit
+parsePaymentMethod "Debit" = Debit
+parsePaymentMethod "CREDIT" = Credit
+parsePaymentMethod "Credit" = Credit
+parsePaymentMethod "ACH" = ACH
+parsePaymentMethod "GIFT_CARD" = GiftCard
+parsePaymentMethod "GiftCard" = GiftCard
 parsePaymentMethod "STORED_VALUE" = StoredValue
-parsePaymentMethod "StoredValue"  = StoredValue
-parsePaymentMethod "MIXED"        = Mixed
-parsePaymentMethod "Mixed"        = Mixed
+parsePaymentMethod "StoredValue" = StoredValue
+parsePaymentMethod "MIXED" = Mixed
+parsePaymentMethod "Mixed" = Mixed
 parsePaymentMethod s
   | take 6 s == "OTHER:" = Other (T.pack $ drop 6 s)
   | take 6 s == "Other:" = Other (T.pack $ drop 6 s)
-  | otherwise            = Other (T.pack s)
+  | otherwise = Other (T.pack s)
 
 parseTaxCategory :: String -> TaxCategory
 parseTaxCategory "REGULAR_SALES_TAX" = RegularSalesTax
-parseTaxCategory "RegularSalesTax"   = RegularSalesTax
-parseTaxCategory "EXCISE_TAX"        = ExciseTax
-parseTaxCategory "ExciseTax"         = ExciseTax
-parseTaxCategory "CANNABIS_TAX"      = CannabisTax
-parseTaxCategory "CannabisTax"       = CannabisTax
-parseTaxCategory "LOCAL_TAX"         = LocalTax
-parseTaxCategory "LocalTax"          = LocalTax
-parseTaxCategory "MEDICAL_TAX"       = MedicalTax
-parseTaxCategory "MedicalTax"        = MedicalTax
-parseTaxCategory "NO_TAX"            = NoTax
-parseTaxCategory "NoTax"             = NoTax
-parseTaxCategory _                   = NoTax
+parseTaxCategory "RegularSalesTax" = RegularSalesTax
+parseTaxCategory "EXCISE_TAX" = ExciseTax
+parseTaxCategory "ExciseTax" = ExciseTax
+parseTaxCategory "CANNABIS_TAX" = CannabisTax
+parseTaxCategory "CannabisTax" = CannabisTax
+parseTaxCategory "LOCAL_TAX" = LocalTax
+parseTaxCategory "LocalTax" = LocalTax
+parseTaxCategory "MEDICAL_TAX" = MedicalTax
+parseTaxCategory "MedicalTax" = MedicalTax
+parseTaxCategory "NO_TAX" = NoTax
+parseTaxCategory "NoTax" = NoTax
+parseTaxCategory _ = NoTax

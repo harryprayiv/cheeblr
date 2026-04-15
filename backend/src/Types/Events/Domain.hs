@@ -10,11 +10,11 @@ import GHC.Generics (Generic)
 import Types.Events
 
 data DomainEvent
-  = InventoryEvt  InventoryEvent
+  = InventoryEvt InventoryEvent
   | TransactionEvt TransactionEvent
-  | RegisterEvt   RegisterEvent
-  | SessionEvt    SessionEvent
-  | StockEvt      StockEvent
+  | RegisterEvt RegisterEvent
+  | SessionEvt SessionEvent
+  | StockEvt StockEvent
   deriving (Show, Eq, Generic)
 
 instance ToJSON DomainEvent

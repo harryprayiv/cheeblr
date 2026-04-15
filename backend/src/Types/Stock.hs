@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+
 -- {-# LANGUAGE OverloadedStrings #-}
 
 module Types.Stock (

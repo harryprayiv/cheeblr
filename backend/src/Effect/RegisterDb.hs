@@ -41,13 +41,13 @@ import qualified DB.Register as DBR
 import Types.Location (LocationId)
 
 data RegisterDb :: Effect where
-  GetAllRegisters        :: RegisterDb m [Register]
+  GetAllRegisters :: RegisterDb m [Register]
   GetRegistersByLocation :: LocationId -> RegisterDb m [Register]
-  GetRegisterById        :: UUID -> RegisterDb m (Maybe Register)
-  CreateRegister         :: Register -> RegisterDb m Register
-  UpdateRegister         :: UUID -> Register -> RegisterDb m Register
-  OpenRegisterDb         :: UUID -> OpenRegisterRequest -> RegisterDb m Register
-  CloseRegisterDb        :: UUID -> CloseRegisterRequest -> RegisterDb m CloseRegisterResult
+  GetRegisterById :: UUID -> RegisterDb m (Maybe Register)
+  CreateRegister :: Register -> RegisterDb m Register
+  UpdateRegister :: UUID -> Register -> RegisterDb m Register
+  OpenRegisterDb :: UUID -> OpenRegisterRequest -> RegisterDb m Register
+  CloseRegisterDb :: UUID -> CloseRegisterRequest -> RegisterDb m CloseRegisterResult
 
 type instance DispatchOf RegisterDb = Dynamic
 
@@ -74,15 +74,15 @@ closeRegisterDb regId req = send (CloseRegisterDb regId req)
 
 runRegisterDbIO :: (IOE :> es) => DBPool -> Eff (RegisterDb : es) a -> Eff es a
 runRegisterDbIO pool = interpret $ \_ -> \case
-  GetAllRegisters             -> liftIO $ DBR.getAllRegisters pool
+  GetAllRegisters -> liftIO $ DBR.getAllRegisters pool
   GetRegistersByLocation locId -> liftIO $ do
     regs <- DBR.getAllRegisters pool
     pure (filter (\r -> registerLocationId r == locId) regs)
-  GetRegisterById u      -> liftIO $ DBR.getRegisterById pool u
-  CreateRegister r       -> liftIO $ DBR.createRegister pool r
-  UpdateRegister u r     -> liftIO $ DBR.updateRegister pool u r
-  OpenRegisterDb u req   -> liftIO $ DBR.openRegister pool u req
-  CloseRegisterDb u req  -> liftIO $ DBR.closeRegister pool u req
+  GetRegisterById u -> liftIO $ DBR.getRegisterById pool u
+  CreateRegister r -> liftIO $ DBR.createRegister pool r
+  UpdateRegister u r -> liftIO $ DBR.updateRegister pool u r
+  OpenRegisterDb u req -> liftIO $ DBR.openRegister pool u req
+  CloseRegisterDb u req -> liftIO $ DBR.closeRegister pool u req
 
 newtype RegStore = RegStore
   { rsRegisters :: Map UUID Register
@@ -92,9 +92,10 @@ newtype RegStore = RegStore
 emptyRegStore :: RegStore
 emptyRegStore = RegStore Map.empty
 
--- | Pure interpreter for tests.
--- Previously used `error` on missing register IDs; now uses `throwError err404`
--- so test stacks can handle the failure without crashing the process.
+{- | Pure interpreter for tests.
+Previously used `error` on missing register IDs; now uses `throwError err404`
+so test stacks can handle the failure without crashing the process.
+-}
 runRegisterDbPure ::
   (Error ServerError :> es) =>
   RegStore ->
@@ -118,26 +119,26 @@ runRegisterDbPure initial = reinterpret (runState initial) $ \_ -> \case
   OpenRegisterDb regId req -> do
     st <- get @RegStore
     case Map.lookup regId (rsRegisters st) of
-      Nothing  -> throwError err404
+      Nothing -> throwError err404
       Just reg -> do
         let opened =
               reg
-                { registerIsOpen               = True
-                , registerCurrentDrawerAmount  = openRegisterStartingCash req
+                { registerIsOpen = True
+                , registerCurrentDrawerAmount = openRegisterStartingCash req
                 , registerExpectedDrawerAmount = openRegisterStartingCash req
-                , registerOpenedBy             = Just (openRegisterEmployeeId req)
+                , registerOpenedBy = Just (openRegisterEmployeeId req)
                 }
         put @RegStore st {rsRegisters = Map.insert regId opened (rsRegisters st)}
         pure opened
   CloseRegisterDb regId req -> do
     st <- get @RegStore
     case Map.lookup regId (rsRegisters st) of
-      Nothing  -> throwError err404
+      Nothing -> throwError err404
       Just reg -> do
         let
-          counted  = closeRegisterCountedCash req
+          counted = closeRegisterCountedCash req
           variance = registerExpectedDrawerAmount reg - counted
-          closed   = reg {registerIsOpen = False, registerCurrentDrawerAmount = counted}
+          closed = reg {registerIsOpen = False, registerCurrentDrawerAmount = counted}
         put @RegStore st {rsRegisters = Map.insert regId closed (rsRegisters st)}
         pure
           CloseRegisterResult

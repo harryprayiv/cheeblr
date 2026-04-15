@@ -76,20 +76,20 @@ requireManager ctx =
 
 isManagerEvent :: DomainEvent -> Bool
 isManagerEvent (TransactionEvt _) = True
-isManagerEvent (RegisterEvt _)    = True
-isManagerEvent _                  = False
+isManagerEvent (RegisterEvt _) = True
+isManagerEvent _ = False
 
 toTransactionSummary :: Int -> UTCTime -> Transaction -> TransactionSummary
 toTransactionSummary staleSecs now tx =
   let elapsedSecs = round (diffUTCTime now (transactionCreated tx)) :: Int
    in TransactionSummary
-        { tsId          = transactionId tx
-        , tsStatus      = transactionStatus tx
-        , tsCreated     = transactionCreated tx
+        { tsId = transactionId tx
+        , tsStatus = transactionStatus tx
+        , tsCreated = transactionCreated tx
         , tsElapsedSecs = elapsedSecs
-        , tsItemCount   = length (transactionItems tx)
-        , tsTotal       = transactionTotal tx
-        , tsIsStale     = elapsedSecs > staleSecs
+        , tsItemCount = length (transactionItems tx)
+        , tsTotal = transactionTotal tx
+        , tsIsStale = elapsedSecs > staleSecs
         }
 
 buildAlerts :: AppEnv -> [Transaction] -> [Register] -> Inventory -> IO [ManagerAlert]
@@ -127,48 +127,48 @@ buildAlerts env txs registers (Inventory invitems) = do
 buildDayStats :: [Transaction] -> UTCTime -> LocationDayStats
 buildDayStats allTxs now =
   let
-    today      = utctDay now
-    todayTxs   = filter (\tx -> utctDay (transactionCreated tx) == today) allTxs
-    completed  = filter (\tx -> transactionStatus tx == Completed) todayTxs
-    voided     = filter (\tx -> transactionIsVoided tx) todayTxs
-    refunded   = filter (\tx -> transactionIsRefunded tx) todayTxs
-    revenue    = sum (map transactionTotal completed)
-    count      = length completed
-    avg        = if count == 0 then 0 else revenue `div` count
+    today = utctDay now
+    todayTxs = filter (\tx -> utctDay (transactionCreated tx) == today) allTxs
+    completed = filter (\tx -> transactionStatus tx == Completed) todayTxs
+    voided = filter (\tx -> transactionIsVoided tx) todayTxs
+    refunded = filter (\tx -> transactionIsRefunded tx) todayTxs
+    revenue = sum (map transactionTotal completed)
+    count = length completed
+    avg = if count == 0 then 0 else revenue `div` count
    in
     LocationDayStats
-      { ldsTxCount     = count
-      , ldsRevenue     = revenue
-      , ldsVoidCount   = length voided
+      { ldsTxCount = count
+      , ldsRevenue = revenue
+      , ldsVoidCount = length voided
       , ldsRefundCount = length refunded
-      , ldsAvgTxValue  = avg
+      , ldsAvgTxValue = avg
       }
 
 activityHandler :: AppEnv -> Maybe Text -> Handler ActivitySummary
 activityHandler env mHeader = do
-  ctx       <- authCtx env mHeader
+  ctx <- authCtx env mHeader
   requireManager ctx
-  now       <- liftIO getCurrentTime
-  txs       <- liftIO $ DBT.getAllTransactions (envDbPool env)
+  now <- liftIO getCurrentTime
+  txs <- liftIO $ DBT.getAllTransactions (envDbPool env)
   registers <- liftIO $ DBR.getAllRegisters (envDbPool env)
   inventory <- liftIO $ getAllMenuItems (envDbPool env)
 
   let
     staleSecs = cfgStaleTransactionSecs (envConfig env)
-    openRegs  = filter registerIsOpen registers
-    liveTxs   = filter (\tx -> transactionStatus tx `elem` [Created, InProgress]) txs
+    openRegs = filter registerIsOpen registers
+    liveTxs = filter (\tx -> transactionStatus tx `elem` [Created, InProgress]) txs
     summaries = map (toTransactionSummary staleSecs now) liveTxs
-    dayStats  = buildDayStats txs now
+    dayStats = buildDayStats txs now
 
   alerts <- liftIO $ buildAlerts env txs registers inventory
 
   pure
     ActivitySummary
-      { asSummaryTime      = now
-      , asOpenRegisters    = openRegs
+      { asSummaryTime = now
+      , asOpenRegisters = openRegs
       , asLiveTransactions = summaries
-      , asTodayStats       = dayStats
-      , asAlerts           = alerts
+      , asTodayStats = dayStats
+      , asAlerts = alerts
       }
 
 activityStreamHandler ::
@@ -190,9 +190,9 @@ activityStreamHandler env mHeader mCursor = Tagged $ \req sendResp -> do
 
 alertsHandler :: AppEnv -> Maybe Text -> Handler [ManagerAlert]
 alertsHandler env mHeader = do
-  ctx       <- authCtx env mHeader
+  ctx <- authCtx env mHeader
   requireManager ctx
-  txs       <- liftIO $ DBT.getAllTransactions (envDbPool env)
+  txs <- liftIO $ DBT.getAllTransactions (envDbPool env)
   registers <- liftIO $ DBR.getAllRegisters (envDbPool env)
   inventory <- liftIO $ getAllMenuItems (envDbPool env)
   liftIO $ buildAlerts env txs registers inventory
@@ -207,10 +207,10 @@ dailyReportHandler env mHeader _req = do
   let stats = buildDayStats txs now
   pure
     DailyReportResult
-      { dailyReportCash         = ldsTxCount stats * ldsAvgTxValue stats `div` 2
-      , dailyReportCard         = ldsTxCount stats * ldsAvgTxValue stats `div` 2
-      , dailyReportOther        = 0
-      , dailyReportTotal        = ldsRevenue stats
+      { dailyReportCash = ldsTxCount stats * ldsAvgTxValue stats `div` 2
+      , dailyReportCard = ldsTxCount stats * ldsAvgTxValue stats `div` 2
+      , dailyReportOther = 0
+      , dailyReportTotal = ldsRevenue stats
       , dailyReportTransactions = ldsTxCount stats
       }
 
@@ -230,7 +230,7 @@ overrideVoidHandler env txId mHeader req = do
   mTx <- liftIO $ DBT.getTransactionById (envDbPool env) txId
   case mTx of
     Nothing -> throwError err404 {errBody = LBS.pack "Transaction not found"}
-    Just _  -> do
+    Just _ -> do
       _ <- liftIO $ DBT.voidTransaction (envDbPool env) txId (orReason req)
       pure $ MutationResponse True ("Transaction voided: " <> orReason req)
 

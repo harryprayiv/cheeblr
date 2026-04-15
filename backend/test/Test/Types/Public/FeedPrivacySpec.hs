@@ -133,10 +133,25 @@ spec = describe "FeedFrame privacy" $ do
       -- tags, effects, pricePerUnit, availableQty, inStock,
       -- locationId, locationName, updatedAt.
       let expected =
-            [ "publicSku", "name", "brand", "category", "subcategory"
-            , "measureUnit", "perPackage", "thc", "cbg", "strain"
-            , "species", "dominantTerpene", "tags", "effects"
-            , "pricePerUnit", "availableQty", "inStock"
-            , "locationId", "locationName", "updatedAt"
+            [ "publicSku"
+            , "name"
+            , "brand"
+            , "category"
+            , "subcategory"
+            , "measureUnit"
+            , "perPackage"
+            , "thc"
+            , "cbg"
+            , "strain"
+            , "species"
+            , "dominantTerpene"
+            , "tags"
+            , "effects"
+            , "pricePerUnit"
+            , "availableQty"
+            , "inStock"
+            , "locationId"
+            , "locationName"
+            , "updatedAt"
             ]
       mapM_ (\k -> payloadJson `shouldContain` ("\"" <> k <> "\"")) expected

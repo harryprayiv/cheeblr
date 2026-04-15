@@ -20,14 +20,14 @@ import Effect.EventEmitter
 import Effect.StockDb
 import qualified Service.Stock as Svc
 import State.StockPullMachine (PullVertex (..))
-import Types.Events.Domain
 import Types.Events
+import Types.Events.Domain
 import Types.Location (LocationId (..))
 import Types.Stock
 
 pullId, txId, actorId :: UUID
-pullId  = read "11111111-1111-1111-1111-111111111111"
-txId    = read "22222222-2222-2222-2222-222222222222"
+pullId = read "11111111-1111-1111-1111-111111111111"
+txId = read "22222222-2222-2222-2222-222222222222"
 actorId = read "33333333-3333-3333-3333-333333333333"
 
 locId :: LocationId
@@ -39,18 +39,18 @@ testTime = read "2024-06-15 10:00:00 UTC"
 mkPull :: PullVertex -> PullRequest
 mkPull status =
   PullRequest
-    { prId             = pullId
-    , prTransactionId  = txId
-    , prItemSku        = read "55555555-5555-5555-5555-555555555555"
-    , prItemName       = "Test Item"
+    { prId = pullId
+    , prTransactionId = txId
+    , prItemSku = read "55555555-5555-5555-5555-555555555555"
+    , prItemName = "Test Item"
     , prQuantityNeeded = 2
-    , prStatus         = status
-    , prCashierId      = Nothing
-    , prRegisterId     = Nothing
-    , prLocationId     = locId
-    , prCreatedAt      = testTime
-    , prUpdatedAt      = testTime
-    , prFulfilledAt    = Nothing
+    , prStatus = status
+    , prCashierId = Nothing
+    , prRegisterId = Nothing
+    , prLocationId = locId
+    , prCreatedAt = testTime
+    , prUpdatedAt = testTime
+    , prFulfilledAt = Nothing
     }
 
 storeWith :: PullVertex -> StockStore
@@ -106,35 +106,39 @@ shouldFailWith code io = do
   result <- io
   case result of
     Left err -> errHTTPCode err `shouldBe` code
-    Right _  -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
+    Right _ -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
 
 hasStatusChangedEvent :: [DomainEvent] -> Bool
 hasStatusChangedEvent = any $ \case
   StockEvt (PullStatusChanged {}) -> True
-  _                               -> False
+  _ -> False
 
 spec :: Spec
 spec = describe "Service.Stock (pure interpreter)" $ do
-
   describe "acceptPull" $ do
     it "succeeds from PullPending → PullAccepted" $ do
       pr <- shouldSucceed $ runTest (storeWith PullPending) (Svc.acceptPull pullId actorId)
       prStatus pr `shouldBe` PullAccepted
 
     it "rejects from PullAccepted with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullAccepted) (Svc.acceptPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullAccepted) (Svc.acceptPull pullId actorId)
 
     it "rejects from PullPulling with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullPulling) (Svc.acceptPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullPulling) (Svc.acceptPull pullId actorId)
 
     it "rejects from PullFulfilled with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullFulfilled) (Svc.acceptPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullFulfilled) (Svc.acceptPull pullId actorId)
 
     it "rejects from PullCancelled with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullCancelled) (Svc.acceptPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullCancelled) (Svc.acceptPull pullId actorId)
 
     it "returns 404 when pull not found" $
-      shouldFailWith 404 $ runTest emptyStockStore (Svc.acceptPull pullId actorId)
+      shouldFailWith 404 $
+        runTest emptyStockStore (Svc.acceptPull pullId actorId)
 
     it "emits PullStatusChanged on success" $ do
       (_, evts) <- runTestWithEvents (storeWith PullPending) (Svc.acceptPull pullId actorId)
@@ -150,13 +154,16 @@ spec = describe "Service.Stock (pure interpreter)" $ do
       prStatus pr `shouldBe` PullPulling
 
     it "rejects from PullPending with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullPending) (Svc.startPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullPending) (Svc.startPull pullId actorId)
 
     it "rejects from PullPulling with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullPulling) (Svc.startPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullPulling) (Svc.startPull pullId actorId)
 
     it "returns 404 when pull not found" $
-      shouldFailWith 404 $ runTest emptyStockStore (Svc.startPull pullId actorId)
+      shouldFailWith 404 $
+        runTest emptyStockStore (Svc.startPull pullId actorId)
 
     it "emits PullStatusChanged on success" $ do
       (_, evts) <- runTestWithEvents (storeWith PullAccepted) (Svc.startPull pullId actorId)
@@ -168,13 +175,16 @@ spec = describe "Service.Stock (pure interpreter)" $ do
       prStatus pr `shouldBe` PullFulfilled
 
     it "rejects from PullAccepted with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullAccepted) (Svc.fulfillPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullAccepted) (Svc.fulfillPull pullId actorId)
 
     it "rejects from PullPending with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullPending) (Svc.fulfillPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullPending) (Svc.fulfillPull pullId actorId)
 
     it "returns 404 when pull not found" $
-      shouldFailWith 404 $ runTest emptyStockStore (Svc.fulfillPull pullId actorId)
+      shouldFailWith 404 $
+        runTest emptyStockStore (Svc.fulfillPull pullId actorId)
 
     it "emits PullStatusChanged on success" $ do
       (_, evts) <- runTestWithEvents (storeWith PullPulling) (Svc.fulfillPull pullId actorId)
@@ -182,8 +192,9 @@ spec = describe "Service.Stock (pure interpreter)" $ do
 
   describe "reportIssue" $ do
     it "succeeds from PullPulling → PullIssue" $ do
-      pr <- shouldSucceed $
-        runTest (storeWith PullPulling) (Svc.reportIssue pullId "broken" actorId)
+      pr <-
+        shouldSucceed $
+          runTest (storeWith PullPulling) (Svc.reportIssue pullId "broken" actorId)
       prStatus pr `shouldBe` PullIssue
 
     it "rejects from PullPending with 409" $
@@ -204,13 +215,16 @@ spec = describe "Service.Stock (pure interpreter)" $ do
       prStatus pr `shouldBe` PullAccepted
 
     it "rejects from PullPulling with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullPulling) (Svc.retryPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullPulling) (Svc.retryPull pullId actorId)
 
     it "rejects from PullPending with 409" $
-      shouldFailWith 409 $ runTest (storeWith PullPending) (Svc.retryPull pullId actorId)
+      shouldFailWith 409 $
+        runTest (storeWith PullPending) (Svc.retryPull pullId actorId)
 
     it "returns 404 when pull not found" $
-      shouldFailWith 404 $ runTest emptyStockStore (Svc.retryPull pullId actorId)
+      shouldFailWith 404 $
+        runTest emptyStockStore (Svc.retryPull pullId actorId)
 
     it "emits PullStatusChanged on success" $ do
       (_, evts) <- runTestWithEvents (storeWith PullIssue) (Svc.retryPull pullId actorId)
@@ -218,18 +232,21 @@ spec = describe "Service.Stock (pure interpreter)" $ do
 
   describe "cancelPull" $ do
     it "succeeds from PullPending → PullCancelled" $ do
-      pr <- shouldSucceed $
-        runTest (storeWith PullPending) (Svc.cancelPull pullId "test" actorId)
+      pr <-
+        shouldSucceed $
+          runTest (storeWith PullPending) (Svc.cancelPull pullId "test" actorId)
       prStatus pr `shouldBe` PullCancelled
 
     it "succeeds from PullAccepted → PullCancelled" $ do
-      pr <- shouldSucceed $
-        runTest (storeWith PullAccepted) (Svc.cancelPull pullId "test" actorId)
+      pr <-
+        shouldSucceed $
+          runTest (storeWith PullAccepted) (Svc.cancelPull pullId "test" actorId)
       prStatus pr `shouldBe` PullCancelled
 
     it "succeeds from PullIssue → PullCancelled" $ do
-      pr <- shouldSucceed $
-        runTest (storeWith PullIssue) (Svc.cancelPull pullId "test" actorId)
+      pr <-
+        shouldSucceed $
+          runTest (storeWith PullIssue) (Svc.cancelPull pullId "test" actorId)
       prStatus pr `shouldBe` PullCancelled
 
     it "rejects from PullFulfilled with 409" $
@@ -253,18 +270,18 @@ spec = describe "Service.Stock (pure interpreter)" $ do
   describe "full happy-path sequences" $ do
     it "Pending → Accepted → Pulling → Fulfilled" $ do
       finalStatus <- shouldSucceed $ runTest (storeWith PullPending) $ do
-        void $ Svc.acceptPull  pullId actorId
-        void $ Svc.startPull   pullId actorId
+        void $ Svc.acceptPull pullId actorId
+        void $ Svc.startPull pullId actorId
         prStatus <$> Svc.fulfillPull pullId actorId
       finalStatus `shouldBe` PullFulfilled
 
     it "Pending → Accepted → Pulling → Issue → Accepted → Pulling → Fulfilled" $ do
       finalStatus <- shouldSucceed $ runTest (storeWith PullPending) $ do
-        void $ Svc.acceptPull  pullId actorId
-        void $ Svc.startPull   pullId actorId
+        void $ Svc.acceptPull pullId actorId
+        void $ Svc.startPull pullId actorId
         void $ Svc.reportIssue pullId "first attempt failed" actorId
-        void $ Svc.retryPull   pullId actorId
-        void $ Svc.startPull   pullId actorId
+        void $ Svc.retryPull pullId actorId
+        void $ Svc.startPull pullId actorId
         prStatus <$> Svc.fulfillPull pullId actorId
       finalStatus `shouldBe` PullFulfilled
 

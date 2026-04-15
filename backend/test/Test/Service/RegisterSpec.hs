@@ -26,8 +26,8 @@ import Effect.Clock (Clock, runClockPure)
 import Effect.EventEmitter
 import Effect.RegisterDb
 import qualified Service.Register as Svc
-import Types.Events.Domain
 import Types.Events
+import Types.Events.Domain
 
 regUUID, empUUID, locUUID :: UUID
 regUUID = read "11111111-1111-1111-1111-111111111111"

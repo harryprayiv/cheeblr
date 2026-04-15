@@ -49,4 +49,4 @@ cheeblrOpenApi =
     & OpenApi.info . OpenApi.title .~ "Cheeblr API"
     & OpenApi.info . OpenApi.version .~ "1.0"
     & OpenApi.info . OpenApi.description
-        ?~ "Cannabis dispensary POS and inventory management API"
+      ?~ "Cannabis dispensary POS and inventory management API"

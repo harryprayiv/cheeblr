@@ -52,29 +52,29 @@ testTime = read "2024-06-15 10:00:00 UTC"
 mkPull :: UUID -> UUID -> UUID -> LocationId -> PullVertex -> PullRequest
 mkPull pid tid sku loc status =
   PullRequest
-    { prId             = pid
-    , prTransactionId  = tid
-    , prItemSku        = sku
-    , prItemName       = "Test Item"
+    { prId = pid
+    , prTransactionId = tid
+    , prItemSku = sku
+    , prItemName = "Test Item"
     , prQuantityNeeded = 1
-    , prStatus         = status
-    , prCashierId      = Nothing
-    , prRegisterId     = Nothing
-    , prLocationId     = loc
-    , prCreatedAt      = testTime
-    , prUpdatedAt      = testTime
-    , prFulfilledAt    = Nothing
+    , prStatus = status
+    , prCashierId = Nothing
+    , prRegisterId = Nothing
+    , prLocationId = loc
+    , prCreatedAt = testTime
+    , prUpdatedAt = testTime
+    , prFulfilledAt = Nothing
     }
 
 mkMsg :: UUID -> UUID -> PullMessage
 mkMsg mid pullId =
   PullMessage
-    { pmId            = mid
+    { pmId = mid
     , pmPullRequestId = pullId
-    , pmFromRole      = "cashier"
-    , pmSenderId      = senderId
-    , pmMessage       = "Please hurry"
-    , pmCreatedAt     = testTime
+    , pmFromRole = "cashier"
+    , pmSenderId = senderId
+    , pmMessage = "Please hurry"
+    , pmCreatedAt = testTime
     }
 
 -- Run a StockDb action against the pure interpreter and return the result.
@@ -87,7 +87,6 @@ run store action = fst <$> runEff (runStockDbPure store action)
 
 spec :: Spec
 spec = describe "Effect.StockDb (pure interpreter)" $ do
-
   describe "createPullRequest / getPullRequest" $ do
     it "round-trips a pull request" $ do
       let pr = mkPull pullId1 txId1 itemSku1 locId PullPending
@@ -121,8 +120,10 @@ spec = describe "Effect.StockDb (pure interpreter)" $ do
       status `shouldBe` Just PullAccepted
 
     it "returns Left for an unknown pull" $ do
-      result <- run emptyStockStore
-        (updatePullStatus pullId1 PullAccepted Nothing)
+      result <-
+        run
+          emptyStockStore
+          (updatePullStatus pullId1 PullAccepted Nothing)
       result `shouldBe` Left "Pull request not found"
 
   describe "getPendingPulls" $ do
@@ -152,7 +153,7 @@ spec = describe "Effect.StockDb (pure interpreter)" $ do
 
     it "excludes pulls from other locations" $ do
       let
-        pr1 = mkPull pullId1 txId1 itemSku1 locId      PullPending
+        pr1 = mkPull pullId1 txId1 itemSku1 locId PullPending
         pr2 = mkPull pullId2 txId2 itemSku2 otherLocId PullPending
       pulls <- run emptyStockStore $ do
         _ <- createPullRequest pr1
@@ -251,7 +252,7 @@ spec = describe "Effect.StockDb (pure interpreter)" $ do
   describe "messages" $ do
     it "stores and retrieves messages for a pull" $ do
       let
-        pr  = mkPull pullId1 txId1 itemSku1 locId PullPending
+        pr = mkPull pullId1 txId1 itemSku1 locId PullPending
         msg = mkMsg msgId1 pullId1
       msgs <- run emptyStockStore $ do
         _ <- createPullRequest pr
