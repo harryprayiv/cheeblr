@@ -69,6 +69,14 @@
     settings = {};
   };
 
+  # Licensing - consumed by devShell banner, source-file headers, UI About dialog, etc.
+  license = {
+    holder = "Harry Pray IV";
+    years  = "2024-2026";
+    spdx   = "AGPL-3.0-or-later";
+    name   = "GNU AGPLv3 or later";
+  };
+
   # Data directories
   dataDir = "$HOME/.local/share/${name}";
   logDir  = "$HOME/.local/share/${name}/logs";

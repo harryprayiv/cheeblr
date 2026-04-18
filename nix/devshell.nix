@@ -8,10 +8,11 @@
 let
   appConfig = import ./config.nix { inherit name; };
 
-  psConfig   = appConfig.purescript;
-  hsConfig   = appConfig.haskell;
-  dbConfig   = appConfig.database;
-  viteConfig = appConfig.vite;
+  psConfig       = appConfig.purescript;
+  hsConfig       = appConfig.haskell;
+  dbConfig       = appConfig.database;
+  viteConfig     = appConfig.vite;
+  licenseConfig  = appConfig.license;
 
   frontendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head psConfig.codeDirs));
   backendPath  = builtins.head (builtins.split "/[^/]*$" (builtins.head hsConfig.codeDirs));
@@ -365,6 +366,8 @@ let
       EOF
 
       echo "Welcome to the ${lib.toSentenceCase name} dev environment!"
+      echo "Copyright (C) ${licenseConfig.years} ${licenseConfig.holder}. Licensed under the ${licenseConfig.name}."
+      echo "This is free software with ABSOLUTELY NO WARRANTY; see LICENSE for terms."
       echo ""
       echo "Secrets:"
       ${sopsModule.loadSecretsHook}
