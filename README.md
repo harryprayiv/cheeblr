@@ -316,16 +316,17 @@ Haskell unit tests run the full service layer against pure in-memory interpreter
 - Third-party integrations (Metrc, Leafly)
 - Libsodium public-key challenge-response (upgrade path for highest-security deployments)
 
-## License
+## 📜 License
 
-This project is licensed under the Apache License Version 2.0, January 2004 -- see the LICENSE file for details.
+This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007 — see the LICENSE file for details. 
 
-## Contributing
+## 🤝 Contributing
 
 Contributions are welcome. Please feel free to submit a Pull Request.
 
 ## Support
 
-[![Donate ADA](https://img.shields.io/badge/Donate-ADA-0033AD?style=for-the-badge&logo=cardano&logoColor=white)](https://cardanoscan.io/address/addr1qxankwszy6zaclef8vq5fjn3008689yswvangmz604npjhms7402kf0h964awtj8d6xz7lzlvnrq6hz6wu6k845pzkvspum4l7)
 
-If my software is useful to you, Cardano ADA donations fund continued work:
+If you like my style, Cardano ADA donations fund continued work.
+
+[![Donate ADA](https://img.shields.io/badge/Donate-ADA-0033AD?style=for-the-badge&logo=cardano&logoColor=white)](https://cardanoscan.io/address/addr1qxankwszy6zaclef8vq5fjn3008689yswvangmz604npjhms7402kf0h964awtj8d6xz7lzlvnrq6hz6wu6k845pzkvspum4l7)
