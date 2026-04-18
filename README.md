@@ -285,7 +285,7 @@ Integration tests spin up and tear down their own isolated PostgreSQL instance s
 
 ## 📜 License
 
-This project is licensed under the Apache License Version 2.0, January 2004 — see the LICENSE file for details.
+This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007 — see the LICENSE file for details. 
 
 ## 🤝 Contributing
 
