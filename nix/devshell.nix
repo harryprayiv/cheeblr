@@ -344,16 +344,17 @@ let
     inherit nativeBuildInputs;
     buildInputs = commonBuildInputs ++ darwinInputs;
 
-    shellHook = ''
+  shellHook = ''
       export PGDATA="${dbConfig.dataDir}"
       export PGPORT="${toString dbConfig.port}"
       export PGUSER="${dbConfig.user}"
       export PGDATABASE="${dbConfig.name}"
       export PKG_CONFIG_PATH="${pkgs.postgresql.lib}/lib/pkgconfig:$PKG_CONFIG_PATH"
+      export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/cheeblr.txt"
 
       mkdir -p "$(pwd)/script/concat_archive/output" \
-               "$(pwd)/script/concat_archive/archive" \
-               "$(pwd)/script/concat_archive/.hashes"
+              "$(pwd)/script/concat_archive/archive" \
+              "$(pwd)/script/concat_archive/.hashes"
       mkdir -p "$(pwd)/.vscode"
 
       cat > "$(pwd)/.vscode/argv.json" <<EOF
