@@ -1,14 +1,8 @@
 keys:
-  # dev machine age key
-  - &dev_winsmuth age1yexqgdkt9qpuvy0w5f084u3qskveptjx0pwsp23e6epsywxq0qzsq5lzpm
-
-  # For each NixOS host you deploy to, derive from SSH host key:
-  # cat /etc/ssh/ssh_host_ed25519_key.pub | ssh-to-age
-  - &host_winsmuth age1p6rtzhtzlpkv4dw6umvv2wpplekmjj225xkyf8xelgewuhndxvlqq8smh6
+  - &dev_key age1rtzm2vl87lw600tlx8fw72v026g5z82mej8c7mchseu2y4834a8savewm6
 
 creation_rules:
-  - path_regex: secrets/cheeblr\.yaml$
+  - path_regex: secrets/.*\.yaml$
     key_groups:
       - age:
-          - *dev_winsmuth
-          - *host_winsmuth
+          - *dev_key
