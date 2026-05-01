@@ -1,0 +1,484 @@
+{
+  "regAnnotations": [
+    {
+      "annName": "loginHandler",
+      "annModule": "Server.Auth",
+      "annIntent": "Validates credentials, mints a session, and sets the cheeblr_session HttpOnly cookie. Records every attempt (success or failure) in login_attempts for rate limiting. Returns generic 401 on bad username and bad password alike to avoid user enumeration. Pre-flight rate limit: 5 failures per (username, ip) in 10 minutes, 20 per ip in 10 minutes — both checks return 429 with Retry-After: 600.",
+      "annEffects": ["DBPool", "Katip.LogEnv", "IO"],
+      "annVerify": [
+        { "verifyExpr": "loginHandler validCreds", "verifyExpected": "Headers (Set-Cookie cheeblr_session=...) LoginResponse", "verifyPasses": null },
+        { "verifyExpr": "loginHandler badPassword", "verifyExpected": "err401 Invalid username or password", "verifyPasses": null },
+        { "verifyExpr": "loginHandler unknownUser", "verifyExpected": "err401 Invalid username or password", "verifyPasses": null },
+        { "verifyExpr": "loginHandler afterFiveFailures", "verifyExpected": "err429 Retry-After: 600", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Server/Auth.hs", "srcLine": 92 }
+    },
+    {
+      "annName": "cookieAuthMiddleware",
+      "annModule": "App",
+      "annIntent": "WAI middleware that lifts the cheeblr_session cookie into a synthetic Authorization: Bearer header before the request hits Servant, so downstream handlers can use existing Maybe Text bearer extraction unchanged. Also performs lazy token rotation: if the session's token_rotated_at is older than cfgTokenRotationSecs, mints a new token, updates the DB, and writes a fresh Set-Cookie on the response.",
+      "annEffects": ["DBPool", "IO"],
+      "annVerify": [
+        { "verifyExpr": "cookieAuthMiddleware reqWithoutCookie", "verifyExpected": "passes through with original headers", "verifyPasses": null },
+        { "verifyExpr": "cookieAuthMiddleware reqWithFreshCookie", "verifyExpected": "Authorization: Bearer <token> injected, no Set-Cookie", "verifyPasses": null },
+        { "verifyExpr": "cookieAuthMiddleware reqWithStaleCookie", "verifyExpected": "Authorization: Bearer <newToken> injected, Set-Cookie: cheeblr_session=<newToken>", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/App.hs", "srcLine": 222 }
+    },
+    {
+      "annName": "extractCookieToken",
+      "annModule": "App",
+      "annIntent": "Pulls the cheeblr_session value out of the WAI request's Cookie header. Returns Nothing if either the header is absent or the cheeblr_session cookie is absent.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "extractCookieToken reqWithCookie", "verifyExpected": "Just \"abc123\"", "verifyPasses": null },
+        { "verifyExpr": "extractCookieToken reqWithoutCookie", "verifyExpected": "Nothing", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/App.hs", "srcLine": 246 }
+    },
+    {
+      "annName": "rotateSessionToken",
+      "annModule": "DB.Auth",
+      "annIntent": "Issues a new opaque session token for an existing session row, updates token_hash, expires_at (now + 8h), token_rotated_at, and last_seen_at atomically. Old token becomes invalid immediately — there is no grace window in the current implementation.",
+      "annEffects": ["DBPool", "Entropy", "IO"],
+      "annVerify": [
+        { "verifyExpr": "rotateSessionToken existingSessionId", "verifyExpected": "(newToken, expiresAt) and DB updated", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 348 }
+    },
+    {
+      "annName": "hashPassword",
+      "annModule": "DB.Auth",
+      "annIntent": "Hashes a plaintext password with Argon2id (m=65536 KiB, t=3, p=4, 32-byte output) using a fresh 16-byte salt from getEntropy. Output is a PHC-formatted string $argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash> with unpadded base64.",
+      "annEffects": ["Entropy", "IO"],
+      "annVerify": [
+        { "verifyExpr": "hashPassword \"hunter2\" >>= \\h -> pure (verifyPassword h \"hunter2\")", "verifyExpected": "True", "verifyPasses": null },
+        { "verifyExpr": "hashPassword \"hunter2\" >>= \\h -> pure (verifyPassword h \"wrong\")", "verifyExpected": "False", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 142 }
+    },
+    {
+      "annName": "verifyPassword",
+      "annModule": "DB.Auth",
+      "annIntent": "Pure function. Parses a stored PHC string, recomputes the Argon2id hash with the embedded salt and the project's argonOpts, and compares to the embedded hash. Note: parameters are NOT read from the PHC string — argonOpts is fixed. Changing argonOpts invalidates all existing hashes.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "verifyPassword (validPhc \"hunter2\") \"hunter2\"", "verifyExpected": "True", "verifyPasses": null },
+        { "verifyExpr": "verifyPassword malformedPhc \"anything\"", "verifyExpected": "False", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 152 }
+    },
+    {
+      "annName": "createSession",
+      "annModule": "DB.Auth",
+      "annIntent": "Creates a new session row with an 8-hour expiry. Token is 32 bytes from getEntropy, returned to caller as URL-safe unpadded base64; only the SHA-256 hash is stored.",
+      "annEffects": ["DBPool", "Entropy", "IO"],
+      "annVerify": [
+        { "verifyExpr": "createSession pool uid Nothing \"agent\" \"1.2.3.4\"", "verifyExpected": "(token, expiresAt) where expiresAt = now + 8h", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 269 }
+    },
+    {
+      "annName": "lookupSession",
+      "annModule": "DB.Auth",
+      "annIntent": "Resolves a raw bearer token to (SessionRow, UserRow) if the token decodes, hashes to an unrevoked, unexpired row, and the user is active. Side effect: bumps last_seen_at on hit. The bump is a separate UPDATE — one extra round-trip per authenticated request.",
+      "annEffects": ["DBPool", "IO"],
+      "annVerify": [
+        { "verifyExpr": "lookupSession pool validToken", "verifyExpected": "Just (sessRow, userRow)", "verifyPasses": null },
+        { "verifyExpr": "lookupSession pool revokedToken", "verifyExpected": "Nothing", "verifyPasses": null },
+        { "verifyExpr": "lookupSession pool expiredToken", "verifyExpected": "Nothing", "verifyPasses": null },
+        { "verifyExpr": "lookupSession pool malformedToken", "verifyExpected": "Nothing", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 297 }
+    },
+    {
+      "annName": "createTransactionSvc",
+      "annModule": "Service.Transaction",
+      "annIntent": "Service-layer wrapper around TransactionDb.createTransaction that emits a TransactionCreated domain event with the current Clock time.",
+      "annEffects": ["TransactionDb", "EventEmitter", "Clock"],
+      "annVerify": [
+        { "verifyExpr": "createTransactionSvc tx", "verifyExpected": "Right tx, TransactionCreated emitted", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Service/Transaction.hs", "srcLine": 145 }
+    },
+    {
+      "annName": "addItem",
+      "annModule": "Service.Transaction",
+      "annIntent": "Adds an item to a transaction with full crem state machine enforcement (AddItemCmd transitions Created -> InProgress, validates from InProgress). Reserves inventory via the TransactionDb effect. On success, emits TransactionItemAdded and creates a stock pull request via createStockPull. On InventoryException returns 404 (ItemNotFound) or 400 (InsufficientInventory) with diagnostic body.",
+      "annEffects": ["TransactionDb", "StockDb", "InventoryDb", "EventEmitter", "Clock", "GenUUID", "Error ServerError"],
+      "annVerify": [
+        { "verifyExpr": "addItem itemForCreatedTx", "verifyExpected": "Right item, status -> InProgress, ItemAdded + PullRequestCreated emitted", "verifyPasses": null },
+        { "verifyExpr": "addItem itemForCompletedTx", "verifyExpected": "err409 InvalidTxCommand", "verifyPasses": null },
+        { "verifyExpr": "addItem itemUnknownSku", "verifyExpected": "err404 Item not found", "verifyPasses": null },
+        { "verifyExpr": "addItem itemOverAvailable", "verifyExpected": "err400 Insufficient inventory", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Service/Transaction.hs", "srcLine": 159 }
+    },
+    {
+      "annName": "voidTx",
+      "annModule": "Service.Transaction",
+      "annIntent": "Voids a transaction via the crem state machine (VoidCmd valid from Created, InProgress, or Completed). On success, voids in DB, emits TransactionVoided, then cancels every still-open pull for this transaction and emits PullRequestCancelled for each.",
+      "annEffects": ["TransactionDb", "StockDb", "EventEmitter", "Clock", "Error ServerError"],
+      "annVerify": [
+        { "verifyExpr": "voidTx createdTxId \"customer cancelled\"", "verifyExpected": "Right tx{status=Voided}, TransactionVoided + PullRequestCancelled emitted", "verifyPasses": null },
+        { "verifyExpr": "voidTx voidedTxId \"already void\"", "verifyExpected": "err409 Transaction is voided", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Service/Transaction.hs", "srcLine": 308 }
+    },
+    {
+      "annName": "finalizeTx",
+      "annModule": "Service.Transaction",
+      "annIntent": "Transitions an InProgress transaction to Completed via the crem state machine. The TransactionDb interpreter decrements menu_items.quantity and marks reservations Completed. Emits TransactionFinalized.",
+      "annEffects": ["TransactionDb", "EventEmitter", "Clock", "Error ServerError"],
+      "annVerify": [
+        { "verifyExpr": "finalizeTx inProgressTxId", "verifyExpected": "Right tx{status=Completed}, inventory decremented, TransactionFinalized emitted", "verifyPasses": null },
+        { "verifyExpr": "finalizeTx createdTxId", "verifyExpected": "err409 Cannot Finalize from Created", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Service/Transaction.hs", "srcLine": 285 }
+    },
+    {
+      "annName": "openRegister",
+      "annModule": "Service.Register",
+      "annIntent": "Opens a register via the crem RegisterMachine (OpenRegCmd valid only from RegClosed). On success, persists via openRegisterDb and emits RegisterOpened with starting cash.",
+      "annEffects": ["RegisterDb", "EventEmitter", "Clock", "Error ServerError"],
+      "annVerify": [
+        { "verifyExpr": "openRegister closedRegId req", "verifyExpected": "Right reg{isOpen=True}, RegisterOpened emitted", "verifyPasses": null },
+        { "verifyExpr": "openRegister openRegId req", "verifyExpected": "err409 Register is already open", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Service/Register.hs", "srcLine": 49 }
+    },
+    {
+      "annName": "fulfillPull",
+      "annModule": "Service.Stock",
+      "annIntent": "Marks a stock pull as Fulfilled via the StockPullMachine (FulfillCmd valid only from PullPulling). Emits PullStatusChanged with old and new vertex.",
+      "annEffects": ["StockDb", "EventEmitter", "Clock", "Error ServerError"],
+      "annVerify": [
+        { "verifyExpr": "fulfillPull pullingId actorId", "verifyExpected": "Right pr{status=PullFulfilled}, PullStatusChanged emitted", "verifyPasses": null },
+        { "verifyExpr": "fulfillPull acceptedId actorId", "verifyExpected": "err409 Invalid command in Accepted state", "verifyPasses": null },
+        { "verifyExpr": "fulfillPull fulfilledId actorId", "verifyExpected": "err409 Pull request is fulfilled", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Service/Stock.hs", "srcLine": 102 }
+    },
+    {
+      "annName": "publish",
+      "annModule": "Infrastructure.Broadcast",
+      "annIntent": "Atomically increments the broadcaster's sequence number, writes the event to the broadcast TChan, and appends to the bounded history seq. History is dropped FIFO past bMaxHistory. Used by EventEmitter, Katip BroadcastScribe, and the AvailabilityRelay.",
+      "annEffects": ["STM", "IO"],
+      "annVerify": [
+        { "verifyExpr": "publish bc evt >> currentSeq bc", "verifyExpected": "previousSeq + 1", "verifyPasses": null },
+        { "verifyExpr": "publish (full history bc) evt >> historyDepth bc", "verifyExpected": "bMaxHistory bc", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Infrastructure/Broadcast.hs", "srcLine": 39 }
+    },
+    {
+      "annName": "runAvailabilityRelay",
+      "annModule": "Infrastructure.AvailabilityRelay",
+      "annIntent": "Long-running thread. Loads inventory + active reservations from DB on startup, then subscribes to the domain event broadcaster and translates inventory and transaction events into AvailabilityUpdate frames published to the availability broadcaster. Only InventoryEvt and TransactionItemAdded/Removed produce updates.",
+      "annEffects": ["DBPool", "STM", "IO", "Forever"],
+      "annVerify": [
+        { "verifyExpr": "after publish (TransactionItemAdded sku 3)", "verifyExpected": "AvailabilityUpdate with availableQty - 3 published", "verifyPasses": null },
+        { "verifyExpr": "after publish (ItemDeleted sku)", "verifyExpected": "no AvailabilityUpdate published, sku removed from state", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Infrastructure/AvailabilityRelay.hs", "srcLine": 30 }
+    },
+    {
+      "annName": "wsHandler",
+      "annModule": "Server.Feed",
+      "annIntent": "ATProto-style WebSocket subscription handler for app.cheeblr.feed.subscribe. With cursor: replays history from cursor then streams live. Without cursor: emits a synthetic snapshot of every current item at currentSeq (note: snapshot frames all share the same seq, which clients must tolerate), then streams live. Uses 30s ping thread.",
+      "annEffects": ["WebSockets", "STM", "DBPool", "IO"],
+      "annVerify": [
+        { "verifyExpr": "wsHandler with cursor=Just 100", "verifyExpected": "history seq>100 replayed, then live updates", "verifyPasses": null },
+        { "verifyExpr": "wsHandler with cursor=Nothing", "verifyExpected": "synthetic snapshot at currentSeq, then live updates", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Server/Feed.hs", "srcLine": 56 }
+    },
+    {
+      "annName": "tracingMiddleware",
+      "annModule": "Server.Middleware.Tracing",
+      "annIntent": "WAI middleware that ensures every request has a TraceId. Reads X-Trace-Id from inbound headers if present and parseable, otherwise generates a fresh one. Stores in WAI vault under traceIdKey, mirrors back to response as X-Trace-Id. Downstream code uses getTraceId.",
+      "annEffects": ["IO"],
+      "annVerify": [
+        { "verifyExpr": "tracingMiddleware reqWithoutTraceId", "verifyExpected": "fresh TraceId in vault, X-Trace-Id on response", "verifyPasses": null },
+        { "verifyExpr": "tracingMiddleware reqWithValidTraceId", "verifyExpected": "supplied TraceId preserved in vault and response", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Server/Middleware/Tracing.hs", "srcLine": 28 }
+    },
+    {
+      "annName": "buildCsp",
+      "annModule": "App",
+      "annIntent": "Pure function. Builds the Content-Security-Policy header. default-src/script-src/style-src all 'self' (no inline, no eval). img-src adds the configured cfgImgSrcDomain or falls back to https:. connect-src adds the API public URL and its ws/wss derivative. frame-ancestors none, form-action self.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "buildCsp \"https://api.example.com\" Nothing", "verifyExpected": "...connect-src 'self' https://api.example.com wss://api.example.com...", "verifyPasses": null },
+        { "verifyExpr": "buildCsp \"http://localhost:8080\" (Just \"https://cdn.example.com\")", "verifyExpected": "...img-src 'self' data: https://cdn.example.com...", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/App.hs", "srcLine": 296 }
+    },
+    {
+      "annName": "checkLoginRateLimit",
+      "annModule": "Server.Auth",
+      "annIntent": "Pre-flight rate limit before a login attempt. Throws err429 with Retry-After: 600 if there are 5+ failed attempts for the same (username, ip) in the last 10 minutes, OR 20+ failures from the ip alone in the last 10 minutes. Both windows are hardcoded to 10 minutes regardless of cfgRateLimitWindow.",
+      "annEffects": ["DBPool", "Error ServerError"],
+      "annVerify": [
+        { "verifyExpr": "after 5 failures for (alice, 1.2.3.4): checkLoginRateLimit pool \"alice\" \"1.2.3.4\"", "verifyExpected": "err429 Too many failed login attempts", "verifyPasses": null },
+        { "verifyExpr": "after 4 failures: checkLoginRateLimit pool \"alice\" \"1.2.3.4\"", "verifyExpected": "()", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Server/Auth.hs", "srcLine": 67 }
+    },
+    {
+      "annName": "txRowToDomain",
+      "annModule": "DB.Transaction",
+      "annIntent": "Pure decoder from the Rel8 TransactionRow plus pre-hydrated children to a Types.Transaction value. Lives in DB.Transaction (not Types.Transaction) so Types.Transaction has no Rel8/hasql dependency and can be imported by any consumer including the future PureScript codegen.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "txRowToDomain row [] []", "verifyExpected": "Transaction with empty items and payments", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Transaction.hs", "srcLine": 558 }
+    },
+    {
+      "annName": "hydrateTx",
+      "annModule": "DB.Transaction",
+      "annIntent": "Loads a Transaction from DB by querying transaction_item, transaction_tax, discount, and payment_transaction child tables for the given txId, then assembling via txRowToDomain. N+1 by design: one items query, then per-item tax and discount queries. Acceptable for POS-scale (single-digit items per transaction).",
+      "annEffects": ["DBPool", "IO"],
+      "annVerify": [
+        { "verifyExpr": "hydrateTx pool emptyTxRow", "verifyExpected": "Transaction with no items or payments", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Transaction.hs", "srcLine": 196 }
+    },
+    {
+      "annName": "insertDomainEvent",
+      "annModule": "DB.Events",
+      "annIntent": "Append-only insert into domain_events. Encodes the DomainEvent as JSON via Aeson, casts $7 from text to jsonb in SQL. The domain_events table has rules forbidding UPDATE and DELETE, so this is a true append-only audit log.",
+      "annEffects": ["DBPool", "IO"],
+      "annVerify": [
+        { "verifyExpr": "insertDomainEvent pool Nothing Nothing Nothing (TransactionEvt ...)", "verifyExpected": "row appended with type=transaction.created, payload as jsonb", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/DB/Events.hs", "srcLine": 89 }
+    },
+    {
+      "annName": "runEventEmitterProd",
+      "annModule": "Effect.EventEmitter",
+      "annIntent": "Production interpreter for the EventEmitter effect. On every Emit: persists the event to domain_events via insertDomainEvent, then publishes to the in-process broadcaster for SSE/WS subscribers. The two writes are sequential and not transactional — if the publish succeeds and the DB write fails, subscribers will see an event that isn't durable.",
+      "annEffects": ["DBPool", "IO"],
+      "annVerify": [
+        { "verifyExpr": "runEventEmitterProd: emit evt", "verifyExpected": "row in domain_events AND event on broadcaster", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Effect/EventEmitter.hs", "srcLine": 41 }
+    },
+    {
+      "annName": "runTransactionDbPure",
+      "annModule": "Effect.TransactionDb",
+      "annIntent": "Pure in-memory interpreter for the TransactionDb effect, used in tests. Backed by a TxStore record holding Maps for transactions, item-to-tx, payment-to-tx, reservations, and inventory totals. Implements the same reservation logic as the IO interpreter (active reserved qty subtracted from inventory total).",
+      "annEffects": ["GenUUID", "Clock"],
+      "annVerify": [
+        { "verifyExpr": "runTransactionDbPure emptyTxStore (createTransaction tx)", "verifyExpected": "(tx, store with one transaction)", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/src/Effect/TransactionDb.hs", "srcLine": 269 }
+    },
+    {
+      "annName": "main_bootstrap",
+      "annModule": "Main (Bootstrap)",
+      "annIntent": "One-shot admin bootstrap. Aborts with a notice if any active user exists. Otherwise generates an 18-byte URL-safe-base64 password, creates an Admin user named 'admin', and prints credentials to stdout exactly once. Refuses to re-run unless the users table is emptied first.",
+      "annEffects": ["IO", "DBPool", "Entropy", "Env"],
+      "annVerify": [
+        { "verifyExpr": "main_bootstrap with empty users", "verifyExpected": "creates admin, prints password, exit 0", "verifyPasses": null },
+        { "verifyExpr": "main_bootstrap with existing users", "verifyExpected": "no insert, prints skip notice, exit 0", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "backend/app/Bootstrap.hs", "srcLine": 64 }
+    }
+  ],
+  "regDecisions": [
+    {
+      "decName": "HttpOnlyCookiesNotLocalStorage",
+      "decModule": "App + Server.Cookie",
+      "decDate": "2026-02-14",
+      "decReason": [
+        "localStorage tokens are readable by any XSS payload; HttpOnly cookies are not.",
+        "Cookie carries SameSite=Strict + Secure + Path=/ + Max-Age=28800.",
+        "cookieAuthMiddleware translates the cookie into an Authorization: Bearer header so existing Servant Maybe Text bearer extraction continues to work without changes downstream.",
+        "Trade-off: the middleware blindly overwrites any client-supplied Authorization header. This is intentional but should be reconsidered if any non-browser client ever needs to send its own bearer."
+      ],
+      "decChosen": "HttpOnly + Secure + SameSite=Strict cookie, lifted to bearer in middleware",
+      "decRejected": ["localStorage bearer tokens", "sessionStorage", "double-submit CSRF tokens with localStorage"],
+      "decImpacts": ["loginHandler", "cookieAuthMiddleware", "extractCookieToken"],
+      "decLocation": { "srcFile": "backend/src/Server/Cookie.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "Argon2idWithFixedParameters",
+      "decModule": "DB.Auth",
+      "decDate": "2026-01-22",
+      "decReason": [
+        "Argon2id is the OWASP-recommended default for new password hashing.",
+        "Parameters m=65536 (64 MiB), t=3, p=4 are the cryptonite Argon2.Options chosen for the production hardware target (Raspberry Pi 5 + Postgres).",
+        "Parameters are NOT read from the PHC string at verify time — argonOpts is treated as a global constant. Changing argonOpts will silently invalidate every existing hash. If params need to evolve, parse the PHC and dispatch on it."
+      ],
+      "decChosen": "Argon2id m=65536 t=3 p=4, 32-byte output, 16-byte salt",
+      "decRejected": ["bcrypt (input length cap, no memory hardness)", "scrypt", "PBKDF2"],
+      "decImpacts": ["hashPassword", "verifyPassword"],
+      "decLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 117 }
+    },
+    {
+      "decName": "PostgresOpaqueSessionsWithLazyRotation",
+      "decModule": "DB.Auth + App",
+      "decDate": "2026-02-14",
+      "decReason": [
+        "JWTs cannot be revoked without a denylist, defeating their statelessness benefit.",
+        "PostgreSQL is already in the stack, so opaque server-side tokens add no infrastructure.",
+        "Rotation is lazy: cookieAuthMiddleware checks token_rotated_at on every authenticated request and rotates if older than cfgTokenRotationSecs (default 900s). This avoids a separate rotation worker but adds one DB round-trip per request even when no rotation is needed.",
+        "Old token is invalidated immediately on rotation — no grace window. Concurrent requests that arrive between the new Set-Cookie and the browser receiving it will get 401. Acceptable for POS where retries are immediate; would need revisiting for mobile."
+      ],
+      "decChosen": "PostgreSQL-backed opaque tokens with per-request rotation check",
+      "decRejected": ["JWT", "Redis-backed sessions", "JWT + denylist", "fixed rotation worker"],
+      "decImpacts": ["loginHandler", "lookupSession", "rotateSessionToken", "cookieAuthMiddleware", "createSession"],
+      "decLocation": { "srcFile": "backend/src/DB/Auth.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "TwoTierLoginRateLimit",
+      "decModule": "Server.Auth",
+      "decDate": "2026-03-15",
+      "decReason": [
+        "Per-credential limit (5 in 10min) blocks credential-stuffing on a single account.",
+        "Per-IP limit (20 in 10min) blocks credential-stuffing across many accounts from one source.",
+        "Both windows are hardcoded to 10 minutes inside Server.Auth, NOT taken from cfgRateLimitWindow / cfgRateLimitMax. The config values are currently dead code; either wire them up or delete them.",
+        "Rate-limit state lives in the login_attempts table, queried with COUNT-style filters. Cheap at POS scale; would need a Redis-backed counter at internet scale."
+      ],
+      "decChosen": "Per-(username,ip) and per-ip windowed counters in PostgreSQL",
+      "decRejected": ["per-ip only", "in-memory token bucket", "external WAF rate limiting"],
+      "decImpacts": ["checkLoginRateLimit", "loginHandler"],
+      "decLocation": { "srcFile": "backend/src/Server/Auth.hs", "srcLine": 35 }
+    },
+    {
+      "decName": "AppendOnlyDomainEventsWithDbRules",
+      "decModule": "DB.Events",
+      "decDate": "2025-12-15",
+      "decReason": [
+        "Compliance requires an immutable audit log for every transaction lifecycle step.",
+        "Application-level append-only is bypassable; PostgreSQL RULE-based UPDATE/DELETE blockers are not.",
+        "domain_events table has CREATE RULE domain_events_no_update DO INSTEAD NOTHING and the same for delete. The schema itself enforces immutability.",
+        "JSONB payload preserves the full event for replay; structured columns (type, aggregate_id, trace_id) support efficient querying for the admin UI."
+      ],
+      "decChosen": "domain_events with INSTEAD NOTHING rules + JSONB payload + indexed (aggregate_id, type, trace_id, location_id)",
+      "decRejected": ["application-only enforcement", "separate event-store database (Kafka, EventStoreDB)", "WAL mining"],
+      "decImpacts": ["insertDomainEvent", "runEventEmitterProd"],
+      "decLocation": { "srcFile": "backend/src/DB/Events.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "CremForLifecycleEnforcement",
+      "decModule": "State.TransactionMachine + State.RegisterMachine + State.StockPullMachine",
+      "decDate": "2025-11-03",
+      "decReason": [
+        "Transaction, register, and stock-pull state transitions are legally significant for cannabis compliance — an unintended Created -> Completed shortcut is a reportable violation.",
+        "crem encodes the topology in types via singletons + GADTs; any transition not declared in the Topology fails to compile.",
+        "All three machines pair (SomeXxxState, fromXxx, toSomeXxxState) so callers handle existential states without leaking type-level vertices.",
+        "Cost: each machine is ~150 LOC of singletons + GADT boilerplate. Worth it for the lifecycle invariants."
+      ],
+      "decChosen": "crem (singletons-based type-level state machines)",
+      "decRejected": ["runtime status field with assertions", "phantom-typed wrapper newtypes", "no enforcement"],
+      "decImpacts": ["addItem", "voidTx", "finalizeTx", "openRegister", "fulfillPull"],
+      "decLocation": { "srcFile": "backend/src/State/TransactionMachine.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "EffectfulOverMtlWithPureInterpreters",
+      "decModule": "Effect.* + Service.*",
+      "decDate": "2025-09-18",
+      "decReason": [
+        "effectful's Eff monad avoids the n-squared instances problem of mtl as effect counts grow.",
+        "Every effect (Clock, GenUUID, EventEmitter, InventoryDb, RegisterDb, StockDb, TransactionDb) ships with both an IO interpreter (runXxxIO) and a pure interpreter (runXxxPure). Service-layer code is therefore unit-testable without a database, broadcaster, or wall clock.",
+        "runClockPureSequence and runGenUUIDPure both accept a supply list and crash on exhaustion — explicit failure beats silent test nondeterminism.",
+        "Cost: every DB action exists twice (IO + pure). Drift between them is a real risk; if it bites, generate one from the other or fold the pure interpreter into a property test that compares the two."
+      ],
+      "decChosen": "effectful with paired IO and pure interpreters per effect",
+      "decRejected": ["mtl", "polysemy", "fused-effects", "ReaderT IO pattern"],
+      "decImpacts": ["createTransactionSvc", "addItem", "voidTx", "finalizeTx", "openRegister", "fulfillPull", "runEventEmitterProd", "runTransactionDbPure"],
+      "decLocation": { "srcFile": "backend/src/Effect/TransactionDb.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "AtprotoStyleInventoryFeed",
+      "decModule": "Server.Feed + Infrastructure.AvailabilityRelay + Types.Public.AvailableItem",
+      "decDate": "2025-12-07",
+      "decReason": [
+        "Public consumers (compliance reporting, third-party menu sites) need an audit-friendly event log, not a snapshot poll.",
+        "Subscribe protocol mirrors ATProto's com.atproto.sync.subscribeRepos: WebSocket, monotonic seq, optional cursor for replay.",
+        "Lexicons are served at /lexicons/app.cheeblr.* as JSON literals (currently inlined in Server.Feed.hs as Haskell strings — ugly but vendored to avoid a runtime asset dependency).",
+        "AvailableItem is deliberately distinct from internal MenuItem: only public-safe fields, with a PublicSku newtype to prevent confusing internal UUIDs with public identifiers."
+      ],
+      "decChosen": "ATProto-style WebSocket subscription with seq-based cursor and bounded in-memory replay history",
+      "decRejected": ["polling REST endpoint", "Postgres LISTEN/NOTIFY exposed to clients", "Kafka", "raw SSE (no replay semantics)"],
+      "decImpacts": ["wsHandler", "runAvailabilityRelay", "publish"],
+      "decLocation": { "srcFile": "backend/src/Server/Feed.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "ParseAndDecodeFunctionsLiveInDBModule",
+      "decModule": "DB.Transaction + Types.Transaction",
+      "decDate": "2026-04-11",
+      "decReason": [
+        "Types.Transaction is imported by frontend-bound modules (Types.Public.AvailableItem, Types.Events.*) that must not transitively pull in Rel8 or hasql.",
+        "Rel8 row types live in DB.Schema; conversions (txRowToDomain, hydrateTx, insertTransactionItem, etc.) live in DB.Transaction.",
+        "Pure parsers for status/type/payment-method strings (parseTransactionStatus, parsePaymentMethod, parseTaxCategory) also live in DB.Transaction, since they exist solely to round-trip with the text columns. Types.Transaction stays pure ADT + JSON.",
+        "Rule: if it touches the Rel8 wire format, it lives in DB.Transaction. If it's a pure value-level operation on Transaction, it lives in Types.Transaction."
+      ],
+      "decChosen": "DB.* owns all wire decoders; Types.* stays pure",
+      "decRejected": ["decoders co-located with types", "separate Codec.Transaction module"],
+      "decImpacts": ["txRowToDomain", "hydrateTx"],
+      "decLocation": { "srcFile": "backend/src/DB/Transaction.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "TraceIdViaWaiVaultNotReader",
+      "decModule": "Server.Middleware.Tracing",
+      "decDate": "2026-01-30",
+      "decReason": [
+        "Servant handlers run in the Handler monad with no convenient place to thread per-request context.",
+        "WAI's Vault is the canonical mechanism for middleware-to-handler context passing in Haskell web stacks.",
+        "Bonus: the same TraceId can be stamped on the outbound response and on every domain event written during the request, giving end-to-end traceability.",
+        "Caveat: traceIdKey is created via unsafePerformIO with a NOINLINE pragma. This is the documented WAI pattern but it's a global mutable resource — only ever create one per process."
+      ],
+      "decChosen": "WAI Vault key for TraceId, populated by tracingMiddleware",
+      "decRejected": ["ReaderT TraceId IO over Servant", "thread TraceId through every handler signature", "implicit parameter"],
+      "decImpacts": ["tracingMiddleware"],
+      "decLocation": { "srcFile": "backend/src/Server/Middleware/Tracing.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "BroadcasterWithBoundedHistory",
+      "decModule": "Infrastructure.Broadcast",
+      "decDate": "2025-10-12",
+      "decReason": [
+        "Late SSE/WS subscribers need to catch up without scanning the full domain_events table on every connect.",
+        "TChan-based pub/sub plus a bounded Seq history gives O(1) publish and O(history) replay.",
+        "Bound is set per-broadcaster from cfgLogBroadcastSize / cfgDomainBroadcastSize / cfgStockBroadcastSize / cfgAvailabilityBroadcastSize.",
+        "Anything older than the bound is unreachable via in-memory replay; the client must fall back to /admin/domain-events with a cursor. This trade-off is deliberate — keeping more in memory hurts startup recovery and steady-state RAM."
+      ],
+      "decChosen": "TChan + bounded Data.Sequence history per stream",
+      "decRejected": ["unbounded history", "Redis Streams", "Kafka"],
+      "decImpacts": ["publish", "wsHandler", "runAvailabilityRelay"],
+      "decLocation": { "srcFile": "backend/src/Infrastructure/Broadcast.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "KeepMorpheusGraphQLPendingRemoval",
+      "decModule": "API.Inventory + GraphQL.*",
+      "decDate": "2026-04-30",
+      "decReason": [
+        "Earlier security review flagged morpheus-graphql as unnecessary attack surface (one auth-protected endpoint, exactly zero current consumers).",
+        "Removal is non-trivial: API.OpenApi has orphan ToSchema instances for GQLRequest and GQLResponse, and Server.hs wires graphqlInventory through the InventoryAPI. Removal should be a single PR that drops the dep, the resolvers, the schema module, and the orphan instances together.",
+        "Currently kept under protest. Do not extend it. New API surface goes through Servant REST or the WS feed."
+      ],
+      "decChosen": "Keep existing surface, freeze new development, plan removal",
+      "decRejected": ["actively expand GraphQL", "remove immediately without a planned PR"],
+      "decImpacts": [],
+      "decLocation": { "srcFile": "backend/src/API/Inventory.hs", "srcLine": 1 }
+    },
+    {
+      "decName": "InMiddlewareCorsAndHeaderHardening",
+      "decModule": "App",
+      "decDate": "2026-03-02",
+      "decReason": [
+        "Strict-Transport-Security, X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, and a hand-built CSP are applied via securityHeadersMiddleware on every response.",
+        "CORS is locked to cfgAllowedOrigin if set; otherwise opens with reflectOriginMiddleware. The reflect path also sets Access-Control-Allow-Credentials: true, which is technically invalid alongside Access-Control-Allow-Origin: * — the reflect middleware always echoes a specific origin, so this only matters for the genuinely-no-origin path which browsers reject anyway. Worth tightening regardless: in production, ALLOWED_ORIGIN must be set.",
+        "handleOptionsMiddleware short-circuits all OPTIONS requests before they reach Servant, since Servant doesn't natively serve preflight."
+      ],
+      "decChosen": "Hand-built middleware stack: tracing → security headers → OPTIONS short-circuit → reflect origin → cookie auth → CORS → Servant",
+      "decRejected": ["nginx-handled headers", "wai-middleware-throttle stack only"],
+      "decImpacts": ["buildCsp", "cookieAuthMiddleware"],
+      "decLocation": { "srcFile": "backend/src/App.hs", "srcLine": 1 }
+    }
+  ]
+}

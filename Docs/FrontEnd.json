@@ -1,0 +1,486 @@
+{
+  "regAnnotations": [
+    {
+      "annName": "main",
+      "annModule": "Main",
+      "annIntent": "Application entry point. Creates Polls for auth state, current route, backend capabilities, and per-page data (inventory/edit/delete/transaction). Subscribes to hash-route changes via routing-duplex matchesWith. Each route change kills the previous fiber and launches a new parSequence_ of loaders. Restores session via validateSession on startup, then replays the initial route via matcher Nothing initialRoute once readyRef flips true. Pre-initializes the local register on login.",
+      "annEffects": ["Effect", "Aff", "ST.Poll", "Ref", "Console", "Hash routing"],
+      "annVerify": [
+        { "verifyExpr": "main >> navigateTo LiveView", "verifyExpected": "loadInventory and loadSession run in parallel via parSequence_", "verifyPasses": null },
+        { "verifyExpr": "main >> navigateTo LiveView >> navigateTo Edit", "verifyExpected": "previous fiber killed before edit loader starts", "verifyPasses": null },
+        { "verifyExpr": "main with valid session cookie", "verifyExpected": "validateSession succeeds, pushAuth (SignedIn devUser uuid), initial route LiveView", "verifyPasses": null },
+        { "verifyExpr": "main with no session", "verifyExpected": "validateSession fails, initial route Login", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Main.purs", "srcLine": 153 }
+    },
+    {
+      "annName": "loadTxPageData",
+      "annModule": "Main",
+      "annIntent": "Loads everything CreateTransaction needs in a single parallel pass: inventory and (register-or-init + new transaction). Uses Control.Parallel.parallel + sequential to fan out. Returns TxPageDegraded if inventory fails but register/transaction succeed — the page is still usable for cash drawer ops without a product list.",
+      "annEffects": ["Aff", "DBPool via API"],
+      "annVerify": [
+        { "verifyExpr": "loadTxPageData userId (all succeed)", "verifyExpected": "TxPageReady inv reg tx", "verifyPasses": null },
+        { "verifyExpr": "loadTxPageData userId (inventory fails)", "verifyExpected": "TxPageDegraded err reg tx", "verifyPasses": null },
+        { "verifyExpr": "loadTxPageData userId (register init fails)", "verifyExpected": "TxPageError err", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Main.purs", "srcLine": 113 }
+    },
+    {
+      "annName": "login",
+      "annModule": "API.Auth",
+      "annIntent": "POSTs credentials to /auth/login with credentials: Include so the backend's Set-Cookie response is honored by the browser. Does NOT manually store any token — the HttpOnly cookie cannot be read from JS. Returns the LoginResponse for UI use only. Use of attempt + throwError for non-2xx is the canonical pattern in this codebase for fetch-based handlers.",
+      "annEffects": ["Aff", "Fetch", "Browser cookie store"],
+      "annVerify": [
+        { "verifyExpr": "login \"alice\" \"correct\" Nothing", "verifyExpected": "Right { loginExpiresAt, loginUser } and cookie set in browser", "verifyPasses": null },
+        { "verifyExpr": "login \"alice\" \"wrong\" Nothing", "verifyExpected": "Left \"HTTP 401: Invalid username or password\"", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/API/Auth.purs", "srcLine": 30 }
+    },
+    {
+      "annName": "validateSession",
+      "annModule": "API.Auth",
+      "annIntent": "GETs /auth/me with credentials: Include. The browser sends the cheeblr_session cookie automatically; the backend's cookieAuthMiddleware lifts it to a synthetic Authorization header before the handler runs. Returns the SessionResponse if the cookie is valid and unexpired, otherwise Left. Used on app startup in Main to decide between Login and LiveView routes.",
+      "annEffects": ["Aff", "Fetch", "Browser cookie store"],
+      "annVerify": [
+        { "verifyExpr": "validateSession (with valid cookie)", "verifyExpected": "Right SessionResponse", "verifyPasses": null },
+        { "verifyExpr": "validateSession (no cookie or expired)", "verifyExpected": "Left \"HTTP 401: ...\"", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/API/Auth.purs", "srcLine": 73 }
+    },
+    {
+      "annName": "authGet",
+      "annModule": "API.Request",
+      "annIntent": "Authenticated GET helper. Sets Authorization: Bearer <userId> AND credentials: Include. The bearer header is leftover from the pre-cookie auth era and is ignored by the backend when a session cookie is present (cookieAuthMiddleware overwrites it). Origin header is set explicitly to satisfy the backend's reflectOriginMiddleware. Wraps fetch + fromJSON in runRequest, which catches all exceptions and returns Either String a — never throws.",
+      "annEffects": ["Aff", "Fetch", "Browser cookie store"],
+      "annVerify": [
+        { "verifyExpr": "authGet uid \"/inventory\"", "verifyExpected": "Right Inventory on 200, Left errMsg on any non-2xx or parse failure", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/API/Request.purs", "srcLine": 56 }
+    },
+    {
+      "annName": "authPostChecked",
+      "annModule": "API.Request",
+      "annIntent": "POST variant that explicitly checks response.status before parsing. Used for endpoints where a 4xx body contains a structured error JSON the caller needs to surface (e.g. addTransactionItem -> InsufficientInventory). Other authPost helpers parse blindly and trust ReadForeign to fail — those don't surface server error bodies.",
+      "annEffects": ["Aff", "Fetch"],
+      "annVerify": [
+        { "verifyExpr": "authPostChecked uid \"/transaction/item\" item (200 + valid JSON)", "verifyExpected": "Right res", "verifyPasses": null },
+        { "verifyExpr": "authPostChecked uid \"/transaction/item\" item (400 with error body)", "verifyExpected": "Left \"Server returned status 400: <body>\"", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/API/Request.purs", "srcLine": 209 }
+    },
+    {
+      "annName": "addItemToCart",
+      "annModule": "Services.Cart",
+      "annIntent": "Adds a menu item to the cart by calling TransactionService.createTransactionItem (which hits POST /transaction/item, reserving inventory server-side via the crem state machine). On success: if the item already exists in cart, merges quantities and recomputes totals; otherwise prepends. Updates cart items, totals, status message, and clears the inventory-checking flag. Tax rate is hardcoded to 0.08 / 8% — a TODO that mirrors the server-side hardcoded 0.15 in the older addItemToTransaction. These rates disagree and only one path is alive in production.",
+      "annEffects": ["Effect", "Aff via launchAff_", "Console"],
+      "annVerify": [
+        { "verifyExpr": "addItemToCart uid newItem 2 [] txId ...", "verifyExpected": "cart has [newItem qty=2], totals updated, statusMsg \"Added <name> to cart\"", "verifyPasses": null },
+        { "verifyExpr": "addItemToCart uid existingItem 1 [existing qty=2] txId ...", "verifyExpected": "cart has [merged qty=3], totals recomputed", "verifyPasses": null },
+        { "verifyExpr": "addItemToCart uid item 0 [] txId ...", "verifyExpected": "statusMsg \"Quantity must be greater than 0\", no API call", "verifyPasses": null },
+        { "verifyExpr": "addItemToCart uid overstockItem qty [] txId ...", "verifyExpected": "API returns Left, statusMsg \"Failed to add item: <err>\"", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Services/Cart.purs", "srcLine": 224 }
+    },
+    {
+      "annName": "removeItemFromCart",
+      "annModule": "Services.Cart",
+      "annIntent": "Removes a transaction item by calling DELETE /transaction/item/<id>. The server-side InventoryDb interpreter releases the matching reservation in the same transaction — frontend does not need to manage reservation state. After successful delete, filters items locally and recomputes totals via calculateCartTotals.",
+      "annEffects": ["Effect", "Aff via launchAff_", "Console"],
+      "annVerify": [
+        { "verifyExpr": "removeItemFromCart uid id [...] ...", "verifyExpected": "API succeeds, item removed locally, reservation released server-side", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Services/Cart.purs", "srcLine": 333 }
+    },
+    {
+      "annName": "startTransaction",
+      "annModule": "Services.TransactionService",
+      "annIntent": "Generates a new transaction UUID client-side, builds an empty Transaction with status=Created and type=Sale and zero monetary fields, and POSTs to /transaction. The server-side TransactionDb interpreter persists it via the crem state machine (CreatedState). All subsequent item/payment ops reference this transaction by ID.",
+      "annEffects": ["Aff", "Effect via genUUID/nowDateTime"],
+      "annVerify": [
+        { "verifyExpr": "startTransaction uid validParams", "verifyExpected": "Right Transaction with status=Created", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Services/TransactionService.purs", "srcLine": 31 }
+    },
+    {
+      "annName": "calculateCartTotals",
+      "annModule": "Services.TransactionService",
+      "annIntent": "Pure folder. Sums per-item subtotals, taxes, and totals into a CartTotals record. Discount total is NOT recomputed — it's carried through from the input record's initial value (currently always Discrete 0 from emptyCartTotals). If discounts are ever added, this needs updating.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "calculateCartTotals []", "verifyExpected": "{ subtotal: 0, taxTotal: 0, total: 0, discountTotal: 0 }", "verifyPasses": null },
+        { "verifyExpr": "calculateCartTotals [item with sub=1000 tax=80 total=1080]", "verifyExpected": "{ subtotal: 1000, taxTotal: 80, total: 1080, discountTotal: 0 }", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Services/TransactionService.purs", "srcLine": 184 }
+    },
+    {
+      "annName": "getOrInitLocalRegister",
+      "annModule": "Services.RegisterService",
+      "annIntent": "Per-browser register identity. Reads register_id from localStorage (creating a new UUID and persisting if missing), then GETs /register/<id>. If found, returns it (regardless of open/closed state). If not found, calls createAndOpenRegister which creates+opens with starting cash 0. Distinct from initLocalRegister which forcibly opens any closed register.",
+      "annEffects": ["Effect", "Aff via launchAff_", "localStorage", "Console"],
+      "annVerify": [
+        { "verifyExpr": "getOrInitLocalRegister (no register_id stored)", "verifyExpected": "new UUID stored, register created+opened on backend", "verifyPasses": null },
+        { "verifyExpr": "getOrInitLocalRegister (existing register_id, register exists)", "verifyExpected": "existing register returned, no DB writes", "verifyPasses": null },
+        { "verifyExpr": "getOrInitLocalRegister (existing register_id, register missing)", "verifyExpected": "new register created and opened with that ID", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Services/RegisterService.purs", "srcLine": 119 }
+    },
+    {
+      "annName": "createTransaction_UI",
+      "annModule": "UI.Transaction.CreateTransaction",
+      "annIntent": "The transaction page. Two-pane layout: left = inventory selection (search + category tabs + table with Add buttons), right = cart + payment section. Uses 14 separate useState/useHot state slots for cart items, totals, search text, payment method, etc. The Process Payment button validates that paymentsCoversTotal before calling finalizeTransaction. Every Add/Remove dispatches a server call via Services.Cart — the UI does not maintain authoritative state; the server does.",
+      "annEffects": ["Effect", "Aff", "Deku.Hooks", "Browser DOM"],
+      "annVerify": [
+        { "verifyExpr": "click Add on item with qty=2", "verifyExpected": "POST /transaction/item, item appended or merged in cart", "verifyPasses": null },
+        { "verifyExpr": "click Process Payment with insufficient payments", "verifyExpected": "statusMsg \"Cannot complete: Payment amount is insufficient\", no finalize call", "verifyPasses": null },
+        { "verifyExpr": "click Clear Items with non-empty cart", "verifyExpected": "POST /transaction/clear/<id>, cart emptied locally", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/UI/Transaction/CreateTransaction.purs", "srcLine": 50 }
+    },
+    {
+      "annName": "itemForm",
+      "annModule": "UI.Inventory.ItemForm",
+      "annIntent": "Unified create/edit form, parameterized by FormMode (CreateMode uuid | EditMode menuItem). Two-tier validation: per-field rules (allOf [nonEmpty, alphanumeric], dollarAmount, percentage, validUrl) gate the submit button via isFormValid; full-record validateMenuItem runs at submit time and converts the FormInit string-record to a typed MenuItem. On success: writeInventory (Create) or updateInventory (Edit), with form reset only on Create.",
+      "annEffects": ["Effect", "Aff", "Deku.Hooks"],
+      "annVerify": [
+        { "verifyExpr": "submit with all fields valid (CreateMode)", "verifyExpected": "POST /inventory, Right MutationResponse, form reset", "verifyPasses": null },
+        { "verifyExpr": "submit with invalid percentage", "verifyExpected": "submit button disabled (gray), no API call", "verifyPasses": null },
+        { "verifyExpr": "submit with all fields valid (EditMode)", "verifyExpected": "PUT /inventory, Right MutationResponse, form NOT reset (mode preserved)", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/UI/Inventory/ItemForm.purs", "srcLine": 287 }
+    },
+    {
+      "annName": "validateMenuItem",
+      "annModule": "Types.Inventory",
+      "annIntent": "Pure validator. Takes MenuItemFormInput (all-strings record) and returns Either String MenuItem. Uses Data.Validation.Semigroup V to accumulate errors across fields, then converts to Either via toEither. Multi-error report joined with comma. Converts string price to Discrete USD by floor (priceValue * 100.0) — so $12.999 silently truncates to 1299 cents.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "validateMenuItem allValidInput", "verifyExpected": "Right MenuItem", "verifyPasses": null },
+        { "verifyExpr": "validateMenuItem inputWithBadSku", "verifyExpected": "Left \"SKU must be a valid UUID\"", "verifyPasses": null },
+        { "verifyExpr": "validateMenuItem inputWithMultipleErrors", "verifyExpected": "Left \"err1, err2, err3\"", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Types/Inventory.purs", "srcLine": 460 }
+    },
+    {
+      "annName": "feedMonitor",
+      "annModule": "Pages.Admin.Tabs.FeedMonitor",
+      "annIntent": "WebSocket client for the public ATProto-style feed at /xrpc/app.cheeblr.feed.subscribe. Connect button opens a WS via Utils.WebSocket.openWebSocket; on each message, parses to FeedFrame via readJSON_ and prepends to the frames Ref (capped at 100). Disconnect closes the socket. NOT auto-connected — the user clicks Connect explicitly. Used on both the Admin dashboard and the standalone /#/feed route.",
+      "annEffects": ["Effect", "Ref", "WebSocket"],
+      "annVerify": [
+        { "verifyExpr": "click Connect", "verifyExpected": "WS opens to wss://.../xrpc/app.cheeblr.feed.subscribe, status \"Connected\"", "verifyPasses": null },
+        { "verifyExpr": "FeedFrame received over WS", "verifyExpected": "frame prepended, oldest dropped if length > 100", "verifyPasses": null },
+        { "verifyExpr": "click Disconnect", "verifyExpected": "WS closes, status \"Disconnected\", frames retained", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Pages/Admin/Tabs/FeedMonitor.purs", "srcLine": 36 }
+    },
+    {
+      "annName": "logViewer",
+      "annModule": "Pages.Admin.Tabs.LogViewer",
+      "annIntent": "SSE client for /admin/logs/stream, authenticated via ?authorization=Bearer+<userId> in the URL because EventSource cannot set custom headers. Note: the cookie is also sent automatically because EventSource respects same-origin cookies. The current implementation has a known bug — setEntries does not preserve previous entries (the closure resets to []), so only the latest event is ever shown. Fix: read entries from a Ref, not from pure [].",
+      "annEffects": ["Effect", "Ref", "SSE/EventSource"],
+      "annVerify": [
+        { "verifyExpr": "click Connect", "verifyExpected": "EventSource opens to /admin/logs/stream, status SSEConnected", "verifyPasses": null },
+        { "verifyExpr": "two LogEvent messages received", "verifyExpected": "BUG: only the second event is rendered; should show both", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Pages/Admin/Tabs/LogViewer.purs", "srcLine": 28 }
+    },
+    {
+      "annName": "stockInterface",
+      "annModule": "Pages.Stock.Interface",
+      "annIntent": "Stock room operator UI. Two-pane: left = pull queue (filtered by location), right = selected pull's message thread. On load: fetches initial queue via API and opens an SSE connection to /stock/queue/stream that triggers loadQueue on every event (no event payload parsing — the SSE connection is purely a 'something changed, refetch' signal). On new pulls: plays SoundInfo and shows a desktop notification via foreign import showPullNotification. Status transitions go through the crem StockPullMachine on the backend; the frontend just labels the actions.",
+      "annEffects": ["Effect", "Aff", "Ref", "SSE", "Audio", "Browser Notifications"],
+      "annVerify": [
+        { "verifyExpr": "click Accept on PullPending pull", "verifyExpected": "POST /stock/pull/<id>/accept, queue reloads, status -> PullAccepted", "verifyPasses": null },
+        { "verifyExpr": "click Fulfill on PullAccepted pull (skipping PullPulling)", "verifyExpected": "backend rejects with 409 Invalid command in Accepted state, statusMsg \"Error: ...\"", "verifyPasses": null },
+        { "verifyExpr": "new pull arrives via SSE while page is open", "verifyExpected": "loadQueue runs, alertBanner shows new pull, SoundInfo plays", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Pages/Stock/Interface.purs", "srcLine": 47 }
+    },
+    {
+      "annName": "renderInventory",
+      "annModule": "UI.Inventory.MenuLiveView",
+      "annIntent": "The customer-facing live view. Pure function from LiveViewConfig and Inventory to a Nut. Filters out qty=0 if config.hideOutOfStock, sorts via compareMenuItems (which threads sortFields tuples and inverts ordering for Descending), then maps to renderItem cards. Each card has Edit/Delete links via hash-route URLs.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "renderInventory cfg (Inventory [])", "verifyExpected": "Nut showing 'No items in inventory'", "verifyPasses": null },
+        { "verifyExpr": "renderInventory cfg{hideOutOfStock=true} mixedInventory", "verifyExpected": "only qty>0 items rendered", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/UI/Inventory/MenuLiveView.purs", "srcLine": 50 }
+    },
+    {
+      "annName": "openSSE",
+      "annModule": "Utils.SSE",
+      "annIntent": "Wraps a foreign import openSSEImpl that creates an EventSource. Returns SSEConnection { status: Poll SSEStatus, close :: Effect Unit }. Status Poll is seeded with SSEConnecting via Control.Alt.<|> and updated on internal status callbacks (\"connected\" -> SSEConnected etc.). The close function delegates to a Ref so the actual close handle can be captured after openSSEImpl returns.",
+      "annEffects": ["Effect", "Ref", "ST.Poll", "Foreign import"],
+      "annVerify": [
+        { "verifyExpr": "openSSE url onMsg", "verifyExpected": "SSEConnection with status starting at SSEConnecting", "verifyPasses": null },
+        { "verifyExpr": "EventSource onopen fires", "verifyExpected": "status Poll pushes SSEConnected", "verifyPasses": null },
+        { "verifyExpr": "conn.close", "verifyExpected": "EventSource closed, status -> SSEClosed", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Utils/SSE.purs", "srcLine": 39 }
+    },
+    {
+      "annName": "openWebSocket",
+      "annModule": "Utils.WebSocket",
+      "annIntent": "Foreign-imported wrapper around browser WebSocket. Takes a URL (must be ws:// or wss://; convert with toWsUrl) and four callbacks (onMessage, onOpen, onClose, onError). Returns an opaque WSConnection handle for closeWebSocket. The close handler is critical because Deku does not auto-cleanup foreign resources on unmount.",
+      "annEffects": ["Effect", "WebSocket", "Foreign import"],
+      "annVerify": [
+        { "verifyExpr": "openWebSocket (toWsUrl httpsUrl) cbs", "verifyExpected": "WSConnection opened to wss:// URL", "verifyPasses": null },
+        { "verifyExpr": "closeWebSocket conn", "verifyExpected": "socket closed, onClose callback fires", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Utils/WebSocket.purs", "srcLine": 28 }
+    },
+    {
+      "annName": "nav",
+      "annModule": "Route",
+      "annIntent": "Top-level navigation bar. Polls current route and auth state. Auth-aware: shows Login link when SignedOut, Logout button when SignedIn. Logout calls API.Auth.logout (which POSTs /auth/logout, clearing the cookie server-side via Set-Cookie: cheeblr_session=; Max-Age=0), then clears local token state via clearToken (currently a stub) and pushes SignedOut.",
+      "annEffects": ["Effect", "Aff via launchAff_"],
+      "annVerify": [
+        { "verifyExpr": "nav SignedOut", "verifyExpected": "Login link shown, no Logout button", "verifyPasses": null },
+        { "verifyExpr": "click Logout when SignedIn", "verifyExpected": "POST /auth/logout, cookie cleared by browser, authPoll pushed SignedOut", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Route.purs", "srcLine": 56 }
+    },
+    {
+      "annName": "alertBanner",
+      "annModule": "Pages.Stock.Components.AlertBanner",
+      "annIntent": "Optional banner that shows the latest new pull request with View and dismiss buttons. View calls onSelect with the pull's UUID and onDismiss; dismiss-X calls onDismiss alone. Driven by Poll (Maybe PullRequest) — Nothing renders an empty div. Used by Pages.Stock.Interface as the new-pull notification UI.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "alertBanner (pure Nothing) onSelect onDismiss", "verifyExpected": "empty div", "verifyPasses": null },
+        { "verifyExpr": "alertBanner (pure (Just pr)) onSelect onDismiss + click View", "verifyExpected": "onSelect pr.prId called, then onDismiss called", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Pages/Stock/Components/AlertBanner.purs", "srcLine": 24 }
+    },
+    {
+      "annName": "validActions",
+      "annModule": "Types.Stock",
+      "annIntent": "Pure mapping from PullVertex (as String, from server JSON) to the array of UI actions valid in that state. Mirrors the backend's State.StockPullMachine topology — must be kept in sync. Currently: PullPending -> [Accept, Cancel]; PullAccepted -> [Start, Cancel]; PullPulling -> [Fulfill, ReportIssue]; PullIssue -> [Retry, Cancel]; PullFulfilled and PullCancelled -> []. If the backend topology changes, this needs an update.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "validActions \"PullPending\"", "verifyExpected": "[ActionAccept, ActionCancel]", "verifyPasses": null },
+        { "verifyExpr": "validActions \"PullFulfilled\"", "verifyExpected": "[]", "verifyPasses": null },
+        { "verifyExpr": "validActions \"UnknownState\"", "verifyExpected": "[]", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Types/Stock.purs", "srcLine": 73 }
+    },
+    {
+      "annName": "capabilitiesForRole",
+      "annModule": "Types.Auth",
+      "annIntent": "Pure role -> capabilities mapping. MUST stay in sync with backend Types.Auth.capabilitiesForRole. The frontend currently uses this in two places: (1) immediately after login, when devUserCapabilities is computed from the local DevUser record; (2) as a fallback in resolveCapabilities when backend caps are not yet loaded. Drift between this and the backend version is silently bug-prone — the backend is authoritative for security; this is for UI gating only.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "capabilitiesForRole Admin", "verifyExpected": "all 18 capabilities = true", "verifyPasses": null },
+        { "verifyExpr": "capabilitiesForRole Customer", "verifyExpected": "only capCanViewInventory = true, all others false", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Types/Auth.purs", "srcLine": 132 }
+    },
+    {
+      "annName": "compareMenuItems",
+      "annModule": "Types.Inventory",
+      "annIntent": "Compare two MenuItems by an ordered list of (SortField, SortOrder) tuples from LiveViewConfig. Walks the priority list; first non-EQ result wins. Descending inverts the natural Ordering via invertOrdering. Used by renderInventory for the live view sort order.",
+      "annEffects": [],
+      "annVerify": [
+        { "verifyExpr": "compareMenuItems cfg{sortFields=[(SortByQuantity, Descending)]} highQty lowQty", "verifyExpected": "LT (because Descending inverts)", "verifyPasses": null },
+        { "verifyExpr": "compareMenuItems cfg{sortFields=[(SortByName, Ascending)]} aItem bItem", "verifyExpected": "LT", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/Types/Inventory.purs", "srcLine": 567 }
+    },
+    {
+      "annName": "fetchInventory",
+      "annModule": "API.Inventory",
+      "annIntent": "Inventory fetch dispatcher. Selects backend based on QueryMode: JsonMode reads inventory.json directly (legacy/standalone mode); HttpMode hits /inventory via authGet; GqlMode hits /graphql/inventory via readInventoryGql. defaultViewConfig.mode is GqlMode, so this is the production path. Removing morpheus-graphql from the backend requires switching this default to HttpMode first.",
+      "annEffects": ["Aff", "Fetch"],
+      "annVerify": [
+        { "verifyExpr": "fetchInventory uid cfg JsonMode", "verifyExpected": "GET inventory.json (no auth)", "verifyPasses": null },
+        { "verifyExpr": "fetchInventory uid cfg HttpMode", "verifyExpected": "GET /inventory with cookie+bearer", "verifyPasses": null },
+        { "verifyExpr": "fetchInventory uid cfg GqlMode", "verifyExpected": "POST /graphql/inventory with inventory query", "verifyPasses": null }
+      ],
+      "annLocation": { "srcFile": "frontend/src/API/Inventory.purs", "srcLine": 56 }
+    }
+  ],
+  "regDecisions": [
+    {
+      "decName": "HttpOnlyCookieAuthOnly",
+      "decModule": "API.Auth + API.Request + Server.Cookie (backend)",
+      "decDate": "2026-02-14",
+      "decReason": [
+        "All cross-origin fetch calls use credentials: Include so the browser sends the cheeblr_session HttpOnly cookie automatically.",
+        "The backend's cookieAuthMiddleware lifts the cookie into a synthetic Authorization: Bearer header before Servant handlers see the request, so existing handler signatures (Maybe Text bearer) stay unchanged.",
+        "API.Request still sends Authorization: Bearer <userId> in the header, but the backend overwrites it from the cookie. The bearer header is currently dead weight kept only to avoid a sweep across every API.* helper. A future cleanup pass should remove all Authorization: Bearer header construction from API.Request and just rely on the cookie.",
+        "Services.AuthService.persistToken/loadToken/clearToken are stub implementations (pure unit / pure Nothing). The localStorage path is intentionally dead — re-wiring it would defeat the XSS protection."
+      ],
+      "decChosen": "HttpOnly cookie via credentials: Include; bearer header retained as no-op",
+      "decRejected": ["localStorage bearer tokens", "sessionStorage", "split: cookie for refresh + bearer for access"],
+      "decImpacts": ["login", "validateSession", "authGet", "authPostChecked"],
+      "decLocation": { "srcFile": "frontend/src/API/Request.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "DekuDoForReactiveUiNotReact",
+      "decModule": "Pages.* + UI.*",
+      "decDate": "2025-08-20",
+      "decReason": [
+        "Deku's Nut + Poll model gives FRP-style reactivity without VDOM diffing; updates are surgical and predictable.",
+        "Deku.do + useState/useHot is the canonical pattern. useHot is preferred for state that should not trigger initial render of subscribers; useState is fine for state that should fire on subscribe.",
+        "(<#~>) is the operator for binding a Poll-of-data to dynamic Nut content, equivalent to React's conditional rendering.",
+        "Trade-off: smaller community than React, fewer ready-made components, idiosyncratic patterns (e.g. <|> for seeding Polls). LLMs trained on React will produce broken code if not told to use Deku.",
+        "Reaffirmed because the alternative is TypeScript+React, which Harry has explicitly rejected on every axis that matters."
+      ],
+      "decChosen": "Deku + FRP.Poll + Yoga.JSON",
+      "decRejected": ["React", "Halogen", "Concur", "purescript-flame"],
+      "decImpacts": [],
+      "decLocation": { "srcFile": "frontend/src/Main.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "CentralizedAsyncLoadingInMain",
+      "decModule": "Main",
+      "decDate": "2026-03-22",
+      "decReason": [
+        "Earlier callback-based loading scattered fetch logic across every page module, with no way to cancel in-flight requests on route change.",
+        "Now: every route change runs through a single matcher function in Main. Previous fiber is killed via killFiber; new loaders fan out via parSequence_.",
+        "Each page receives its data as a Poll (e.g. Poll EditItemStatus), allowing pages to render Loading/Error/Ready states uniformly.",
+        "Caveat: matcher logic is dense and undocumented in source. Anyone reading Main.purs needs to know that route handling = kill old fiber + parSequence_ new loaders + push to per-page Polls."
+      ],
+      "decChosen": "Single matcher in Main; per-route parSequence_ over fiber-cancellable loaders",
+      "decRejected": ["per-page useEffect equivalents", "react-query-style cache layer", "Halogen-style component lifecycle"],
+      "decImpacts": ["main", "loadTxPageData"],
+      "decLocation": { "srcFile": "frontend/src/Main.purs", "srcLine": 153 }
+    },
+    {
+      "decName": "DevUserShimAfterLogin",
+      "decModule": "Config.Auth + Pages.Login + Main",
+      "decDate": "2026-02-20",
+      "decReason": [
+        "After successful login, the frontend reads sessionRole from the backend's SessionResponse and calls findDevUserByRole to resolve a hardcoded DevUser record (one of customer-1, cashier-1, manager-1, admin-1).",
+        "All subsequent authState carries this dev user — meaning auUserId, auLocationId, auEmail are dev-record values, not the real backend user's values.",
+        "Authentication is still backend-driven via cookie; this only affects which UUID the frontend uses for client-generated values like transactionEmployeeId.",
+        "WORKS FOR: development with the four canonical dev users, and production where a single real user maps cleanly to a single role.",
+        "BREAKS FOR: any deployment with multiple users sharing a role. Two cashiers will both appear as cashier-1 in transactionEmployeeId, breaking per-cashier audit trails.",
+        "This is a known shortcut, not a permanent design. Plan: replace findDevUserByRole with a real AuthenticatedUser materialized from SessionResponse + a /auth/me extension that returns the full user record."
+      ],
+      "decChosen": "Hardcoded dev-user shim; real fix deferred",
+      "decRejected": ["full AuthenticatedUser from /auth/me", "send full user record in login response", "no shim, fail closed"],
+      "decImpacts": ["main", "login"],
+      "decLocation": { "srcFile": "frontend/src/Config/Auth.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "PerBrowserRegisterIdInLocalStorage",
+      "decModule": "Services.RegisterService",
+      "decDate": "2025-10-04",
+      "decReason": [
+        "A POS register is physically tied to a station (terminal). Each browser instance acts as one register.",
+        "register_id is generated on first launch and persisted to localStorage; subsequent launches reuse it. This is the only piece of state that survives a logout because it's tied to the device, not the user.",
+        "On startup, getOrInitLocalRegister GETs the register from the backend; if missing, creates+opens it with starting cash 0. If present, uses it as-is regardless of open/closed state (initLocalRegister is the variant that forcibly reopens).",
+        "Trade-off: clearing browser storage orphans the backend register row. There is no UI to reassign a register to a new device; an admin must intervene."
+      ],
+      "decChosen": "register_id persisted in localStorage; backend register lifecycle managed via crem on first contact",
+      "decRejected": ["server-assigned register per session", "register selector at login", "register_id in URL path"],
+      "decImpacts": ["getOrInitLocalRegister"],
+      "decLocation": { "srcFile": "frontend/src/Services/RegisterService.purs", "srcLine": 21 }
+    },
+    {
+      "decName": "FinanceMoneyDiscreteUSD",
+      "decModule": "Types.Transaction + Services.* + Utils.Money",
+      "decDate": "2025-07-15",
+      "decReason": [
+        "All monetary values use Discrete USD (cents) from purescript-finance, optionally wrapped in DiscreteMoney USD from a custom Extended module.",
+        "Wire format is Int cents for compatibility with the backend's PostgreSQL INTEGER columns (txSubtotal, etc.). WriteForeign instances unwrap to Int.",
+        "Number is forbidden for monetary values. Floating-point arithmetic on currency is a known footgun; the type system is the cheapest defense.",
+        "Tax rate is the one place Number leaks in (taxRate :: Number in TaxRecord), with conversion via Int.floor (cents * rate). The truncation direction is consistent with how the backend computes tax.",
+        "Caveat: dollarAmount validation in Utils.Validation accepts Number directly, so a user typing 12.999 is silently floored to 1299 cents at validateMenuItem. Documented but not fixed."
+      ],
+      "decChosen": "Discrete USD (cents) for all money; Number only for tax rates",
+      "decRejected": ["Number throughout (precision risk)", "BigInt", "string-formatted decimals at the type level"],
+      "decImpacts": ["addItemToCart", "calculateCartTotals", "startTransaction", "validateMenuItem"],
+      "decLocation": { "srcFile": "frontend/src/Types/Transaction.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "HashRoutingNotHistoryApi",
+      "decModule": "Route + Main",
+      "decDate": "2025-09-10",
+      "decReason": [
+        "Hash-based routing (/#/edit/<uuid>) does not require server-side rewrites — every URL serves the same index.html.",
+        "Deployment story is dead simple: a single static file plus the API. No nginx try_files trickery, no SPA fallback config.",
+        "Trade-off: shareable URLs include the # which some users find ugly. Acceptable for an internal POS app."
+      ],
+      "decChosen": "routing-duplex + Routing.Hash",
+      "decRejected": ["History API + server fallback", "no client routing (full page reloads)"],
+      "decImpacts": ["main", "nav"],
+      "decLocation": { "srcFile": "frontend/src/Route.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "ServerAuthoritativeCart",
+      "decModule": "Services.Cart + UI.Transaction.CreateTransaction",
+      "decDate": "2025-12-02",
+      "decReason": [
+        "Every cart mutation (add item, remove item, add payment, remove payment, finalize, void, clear) hits the backend. Local cart state is a cache, not a source of truth.",
+        "Reservations live server-side in inventory_reservation. The frontend never decrements local quantities — quantity is recomputed by Infrastructure.AvailabilityRelay and pushed via the WebSocket feed.",
+        "Means: every Add click costs a round trip. For dispensary scale (single-digit items per transaction, sub-second roundtrips on LAN), this is fine.",
+        "Means: optimistic updates are NOT done. UI gates the Add button with isCheckingInventory and only updates on server response."
+      ],
+      "decChosen": "Server-authoritative cart; UI is a cache; reservations in DB",
+      "decRejected": ["optimistic UI with reconciliation", "client-side cart with batch submit at checkout"],
+      "decImpacts": ["addItemToCart", "removeItemFromCart", "createTransaction_UI"],
+      "decLocation": { "srcFile": "frontend/src/Services/Cart.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "SsAndWsForRealTimeNoLongPolling",
+      "decModule": "Pages.Admin.* + Pages.Stock.Interface + Utils.SSE + Utils.WebSocket",
+      "decDate": "2026-01-10",
+      "decReason": [
+        "Admin dashboards (logs, events) use SSE — server-to-client only, automatic browser reconnect, plays well with HTTP/2.",
+        "Public ATProto-style inventory feed uses WebSocket — protocol parity with ATProto's subscribeRepos and the Lexicon spec mandates WS.",
+        "Both transports auto-authenticate via cookie on same-origin connections. Bearer token is tacked onto SSE URLs (?authorization=Bearer+...) because EventSource cannot set headers — the cookie still authenticates, the URL bearer is redundant but harmless.",
+        "Foreign imports for both because purescript-web-events lacks a clean wrapper for either. Wrapped in Utils.SSE / Utils.WebSocket with Effect Unit close handlers — cleanup is the caller's responsibility."
+      ],
+      "decChosen": "SSE for dashboard feeds; WS for ATProto-style inventory feed",
+      "decRejected": ["long polling", "single WS for everything", "GraphQL subscriptions"],
+      "decImpacts": ["openSSE", "openWebSocket", "feedMonitor", "logViewer", "stockInterface"],
+      "decLocation": { "srcFile": "frontend/src/Utils/SSE.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "TwoTierFormValidation",
+      "decModule": "UI.Inventory.ItemForm + Types.Inventory + Utils.Validation",
+      "decDate": "2025-11-18",
+      "decReason": [
+        "Per-field validation (nonEmpty, alphanumeric, dollarAmount, percentage, validUrl) gates the submit button via isFormValid. This gives instant red-text feedback on bad input.",
+        "Full-record validation (validateMenuItem) runs at submit time. Uses Data.Validation.Semigroup V to accumulate ALL errors at once, not just the first. Errors are joined with comma into a single Left String.",
+        "Both layers are necessary: per-field catches typos early; full-record catches cross-field issues (e.g. SKU malformed in a way regex didn't catch).",
+        "Means there are TWO sources of truth for what counts as valid. They must agree. validateMenuItem is the authoritative one because it builds the typed MenuItem; per-field rules are for UX."
+      ],
+      "decChosen": "Per-field rules (UX) + full-record V validation (correctness)",
+      "decRejected": ["per-field only", "submit-time only", "single Either-based validator with first-error semantics"],
+      "decImpacts": ["itemForm", "validateMenuItem"],
+      "decLocation": { "srcFile": "frontend/src/UI/Inventory/ItemForm.purs", "srcLine": 1 }
+    },
+    {
+      "decName": "MorpheusGqlAsDefaultInventoryFetch",
+      "decModule": "API.Inventory + GraphQL.API.Inventory + Config.LiveView",
+      "decDate": "2025-08-30",
+      "decReason": [
+        "Historical default — chosen when GraphQL was an active part of the architecture.",
+        "Currently the only consumer of /graphql/inventory in production. Backend KeepMorpheusGraphQLPendingRemoval decision flagged morpheus for removal but did not change the frontend default.",
+        "To remove morpheus from the backend cleanly, defaultViewConfig.mode must be flipped to HttpMode first, then a release window passed, then the GraphQL.* modules and the morpheus dep can be deleted in one commit.",
+        "Today this works because the backend resolves /graphql/inventory equivalently to /inventory. There's no functional reason to prefer one over the other from the frontend's perspective."
+      ],
+      "decChosen": "GqlMode (legacy default, removal blocked on coordinated frontend+backend change)",
+      "decRejected": ["HttpMode default now", "remove morpheus immediately"],
+      "decImpacts": ["fetchInventory"],
+      "decLocation": { "srcFile": "frontend/src/Config/LiveView.purs", "srcLine": 16 }
+    },
+    {
+      "decName": "MirroredCapabilitiesForUiGating",
+      "decModule": "Types.Auth + UI.Components.AuthGuard",
+      "decDate": "2025-09-25",
+      "decReason": [
+        "UI.Components.AuthGuard.whenCapable / whenCanCreateItem etc. wrap Deku.Hooks.guard around capability predicates so role-restricted UI vanishes for unauthorized users.",
+        "Capabilities are duplicated between backend Types.Auth.capabilitiesForRole and frontend Types.Auth.capabilitiesForRole. Both must agree.",
+        "Backend is authoritative for security — every API call is checked against backend caps regardless of UI state. The frontend version exists ONLY to avoid showing buttons the user can't use.",
+        "Drift risk: adding a new capability requires touching both files. There's no codegen, no shared schema. This is the classic 'two sources of truth' problem; the alternative (codegen) is more infra than it's worth at current scale."
+      ],
+      "decChosen": "Manual mirror; backend authoritative",
+      "decRejected": ["codegen capabilities from a shared schema (e.g. tidy-codegen)", "fetch capabilities-list from server on login"],
+      "decImpacts": ["capabilitiesForRole"],
+      "decLocation": { "srcFile": "frontend/src/Types/Auth.purs", "srcLine": 1 }
+    }
+  ]
+}
