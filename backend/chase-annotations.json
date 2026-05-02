@@ -1,0 +1,1032 @@
+{
+  "version": 1,
+  "modules": {
+
+    "DB.Auth": {
+      "decisions": [
+        {
+          "name": "OpaqueRotatingSessionTokens",
+          "what": "PostgreSQL-backed opaque tokens with per-request rotation check",
+          "why": [
+            "JWTs cannot be revoked without a denylist, defeating their statelessness benefit.",
+            "PostgreSQL is already in the stack, so opaque server-side tokens add no infrastructure.",
+            "Rotation is lazy: cookieAuthMiddleware checks token_rotated_at on every authenticated request and rotates if older than cfgTokenRotationSecs.",
+            "Old token is invalidated immediately on rotation; no grace window. Concurrent in-flight requests race; acceptable for POS where retries are immediate."
+          ],
+          "affects": ["createSession", "lookupSession", "rotateSessionToken", "getSessionRotatedAt"]
+        },
+        {
+          "name": "Argon2idWithFixedParameters",
+          "what": "Argon2id m=65536 t=3 p=4, 32-byte output, 16-byte salt, PHC-encoded",
+          "why": [
+            "OWASP-recommended default for new password hashing.",
+            "Parameters tuned for Raspberry Pi 5 + Postgres production target.",
+            "Parameters are NOT read from the PHC string at verify time. argonOpts is a global constant; changing it silently invalidates every existing hash."
+          ],
+          "affects": ["argonOpts", "hashPassword", "verifyPassword", "buildPHC"]
+        },
+        {
+          "name": "HardcodedSessionTtl",
+          "what": "8h expiry hardcoded in createSession AND rotateSessionToken",
+          "why": [
+            "AppConfig.cfgSessionTtlSeconds is loaded but never threaded here.",
+            "Setting SESSION_TTL_SECS env var has no effect on actual session lifetime.",
+            "Either thread the config through (preferred) or delete the dead config key."
+          ],
+          "affects": ["createSession", "rotateSessionToken"]
+        }
+      ],
+      "invariants": {
+        "argonOpts": [
+          "iterations=3, memory=64MiB, parallelism=4, Argon2id v1.3",
+          "tuning is deliberate; lowering requires re-running threat model"
+        ],
+        "b64Enc": [
+          "standard base64 with trailing '=' stripped",
+          "asymmetric with b64Dec, which re-pads on decode"
+        ],
+        "buildPHC": [
+          "PHC format: $argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>",
+          "params come from argonOpts at hash time; mixing old hashes with new param sets requires migration since verifyPassword does NOT read params from PHC"
+        ],
+        "hashPassword": {
+          "intent": "Hash plaintext with Argon2id and return PHC-formatted output",
+          "effects": ["Entropy", "IO"],
+          "notes": [
+            "16-byte salt from getEntropy (kernel-backed CSPRNG)",
+            "throws via throwCryptoErrorIO on argon2 failure; no Maybe path",
+            "synchronous, ~100ms+ on commodity hardware (do not call on hot paths)"
+          ],
+          "spec": [
+            { "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"hunter2\"", "expected": "True" },
+            { "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"wrong\"",  "expected": "False" }
+          ]
+        },
+        "verifyPassword": {
+          "intent": "Pure: parse PHC, recompute Argon2id with embedded salt and project's argonOpts, compare to embedded hash",
+          "notes": [
+            "comparison via ByteString Eq; not explicitly time-hardened",
+            "returns False silently on malformed PHC string; no exception",
+            "returns False on argon2 failure; no exception",
+            "parameters are NOT read from the PHC string. argonOpts is fixed at module level. Changing argonOpts invalidates all existing hashes."
+          ]
+        },
+        "hashTokenBytes": [
+          "SHA-256 in lowercase hex over raw token bytes",
+          "raw token bytes are never persisted; only this hash is stored"
+        ],
+        "encodeTokenBytes": [
+          "URL-safe base64, '=' stripped",
+          "decodeTokenText re-pads symmetrically"
+        ],
+        "createAuthTables": {
+          "intent": "Idempotent DDL for users, sessions, login_attempts",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS",
+            "ALTER TABLE for token_rotated_at runs on every startup including fresh DBs (no-op then)",
+            "creates partial index on token_hash WHERE NOT revoked",
+            "no cleanup index on login_attempts; that table grows unbounded"
+          ]
+        },
+        "createUser": {
+          "intent": "Insert a new user with a hashed password",
+          "effects": ["DBPool", "Entropy", "IO"],
+          "notes": [
+            "calls hashPassword (synchronous Argon2; ~100ms+)",
+            "Abort on conflict: throws if username already exists",
+            "no email uniqueness constraint at DB level",
+            "newPassword is plaintext in NewUser; do not log it"
+          ]
+        },
+        "lookupUserByUsername": [
+          "filters on isActive; deactivated users are invisible to login",
+          "returns Nothing for 0 rows OR multiple rows (defensive against duplicate-row scenarios)"
+        ],
+        "createSession": {
+          "intent": "Create a new session row with an 8h expiry, return raw token",
+          "effects": ["DBPool", "Entropy", "IO"],
+          "notes": [
+            "32 random bytes from getEntropy",
+            "expires_at = now + 8h, HARDCODED; cfgSessionTtlSeconds is NOT consulted here",
+            "raw token returned to caller; only SHA-256 stored in DB",
+            "tokenRotatedAt initialized to now"
+          ],
+          "spec": [
+            { "input": "createSession pool uid Nothing \"agent\" \"1.2.3.4\"", "expected": "(token, now + 8h)" }
+          ]
+        },
+        "lookupSession": {
+          "intent": "Resolve a raw bearer token to (SessionRow, UserRow) and bump last_seen_at",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "SIDE EFFECT: updates last_seen_at on every successful lookup (write-on-read)",
+            "returns Nothing on multi-row result (defensive against hash collision)",
+            "filters on NOT revoked AND expires_at > now AND user.isActive",
+            "called on every authenticated request via cookieAuthMiddleware; budget the write accordingly"
+          ],
+          "spec": [
+            { "input": "lookupSession pool validToken",     "expected": "Just (sessRow, userRow)" },
+            { "input": "lookupSession pool revokedToken",   "expected": "Nothing" },
+            { "input": "lookupSession pool expiredToken",   "expected": "Nothing" },
+            { "input": "lookupSession pool malformedToken", "expected": "Nothing" }
+          ]
+        },
+        "getSessionRotatedAt": [
+          "read-only check of when a session's token was last rotated",
+          "does NOT update last_seen_at (lookupSession owns that)",
+          "exists separately from lookupSession to avoid write amplification on every rotation check"
+        ],
+        "rotateSessionToken": {
+          "intent": "Mint a new opaque token for an existing session, invalidate the old one immediately",
+          "effects": ["DBPool", "Entropy", "IO"],
+          "notes": [
+            "issues new 8h expiry, HARDCODED; cfgSessionTtlSeconds ignored here too",
+            "old token hash overwritten; old token invalid immediately",
+            "race: concurrent rotation requests may collide on tokenHash UNIQUE constraint; not handled"
+          ]
+        },
+        "cleanupExpiredSessions": [
+          "deletes expired sessions AND revoked sessions older than 24h",
+          "the 24h grace window is HARDCODED, not driven by config",
+          "called from sessionCleanupWorker in App.hs"
+        ],
+        "revokeSession": [
+          "soft-delete: sets revoked=true; row remains for audit",
+          "actual deletion happens in cleanupExpiredSessions after 24h grace"
+        ],
+        "revokeAllUserSessions": [
+          "bulk soft-delete; intended for password change or compromise",
+          "filters out already-revoked rows to avoid touching audit timestamps"
+        ],
+        "recordLoginAttempt": [
+          "always inserts; no deduplication",
+          "table grows unbounded; no automated cleanup"
+        ],
+        "recentFailedAttempts": [
+          "counts failed attempts where username AND ip both match within window",
+          "different from recentFailedAttemptsByIp (ip-only)"
+        ],
+        "clearRateLimitForIp": [
+          "DELETE, not soft delete",
+          "wipes ALL attempts for the IP including successful ones (loses audit data)",
+          "admin-only operation; bypasses limits by removing data, not by whitelisting"
+        ]
+      }
+    },
+
+    "App": {
+      "decisions": [
+        {
+          "name": "HttpOnlyCookiesNotLocalStorage",
+          "what": "HttpOnly + Secure + SameSite=Strict cookie, lifted to bearer in middleware",
+          "why": [
+            "localStorage tokens are readable by any XSS payload; HttpOnly cookies are not.",
+            "Cookie carries SameSite=Strict + Secure + Path=/ + Max-Age=28800.",
+            "cookieAuthMiddleware translates the cookie into Authorization: Bearer so existing Servant Maybe Text bearer extraction works unchanged.",
+            "Middleware blindly overwrites any client-supplied Authorization header. Intentional but reconsider if a non-browser client ever needs to send its own bearer."
+          ],
+          "affects": ["cookieAuthMiddleware", "extractCookieToken", "checkAndRotate"]
+        },
+        {
+          "name": "MiddlewareStackOrderMatters",
+          "what": "tracing > securityHeaders > handleOptions > reflectOrigin > cookieAuth > corsApp",
+          "why": [
+            "OPTIONS short-circuits before auth (browsers preflight without cookies).",
+            "reflectOrigin is the LAST CORS-touching layer, so it has the final say on Allow-Origin.",
+            "cookieAuth is innermost so it sees a clean request and can prepend Set-Cookie that survives outer layers.",
+            "In production, ALLOWED_ORIGIN must be set; the reflect path is for development only."
+          ],
+          "affects": ["runWithEnv", "cookieAuthMiddleware", "handleOptionsMiddleware", "reflectOriginMiddleware", "securityHeadersMiddleware"]
+        },
+        {
+          "name": "BackgroundWorkersForkedAtStartup",
+          "what": "AvailabilityRelay and sessionCleanupWorker forked unsupervised",
+          "why": [
+            "If either thread dies, the parent does not notice until the next cleanup interval (or never, for the relay).",
+            "Acceptable for a single-tenant POS where the operator restarts on visible failure.",
+            "Replace with a supervisor tree if multi-tenant."
+          ],
+          "affects": ["runWithEnv", "sessionCleanupWorker"]
+        }
+      ],
+      "invariants": {
+        "buildEnv": {
+          "intent": "Allocate runtime resources (broadcasters, metrics, log env, DB pool, availability state)",
+          "effects": ["IO"],
+          "notes": [
+            "creates 4 broadcasters, 1 metrics record, 1 availability TVar",
+            "initializes Katip BEFORE the DB pool; smoke-test failures predate broadcast scribe registration",
+            "envLogNS = mempty at construction; per-component namespaces added at log call sites"
+          ]
+        },
+        "runWithEnv": {
+          "intent": "Wire the WAI middleware stack and run Warp with optional TLS",
+          "effects": ["IO"],
+          "notes": [
+            "creates ALL DB tables on every startup (idempotent)",
+            "registers broadcast scribe AFTER initLogging; first startup messages do not reach the broadcaster",
+            "forks AvailabilityRelay; if it dies, prints to stderr and continues degraded",
+            "forks sessionCleanupWorker; first cleanup runs after intervalHours, NOT immediately",
+            "TLS fallback is silent: USE_TLS=true with missing cert/key drops to HTTP and continues"
+          ]
+        },
+        "cookieAuthMiddleware": {
+          "intent": "Lift cheeblr_session cookie to Authorization: Bearer header, lazily rotate stale tokens",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "synthesizes Authorization: Bearer <token> BEFORE calling the inner app",
+            "if the token rotates mid-request, prepends Set-Cookie to the response",
+            "called on EVERY request, including OPTIONS and unauthenticated routes",
+            "no-op when no cheeblr_session cookie is present",
+            "blindly overwrites any client-supplied Authorization header"
+          ],
+          "spec": [
+            { "input": "request without cookie",       "expected": "passes through unchanged" },
+            { "input": "request with fresh cookie",    "expected": "Authorization: Bearer <token> injected, no Set-Cookie" },
+            { "input": "request with stale cookie",    "expected": "Authorization: Bearer <newToken> injected, Set-Cookie: cheeblr_session=<newToken>" }
+          ]
+        },
+        "extractCookieToken": [
+          "reads from Cookie request header only (not query string, not body)",
+          "tolerates other cookies in the same header; cheeblr_session selected by name"
+        ],
+        "checkAndRotate": [
+          "issues a new token if (now - tokenRotatedAt) > threshold",
+          "does NOT update last_seen_at (lookupSession owns that)",
+          "returns Nothing if the session is missing (caller treats as 'no rotation needed')",
+          "race: two concurrent requests can both rotate; second wins, first response carries a stale token"
+        ],
+        "sessionCleanupWorker": [
+          "first iteration waits intervalHours then cleans; never runs at startup",
+          "exceptions caught and printed to stderr; loop continues",
+          "intervalHours is in HOURS; multiplied by 3600 internally"
+        ],
+        "buildCsp": {
+          "intent": "Pure: build the Content-Security-Policy header value",
+          "notes": [
+            "default-src/script-src/style-src all 'self' (no inline, no eval)",
+            "img-src defaults to 'https:' if cfgImgSrcDomain is Nothing",
+            "rewrites https:// to wss:// (and http:// to ws://) for connect-src",
+            "frame-ancestors 'none' (cannot be embedded as iframe)"
+          ],
+          "spec": [
+            { "input": "buildCsp \"https://api.example.com\" Nothing",                       "expected": "...connect-src 'self' https://api.example.com wss://api.example.com..." },
+            { "input": "buildCsp \"http://localhost:8080\" (Just \"https://cdn.example.com\")", "expected": "...img-src 'self' data: https://cdn.example.com..." }
+          ]
+        },
+        "securityHeadersMiddleware": [
+          "appends headers via response header list (<>); does not overwrite if already present",
+          "HSTS, X-Content-Type-Options, X-Frame-Options DENY, Referrer-Policy, CSP all set unconditionally",
+          "HSTS max-age=1y with includeSubDomains; do NOT enable in production until the domain is final"
+        ],
+        "handleOptionsMiddleware": [
+          "short-circuits OPTIONS with status 200 BEFORE reaching application logic",
+          "Access-Control-Allow-Origin reflected from request Origin if cfgAllowedOrigin is Nothing",
+          "Allow-Methods and Allow-Headers are HARDCODED; route-specific CORS is not supported",
+          "Max-Age=86400 (24h) hardcoded"
+        ],
+        "reflectOriginMiddleware": [
+          "strips Access-Control-Allow-{Origin,Credentials} from response, then re-adds with reflected request Origin",
+          "runs on EVERY response, including non-CORS requests",
+          "Allow-Credentials is always 'true'; downstream cannot opt out"
+        ]
+      }
+    },
+
+    "Server.Auth": {
+      "decisions": [
+        {
+          "name": "TwoTierLoginRateLimit",
+          "what": "Per-(username, ip) AND per-ip windowed counters in PostgreSQL",
+          "why": [
+            "Per-credential limit (5/10min) blocks credential-stuffing on a single account.",
+            "Per-IP limit (20/10min) blocks credential-stuffing across many accounts from one source.",
+            "Windows are HARDCODED in this module, NOT taken from cfgRateLimitWindow / cfgRateLimitMax. Config values are dead code; either wire them up or delete them.",
+            "Cheap at POS scale; would need Redis-backed counters at internet scale."
+          ],
+          "affects": ["perCredentialLimit", "perIpLimit", "rateLimitWindow", "checkLoginRateLimit"]
+        },
+        {
+          "name": "FailFirstFastReturn",
+          "what": "Rate limit BEFORE password check, password check BEFORE session creation, recordLoginAttempt on every outcome",
+          "why": [
+            "Rate-limit-first prevents using password-verify timing (Argon2 is slow) as a username-enumeration oracle.",
+            "recordLoginAttempt always means even successful logins show in the audit table.",
+            "Missing-user case still records a failed attempt (closes one enumeration channel)."
+          ],
+          "affects": ["loginHandler", "checkLoginRateLimit"]
+        }
+      ],
+      "invariants": {
+        "perCredentialLimit": [
+          "5 failures per (username, ip) within rateLimitWindow",
+          "HARDCODED; AppConfig.cfgRateLimitMax is loaded but not consulted here"
+        ],
+        "perIpLimit": [
+          "20 failures per ip within rateLimitWindow (any usernames)",
+          "HARDCODED; not driven by config"
+        ],
+        "rateLimitWindow": [
+          "10 minutes; HARDCODED",
+          "AppConfig.cfgRateLimitWindow is loaded but ignored here"
+        ],
+        "checkLoginRateLimit": {
+          "intent": "Pre-flight rate limit before a login attempt; throws err429 with Retry-After: 600",
+          "effects": ["DBPool", "Error ServerError"],
+          "notes": [
+            "checks per-credential FIRST, then per-ip; first to trip wins",
+            "does NOT consume budget; recordLoginAttempt is the only writer"
+          ],
+          "spec": [
+            { "input": "after 5 failures for (alice, 1.2.3.4)", "expected": "err429 Too many failed login attempts" },
+            { "input": "after 4 failures",                       "expected": "()" }
+          ]
+        },
+        "loginHandler": {
+          "intent": "Validate credentials, mint a session, set the cheeblr_session cookie, record the attempt",
+          "effects": ["DBPool", "Katip.LogEnv", "Error ServerError", "IO"],
+          "notes": [
+            "rate-limit check runs BEFORE password verification (avoids Argon2 timing oracle)",
+            "missing-user case still records a failed attempt (closes one enumeration channel)",
+            "always recordLoginAttempt regardless of outcome; success rows exist for audit",
+            "User-Agent and X-Real-IP default to 'unknown' if absent",
+            "401 body is GENERIC for both bad-username and bad-password (no enumeration leak)"
+          ],
+          "spec": [
+            { "input": "valid credentials",                "expected": "Headers (Set-Cookie cheeblr_session=...) LoginResponse" },
+            { "input": "wrong password",                   "expected": "err401 Invalid username or password" },
+            { "input": "unknown username",                 "expected": "err401 Invalid username or password" },
+            { "input": "after 5 (username, ip) failures",  "expected": "err429 with Retry-After: 600" }
+          ]
+        },
+        "logoutHandler": [
+          "revokes session by id (not by token); idempotent on repeat",
+          "always sets clearSessionCookie even if revoke fails"
+        ],
+        "meHandler": [
+          "returns capabilities derived from role; no per-user override path exists",
+          "side effect: lookupSession bumps last_seen_at"
+        ],
+        "listUsersHandler": [
+          "STUB: returns [] regardless of state, even when caller is authorized",
+          "the authorization check is real; only the result list is fake"
+        ],
+        "createUserHandler": [
+          "calls hashPassword synchronously (~100ms+ via Argon2)",
+          "no transactional guarantee: createUser commits, then a SECOND DB read fetches the row",
+          "if the second read fails the user EXISTS in DB but the handler returns 500",
+          "no email format validation; accepts any string or Nothing"
+        ],
+        "parseRoleText": [
+          "case-sensitive; defaults UNKNOWN strings silently to Cashier",
+          "'admin' lowercase becomes Cashier with no error"
+        ]
+      }
+    },
+
+    "DB.Transaction": {
+      "decisions": [
+        {
+          "name": "ParseAndDecodeFunctionsLiveInDBModule",
+          "what": "DB.Transaction owns all wire decoders; Types.Transaction stays pure",
+          "why": [
+            "Types.Transaction is imported by frontend-bound modules that must not transitively pull in Rel8 or hasql.",
+            "Rel8 row types live in DB.Schema; conversions (txRowToDomain, hydrateTx, insertTransactionItem) live in DB.Transaction.",
+            "Pure parsers for status/type/payment-method strings also live here, since they exist solely to round-trip with text columns."
+          ],
+          "affects": ["txRowToDomain", "hydrateTx", "parseTransactionStatus", "parsePaymentMethod", "parseTaxCategory"]
+        }
+      ],
+      "invariants": {
+        "createTransactionTables": [
+          "idempotent CREATE TABLE IF NOT EXISTS for transaction, register, inventory_reservation, transaction_item, transaction_tax, discount, payment_transaction",
+          "ON DELETE CASCADE chains: tx -> items -> taxes/discounts; tx -> payments",
+          "no migration support; schema changes require manual ALTER"
+        ],
+        "hydrateTx": {
+          "intent": "Load a Transaction by querying transaction_item, transaction_tax, discount, and payment_transaction child tables, then assembling via txRowToDomain",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "N+1 by design: one items query, then per-item tax and discount queries",
+            "acceptable for POS-scale (single-digit items per transaction)"
+          ]
+        },
+        "createTransaction": [
+          "inserts the transaction row, then inserts items and payments via insertTransactionItem and insertPaymentTransaction",
+          "NOT a single transaction at the SQL level; partial failures leave orphan items/payments",
+          "totals on the row are taken AS GIVEN by the caller; no recomputation here"
+        ],
+        "voidTransaction": [
+          "sets status='VOIDED', is_voided=true, void_reason; does NOT release reservations",
+          "reservation release is the caller's responsibility (Service.Transaction.voidTx + StockDb.cancelPullsForTransaction)"
+        ],
+        "refundTransaction": {
+          "intent": "Create a NEW Transaction row with negated amounts pointing back at the original",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "refundId is supplied by the caller (Service.Transaction generates the UUID)",
+            "original tx is marked is_refunded=true with refund_reason; refund tx has reference_transaction_id pointing to original",
+            "negation walks ALL items and payments via negateTransactionItem / negatePaymentTransaction"
+          ]
+        },
+        "clearTransaction": [
+          "ORDER inside one Session: release reservations, delete payments, delete items, zero totals, status='CREATED'",
+          "preserves the transaction row (id, employee, register) so the cashier resumes on the same transaction",
+          "intended for 'discard cart' flows"
+        ],
+        "finalizeTransaction": {
+          "intent": "Decrement menu_items.quantity for each reserved item and complete the reservations",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "ORDER: query all 'Reserved' reservations for tx; for each, decrement menu_quantity AND mark reservation 'Completed'",
+            "two UPDATEs per item; not transactionally bundled",
+            "after all decrements, status='COMPLETED' and completed=now",
+            "calls getTransactionById at the end to return the hydrated result"
+          ]
+        },
+        "addTransactionItem": {
+          "intent": "Reserve inventory for an item being added to a transaction",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "checks (menu_quantity - SUM(active reservations)) BEFORE inserting",
+            "throws ItemNotFound if the menu sku doesn't exist",
+            "throws InsufficientInventory carrying (sku, requested, available) if not enough",
+            "creates a 'Reserved' row in inventory_reservation; release happens via deleteTransactionItem or clearTransaction"
+          ]
+        },
+        "txRowToDomain": [
+          "pure decoder from Rel8 TransactionRow plus pre-hydrated children to a Types.Transaction",
+          "lives in DB.Transaction (not Types.Transaction) so Types.Transaction has no Rel8/hasql dependency"
+        ],
+        "parseTransactionStatus": [
+          "DEFENSIVE: unknown strings silently default to Created",
+          "round-trips against showStatus; symmetric within this module only",
+          "acts as the boundary between SQL TEXT columns and the typed enum"
+        ],
+        "parsePaymentMethod": [
+          "case-insensitive for canonical methods; 'OTHER:foo' / 'Other:foo' carries arbitrary text payload",
+          "fallback for unrecognized strings is Other s (preserves the original text), NOT a default constructor"
+        ],
+        "showDiscountType": [
+          "loses information: PercentOff/AmountOff/Custom all collapse to their tag without the payload",
+          "discRowAmount and discRowPercent in the row carry the payload; showDiscountType + getDiscountPercent jointly preserve it"
+        ]
+      }
+    },
+
+    "DB.Events": {
+      "decisions": [
+        {
+          "name": "AppendOnlyDomainEventsWithDbRules",
+          "what": "domain_events with INSTEAD NOTHING rules + JSONB payload + indexed (aggregate_id, type, trace_id, location_id)",
+          "why": [
+            "Compliance requires an immutable audit log for every transaction lifecycle step.",
+            "Application-level append-only is bypassable; PostgreSQL RULE-based UPDATE/DELETE blockers are not.",
+            "JSONB payload preserves the full event for replay; structured columns support efficient querying for the admin UI."
+          ],
+          "affects": ["createEventsTables", "insertDomainEvent"]
+        }
+      ],
+      "invariants": {
+        "createEventsTables": [
+          "creates domain_events with seq BIGSERIAL PK, aggregate_id, trace_id, actor_id, location_id, payload JSONB",
+          "creates four indexes: (aggregate_id, seq), (type, seq), trace_id (partial), (location_id, seq) (partial), occurred_at",
+          "creates RULES domain_events_no_update / domain_events_no_delete that turn UPDATE/DELETE into NOTHING",
+          "the rules are guarded by IF NOT EXISTS via DO $$ ... END $$ so re-running the DDL is safe"
+        ],
+        "insertDomainEvent": {
+          "intent": "Append-only insert of one DomainEvent",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "encodes the DomainEvent as JSON via Aeson, casts $7 from text to jsonb in SQL",
+            "id, type, aggregate_id derived via eventMeta dispatching on the event variant",
+            "occurred_at is the application clock at insert time, NOT a DB now()"
+          ]
+        },
+        "queryDomainEvents": [
+          "DESCENDING order by seq with LIMIT; cursor is exclusive (seq > $3)",
+          "all three filter params are OPTIONAL (null aware via SQL null comparison)"
+        ],
+        "eventMeta": [
+          "extracts (type-string, aggregate-id) for indexing",
+          "type strings follow dot.case e.g. 'transaction.created', 'inventory.item_updated'",
+          "aggregate_id is the natural identifier of the affected aggregate (txId, sku, regId)"
+        ]
+      }
+    },
+
+    "Effect.EventEmitter": {
+      "invariants": {
+        "runEventEmitterNoop": [
+          "discards events; useful for tests that want pure logic without event side effects"
+        ],
+        "runEventEmitterCollect": [
+          "collects events into an IORef in REVERSE order (cons onto front)",
+          "callers wanting chronological order must reverse the list"
+        ],
+        "runEventEmitterProd": {
+          "intent": "Production interpreter: persist to domain_events AND publish to broadcaster",
+          "effects": ["DBPool", "IO"],
+          "notes": [
+            "ORDER: insertDomainEvent first, then publish",
+            "the two writes are sequential and NOT transactional",
+            "if publish succeeds and the DB write fails (or vice versa), subscribers see a divergence from the audit log",
+            "trace, actor, and location are bound at interpreter setup time; one interpreter per request scope"
+          ]
+        }
+      }
+    },
+
+    "Effect.TransactionDb": {
+      "decisions": [
+        {
+          "name": "EffectfulOverMtlWithPureInterpreters",
+          "what": "effectful with paired IO and pure interpreters per effect",
+          "why": [
+            "effectful's Eff monad avoids the n-squared instances problem of mtl as effect counts grow.",
+            "Every effect ships with both runXxxIO and runXxxPure. Service-layer code is unit-testable without a database, broadcaster, or wall clock.",
+            "runClockPureSequence and runGenUUIDPure both accept a supply list and crash on exhaustion — explicit failure beats silent test nondeterminism.",
+            "Cost: every DB action exists twice. Drift between IO and pure is a real risk; if it bites, fold the pure interpreter into a property test that compares the two."
+          ],
+          "affects": ["runTransactionDbIO", "runTransactionDbPure"]
+        }
+      ],
+      "invariants": {
+        "runTransactionDbIO": [
+          "thin shim over DB.Transaction.* and DB.Reservation.*",
+          "AddTransactionItem catches InventoryException via try; other exceptions propagate"
+        ],
+        "runTransactionDbPure": {
+          "intent": "Pure in-memory interpreter for unit tests, requiring GenUUID and Clock effects in scope",
+          "notes": [
+            "TxStore holds Maps for txs, item->tx, payment->tx, reservations, and inventory totals",
+            "implements the SAME reservation logic as the IO interpreter (active reserved qty subtracted from total)",
+            "DOES NOT enforce status invariants; that's the state machine's job in Service.Transaction",
+            "RefundTransaction generates a refund row using the supplied refundId, preserves original is_refunded flag"
+          ]
+        },
+        "activeReservedQty": [
+          "sums reservation.qty over entries with matching sku AND status == 'Reserved'",
+          "filtering by status text (not by an enum) matches the DB row schema"
+        ]
+      }
+    },
+
+    "Service.Transaction": {
+      "decisions": [
+        {
+          "name": "EventEmissionAfterPersistence",
+          "what": "Domain events are emitted AFTER the corresponding DB write succeeds",
+          "why": [
+            "If the DB write fails, the event is never emitted (no orphan events).",
+            "If the emit fails after DB success, downstream consumers miss the event but DB state is correct.",
+            "Asymmetric and acceptable for a POS that prioritizes books-and-records integrity over event-stream completeness."
+          ],
+          "affects": ["addItem", "removeItem", "addPayment", "removePayment", "finalizeTx", "voidTx", "refundTx", "createTransactionSvc"]
+        },
+        {
+          "name": "StockPullsAreBestEffort",
+          "what": "createStockPull silently swallows insertion errors; the transaction proceeds either way",
+          "why": [
+            "Loss of a stock pull means the cashier falls back to a verbal pull request.",
+            "Failing the transaction-item add to prevent that loss would be worse for the cashier under load.",
+            "Recovery is manual."
+          ],
+          "affects": ["addItem", "createStockPull"]
+        },
+        {
+          "name": "RefundIsANewTransaction",
+          "what": "Refunds create a new Transaction row pointing at the original via reference_transaction_id",
+          "why": [
+            "Keeps the books double-entry: original sale and refund are both visible, both auditable, both immutable.",
+            "Avoids needing a 'reverse a transaction' state on the original row.",
+            "refundId is generated at the SERVICE layer (not the DB) so the domain event and the DB row share the same UUID."
+          ],
+          "affects": ["refundTx"]
+        }
+      ],
+      "invariants": {
+        "loadTx": [
+          "throws err404 if not found; never returns Nothing",
+          "constructs SomeTxState from current DB status (single source of truth on load)"
+        ],
+        "guardTxEvent": [
+          "translates InvalidTxCommand to err409 with reason in the body",
+          "all other events fall through silently"
+        ],
+        "persistStatusChange": [
+          "no-op if the new status equals the current status",
+          "issues an UPDATE only when the state machine actually transitions"
+        ],
+        "createStockPull": [
+          "BEST-EFFORT: failure to insert is SILENTLY ignored (Left _ -> pure ())",
+          "looks up item name from inventory snapshot; falls back to UUID-as-text if missing",
+          "emits PullRequestCreated only on successful insert"
+        ],
+        "createTransactionSvc": [
+          "thin wrapper: createTransaction then emit TransactionCreated",
+          "no state machine guard; new transactions are always valid"
+        ],
+        "addItem": {
+          "intent": "Add an item to a transaction with state-machine enforcement and inventory reservation",
+          "effects": ["TransactionDb", "StockDb", "InventoryDb", "EventEmitter", "Clock", "GenUUID", "Error ServerError"],
+          "notes": [
+            "ORDER: state-guard, persistStatusChange, addTransactionItem, emit TransactionItemAdded, createStockPull",
+            "if addTransactionItem fails (inventory), the transaction status was ALREADY persisted as InProgress",
+            "createStockPull failures do NOT roll back the item or status change",
+            "ItemNotFound -> err404; InsufficientInventory -> err400 with both numbers in body"
+          ],
+          "spec": [
+            { "input": "addItem on Created tx",         "expected": "Right item, status -> InProgress, ItemAdded + PullRequestCreated emitted" },
+            { "input": "addItem on Completed tx",       "expected": "err409 InvalidTxCommand" },
+            { "input": "addItem with unknown sku",      "expected": "err404 Item not found" },
+            { "input": "addItem with qty > available",  "expected": "err400 Insufficient inventory" }
+          ]
+        },
+        "removeItem": [
+          "looks up the item BEFORE deletion to capture sku and qty for the event",
+          "cancels pulls for this (txId, sku) AFTER the DB delete",
+          "emits PullRequestCancelled per pull that was actually cancelled (filtered by current vertex)"
+        ],
+        "addPayment": [
+          "state-machine guard runs against the stored status, not a recomputed one",
+          "does NOT finalize even if amount equals total; finalize is a separate explicit command"
+        ],
+        "removePayment": [
+          "looks up txId via getTxIdByPaymentId BEFORE deletion (post-delete the link is gone)"
+        ],
+        "finalizeTx": {
+          "intent": "Transition InProgress -> Completed; decrement inventory; mark reservations Completed",
+          "notes": [
+            "underlying TransactionDb.finalizeTransaction does inventory adjustment AND reservation completion",
+            "no rollback if emit fails (broadcaster publish is fire-and-forget)"
+          ],
+          "spec": [
+            { "input": "finalizeTx on InProgress tx",  "expected": "Right tx{status=Completed}, inventory decremented, TransactionFinalized emitted" },
+            { "input": "finalizeTx on Created tx",     "expected": "err409 Cannot Finalize from Created" }
+          ]
+        },
+        "voidTx": {
+          "intent": "Void a transaction (valid from Created, InProgress, or Completed); cancel any open stock pulls",
+          "notes": [
+            "captures pulls list BEFORE void to know what to cancel",
+            "ORDER: state guard, voidTransaction (DB), emit TransactionVoided, cancelPullsForTransaction, emit PullRequestCancelled per non-terminal pull"
+          ],
+          "spec": [
+            { "input": "voidTx on Created tx",    "expected": "Right tx{status=Voided}, TransactionVoided + PullRequestCancelled emitted" },
+            { "input": "voidTx on Voided tx",     "expected": "err409 Transaction is voided" }
+          ]
+        },
+        "refundTx": [
+          "GENERATES the refund UUID at the service layer (not the DB)",
+          "refund is a SEPARATE Transaction row with negated amounts and Type=Return",
+          "original tx is marked is_refunded=true; refund tx points back via reference_transaction_id"
+        ]
+      }
+    },
+
+    "Service.Register": {
+      "invariants": {
+        "loadReg": [
+          "throws err404 if not found",
+          "constructs SomeRegState from registerIsOpen field"
+        ],
+        "guardRegEvent": [
+          "translates InvalidRegCommand to err409 with reason in the body"
+        ],
+        "openRegister": {
+          "intent": "Open a register via the RegisterMachine (valid only from RegClosed)",
+          "spec": [
+            { "input": "openRegister closedRegId req",  "expected": "Right reg{isOpen=True}, RegisterOpened emitted" },
+            { "input": "openRegister openRegId req",    "expected": "err409 Register is already open" }
+          ]
+        },
+        "closeRegister": [
+          "computes variance = expectedDrawerAmount - countedCash on the loaded register",
+          "emits RegisterClosed with variance; variance can be negative (over) or positive (short)"
+        ]
+      }
+    },
+
+    "Service.Stock": {
+      "invariants": {
+        "loadPull": [
+          "throws err404 if not found",
+          "reconstructs SomePullState from PullVertex via fromVertex"
+        ],
+        "guardPullEvent": [
+          "translates InvalidPullCmd to err409 with reason in the body"
+        ],
+        "transition": [
+          "ORDER: load, run command, guard, updatePullStatus, emit PullStatusChanged",
+          "carries actorId from the command into the event for audit",
+          "if updatePullStatus fails it returns err500 with the DB error text"
+        ],
+        "fulfillPull": {
+          "intent": "Mark a pull as Fulfilled (valid only from PullPulling)",
+          "spec": [
+            { "input": "fulfillPull pullingId actor",   "expected": "Right pr{status=PullFulfilled}, PullStatusChanged emitted" },
+            { "input": "fulfillPull acceptedId actor",  "expected": "err409 Invalid command in Accepted state" },
+            { "input": "fulfillPull fulfilledId actor", "expected": "err409 Pull request is fulfilled" }
+          ]
+        },
+        "cancelPull": [
+          "DOES NOT use transition: emits PullRequestCancelled (not PullStatusChanged) with the cancellation reason",
+          "valid from any non-terminal vertex; PullCancelled and PullFulfilled are absorbing"
+        ],
+        "addMessage": [
+          "loads the pull only to assert it exists; message can be added in any state",
+          "msgId is generated at the service layer via GenUUID"
+        ]
+      }
+    },
+
+    "State.StockPullMachine": {
+      "decisions": [
+        {
+          "name": "StateMachineEnforcedAtTypeLevel",
+          "what": "PullState is GADT-indexed by PullVertex; transitions live in pullAction whose type uses crem ActionResult",
+          "why": [
+            "The DSL prevents constructing a transition not in PullTopology.",
+            "Service.Stock.transition relies on this: it persists the new vertex without re-validating, trusting the machine output.",
+            "Illegal commands produce a PullEvent with constructor InvalidPullCmd, NOT a Haskell exception, so the service layer can map it to err409."
+          ],
+          "affects": ["pullAction", "runPullCommand", "fromVertex", "toPullVertex"]
+        }
+      ],
+      "invariants": {
+        "fromVertex": [
+          "rebuilds typed state from a database-loaded PullVertex",
+          "lossless: every PullVertex maps to exactly one PullState constructor"
+        ],
+        "toPullVertex": [
+          "extracts the runtime tag from a SomePullState",
+          "used to persist the new state after a transition"
+        ],
+        "pullAction": [
+          "Pending  -> {Accepted via AcceptCmd, Cancelled via CancelCmd}; everything else is InvalidPullCmd",
+          "Accepted -> {Pulling via StartPullCmd, Cancelled via CancelCmd}",
+          "Pulling  -> {Fulfilled via FulfillCmd, Issue via ReportIssueCmd}; cannot be cancelled directly",
+          "Issue    -> {Accepted via RetryCmd, Cancelled via CancelCmd}",
+          "Fulfilled and Cancelled are absorbing; any further command yields InvalidPullCmd, no state change"
+        ],
+        "runPullCommand": [
+          "wraps pullAction; existential erasure means callers cannot inspect the new vertex's type",
+          "callers pattern-match on the returned PullEvent to know which transition fired",
+          "InvalidPullCmd indicates same-state with no transition; the SomePullState is unchanged"
+        ]
+      }
+    },
+
+    "State.RegisterMachine": {
+      "invariants": {
+        "fromRegister": [
+          "dispatches on registerIsOpen field to choose ClosedState or OpenState"
+        ],
+        "regAction": [
+          "Closed -> {Open via OpenRegCmd}; CloseRegCmd from Closed is InvalidRegCommand",
+          "Open   -> {Closed via CloseRegCmd}; OpenRegCmd from Open  is InvalidRegCommand",
+          "OpenRegCmd sets currentDrawer = expectedDrawer = startCash, sets openedBy",
+          "CloseRegCmd computes variance = expectedDrawer - countedCash, sets currentDrawer = countedCash"
+        ]
+      }
+    },
+
+    "State.TransactionMachine": {
+      "decisions": [
+        {
+          "name": "CremForLifecycleEnforcement",
+          "what": "crem (singletons-based type-level state machines) for transaction, register, and stock-pull lifecycles",
+          "why": [
+            "Transaction, register, and stock-pull state transitions are legally significant for cannabis compliance — an unintended Created -> Completed shortcut is a reportable violation.",
+            "crem encodes the topology in types via singletons + GADTs; any transition not declared in the Topology fails to compile.",
+            "All three machines pair (SomeXxxState, fromXxx, toSomeXxxState) so callers handle existential states without leaking type-level vertices."
+          ],
+          "affects": ["txAction", "runTxCommand", "fromTransaction", "toSomeTxState", "someTxStatus"]
+        }
+      ],
+      "invariants": {
+        "fromTransaction": [
+          "dispatches on transactionStatus field to choose the correct SomeTxState constructor"
+        ],
+        "txAction": [
+          "Created     -> {InProgress via AddItemCmd, Voided via VoidCmd}; everything else is InvalidTxCommand",
+          "InProgress  -> {InProgress via item/payment add+remove, Completed via Finalize, Voided via Void}",
+          "Completed   -> {Voided via Void, Refunded via Refund}; further item/payment ops are invalid",
+          "Voided and Refunded are absorbing; any further command yields InvalidTxCommand",
+          "AddItemCmd from Created sets transactionStatus = InProgress on the carried Transaction value, NOT just the type-level vertex"
+        ],
+        "runTxCommand": [
+          "callers pattern-match on TxEvent to know which transition fired",
+          "InvalidTxCommand carries a human-readable reason that Service.Transaction maps to err409 body"
+        ],
+        "someTxStatus": [
+          "extracts TransactionStatus from a SomeTxState by inspecting the singleton tag",
+          "used by Service.Transaction.persistStatusChange to detect actual transitions"
+        ],
+        "cmdLabel": [
+          "human-readable command names used in InvalidTxCommand error messages",
+          "MUST stay in sync with TxCommand constructors; partial functions would silently produce 'Cannot ?' messages"
+        ]
+      }
+    },
+
+    "Infrastructure.Broadcast": {
+      "decisions": [
+        {
+          "name": "BoundedInMemoryReplay",
+          "what": "TChan plus bounded Data.Sequence history per stream",
+          "why": [
+            "Late SSE/WS subscribers need to catch up without scanning domain_events for every connect.",
+            "O(1) publish and O(history) replay.",
+            "Anything older than the bound is unreachable from this broadcaster; clients fall back to /admin/domain-events with a cursor for deeper history.",
+            "Bound is per-broadcaster from cfgLogBroadcastSize / cfgDomainBroadcastSize / cfgStockBroadcastSize / cfgAvailabilityBroadcastSize."
+          ],
+          "affects": ["newBroadcaster", "publish", "historyFrom"]
+        }
+      ],
+      "invariants": {
+        "newBroadcaster": [
+          "TChan is a broadcast channel; subscribers each get an independent dup",
+          "bMaxHistory is fixed at construction; cannot be resized at runtime",
+          "bNextSeq starts at 0; first published event has seq 0"
+        ],
+        "publish": {
+          "intent": "Atomically bump seq, write to channel, append to bounded history",
+          "effects": ["STM", "IO"],
+          "notes": [
+            "ORDER inside the STM transaction: read seq, write seq+1, write to chan, trim history",
+            "history is dropped FIFO when length exceeds bMaxHistory (Seq.drop 1)",
+            "called by: runEventEmitterProd, mkBroadcastScribe (Katip), runAvailabilityRelay"
+          ],
+          "spec": [
+            { "input": "pre <- currentSeq bc; publish bc evt; post <- currentSeq bc",     "expected": "post == pre + 1" },
+            { "input": "replicateM_ (bMaxHistory + n) (publish bc evt); historyDepth bc", "expected": "bMaxHistory bc" }
+          ]
+        },
+        "subscribe": [
+          "subInitSeq is the seq at the moment of subscribe; events with that seq or later flow through subChan",
+          "subscribers DO NOT see history automatically; sseStream and wsHandler replay history themselves before reading subChan",
+          "no unsubscribe operation; channels are GC-cleaned when subscribers drop their reference"
+        ],
+        "historyFrom": [
+          "returns all (seq, event) pairs with seq strictly greater than cursor",
+          "uses Seq.filter; O(n) over current history",
+          "result is bounded by bMaxHistory regardless of cursor value"
+        ],
+        "currentSeq": [
+          "next seq value that publish would assign (NOT the just-published one)",
+          "uses readTVarIO (no STM transaction); cheaper than subscribe for a snapshot"
+        ]
+      }
+    },
+
+    "Infrastructure.AvailabilityRelay": {
+      "decisions": [
+        {
+          "name": "EventDrivenAvailabilityProjection",
+          "what": "Availability is derived state, populated once from DB then maintained by streaming domain events",
+          "why": [
+            "Avoids a second DB round-trip on every transaction-item event.",
+            "Cost is a startup race window where events between populateFromDb and subscribe are missed; acceptable because the relay only runs at app startup.",
+            "If the relay dies and is restarted, populateFromDb re-syncs from authoritative DB state."
+          ],
+          "affects": ["runAvailabilityRelay", "populateFromDb", "updateAvailability"]
+        }
+      ],
+      "invariants": {
+        "runAvailabilityRelay": {
+          "intent": "Long-running thread translating DomainEvents into AvailabilityUpdates",
+          "effects": ["DBPool", "STM", "IO", "forever"],
+          "notes": [
+            "ORDER on startup: populateFromDb FIRST, then subscribe, then loop",
+            "events that arrive between populateFromDb and subscribe are lost (small race window)",
+            "loop is forever; on STM exception or DB error the thread dies and App.hs prints to stderr",
+            "no supervisor: relay death silently breaks the public feed until process restart",
+            "only InventoryEvt and TransactionItemAdded/Removed produce updates; other events are ignored"
+          ],
+          "spec": [
+            { "input": "publish (TransactionItemAdded sku 3)", "expected": "AvailabilityUpdate with availableQty - 3 published" },
+            { "input": "publish (ItemDeleted sku)",            "expected": "no AvailabilityUpdate published, sku removed from state" }
+          ]
+        },
+        "populateFromDb": [
+          "two queries: getAllMenuItems then getAllActiveReservations",
+          "reservation totals aggregated by SKU via Map.fromListWith (+)",
+          "called only at relay startup; no periodic re-hydration; trusts the event stream after",
+          "if a reservation is mutated by someone bypassing the event emitter, the relay drifts permanently"
+        ],
+        "updateAvailability": [
+          "ItemDeleted clears both asItems AND asReserved entries for the sku; emits Nothing because the item is gone",
+          "TransactionItemRemoved decrements reservation; if it drops to 0 the entry is removed (Map.update with Nothing branch)",
+          "negative reservations are clamped to 0 by Map.update returning Nothing",
+          "publishFor reads asItems for the sku; if missing returns Nothing (no orphan updates)"
+        ]
+      }
+    },
+
+    "Server.Feed": {
+      "decisions": [
+        {
+          "name": "AtprotoStyleSubscription",
+          "what": "WebSocket subscription with monotonic seq cursor, modeled on com.atproto.sync.subscribeRepos",
+          "why": [
+            "Public consumers (compliance reporting, third-party menu sites) need an audit-friendly event log, not snapshot polling.",
+            "The subscribe protocol is intentionally familiar to ATProto implementers.",
+            "Lexicons are served at /lexicons/app.cheeblr.* so consumers can introspect the schema."
+          ],
+          "affects": ["wsHandler", "feedSubscribeApp", "lexiconsApp"]
+        },
+        {
+          "name": "SyntheticSnapshotFramesShareSeq",
+          "what": "When a client connects without a cursor, every snapshot frame carries currentSeq",
+          "why": [
+            "Snapshot frames are not in the broadcaster's history and have no real seq of their own.",
+            "Clients must tolerate non-strictly-monotonic seq across the snapshot block, then strictly monotonic from the first live event.",
+            "Documented in the lexicon, but easy to miss."
+          ],
+          "affects": ["wsHandler"]
+        }
+      ],
+      "invariants": {
+        "feedSubscribeApp": [
+          "WAI Tagged Application that upgrades to WebSocket or 400s if the client did not request upgrade",
+          "fallback responds 400 with body 'WebSocket connection required'"
+        ],
+        "wsHandler": {
+          "intent": "WebSocket handler for app.cheeblr.feed.subscribe",
+          "effects": ["WebSockets", "STM", "DBPool", "IO"],
+          "notes": [
+            "ORDER: acceptRequest, replay-or-snapshot, subscribe, withPingThread, loop",
+            "with cursor: replays Seq.filter (seq > cursor) from history, then live",
+            "without cursor: emits SYNTHETIC snapshot frames, all sharing currentSeq value, then live",
+            "snapshot frames are NOT in history and CANNOT be replayed by a re-subscribing client without cursor",
+            "ping thread is 30s",
+            "loop catches ConnectionException only; other exceptions kill the connection thread but not the server"
+          ],
+          "spec": [
+            { "input": "connect with cursor=Just 100",  "expected": "frames where seq > 100, then live updates" },
+            { "input": "connect with cursor=Nothing",   "expected": "snapshot of all current items at currentSeq, then live updates" }
+          ]
+        },
+        "feedStatusHandler": [
+          "reads bHistory directly via readTVarIO; not a method on Broadcaster (slight encapsulation leak)",
+          "oldestSeq comes from listToMaybe on the history Seq; Nothing iff history is empty",
+          "inStockCount filters allAvailableItems by aiInStock"
+        ],
+        "feedSnapshotHandler": [
+          "no pagination; full snapshot in one response",
+          "intended for clients that prefer one-shot polling over WS"
+        ],
+        "lexiconsApp": [
+          "lexicon JSON is INLINED as Haskell ByteString literals",
+          "vendored deliberately to avoid a runtime asset path dependency; ugly but self-contained",
+          "404 for any path under /lexicons that is not one of the three known names"
+        ]
+      }
+    },
+
+    "Server.Middleware.Tracing": {
+      "decisions": [
+        {
+          "name": "TraceIdViaWaiVault",
+          "what": "Per-request TraceId stored in WAI Vault under a NOINLINE unsafePerformIO key",
+          "why": [
+            "Servant handlers run in Handler with no convenient place to thread per-request context.",
+            "Vault is the canonical mechanism in the WAI ecosystem.",
+            "The same TraceId can be stamped on the outbound response and on every domain event written during the request, giving end-to-end traceability without changing handler signatures.",
+            "traceIdKey is created via unsafePerformIO with a NOINLINE pragma. This is the documented WAI pattern but it's a global mutable resource — only ever create one per process."
+          ],
+          "affects": ["traceIdKey", "tracingMiddleware", "getTraceId"]
+        }
+      ],
+      "invariants": {
+        "traceIdKey": [
+          "process-global Vault key for stashing the per-request TraceId",
+          "NOINLINE pragma is REQUIRED; without it GHC may inline and create distinct Vault keys per call site",
+          "documented WAI pattern; do not duplicate this trick elsewhere without thinking it through"
+        ],
+        "tracingMiddleware": {
+          "intent": "Ensure every request has a TraceId in the WAI vault and on the response",
+          "notes": [
+            "ORDER: read X-Trace-Id header, parse OR generate fresh, insert in vault, run app, append response header",
+            "header parse: Types.Trace.parseTraceId requires a UUID-shaped string; malformed headers fall back to a fresh ID",
+            "client-supplied traces are TRUSTED; spoofing has no security impact (trace IDs are never used for authorization)",
+            "response header X-Trace-Id is APPENDED, not replaced; if a downstream layer set it, both will appear"
+          ],
+          "spec": [
+            { "input": "request without X-Trace-Id",            "expected": "fresh TraceId in vault, X-Trace-Id present on response" },
+            { "input": "request with valid X-Trace-Id",          "expected": "same TraceId in vault and response" },
+            { "input": "request with malformed X-Trace-Id",      "expected": "fresh TraceId in vault, malformed value DISCARDED" }
+          ]
+        },
+        "getTraceId": [
+          "Nothing if tracingMiddleware did not run before this handler (programmer error, not a runtime case)",
+          "callers should treat Nothing as 'tracing disabled' rather than failing the request"
+        ]
+      }
+    }
+
+  }
+}
