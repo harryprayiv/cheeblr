@@ -60,6 +60,11 @@
           "spec": [
             { "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"hunter2\"", "expected": "True" },
             { "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"wrong\"",  "expected": "False" }
+          ],
+          "consumes": [
+            "DB.Auth.createUser (initial credential)",
+            "Server.Auth.createUserHandler (admin user creation)",
+            "app/Bootstrap.hs (one-shot admin)"
           ]
         },
         "verifyPassword": {
@@ -69,6 +74,9 @@
             "returns False silently on malformed PHC string; no exception",
             "returns False on argon2 failure; no exception",
             "parameters are NOT read from the PHC string. argonOpts is fixed at module level. Changing argonOpts invalidates all existing hashes."
+          ],
+          "consumes": [
+            "Server.Auth.loginHandler (only password verifier in production)"
           ]
         },
         "hashTokenBytes": [
@@ -87,6 +95,9 @@
             "ALTER TABLE for token_rotated_at runs on every startup including fresh DBs (no-op then)",
             "creates partial index on token_hash WHERE NOT revoked",
             "no cleanup index on login_attempts; that table grows unbounded"
+          ],
+          "consumes": [
+            "App.runWithEnv (called on every startup)"
           ]
         },
         "createUser": {
@@ -97,12 +108,21 @@
             "Abort on conflict: throws if username already exists",
             "no email uniqueness constraint at DB level",
             "newPassword is plaintext in NewUser; do not log it"
+          ],
+          "consumes": [
+            "Server.Auth.createUserHandler",
+            "app/Bootstrap.hs"
           ]
         },
-        "lookupUserByUsername": [
-          "filters on isActive; deactivated users are invisible to login",
-          "returns Nothing for 0 rows OR multiple rows (defensive against duplicate-row scenarios)"
-        ],
+        "lookupUserByUsername": {
+          "notes": [
+            "filters on isActive; deactivated users are invisible to login",
+            "returns Nothing for 0 rows OR multiple rows (defensive against duplicate-row scenarios)"
+          ],
+          "consumes": [
+            "Server.Auth.loginHandler (called BEFORE password verification)"
+          ]
+        },
         "createSession": {
           "intent": "Create a new session row with an 8h expiry, return raw token",
           "effects": ["DBPool", "Entropy", "IO"],
@@ -114,6 +134,9 @@
           ],
           "spec": [
             { "input": "createSession pool uid Nothing \"agent\" \"1.2.3.4\"", "expected": "(token, now + 8h)" }
+          ],
+          "consumes": [
+            "Server.Auth.loginHandler (called on successful credential verification, response carries Set-Cookie cheeblr_session)"
           ]
         },
         "lookupSession": {
@@ -130,13 +153,25 @@
             { "input": "lookupSession pool revokedToken",   "expected": "Nothing" },
             { "input": "lookupSession pool expiredToken",   "expected": "Nothing" },
             { "input": "lookupSession pool malformedToken", "expected": "Nothing" }
+          ],
+          "consumes": [
+            "App.cookieAuthMiddleware (every authenticated request — hot path)",
+            "Server.Auth.meHandler",
+            "Server.Auth.logoutHandler",
+            "Server.Admin.buildSessionInfos via SessionInfo.siLastSeen rendered in admin sessions panel",
+            "the last_seen_at write specifically: any worker reading idle sessions for revocation"
           ]
         },
-        "getSessionRotatedAt": [
-          "read-only check of when a session's token was last rotated",
-          "does NOT update last_seen_at (lookupSession owns that)",
-          "exists separately from lookupSession to avoid write amplification on every rotation check"
-        ],
+        "getSessionRotatedAt": {
+          "notes": [
+            "read-only check of when a session's token was last rotated",
+            "does NOT update last_seen_at (lookupSession owns that)",
+            "exists separately from lookupSession to avoid write amplification on every rotation check"
+          ],
+          "consumes": [
+            "App.checkAndRotate (decides whether to rotate without re-bumping last_seen_at)"
+          ]
+        },
         "rotateSessionToken": {
           "intent": "Mint a new opaque token for an existing session, invalidate the old one immediately",
           "effects": ["DBPool", "Entropy", "IO"],
@@ -144,29 +179,65 @@
             "issues new 8h expiry, HARDCODED; cfgSessionTtlSeconds ignored here too",
             "old token hash overwritten; old token invalid immediately",
             "race: concurrent rotation requests may collide on tokenHash UNIQUE constraint; not handled"
+          ],
+          "consumes": [
+            "App.checkAndRotate (called from cookieAuthMiddleware)",
+            "the new token is written to the response as Set-Cookie cheeblr_session"
           ]
         },
-        "cleanupExpiredSessions": [
-          "deletes expired sessions AND revoked sessions older than 24h",
-          "the 24h grace window is HARDCODED, not driven by config",
-          "called from sessionCleanupWorker in App.hs"
-        ],
-        "revokeSession": [
-          "soft-delete: sets revoked=true; row remains for audit",
-          "actual deletion happens in cleanupExpiredSessions after 24h grace"
-        ],
-        "revokeAllUserSessions": [
-          "bulk soft-delete; intended for password change or compromise",
-          "filters out already-revoked rows to avoid touching audit timestamps"
-        ],
-        "recordLoginAttempt": [
-          "always inserts; no deduplication",
-          "table grows unbounded; no automated cleanup"
-        ],
-        "recentFailedAttempts": [
-          "counts failed attempts where username AND ip both match within window",
-          "different from recentFailedAttemptsByIp (ip-only)"
-        ],
+        "cleanupExpiredSessions": {
+          "notes": [
+            "deletes expired sessions AND revoked sessions older than 24h",
+            "the 24h grace window is HARDCODED, not driven by config",
+            "called from sessionCleanupWorker in App.hs"
+          ],
+          "consumes": [
+            "App.sessionCleanupWorker (forked thread, runs every cfgSessionCleanupIntervalHours)"
+          ]
+        },
+        "revokeSession": {
+          "notes": [
+            "soft-delete: sets revoked=true; row remains for audit",
+            "actual deletion happens in cleanupExpiredSessions after 24h grace"
+          ],
+          "consumes": [
+            "Server.Auth.logoutHandler"
+          ]
+        },
+        "revokeAllUserSessions": {
+          "notes": [
+            "bulk soft-delete; intended for password change or compromise",
+            "filters out already-revoked rows to avoid touching audit timestamps"
+          ],
+          "consumes": [
+            "no current handler calls this; intended for future password-change/admin-disable flows"
+          ]
+        },
+        "recordLoginAttempt": {
+          "notes": [
+            "always inserts; no deduplication",
+            "table grows unbounded; no automated cleanup"
+          ],
+          "consumes": [
+            "Server.Auth.loginHandler (success AND failure paths)",
+            "DB.Auth.recentFailedAttempts reads what this writes",
+            "DB.Auth.recentFailedAttemptsByIp reads what this writes"
+          ]
+        },
+        "recentFailedAttempts": {
+          "notes": [
+            "counts failed attempts where username AND ip both match within window",
+            "different from recentFailedAttemptsByIp (ip-only)"
+          ],
+          "consumes": [
+            "Server.Auth.checkLoginRateLimit (per-credential tier)"
+          ]
+        },
+        "recentFailedAttemptsByIp": {
+          "consumes": [
+            "Server.Auth.checkLoginRateLimit (per-IP tier)"
+          ]
+        },
         "clearRateLimitForIp": [
           "DELETE, not soft delete",
           "wipes ALL attempts for the IP including successful ones (loses audit data)",
@@ -218,6 +289,9 @@
             "creates 4 broadcasters, 1 metrics record, 1 availability TVar",
             "initializes Katip BEFORE the DB pool; smoke-test failures predate broadcast scribe registration",
             "envLogNS = mempty at construction; per-component namespaces added at log call sites"
+          ],
+          "consumes": [
+            "App.run (called once at startup)"
           ]
         },
         "runWithEnv": {
@@ -245,18 +319,32 @@
             { "input": "request without cookie",       "expected": "passes through unchanged" },
             { "input": "request with fresh cookie",    "expected": "Authorization: Bearer <token> injected, no Set-Cookie" },
             { "input": "request with stale cookie",    "expected": "Authorization: Bearer <newToken> injected, Set-Cookie: cheeblr_session=<newToken>" }
+          ],
+          "consumes": [
+            "ALL Servant routes that use the existing Maybe Text bearer extraction",
+            "downstream handlers see Authorization: Bearer; they cannot tell whether it came from a header or a cookie"
           ]
         },
-        "extractCookieToken": [
-          "reads from Cookie request header only (not query string, not body)",
-          "tolerates other cookies in the same header; cheeblr_session selected by name"
-        ],
-        "checkAndRotate": [
-          "issues a new token if (now - tokenRotatedAt) > threshold",
-          "does NOT update last_seen_at (lookupSession owns that)",
-          "returns Nothing if the session is missing (caller treats as 'no rotation needed')",
-          "race: two concurrent requests can both rotate; second wins, first response carries a stale token"
-        ],
+        "extractCookieToken": {
+          "notes": [
+            "reads from Cookie request header only (not query string, not body)",
+            "tolerates other cookies in the same header; cheeblr_session selected by name"
+          ],
+          "consumes": [
+            "App.cookieAuthMiddleware (only caller)"
+          ]
+        },
+        "checkAndRotate": {
+          "notes": [
+            "issues a new token if (now - tokenRotatedAt) > threshold",
+            "does NOT update last_seen_at (lookupSession owns that)",
+            "returns Nothing if the session is missing (caller treats as 'no rotation needed')",
+            "race: two concurrent requests can both rotate; second wins, first response carries a stale token"
+          ],
+          "consumes": [
+            "App.cookieAuthMiddleware (only caller)"
+          ]
+        },
         "sessionCleanupWorker": [
           "first iteration waits intervalHours then cleans; never runs at startup",
           "exceptions caught and printed to stderr; loop continues",
@@ -273,6 +361,9 @@
           "spec": [
             { "input": "buildCsp \"https://api.example.com\" Nothing",                       "expected": "...connect-src 'self' https://api.example.com wss://api.example.com..." },
             { "input": "buildCsp \"http://localhost:8080\" (Just \"https://cdn.example.com\")", "expected": "...img-src 'self' data: https://cdn.example.com..." }
+          ],
+          "consumes": [
+            "App.securityHeadersMiddleware"
           ]
         },
         "securityHeadersMiddleware": [
@@ -341,6 +432,9 @@
           "spec": [
             { "input": "after 5 failures for (alice, 1.2.3.4)", "expected": "err429 Too many failed login attempts" },
             { "input": "after 4 failures",                       "expected": "()" }
+          ],
+          "consumes": [
+            "Server.Auth.loginHandler (only caller; runs BEFORE password verification)"
           ]
         },
         "loginHandler": {
@@ -358,16 +452,29 @@
             { "input": "wrong password",                   "expected": "err401 Invalid username or password" },
             { "input": "unknown username",                 "expected": "err401 Invalid username or password" },
             { "input": "after 5 (username, ip) failures",  "expected": "err429 with Retry-After: 600" }
+          ],
+          "consumes": [
+            "Servant route /auth/login (POST)"
           ]
         },
-        "logoutHandler": [
-          "revokes session by id (not by token); idempotent on repeat",
-          "always sets clearSessionCookie even if revoke fails"
-        ],
-        "meHandler": [
-          "returns capabilities derived from role; no per-user override path exists",
-          "side effect: lookupSession bumps last_seen_at"
-        ],
+        "logoutHandler": {
+          "notes": [
+            "revokes session by id (not by token); idempotent on repeat",
+            "always sets clearSessionCookie even if revoke fails"
+          ],
+          "consumes": [
+            "Servant route /auth/logout (POST)"
+          ]
+        },
+        "meHandler": {
+          "notes": [
+            "returns capabilities derived from role; no per-user override path exists",
+            "side effect: lookupSession bumps last_seen_at"
+          ],
+          "consumes": [
+            "Servant route /auth/me (GET) — used by frontend for session validation and capability checks"
+          ]
+        },
         "listUsersHandler": [
           "STUB: returns [] regardless of state, even when caller is authorized",
           "the authorization check is real; only the result list is fake"
@@ -410,6 +517,11 @@
           "notes": [
             "N+1 by design: one items query, then per-item tax and discount queries",
             "acceptable for POS-scale (single-digit items per transaction)"
+          ],
+          "consumes": [
+            "DB.Transaction.getTransactionById",
+            "DB.Transaction.getAllTransactions (mapM hydrateTx over rows)",
+            "Service.Transaction.loadTx (transitively)"
           ]
         },
         "createTransaction": [
@@ -417,10 +529,15 @@
           "NOT a single transaction at the SQL level; partial failures leave orphan items/payments",
           "totals on the row are taken AS GIVEN by the caller; no recomputation here"
         ],
-        "voidTransaction": [
-          "sets status='VOIDED', is_voided=true, void_reason; does NOT release reservations",
-          "reservation release is the caller's responsibility (Service.Transaction.voidTx + StockDb.cancelPullsForTransaction)"
-        ],
+        "voidTransaction": {
+          "notes": [
+            "sets status='VOIDED', is_voided=true, void_reason; does NOT release reservations",
+            "reservation release is the caller's responsibility (Service.Transaction.voidTx + StockDb.cancelPullsForTransaction)"
+          ],
+          "consumes": [
+            "Service.Transaction.voidTx (only caller in production)"
+          ]
+        },
         "refundTransaction": {
           "intent": "Create a NEW Transaction row with negated amounts pointing back at the original",
           "effects": ["DBPool", "IO"],
@@ -428,13 +545,21 @@
             "refundId is supplied by the caller (Service.Transaction generates the UUID)",
             "original tx is marked is_refunded=true with refund_reason; refund tx has reference_transaction_id pointing to original",
             "negation walks ALL items and payments via negateTransactionItem / negatePaymentTransaction"
+          ],
+          "consumes": [
+            "Service.Transaction.refundTx (only caller in production)"
           ]
         },
-        "clearTransaction": [
-          "ORDER inside one Session: release reservations, delete payments, delete items, zero totals, status='CREATED'",
-          "preserves the transaction row (id, employee, register) so the cashier resumes on the same transaction",
-          "intended for 'discard cart' flows"
-        ],
+        "clearTransaction": {
+          "notes": [
+            "ORDER inside one Session: release reservations, delete payments, delete items, zero totals, status='CREATED'",
+            "preserves the transaction row (id, employee, register) so the cashier resumes on the same transaction",
+            "intended for 'discard cart' flows"
+          ],
+          "consumes": [
+            "Service.Transaction.clearTx"
+          ]
+        },
         "finalizeTransaction": {
           "intent": "Decrement menu_items.quantity for each reserved item and complete the reservations",
           "effects": ["DBPool", "IO"],
@@ -443,6 +568,10 @@
             "two UPDATEs per item; not transactionally bundled",
             "after all decrements, status='COMPLETED' and completed=now",
             "calls getTransactionById at the end to return the hydrated result"
+          ],
+          "consumes": [
+            "Service.Transaction.finalizeTx (only caller in production)",
+            "the menu_items.quantity write specifically: Server.Inventory snapshot, AvailabilityRelay (via InventoryEvt)"
           ]
         },
         "addTransactionItem": {
@@ -453,21 +582,45 @@
             "throws ItemNotFound if the menu sku doesn't exist",
             "throws InsufficientInventory carrying (sku, requested, available) if not enough",
             "creates a 'Reserved' row in inventory_reservation; release happens via deleteTransactionItem or clearTransaction"
+          ],
+          "consumes": [
+            "Service.Transaction.addItem"
           ]
         },
-        "txRowToDomain": [
-          "pure decoder from Rel8 TransactionRow plus pre-hydrated children to a Types.Transaction",
-          "lives in DB.Transaction (not Types.Transaction) so Types.Transaction has no Rel8/hasql dependency"
-        ],
-        "parseTransactionStatus": [
-          "DEFENSIVE: unknown strings silently default to Created",
-          "round-trips against showStatus; symmetric within this module only",
-          "acts as the boundary between SQL TEXT columns and the typed enum"
-        ],
-        "parsePaymentMethod": [
-          "case-insensitive for canonical methods; 'OTHER:foo' / 'Other:foo' carries arbitrary text payload",
-          "fallback for unrecognized strings is Other s (preserves the original text), NOT a default constructor"
-        ],
+        "txRowToDomain": {
+          "notes": [
+            "pure decoder from Rel8 TransactionRow plus pre-hydrated children to a Types.Transaction",
+            "lives in DB.Transaction (not Types.Transaction) so Types.Transaction has no Rel8/hasql dependency"
+          ],
+          "consumes": [
+            "DB.Transaction.hydrateTx (the assembly point for full Transaction values)",
+            "DB.Transaction.getAllTransactions, getTransactionById"
+          ]
+        },
+        "parseTransactionStatus": {
+          "notes": [
+            "DEFENSIVE: unknown strings silently default to Created",
+            "round-trips against showStatus; symmetric within this module only",
+            "acts as the boundary between SQL TEXT columns and the typed enum"
+          ],
+          "consumes": [
+            "DB.Transaction.txRowToDomain (decodes the status text column on every load)"
+          ]
+        },
+        "parsePaymentMethod": {
+          "notes": [
+            "case-insensitive for canonical methods; 'OTHER:foo' / 'Other:foo' carries arbitrary text payload",
+            "fallback for unrecognized strings is Other s (preserves the original text), NOT a default constructor"
+          ],
+          "consumes": [
+            "DB.Transaction.paymentRowToDomain"
+          ]
+        },
+        "parseTaxCategory": {
+          "consumes": [
+            "DB.Transaction.taxRowToDomain"
+          ]
+        },
         "showDiscountType": [
           "loses information: PercentOff/AmountOff/Custom all collapse to their tag without the payload",
           "discRowAmount and discRowPercent in the row carry the payload; showDiscountType + getDiscountPercent jointly preserve it"
@@ -502,12 +655,21 @@
             "encodes the DomainEvent as JSON via Aeson, casts $7 from text to jsonb in SQL",
             "id, type, aggregate_id derived via eventMeta dispatching on the event variant",
             "occurred_at is the application clock at insert time, NOT a DB now()"
+          ],
+          "consumes": [
+            "Effect.EventEmitter.runEventEmitterProd (every domain event in production goes here first)"
           ]
         },
-        "queryDomainEvents": [
-          "DESCENDING order by seq with LIMIT; cursor is exclusive (seq > $3)",
-          "all three filter params are OPTIONAL (null aware via SQL null comparison)"
-        ],
+        "queryDomainEvents": {
+          "notes": [
+            "DESCENDING order by seq with LIMIT; cursor is exclusive (seq > $3)",
+            "all three filter params are OPTIONAL (null aware via SQL null comparison)"
+          ],
+          "consumes": [
+            "Server.Admin domain events viewer (cursor-based pagination)",
+            "fallback for SSE/WS clients whose cursor is older than the broadcaster's bounded history"
+          ]
+        },
         "eventMeta": [
           "extracts (type-string, aggregate-id) for indexing",
           "type strings follow dot.case e.g. 'transaction.created', 'inventory.item_updated'",
@@ -518,13 +680,23 @@
 
     "Effect.EventEmitter": {
       "invariants": {
-        "runEventEmitterNoop": [
-          "discards events; useful for tests that want pure logic without event side effects"
-        ],
-        "runEventEmitterCollect": [
-          "collects events into an IORef in REVERSE order (cons onto front)",
-          "callers wanting chronological order must reverse the list"
-        ],
+        "runEventEmitterNoop": {
+          "notes": [
+            "discards events; useful for tests that want pure logic without event side effects"
+          ],
+          "consumes": [
+            "test-only"
+          ]
+        },
+        "runEventEmitterCollect": {
+          "notes": [
+            "collects events into an IORef in REVERSE order (cons onto front)",
+            "callers wanting chronological order must reverse the list"
+          ],
+          "consumes": [
+            "test/spec runners that assert on emitted events"
+          ]
+        },
         "runEventEmitterProd": {
           "intent": "Production interpreter: persist to domain_events AND publish to broadcaster",
           "effects": ["DBPool", "IO"],
@@ -533,6 +705,12 @@
             "the two writes are sequential and NOT transactional",
             "if publish succeeds and the DB write fails (or vice versa), subscribers see a divergence from the audit log",
             "trace, actor, and location are bound at interpreter setup time; one interpreter per request scope"
+          ],
+          "consumes": [
+            "Service.Transaction.* (every state change emits)",
+            "Service.Stock.* (pull lifecycle)",
+            "Service.Register.* (open/close)",
+            "App.Server initialization (one interpreter per request via App env)"
           ]
         }
       }
@@ -553,10 +731,15 @@
         }
       ],
       "invariants": {
-        "runTransactionDbIO": [
-          "thin shim over DB.Transaction.* and DB.Reservation.*",
-          "AddTransactionItem catches InventoryException via try; other exceptions propagate"
-        ],
+        "runTransactionDbIO": {
+          "notes": [
+            "thin shim over DB.Transaction.* and DB.Reservation.*",
+            "AddTransactionItem catches InventoryException via try; other exceptions propagate"
+          ],
+          "consumes": [
+            "Service.Transaction.* in production (the only IO interpreter for this effect)"
+          ]
+        },
         "runTransactionDbPure": {
           "intent": "Pure in-memory interpreter for unit tests, requiring GenUUID and Clock effects in scope",
           "notes": [
@@ -564,6 +747,9 @@
             "implements the SAME reservation logic as the IO interpreter (active reserved qty subtracted from total)",
             "DOES NOT enforce status invariants; that's the state machine's job in Service.Transaction",
             "RefundTransaction generates a refund row using the supplied refundId, preserves original is_refunded flag"
+          ],
+          "consumes": [
+            "Service.Transaction unit tests (no DB needed)"
           ]
         },
         "activeReservedQty": [
@@ -619,15 +805,26 @@
           "no-op if the new status equals the current status",
           "issues an UPDATE only when the state machine actually transitions"
         ],
-        "createStockPull": [
-          "BEST-EFFORT: failure to insert is SILENTLY ignored (Left _ -> pure ())",
-          "looks up item name from inventory snapshot; falls back to UUID-as-text if missing",
-          "emits PullRequestCreated only on successful insert"
-        ],
-        "createTransactionSvc": [
-          "thin wrapper: createTransaction then emit TransactionCreated",
-          "no state machine guard; new transactions are always valid"
-        ],
+        "createStockPull": {
+          "notes": [
+            "BEST-EFFORT: failure to insert is SILENTLY ignored (Left _ -> pure ())",
+            "looks up item name from inventory snapshot; falls back to UUID-as-text if missing",
+            "emits PullRequestCreated only on successful insert"
+          ],
+          "consumes": [
+            "Service.Transaction.addItem (called after each successful item add)",
+            "downstream PullRequestCreated event is consumed by stockroom dashboard SSE"
+          ]
+        },
+        "createTransactionSvc": {
+          "notes": [
+            "thin wrapper: createTransaction then emit TransactionCreated",
+            "no state machine guard; new transactions are always valid"
+          ],
+          "consumes": [
+            "Server.Transaction POST /transactions"
+          ]
+        },
         "addItem": {
           "intent": "Add an item to a transaction with state-machine enforcement and inventory reservation",
           "effects": ["TransactionDb", "StockDb", "InventoryDb", "EventEmitter", "Clock", "GenUUID", "Error ServerError"],
@@ -642,6 +839,9 @@
             { "input": "addItem on Completed tx",       "expected": "err409 InvalidTxCommand" },
             { "input": "addItem with unknown sku",      "expected": "err404 Item not found" },
             { "input": "addItem with qty > available",  "expected": "err400 Insufficient inventory" }
+          ],
+          "consumes": [
+            "Server.Transaction POST /transactions/:id/items"
           ]
         },
         "removeItem": [
@@ -665,6 +865,9 @@
           "spec": [
             { "input": "finalizeTx on InProgress tx",  "expected": "Right tx{status=Completed}, inventory decremented, TransactionFinalized emitted" },
             { "input": "finalizeTx on Created tx",     "expected": "err409 Cannot Finalize from Created" }
+          ],
+          "consumes": [
+            "Server.Transaction POST /transactions/:id/finalize"
           ]
         },
         "voidTx": {
@@ -676,13 +879,21 @@
           "spec": [
             { "input": "voidTx on Created tx",    "expected": "Right tx{status=Voided}, TransactionVoided + PullRequestCancelled emitted" },
             { "input": "voidTx on Voided tx",     "expected": "err409 Transaction is voided" }
+          ],
+          "consumes": [
+            "Server.Transaction POST /transactions/:id/void"
           ]
         },
-        "refundTx": [
-          "GENERATES the refund UUID at the service layer (not the DB)",
-          "refund is a SEPARATE Transaction row with negated amounts and Type=Return",
-          "original tx is marked is_refunded=true; refund tx points back via reference_transaction_id"
-        ]
+        "refundTx": {
+          "notes": [
+            "GENERATES the refund UUID at the service layer (not the DB)",
+            "refund is a SEPARATE Transaction row with negated amounts and Type=Return",
+            "original tx is marked is_refunded=true; refund tx points back via reference_transaction_id"
+          ],
+          "consumes": [
+            "Server.Transaction POST /transactions/:id/refund"
+          ]
+        }
       }
     },
 
@@ -700,12 +911,20 @@
           "spec": [
             { "input": "openRegister closedRegId req",  "expected": "Right reg{isOpen=True}, RegisterOpened emitted" },
             { "input": "openRegister openRegId req",    "expected": "err409 Register is already open" }
+          ],
+          "consumes": [
+            "Server.Register POST /registers/:id/open"
           ]
         },
-        "closeRegister": [
-          "computes variance = expectedDrawerAmount - countedCash on the loaded register",
-          "emits RegisterClosed with variance; variance can be negative (over) or positive (short)"
-        ]
+        "closeRegister": {
+          "notes": [
+            "computes variance = expectedDrawerAmount - countedCash on the loaded register",
+            "emits RegisterClosed with variance; variance can be negative (over) or positive (short)"
+          ],
+          "consumes": [
+            "Server.Register POST /registers/:id/close"
+          ]
+        }
       }
     },
 
@@ -718,23 +937,37 @@
         "guardPullEvent": [
           "translates InvalidPullCmd to err409 with reason in the body"
         ],
-        "transition": [
-          "ORDER: load, run command, guard, updatePullStatus, emit PullStatusChanged",
-          "carries actorId from the command into the event for audit",
-          "if updatePullStatus fails it returns err500 with the DB error text"
-        ],
+        "transition": {
+          "notes": [
+            "ORDER: load, run command, guard, updatePullStatus, emit PullStatusChanged",
+            "carries actorId from the command into the event for audit",
+            "if updatePullStatus fails it returns err500 with the DB error text"
+          ],
+          "consumes": [
+            "Service.Stock.acceptPull, startPulling, fulfillPull, reportIssue, retryPull (all dispatch through here)"
+          ]
+        },
         "fulfillPull": {
           "intent": "Mark a pull as Fulfilled (valid only from PullPulling)",
           "spec": [
             { "input": "fulfillPull pullingId actor",   "expected": "Right pr{status=PullFulfilled}, PullStatusChanged emitted" },
             { "input": "fulfillPull acceptedId actor",  "expected": "err409 Invalid command in Accepted state" },
             { "input": "fulfillPull fulfilledId actor", "expected": "err409 Pull request is fulfilled" }
+          ],
+          "consumes": [
+            "Server.Stock POST /pulls/:id/fulfill (stockroom dashboard)"
           ]
         },
-        "cancelPull": [
-          "DOES NOT use transition: emits PullRequestCancelled (not PullStatusChanged) with the cancellation reason",
-          "valid from any non-terminal vertex; PullCancelled and PullFulfilled are absorbing"
-        ],
+        "cancelPull": {
+          "notes": [
+            "DOES NOT use transition: emits PullRequestCancelled (not PullStatusChanged) with the cancellation reason",
+            "valid from any non-terminal vertex; PullCancelled and PullFulfilled are absorbing"
+          ],
+          "consumes": [
+            "Server.Stock POST /pulls/:id/cancel",
+            "Service.Transaction.voidTx (cascades cancellation), removeItem (per-sku cleanup)"
+          ]
+        },
         "addMessage": [
           "loads the pull only to assert it exists; message can be added in any state",
           "msgId is generated at the service layer via GenUUID"
@@ -771,11 +1004,16 @@
           "Issue    -> {Accepted via RetryCmd, Cancelled via CancelCmd}",
           "Fulfilled and Cancelled are absorbing; any further command yields InvalidPullCmd, no state change"
         ],
-        "runPullCommand": [
-          "wraps pullAction; existential erasure means callers cannot inspect the new vertex's type",
-          "callers pattern-match on the returned PullEvent to know which transition fired",
-          "InvalidPullCmd indicates same-state with no transition; the SomePullState is unchanged"
-        ]
+        "runPullCommand": {
+          "notes": [
+            "wraps pullAction; existential erasure means callers cannot inspect the new vertex's type",
+            "callers pattern-match on the returned PullEvent to know which transition fired",
+            "InvalidPullCmd indicates same-state with no transition; the SomePullState is unchanged"
+          ],
+          "consumes": [
+            "Service.Stock.transition (the only orchestrator that runs commands against this machine)"
+          ]
+        }
       }
     },
 
@@ -817,14 +1055,23 @@
           "Voided and Refunded are absorbing; any further command yields InvalidTxCommand",
           "AddItemCmd from Created sets transactionStatus = InProgress on the carried Transaction value, NOT just the type-level vertex"
         ],
-        "runTxCommand": [
-          "callers pattern-match on TxEvent to know which transition fired",
-          "InvalidTxCommand carries a human-readable reason that Service.Transaction maps to err409 body"
-        ],
-        "someTxStatus": [
-          "extracts TransactionStatus from a SomeTxState by inspecting the singleton tag",
-          "used by Service.Transaction.persistStatusChange to detect actual transitions"
-        ],
+        "runTxCommand": {
+          "notes": [
+            "callers pattern-match on TxEvent to know which transition fired",
+            "InvalidTxCommand carries a human-readable reason that Service.Transaction maps to err409 body"
+          ],
+          "consumes": [
+            "Service.Transaction.addItem, removeItem, addPayment, removePayment, finalizeTx, voidTx, refundTx"
+          ]
+        },
+        "someTxStatus": {
+          "notes": [
+            "extracts TransactionStatus from a SomeTxState by inspecting the singleton tag"
+          ],
+          "consumes": [
+            "Service.Transaction.persistStatusChange (detects when an actual transition happened)"
+          ]
+        },
         "cmdLabel": [
           "human-readable command names used in InvalidTxCommand error messages",
           "MUST stay in sync with TxCommand constructors; partial functions would silently produce 'Cannot ?' messages"
@@ -857,24 +1104,40 @@
           "effects": ["STM", "IO"],
           "notes": [
             "ORDER inside the STM transaction: read seq, write seq+1, write to chan, trim history",
-            "history is dropped FIFO when length exceeds bMaxHistory (Seq.drop 1)",
-            "called by: runEventEmitterProd, mkBroadcastScribe (Katip), runAvailabilityRelay"
+            "history is dropped FIFO when length exceeds bMaxHistory (Seq.drop 1)"
           ],
           "spec": [
             { "input": "pre <- currentSeq bc; publish bc evt; post <- currentSeq bc",     "expected": "post == pre + 1" },
             { "input": "replicateM_ (bMaxHistory + n) (publish bc evt); historyDepth bc", "expected": "bMaxHistory bc" }
+          ],
+          "consumes": [
+            "Effect.EventEmitter.runEventEmitterProd (every domain event)",
+            "Katip.BroadcastScribe (every log line at or above the configured severity)",
+            "Infrastructure.AvailabilityRelay (publishes AvailabilityUpdate frames)"
           ]
         },
-        "subscribe": [
-          "subInitSeq is the seq at the moment of subscribe; events with that seq or later flow through subChan",
-          "subscribers DO NOT see history automatically; sseStream and wsHandler replay history themselves before reading subChan",
-          "no unsubscribe operation; channels are GC-cleaned when subscribers drop their reference"
-        ],
-        "historyFrom": [
-          "returns all (seq, event) pairs with seq strictly greater than cursor",
-          "uses Seq.filter; O(n) over current history",
-          "result is bounded by bMaxHistory regardless of cursor value"
-        ],
+        "subscribe": {
+          "notes": [
+            "subInitSeq is the seq at the moment of subscribe; events with that seq or later flow through subChan",
+            "subscribers DO NOT see history automatically; sseStream and wsHandler replay history themselves before reading subChan",
+            "no unsubscribe operation; channels are GC-cleaned when subscribers drop their reference"
+          ],
+          "consumes": [
+            "Server.Feed.wsHandler (live-tail)",
+            "Server.SSE / admin live event tail",
+            "Infrastructure.AvailabilityRelay's own subscribe to the domain broadcaster"
+          ]
+        },
+        "historyFrom": {
+          "notes": [
+            "returns all (seq, event) pairs with seq strictly greater than cursor",
+            "uses Seq.filter; O(n) over current history",
+            "result is bounded by bMaxHistory regardless of cursor value"
+          ],
+          "consumes": [
+            "Server.Feed.wsHandler cursor-replay path"
+          ]
+        },
         "currentSeq": [
           "next seq value that publish would assign (NOT the just-published one)",
           "uses readTVarIO (no STM transaction); cheaper than subscribe for a snapshot"
@@ -909,6 +1172,11 @@
           "spec": [
             { "input": "publish (TransactionItemAdded sku 3)", "expected": "AvailabilityUpdate with availableQty - 3 published" },
             { "input": "publish (ItemDeleted sku)",            "expected": "no AvailabilityUpdate published, sku removed from state" }
+          ],
+          "consumes": [
+            "App.runWithEnv (forks this thread once at startup)",
+            "Server.Feed.wsHandler subscribes to the availability broadcaster this populates",
+            "Server.Feed.feedSnapshotHandler reads the same TVar"
           ]
         },
         "populateFromDb": [
@@ -968,6 +1236,9 @@
           "spec": [
             { "input": "connect with cursor=Just 100",  "expected": "frames where seq > 100, then live updates" },
             { "input": "connect with cursor=Nothing",   "expected": "snapshot of all current items at currentSeq, then live updates" }
+          ],
+          "consumes": [
+            "Servant route /xrpc/app.cheeblr.feed.subscribe (WebSocket)"
           ]
         },
         "feedStatusHandler": [
@@ -979,11 +1250,16 @@
           "no pagination; full snapshot in one response",
           "intended for clients that prefer one-shot polling over WS"
         ],
-        "lexiconsApp": [
-          "lexicon JSON is INLINED as Haskell ByteString literals",
-          "vendored deliberately to avoid a runtime asset path dependency; ugly but self-contained",
-          "404 for any path under /lexicons that is not one of the three known names"
-        ]
+        "lexiconsApp": {
+          "notes": [
+            "lexicon JSON is INLINED as Haskell ByteString literals",
+            "vendored deliberately to avoid a runtime asset path dependency; ugly but self-contained",
+            "404 for any path under /lexicons that is not one of the three known names"
+          ],
+          "consumes": [
+            "Servant route /lexicons/app.cheeblr.*"
+          ]
+        }
       }
     },
 
@@ -1002,11 +1278,17 @@
         }
       ],
       "invariants": {
-        "traceIdKey": [
-          "process-global Vault key for stashing the per-request TraceId",
-          "NOINLINE pragma is REQUIRED; without it GHC may inline and create distinct Vault keys per call site",
-          "documented WAI pattern; do not duplicate this trick elsewhere without thinking it through"
-        ],
+        "traceIdKey": {
+          "notes": [
+            "process-global Vault key for stashing the per-request TraceId",
+            "NOINLINE pragma is REQUIRED; without it GHC may inline and create distinct Vault keys per call site",
+            "documented WAI pattern; do not duplicate this trick elsewhere without thinking it through"
+          ],
+          "consumes": [
+            "Server.Middleware.Tracing.tracingMiddleware (writes)",
+            "Server.Middleware.Tracing.getTraceId (reads)"
+          ]
+        },
         "tracingMiddleware": {
           "intent": "Ensure every request has a TraceId in the WAI vault and on the response",
           "notes": [
@@ -1016,15 +1298,25 @@
             "response header X-Trace-Id is APPENDED, not replaced; if a downstream layer set it, both will appear"
           ],
           "spec": [
-            { "input": "request without X-Trace-Id",            "expected": "fresh TraceId in vault, X-Trace-Id present on response" },
+            { "input": "request without X-Trace-Id",             "expected": "fresh TraceId in vault, X-Trace-Id present on response" },
             { "input": "request with valid X-Trace-Id",          "expected": "same TraceId in vault and response" },
             { "input": "request with malformed X-Trace-Id",      "expected": "fresh TraceId in vault, malformed value DISCARDED" }
+          ],
+          "consumes": [
+            "App.runWithEnv (outermost middleware, runs on every request)"
           ]
         },
-        "getTraceId": [
-          "Nothing if tracingMiddleware did not run before this handler (programmer error, not a runtime case)",
-          "callers should treat Nothing as 'tracing disabled' rather than failing the request"
-        ]
+        "getTraceId": {
+          "notes": [
+            "Nothing if tracingMiddleware did not run before this handler (programmer error, not a runtime case)",
+            "callers should treat Nothing as 'tracing disabled' rather than failing the request"
+          ],
+          "consumes": [
+            "Effect.EventEmitter.runEventEmitterProd (stamps trace_id on every domain event)",
+            "Katip log enrichment (every log line gets the trace_id)",
+            "any handler that wants to surface trace_id in a response body or error"
+          ]
+        }
       }
     }
 
