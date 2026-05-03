@@ -6,7 +6,6 @@ module DB.Events (
   queryDomainEvents,
 ) where
 
-import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as LBS
 import Data.Functor.Contravariant ((>$<))
