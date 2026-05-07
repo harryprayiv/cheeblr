@@ -1,0 +1,815 @@
+{
+  "version": 1,
+  "modules": {
+
+    "Config.Network": {
+      "openIssues": [
+        {
+          "name": "CurrentConfigIsHardcodedNoEnvSelection",
+          "what": "currentConfig = localConfig is a hardcoded source-level binding; switching to networkConfig requires editing this file",
+          "why": [
+            "No build-time or runtime mechanism for environment selection.",
+            "When deploying to a non-localhost target, currentConfig must be edited by hand and the bundle rebuilt.",
+            "A clean fix would inject the config via a foreign import from a generated JS module, or sniff via window.location.host.",
+            "Symptom of getting it wrong: API calls go to the wrong host, CORS rejects everything, login fails silently with confusing 'network error' messages."
+          ],
+          "blocking": ["clean multi-environment deploy"],
+          "affects": ["currentConfig"]
+        }
+      ],
+      "invariants": {
+        "currentConfig": [
+          "Always returns localConfig in the current source. Edit this binding to switch environments.",
+          "Other modules import currentConfig and use it for apiBaseUrl and appOrigin (sent as the CORS Origin header)."
+        ]
+      }
+    },
+
+    "API.Auth": {
+      "decisions": [
+        {
+          "name": "CredentialsIncludeForCookieAuth",
+          "what": "login, logout, and validateSession all pass credentials: Include in Fetch options",
+          "why": [
+            "The backend issues an HttpOnly session cookie on successful login; subsequent /auth/me calls validate via that cookie.",
+            "credentials: Include is required to BOTH receive the Set-Cookie on login AND send the cookie on /auth/me.",
+            "Cross-origin requests do not send cookies by default; this opt-in is the load-bearing detail of the cookie auth scheme."
+          ],
+          "affects": ["login", "logout", "validateSession"]
+        }
+      ],
+      "invariants": {
+        "login": {
+          "intent": "POST /auth/login, parse the JSON LoginResponse, surface HTTP errors as Left",
+          "effects": ["IO (fetch, throwError)"],
+          "notes": [
+            "Status check is range-based (>= 200 && < 300); both 200 and 204 succeed.",
+            "On non-2xx, reads the response body as text and surfaces it in the Left message; useful for backend-formatted error JSON.",
+            "Without credentials: Include the Set-Cookie response header would be ignored and /auth/me would fail."
+          ]
+        },
+        "validateSession": {
+          "intent": "GET /auth/me to confirm the session cookie is still valid; returns the server's view of the session",
+          "effects": ["IO (fetch)"],
+          "notes": [
+            "Called by Main at app boot to restore session state across reloads.",
+            "Failure (any non-2xx) means the user must log in again; Main routes to Login on Left."
+          ],
+          "consumes": [
+            "Main (inside the launchAff_ block at boot time)"
+          ]
+        }
+      }
+    },
+
+    "API.Request": {
+      "decisions": [
+        {
+          "name": "AuthPostCheckedIsTheOnlyStatusValidatingHelper",
+          "what": "authPostChecked validates HTTP status (2xx required); authPost/authGet/authPut/authDelete parse the JSON regardless of status",
+          "why": [
+            "Most backend endpoints return JSON-shaped error bodies on 4xx/5xx, which authPost handles by letting fromJSON parse them and downstream code pattern-matches on success/error fields.",
+            "authPostChecked exists for endpoints that return raw error text (not JSON) on failure; without the status check, fromJSON would fail and the actual error message would be lost.",
+            "Currently used by Types.Transaction's createTransaction and addTransactionItem paths; everything else uses authPost."
+          ],
+          "affects": ["authPost", "authPostChecked"]
+        },
+        {
+          "name": "BearerHeaderCarriesUserIdNotSessionToken",
+          "what": "Authorization: Bearer header value is the user UUID (from Services.AuthService.userIdFromAuth), NOT a real session token",
+          "why": [
+            "Real auth runs over the HttpOnly session cookie set by /auth/login (see API.Auth.CredentialsIncludeForCookieAuth).",
+            "The Bearer header is decorative or used by the backend as an explicit user identifier on top of the cookie session.",
+            "If a backend handler ever trusts the Bearer header as proof of authentication without checking the cookie, that's an authorization vulnerability."
+          ],
+          "affects": ["authGet", "authPost", "authPut", "authDelete", "authPostChecked"]
+        }
+      ],
+      "invariants": {
+        "authPost": [
+          "Sends Authorization: Bearer <userId> where userId is the show of the user UUID, NOT a real session token.",
+          "credentials: Include sends any cookies that may be set; with the Bearer header this is dual-auth.",
+          "JSON parse failure (any 2xx response that isn't valid JSON of the expected shape) becomes a Left runRequest error; the original status code is not preserved in the error message."
+        ],
+        "authPostChecked": [
+          "Status code check happens BEFORE JSON parse; non-2xx returns the raw response.text in the Left error.",
+          "Used for endpoints (createTransaction, addTransactionItem) where backend errors arrive as plain text rather than parseable JSON.",
+          "Logs every error to console.error in addition to surfacing it; useful for debugging but noisy."
+        ],
+        "runRequest": [
+          "Wraps an Aff action in attempt; success becomes Right, exception becomes Left with the label prefixed.",
+          "Always logs Lefts to console.error; debug-friendly but verbose."
+        ]
+      }
+    },
+
+    "API.Inventory": {
+      "decisions": [
+        {
+          "name": "QueryModeDispatchInFetchInventory",
+          "what": "fetchInventory dispatches between three data sources by QueryMode: JsonMode (static file), HttpMode (REST API), GqlMode (GraphQL)",
+          "why": [
+            "JsonMode is the live-view fallback when the backend is unreachable; reads ./inventory.json with a cache-busting timestamp param.",
+            "HttpMode is the REST path through API.Request.authGetFullUrl using the configured apiEndpoint.",
+            "GqlMode is the GraphQL path used by Pages.LiveView and Main.loadInventory; calls GraphQL.API.Inventory.readInventoryGql.",
+            "The dispatch is a runtime config decision (LiveViewConfig.mode); changing modes requires a UI control (currently absent) or editing defaultViewConfig."
+          ],
+          "affects": ["fetchInventory", "fetchInventoryFromJson", "fetchInventoryFromHttp"]
+        }
+      ],
+      "invariants": {
+        "fetchInventoryFromJson": [
+          "Reads ./inventory.json from the same origin; relative path means it is served by the same web server as the app.",
+          "Appends ?t=<currentTimestamp> for cache-busting; the file might be updated out-of-band.",
+          "No auth headers; the file is assumed to be public on the same origin."
+        ],
+        "fetchInventory": [
+          "Three-way dispatch on QueryMode; the default is GqlMode per Config.LiveView.defaultViewConfig.",
+          "JsonMode and HttpMode are alternatives for development or fallback; the production path is GqlMode."
+        ]
+      }
+    },
+
+    "Types.UUID": {
+      "decisions": [
+        {
+          "name": "ManualUUIDv4ImplementationNotCryptoRandomUUID",
+          "what": "genUUID is a manual UUIDv4 builder using Effect.Random.random, NOT crypto.randomUUID or any cryptographically secure source",
+          "why": [
+            "Effect.Random.random is Math.random under the hood; not suitable for cryptographic purposes.",
+            "For inventory item UUIDs, transaction UUIDs, and similar non-secret identifiers, this is fine.",
+            "A safer implementation would foreign import crypto.randomUUID() from the browser's WebCrypto API (available in all modern browsers since ~2022).",
+            "Switching is a one-line foreign import; the only reason it hasn't happened is nobody has needed cryptographic UUIDs yet."
+          ],
+          "affects": ["genUUID", "randomInt"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "GenUUIDNotCryptographicallySecure",
+          "what": "genUUID's randomness comes from Math.random; an attacker observing some UUIDs could in principle predict subsequent ones",
+          "why": [
+            "PRNG predictability matters if UUIDs are ever used as authorization tokens, password reset links, or share-link nonces.",
+            "Currently genUUID is used for transaction IDs, item IDs, payment IDs, register IDs - all server-validated, so predictability is not currently a vulnerability vector.",
+            "Becomes a problem the moment a future feature uses a UUID as a capability token."
+          ],
+          "blocking": ["any future use of genUUID for security-sensitive identifiers"],
+          "affects": ["genUUID"]
+        }
+      ],
+      "invariants": {
+        "parseUUID": [
+          "Strict regex match: 8-4-4-4-12 lowercase hex with hyphens. Uppercase hex is rejected (would need a flag change).",
+          "Returns Nothing on any deviation from the canonical form; the regex doesn't validate version/variant bits.",
+          "Used by ReadForeign instance and form validators."
+        ],
+        "genUUID": [
+          "Sets version 4 (random) by ORing 0x4000 into the time_hi field.",
+          "Sets variant 10xx by ORing 0x8000 into clock_seq.",
+          "Output format matches parseUUID's expected pattern (lowercase hex, hyphens at standard positions).",
+          "See openIssue GenUUIDNotCryptographicallySecure."
+        ],
+        "validateUUID": [
+          "Trims input before parsing; returns V (Array String) UUID with field-name-prefixed error.",
+          "Used by Types.Inventory.validateMenuItem and similar form validators."
+        ]
+      }
+    },
+
+    "Types.Auth": {
+      "decisions": [
+        {
+          "name": "FourRoleHierarchyWithMonotonicCapabilities",
+          "what": "UserRole has a strict ordering Customer < Cashier < Manager < Admin; each higher role's capabilities are a strict superset of the next-lower role's",
+          "why": [
+            "Models the typical retail hierarchy where higher roles can do everything lower roles can plus more.",
+            "Allows whenRoleAtLeast in UI.Components.AuthGuard to gate features by minimum role.",
+            "Capabilities are explicit per-role rather than computed from the ordering, so the table-of-truth is searchable in source.",
+            "Adding a new capability requires touching all four *Capabilities records, which forces an explicit choice about which roles get it."
+          ],
+          "affects": ["customerCapabilities", "cashierCapabilities", "managerCapabilities", "adminCapabilities", "capabilitiesForRole"]
+        }
+      ],
+      "invariants": {
+        "capabilitiesForRole": [
+          "Total function over UserRole; no Maybe or Either needed.",
+          "Each branch returns the corresponding *Capabilities top-level value, not a fresh record. Modifying *Capabilities propagates."
+        ],
+        "emptyCapabilities": [
+          "All boolean fields are false; used as the SignedOut fallback in resolveCapabilities.",
+          "Also used as the base for the *Capabilities records via record update syntax."
+        ]
+      }
+    },
+
+    "Types.Transaction": {
+      "decisions": [
+        {
+          "name": "DualCaseFormatForReadForeignInstances",
+          "what": "ReadForeign instances accept BOTH PascalCase and SCREAMING_SNAKE_CASE; WriteForeign emits only PascalCase; Show emits SCREAMING_SNAKE_CASE",
+          "why": [
+            "The backend's wire format historically used SCREAMING_SNAKE_CASE; a migration to PascalCase happened (or is happening) and both forms exist in storage and on the wire.",
+            "Accepting both forms in ReadForeign means the frontend doesn't break against either old or new backend builds.",
+            "WriteForeign emits only the new PascalCase format; the SCREAMING_SNAKE_CASE branch is purely for reading legacy data.",
+            "Show is INCONSISTENT with WriteForeign: showTransactionStatus emits 'CREATED' / 'IN_PROGRESS' for log readability, while writeForeignTransactionStatus emits 'Created' / 'InProgress' for the wire. Two output formats per type, deliberately, because logs and wire have different conventions.",
+            "PaymentMethod has a special case: the 'Other s' constructor serializes as 'Other:s' (colon-prefixed); the readForeign side strips the prefix and falls back to Other <whole-string> on no match (never fails parsing).",
+            "Applies to all readForeign*/writeForeign*/show* instances for TransactionStatus, PaymentMethod, TaxCategory, TransactionType, LedgerEntryType, AccountType.",
+            "When the backend migration completes and no SCREAMING_SNAKE_CASE values remain in the wild, the legacy ReadForeign branches can be deleted.",
+            "Affects is empty here because chase's drift checker validates invariant attachment against signatures only; instance dictionary names live in chaseDataDecls which is not drift-checked."
+          ],
+          "affects": []
+        },
+        {
+          "name": "DiscreteMoneyUSDForAllAmounts",
+          "what": "All Transaction, TransactionItem, PaymentTransaction, LedgerEntry money fields use DiscreteMoney USD",
+          "why": [
+            "DiscreteMoney is a phantom-currency-tagged Discrete (Int cents) wrapper from purescript-money.",
+            "Prevents accidental mixing of currencies and accidental Number arithmetic.",
+            "Wire format serializes as a plain Int (cents); the WriteForeign instance unwraps to Int."
+          ],
+          "affects": []
+        }
+      ],
+      "invariants": {
+        "maybeToNullable": [
+          "Wrapper around Data.Nullable.toNullable; named for use-site clarity in the WriteForeign instances that need to emit JSON null for Nothing fields.",
+          "Used pervasively in writeForeignTransaction and writeForeignPaymentTransaction to convert Maybe fields to Nullable before serialization."
+        ]
+      }
+    },
+
+    "Types.Inventory": {
+      "decisions": [
+        {
+          "name": "AccumulatingValidationViaSemigroupV",
+          "what": "validateMenuItem and validateStrainLineage use V (Array String) for accumulating field-by-field error messages, joined into a single comma-separated String at the end",
+          "why": [
+            "V (the Validation Semigroup) accumulates failures rather than short-circuiting like Either.",
+            "Users get all field errors in one pass, not one-at-a-time after fixing each.",
+            "The final Either String MenuItem is the conventional return type; the join-with-comma is the lossy encoding that mapValidationErrors performs.",
+            "Lossy in the sense that if a field error happens to contain a comma, the join becomes ambiguous; in practice no validator currently produces such messages."
+          ],
+          "affects": [
+            "validateMenuItem",
+            "validateStrainLineage",
+            "validateCategory",
+            "validateSpecies",
+            "mapValidationErrors"
+          ]
+        },
+        {
+          "name": "PriceAsDiscreteUSDFromCentsInteger",
+          "what": "MenuItem.price is Discrete USD (cents-as-Int) but the form input is dollars-as-String; conversion happens in validateMenuItem",
+          "why": [
+            "The whole money pipeline (Types.Transaction, Services.Cart, Services.TransactionService, Utils.Money) uses Discrete USD.",
+            "UI input has to be human-friendly (dollars with optional decimals).",
+            "validateMenuItem floors (priceValue * 100); 12.999 dollars becomes 1299 cents (NOT 1300). Inputs with more than 2 decimal places lose precision silently.",
+            "Display goes the other way via Utils.Formatting.formatCentsToDollars."
+          ],
+          "affects": ["validateMenuItem"]
+        }
+      ],
+      "invariants": {
+        "validateMenuItem": [
+          "Multiplies price by 100 and floors to convert dollars (UI input) to cents (Discrete USD storage).",
+          "Validates each field; failures accumulate into a comma-separated error string via mapValidationErrors.",
+          "tags and effects are split on ',' and trimmed via parseCommaList; empty strings are dropped."
+        ],
+        "compareMenuItems": [
+          "Multi-field comparison driven by LiveViewConfig.sortFields; first non-EQ result wins.",
+          "Each field can be Ascending or Descending; Descending inverts via invertOrdering.",
+          "EQ on all fields means the items are considered equal for ordering purposes; sortBy is not stable in PureScript so equal elements may swap on resort."
+        ],
+        "findItemBySku": [
+          "Linear scan; O(n). Acceptable because inventories are small (hundreds, not millions).",
+          "Returns Nothing if no match; consumers typically display 'Unknown Item' or treat as a delete."
+        ],
+        "findItemNameBySku": [
+          "Returns 'Unknown Item' (literal string) for SKUs not in inventory; never Nothing.",
+          "Used in transaction display where missing items are valid (the underlying menu item may have been deleted after the transaction)."
+        ],
+        "generateClassName": [
+          "Concatenates species/category/subcategory into a CSS class string with toClassName-normalized parts.",
+          "Used for visual differentiation in the menu live view; CSS rules elsewhere assume specific class names."
+        ]
+      }
+    },
+
+    "Types.Stock": {
+      "decisions": [
+        {
+          "name": "PullVertexAndStringStatusInParallel",
+          "what": "PullVertex is a typed enum but PullRequest.prStatus is a String, and validActions/statusClass dispatch on the String not the enum",
+          "why": [
+            "The backend serializes pull request status as a string in the JSON wire format; PullVertex exists for typed code paths but the wire model is the source of truth.",
+            "validActions and statusClass take String specifically because they are called on prStatus values fresh off the wire with no enum conversion step.",
+            "Cost: a typo in a status string silently produces an empty action list (no buttons render) rather than a compile error.",
+            "Mitigation would be a parsePullVertex :: String -> Maybe PullVertex used at the API boundary."
+          ],
+          "affects": ["validActions", "statusClass"]
+        }
+      ],
+      "topologies": [
+        {
+          "name": "PullRequestLifecycle",
+          "vertices": ["PullPending", "PullAccepted", "PullPulling", "PullFulfilled", "PullCancelled", "PullIssue"],
+          "transitions": {
+            "PullPending":   ["PullAccepted", "PullCancelled"],
+            "PullAccepted":  ["PullPulling", "PullCancelled"],
+            "PullPulling":   ["PullFulfilled", "PullIssue"],
+            "PullIssue":     ["PullPulling", "PullCancelled"],
+            "PullFulfilled": [],
+            "PullCancelled": []
+          }
+        }
+      ],
+      "invariants": {
+        "validActions": [
+          "Returns the list of PullActions the UI should offer for a given prStatus string.",
+          "Pattern matches on the EXACT string forms: 'PullPending', 'PullAccepted', 'PullPulling', 'PullIssue'. Other strings (including PullFulfilled and PullCancelled) return [].",
+          "Terminal states (Fulfilled, Cancelled) have no valid actions; the UI renders no action buttons for them.",
+          "ActionRetry on PullIssue is intended to transition back to PullPulling (reattempt the pull) per the topology, but this is enforced server-side; the action label is just 'Retry'."
+        ],
+        "actionLabel": [
+          "Maps PullAction to the human-readable button label.",
+          "Total over PullAction; adding a constructor requires updating this function."
+        ],
+        "statusClass": [
+          "Maps prStatus string to a CSS class name; used for visual differentiation of pull cards.",
+          "Unrecognized status returns empty string (no class applied)."
+        ]
+      }
+    },
+
+"Services.AuthService": {
+      "decisions": [
+        {
+          "name": "DevModeAuthBypassesRealLogin",
+          "what": "AuthState carries a DevUser directly; capabilities are derived from the role on the dev user, not from a backend session lookup",
+          "why": [
+            "This is a dev/staging implementation; real production auth would replace SignedIn DevUser with SignedIn AuthenticatedUser pulled from a real session endpoint.",
+            "The dev user is selected by Pages.Login (which calls API.Auth.login and matches the response role to a dev user) or by findDevUserByRole after a sessionResp comes back from /auth/me.",
+            "Capabilities computed via Config.Auth.devUserCapabilities are LOCAL fallbacks; the real source of truth for production should be sessionCapabilities from the backend.",
+            "resolveCapabilities exists exactly to bridge this: backend caps win, local caps are the dev fallback."
+          ],
+          "affects": ["resolveCapabilities", "checkCapability", "getCapabilities"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "TokenPersistenceFunctionsAreNoOps",
+          "what": "persistToken, loadToken, clearToken all return pure unit / pure Nothing; no actual storage happens",
+          "why": [
+            "Auth migrated to HttpOnly cookies; the client should not see the token at all, hence no persistence.",
+            "But the API request layer (API.Request, API.Stock) still sends Authorization: Bearer <userId> headers, where userId is the user UUID, not a session token (see API.Request.BearerHeaderCarriesUserIdNotSessionToken).",
+            "The no-op functions hint at a finished migration that hasn't fully landed; either the Bearer header should be dropped, or these functions should actually persist a real token.",
+            "Currently the functions exist as API stubs that callers can use without breaking; deleting them would force every call site to be updated."
+          ],
+          "blocking": ["true cookie-only auth"],
+          "affects": ["persistToken", "loadToken", "clearToken"]
+        }
+      ],
+      "invariants": {
+        "userIdFromAuth": [
+          "SignedIn returns the show of the user UUID (used as Bearer token in API requests).",
+          "SignedOut returns empty string; downstream API calls with empty Bearer will fail authorization but not crash the client."
+        ],
+        "checkCapability": [
+          "SignedOut always returns false regardless of which capability function is checked.",
+          "SignedIn computes capabilities from the DevUser's role; backend-provided capabilities are NOT consulted by this function."
+        ],
+        "resolveCapabilities": [
+          "Backend capabilities (Just) always win.",
+          "Without backend caps, falls back to DevUser-derived caps for SignedIn, or emptyCapabilities for SignedOut.",
+          "The Boolean canX functions use checkCapability which does NOT consult backend caps; resolveCapabilities is the only path that does."
+        ],
+        "mostRecentUser": [
+          "filterMap that drops SignedOut events; only emits when transitioning into SignedIn.",
+          "Useful for components that need a DevUser specifically and don't want to handle the SignedOut case."
+        ]
+      }
+    },
+
+    "Services.RegisterService": {
+      "decisions": [
+        {
+          "name": "RegisterIdInLocalStorage",
+          "what": "The register's UUID is stored in browser localStorage under key 'register_id' so the same browser tab maps to the same register across reloads",
+          "why": [
+            "A POS terminal is identified by where it's running (the device), not by who's logged in. localStorage gives per-device persistence.",
+            "On first launch (no stored ID), genUUID creates a fresh ID and the register is created+opened on the backend.",
+            "Subsequent launches read the ID, fetch the register, and open it if not already open.",
+            "Implication: clearing localStorage strands the existing register record on the backend (still in DB, no client refers to it). Manual cleanup required.",
+            "Implication: opening the same URL in two browser tabs creates two separate registers with separate IDs; each tab is its own terminal."
+          ],
+          "affects": ["getOrCreateRegisterId", "initLocalRegister", "getOrInitLocalRegister"]
+        }
+      ],
+      "invariants": {
+        "getOrCreateRegisterId": {
+          "intent": "Read register UUID from localStorage; create and persist a fresh one if missing or unparseable",
+          "effects": ["IO (window, localStorage, genUUID)"],
+          "notes": [
+            "Returns the existing parsed UUID OR a freshly generated one.",
+            "Unparseable existing value triggers replacement (silently overwritten); the previous value is lost.",
+            "Does NOT validate that the returned UUID corresponds to a register that exists on the backend; getOrInitLocalRegister handles that."
+          ]
+        },
+        "initLocalRegister": {
+          "intent": "Ensure a register exists and is open for this terminal; create+open if missing, open if existing-but-closed, no-op if already open",
+          "effects": ["IO", "API calls (getRegister, openRegister, createRegister)"],
+          "notes": [
+            "Differs from getOrInitLocalRegister: this one OPENS the register; that one just gets it.",
+            "Used by Main on app boot to ensure the terminal is ready to take transactions.",
+            "Three-state branch: register exists & open (no-op + log); exists & closed (call openExistingRegister); doesn't exist (call createAndOpenRegister)."
+          ],
+          "consumes": [
+            "Main (called inside the app boot launchAff_ block after session restoration)"
+          ]
+        },
+        "createAndOpenRegister": [
+          "Two API calls: createRegister, then openRegister. If createRegister fails, openRegister is not attempted.",
+          "Starting drawer cash is hardcoded to 0; no UI to set it during pre-init.",
+          "Register name is auto-generated as 'Register ID: <uuid>' which is intentionally not user-friendly because pre-init happens without UI."
+        ],
+        "closeLocalRegister": [
+          "Variance reported only if non-zero; zero variance just says 'with no variance'.",
+          "Does NOT clear the register_id from localStorage; the closed register can be reopened on next boot via initLocalRegister."
+        ]
+      }
+    },
+
+    "Services.TransactionService": {
+      "decisions": [
+        {
+          "name": "DiscreteUSDForAllMoney",
+          "what": "All monetary values use Discrete USD (cents-as-Int) wrapped in DiscreteMoney for transport across module boundaries",
+          "why": [
+            "Floating point money is a source of off-by-one errors at every level of a financial app.",
+            "Discrete from purescript-money is an Int wrapper that prevents accidental Number arithmetic.",
+            "DiscreteMoney USD adds a phantom currency tag preventing accidental cross-currency mixing.",
+            "Conversion to/from Number happens only at display boundaries via Utils.Money formatters."
+          ],
+          "affects": [
+            "startTransaction",
+            "createTransactionItem",
+            "calculateCartTotals",
+            "addPayment",
+            "calculateTotalPayments",
+            "getRemainingBalance"
+          ]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "TaxRateHardcodedAndDivergesFromCart",
+          "what": "createTransactionItem hardcodes salesTaxRate = 0.08; Services.Cart.addItemToTransaction hardcodes taxRate = 0.15. Two source-of-truth tax rates for the same conceptual quantity.",
+          "why": [
+            "createTransactionItem (called via Services.Cart.addItemToCart, which is the live UI path) uses 0.08.",
+            "Services.Cart.addItemToTransaction uses 0.15 but is currently dead code (no caller imports it).",
+            "If anyone wires addItemToTransaction in by accident, totals will be wrong and the discrepancy will be hard to find.",
+            "Fix: pick one rate, define it in one place (Config.Tax or similar), have both call sites read from there. Or delete addItemToTransaction since it's dead.",
+            "Worth confirming whether 0.08 is the intended rate; both 0.08 and 0.15 are plausible for different jurisdictions."
+          ],
+          "blocking": ["accurate cart totals when running cart-only flows offline"],
+          "affects": ["createTransactionItem"]
+        }
+      ],
+      "invariants": {
+        "createTransactionItem": [
+          "Tax rate hardcoded to 0.08 (8%); see openIssue TaxRateHardcodedAndDivergesFromCart.",
+          "Generates a fresh UUID for the item via Effect.Random; not deterministic.",
+          "Subtotal = price * quantity; tax = floor(subtotal * 0.08); total = subtotal + tax. Floor is the rounding rule (not banker's rounding).",
+          "Calls API.addTransactionItem; the round-trip is the source of truth, not the locally-computed values."
+        ],
+        "startTransaction": {
+          "intent": "Create a new in-progress Transaction on the backend with empty items/payments and current timestamp",
+          "effects": ["IO (genUUID, nowDateTime)", "API call (createTransaction)"],
+          "notes": [
+            "Status is Created (not InProgress); transitions happen as items are added and payment is taken.",
+            "Logs params (employeeId, registerId, locationId) to console at debug level; not sensitive but verbose."
+          ]
+        },
+        "calculateCartTotals": [
+          "Folds over TransactionItems, summing subtotal/tax/total/discount columns separately.",
+          "Discount total is NOT computed from items here; it carries forward from the input value (currently always 0).",
+          "Pure; no API call."
+        ],
+        "paymentsCoversTotal": [
+          "Returns true iff sum of payment amounts >= transaction total. Strict >=, so exact match qualifies.",
+          "Used as the gate for finalizeTransaction in the UI."
+        ],
+        "getRemainingBalance": [
+          "max with Discrete 0 prevents negative balances on overpayment; the actual change is computed elsewhere (in addPayment).",
+          "Returns the unpaid portion of the transaction total."
+        ]
+      }
+    },
+
+    "Services.Cart": {
+      "openIssues": [
+        {
+          "name": "DeadAddItemToTransactionWithDivergentTaxRate",
+          "what": "addItemToTransaction is exported but has no callers; it hardcodes tax rate 0.15 while the live path uses 0.08",
+          "why": [
+            "addItemToCart is the live path used by UI.Transaction.CreateTransaction. It calls TransactionService.createTransactionItem (rate 0.08) and TransactionService.addTransactionItem.",
+            "addItemToTransaction is a parallel, no-API in-memory implementation that hardcodes rate 0.15. Exported but the only consumer (UI.Transaction.CreateTransaction) imports addItemToCart instead.",
+            "If anyone wires addItemToTransaction in by accident (intellisense temptation: similar name), totals will be wildly wrong and the discrepancy will be hard to find because the backend round-trip in addItemToCart masks the local computation.",
+            "Fix: either delete addItemToTransaction or unify the rate constant somewhere both paths read.",
+            "See also Services.TransactionService.TaxRateHardcodedAndDivergesFromCart."
+          ],
+          "blocking": ["any future offline cart mode"],
+          "affects": ["addItemToTransaction"]
+        }
+      ],
+      "invariants": {
+        "addItemToCart": {
+          "intent": "Add a menu item to the active transaction, calling the backend, merging with any existing line item, and updating UI state via callbacks",
+          "effects": ["API call (createTransactionItem -> addTransactionItem)", "callbacks (setItems, setTotals, setStatusMessage, setCheckingInventory)"],
+          "notes": [
+            "Quantity <= 0 short-circuits with a status message and no API call.",
+            "If the SKU is already in the cart, merges quantities and recomputes subtotal/tax/total. The merge takes the EXISTING item's tax rate, not the new item's, which means rate changes mid-transaction don't propagate.",
+            "On API success, the local state is updated; on API failure, status message is set and no local update happens.",
+            "Callbacks are fired in order: setItems, setTotals, setCheckingInventory, setStatusMessage."
+          ],
+          "consumes": [
+            "UI.Transaction.CreateTransaction (the inventory grid Add button)"
+          ]
+        },
+        "addItemToTransaction": [
+          "DEAD CODE; see openIssue DeadAddItemToTransactionWithDivergentTaxRate.",
+          "Hardcodes tax rate 0.15 (different from the live 0.08 path).",
+          "No API call; purely in-memory cart manipulation."
+        ],
+        "removeItemFromCart": {
+          "notes": [
+            "Calls API.removeTransactionItem to release the inventory reservation, then updates UI state.",
+            "On API failure, logs to console but UI state is NOT rolled back; the item stays visible until the next refresh.",
+            "Sets isProcessing during the API round-trip so the UI can disable interaction."
+          ]
+        },
+        "isItemAvailable": [
+          "Pure check: returns true iff (current cart qty for this SKU + requested qty) <= menu item.quantity.",
+          "Does NOT check the backend; uses only the local inventory snapshot. Stale snapshots produce wrong answers."
+        ],
+        "findUnavailableItems": [
+          "Returns the subset of cart items whose quantity exceeds the corresponding inventory entry's quantity.",
+          "Items not present in the inventory at all are also returned (treated as unavailable).",
+          "Used after an inventory refresh to prompt the user to remove now-unavailable items."
+        ]
+      }
+    },
+
+    "Main": {
+      "decisions": [
+        {
+          "name": "RegisterPreInitOnAppBoot",
+          "what": "Main calls RegisterService.initLocalRegister at boot, before route matching becomes ready",
+          "why": [
+            "Ensures the terminal has a known register on the backend by the time the user lands on the transaction page; avoids a 'register not found' error on first interaction.",
+            "Pre-init runs in launchAff_ alongside session restoration; the readyRef gate prevents premature route matching from firing before the register exists.",
+            "If pre-init fails (network down at boot), the error is logged but the app continues; subsequent transaction attempts will surface the issue."
+          ],
+          "affects": ["main"]
+        },
+        {
+          "name": "DevModeFlagDisablesSessionRestoration",
+          "what": "devMode :: Boolean (currently false) controls whether Main starts in defaultAuthState (SignedOut, requiring login) or devModeAuthState (SignedIn as defaultDevUser)",
+          "why": [
+            "When true, skips the login flow entirely for fast iteration during development.",
+            "When false (current setting), the user must complete the login flow OR have an existing valid cookie session.",
+            "Toggle requires a recompile; no env-based switch."
+          ],
+          "affects": ["main"]
+        },
+        {
+          "name": "FiberCancellationOnRouteChange",
+          "what": "prevAction holds the previously-launched fiber for the current route's data load; route changes killFiber it before launching the new route's load",
+          "why": [
+            "Without cancellation, navigating away from a slow-loading page would leave the load running, potentially pushing stale data into the destination page's poll.",
+            "killFiber cancels the in-flight Aff cleanly; the destination page sees only the loads it requested.",
+            "Trade-off: any side effects already committed by the cancelled fiber (e.g. analytics events, partial DB writes) are not undone."
+          ],
+          "affects": ["main"]
+        }
+      ],
+      "invariants": {
+        "main": {
+          "intent": "Bootstrap the app: set up FRP polls, install route matcher, restore session, pre-init register, mount UI",
+          "effects": ["IO (Poll.create, Ref.new, runInBody, launchAff_)"],
+          "notes": [
+            "readyRef gates the route matcher; the matcher is a no-op until session restoration completes.",
+            "prevAction holds the previously-launched fiber; killFiber on route change cancels in-flight loads to avoid stale state (see decision FiberCancellationOnRouteChange).",
+            "Route matcher dispatches per-route data loaders in parSequence_; loaders push results into the appropriate Poll.",
+            "Session restoration uses validateSession to check cookie validity; falls back to Login on Left, restores SignedIn state on Right."
+          ]
+        },
+        "loadInventory": [
+          "Uses readInventoryGql (GraphQL path) specifically, not fetchInventory.",
+          "Returns InventoryLoaded on success or InventoryError on failure; the UI renders both."
+        ],
+        "loadTxPageData": {
+          "intent": "Concurrent fetch of inventory and register/transaction; degrade gracefully if inventory fails but register/tx succeed",
+          "effects": ["IO (sequential parallel)"],
+          "notes": [
+            "TxPageError is fatal: register or transaction creation failed.",
+            "TxPageDegraded means inventory unavailable but the user can still see register and start adding items by SKU lookup.",
+            "Uses Control.Parallel.parallel/sequential to fetch concurrently."
+          ]
+        },
+        "testItemUUID": [
+          "Hardcoded UUID used by loadEditItem and loadDeleteItem when the URL slug is the literal string 'test'.",
+          "Convenience for testing edit/delete flows without copy-pasting a real UUID; not exposed in the UI."
+        ]
+      }
+    },
+
+    "Pages.Stock.Interface": {
+      "decisions": [
+        {
+          "name": "SSEPushTriggersFullQueueReload",
+          "what": "The SSE stream from /stock/queue/stream is used purely as a 'queue changed' notification; the handler ignores the event payload and calls loadQueue to refetch",
+          "why": [
+            "Avoids encoding the full PullRequest type in the SSE event format; the REST endpoint is the source of truth.",
+            "Trades extra HTTP requests for simpler protocol and avoids drift between SSE event shape and REST response shape.",
+            "Cost: one extra round-trip per queue change; acceptable because changes are infrequent (human-initiated)."
+          ],
+          "affects": ["page"]
+        },
+        {
+          "name": "NewPullDetectionViaPrevQueueDiff",
+          "what": "New pull requests are detected by diffing prevQueueRef against the new fetch result rather than from a 'created' event type",
+          "why": [
+            "The SSE event payload is ignored (see SSEPushTriggersFullQueueReload), so we can't tell from the event whether it was a create or an update.",
+            "Diffing by prId catches creates without needing event-type discrimination.",
+            "Side effect: only triggers audio + browser notification + alert banner for new pulls, not for status updates. Edits to existing pulls are silent.",
+            "If the prev queue is empty (initial load), no notifications fire even if pulls are present; this is intentional to avoid spamming the user on app start."
+          ],
+          "affects": ["page"]
+        }
+      ],
+      "invariants": {
+        "page": {
+          "intent": "Render the stockroom dashboard: queue of pull requests, action buttons per request, message thread for selected request, audio + browser notifications on new requests",
+          "effects": ["IO (SSE connection, audio playback, browser notifications, fetch)"],
+          "notes": [
+            "loadQueue is called on mount, on every SSE message, and when an action completes.",
+            "newPullValue holds the most-recent newly-arrived pull for the AlertBanner UI; setNewPull Nothing dismisses it.",
+            "useRef helper uses unsafePerformEffect; safe here because Ref creation is idempotent and the Ref is component-scoped.",
+            "playSound SoundInfo and showPullNotification both fire on each new pull; can be noisy if many arrive at once."
+          ],
+          "consumes": [
+            "API.Stock.getQueue, getMessages, sendMessage, acceptPull, startPull, fulfillPull, retryPull, cancelPull, reportIssue (the entire stock action surface)"
+          ]
+        },
+        "useRef": [
+          "unsafePerformEffect-based Ref creation; safe because Ref.new is idempotent and the Ref is captured in the continuation's closure.",
+          "Workaround for not having a useRef hook in Deku; revisit if Deku adds one."
+        ]
+      }
+    },
+
+    "Pages.Admin.Tabs.FeedMonitor": {
+      "decisions": [
+        {
+          "name": "InMemoryFeedFrameRingBuffer",
+          "what": "Feed frames are accumulated in component state up to maxFrames (100); older frames are dropped",
+          "why": [
+            "Feed traffic can be high-volume; unbounded growth would exhaust browser memory.",
+            "100 is large enough to inspect recent activity but small enough to render without slowdown.",
+            "If durable inspection is needed, the backend's feed history endpoints are the right path."
+          ],
+          "affects": ["feedMonitor"]
+        },
+        {
+          "name": "ConnRefSentinelForRaceCondition",
+          "what": "connRef holds Just conn while the WebSocket is intended to be open; the onMessage handler checks this Ref before pushing frames",
+          "why": [
+            "Without the check, a message that arrives in flight after disconnect would still update component state, causing stale UI.",
+            "setting connRef to Nothing in onClose / disconnect button breaks the race window.",
+            "PureScript's WebSocket API doesn't synchronously cancel pending callbacks on close; this Ref-based gate is the manual fix."
+          ],
+          "affects": ["feedMonitor"]
+        }
+      ],
+      "invariants": {
+        "feedMonitor": {
+          "intent": "Subscribe to the public inventory feed via WebSocket, render frames as they arrive",
+          "effects": ["IO (WebSocket connection, JSON parsing)"],
+          "notes": [
+            "WebSocket URL derives from currentConfig.apiBaseUrl by toWsUrl rewriting https:// to wss://.",
+            "Frame parsing failures are logged (Console.warn) but not surfaced to the UI.",
+            "No automatic reconnect; user must click Connect again if the connection drops."
+          ]
+        }
+      }
+    },
+
+    "Pages.Admin.Tabs.LogViewer": {
+      "decisions": [
+        {
+          "name": "LogStreamUsesSSENotWebSocket",
+          "what": "Logs stream over SSE (Server-Sent Events) rather than WebSocket",
+          "why": [
+            "SSE is unidirectional (server -> client) which matches the log streaming use case exactly.",
+            "SSE has automatic reconnect built in; WebSocket requires manual reconnect logic.",
+            "SSE works through more proxies and corporate firewalls than WebSocket.",
+            "Cost: SSE doesn't support binary frames, but logs are text anyway."
+          ],
+          "affects": ["logViewer"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "LogViewerSetEntriesUsesStaleClosure",
+          "what": "The onMessage handler does setEntries <<< take maxLogEntries <<< (:) evt =<< pure []; the =<< pure [] discards prior entries on every message",
+          "why": [
+            "Reading literally: pure [] yields [], (:) evt prepends evt giving [evt], take maxLogEntries gives [evt], setEntries [evt].",
+            "Result: each new log message replaces the entire entries list with just that one message.",
+            "Probably intended to read: setEntries =<< (take maxLogEntries <<< (:) evt) <$> currentEntries",
+            "Or simpler: keep entries in a Ref and Ref.modify' over it.",
+            "Worth verifying by watching the UI: if each log push wipes the previous, this is the bug."
+          ],
+          "blocking": ["actually being able to read more than one log entry at a time"],
+          "affects": ["logViewer"]
+        }
+      ],
+      "invariants": {
+        "logViewer": {
+          "intent": "Subscribe to the admin log stream via SSE and render each entry as it arrives",
+          "effects": ["IO (SSE connection)"],
+          "notes": [
+            "Authorization is via query string parameter (?authorization=Bearer+<userId>) because EventSource doesn't support custom headers in standard browsers.",
+            "Bearer is URL-encoded as 'Bearer+' (plus instead of space); this works because URL decoding is lenient.",
+            "Parse failures (non-JSON or wrong shape) are logged but not surfaced.",
+            "See openIssue LogViewerSetEntriesUsesStaleClosure for a likely bug in entry accumulation."
+          ]
+        }
+      }
+    },
+
+    "Pages.Login": {
+      "invariants": {
+        "page": {
+          "intent": "Render the login form, call API.Auth.login on submit, push the corresponding AuthState on success, navigate to /#/ on success",
+          "effects": ["IO (fetch, push auth state, set window.location)"],
+          "notes": [
+            "Maps the backend's session role to a DevUser via findDevUserByRole; falls back to defaultDevUser if no match (which means production without a corresponding dev user would always log in as defaultDevUser regardless of actual role).",
+            "Sets submitting to true on click and false on response; double-click guard relies on this state.",
+            "Hard-redirect via window.location instead of Routing.Hash; the auth state push needs to fully propagate before the new page mounts."
+          ]
+        }
+      }
+    },
+
+    "Utils.SSE": {
+      "decisions": [
+        {
+          "name": "SSEStatusViaForeignImportPushedIntoPoll",
+          "what": "openSSEImpl is a foreign import that takes both an onMessage and an onStatus callback; the PureScript wrapper translates status strings into SSEStatus and pushes them into a Poll",
+          "why": [
+            "EventSource lifecycle events (open, error, close, reconnecting) need to be exposed to the UI for the SSEStatus indicator widget.",
+            "A Poll lets multiple consumers subscribe to status changes (the SSEStatus component, plus potentially logging or analytics).",
+            "Mapping status strings in the foreign import boundary keeps the JS side simple (it just stringifies); typed mapping happens on the PS side."
+          ],
+          "affects": ["openSSE"]
+        }
+      ],
+      "invariants": {
+        "openSSE": {
+          "intent": "Open an EventSource, return a connection object with a status Poll and a close action",
+          "effects": ["IO (foreign import openSSEImpl)"],
+          "notes": [
+            "Status starts as SSEConnecting (via the pure SSEConnecting <|> statusRef.poll combinator).",
+            "Unknown status strings from the JS layer fall through to SSEConnecting; this is permissive by design so future JS-side status types don't break the type checker."
+          ]
+        }
+      }
+    },
+
+    "Utils.WebSocket": {
+      "invariants": {
+        "openWebSocket": [
+          "Foreign import _openWebSocket takes individual callbacks (onMessage, onOpen, onClose, onError); the PS wrapper bundles them as WSCallbacks for ergonomics.",
+          "WSConnection is opaque (foreign import data); the only operation is closeWebSocket.",
+          "No automatic reconnect; consumers must observe onClose / onError and reopen if desired."
+        ],
+        "toWsUrl": [
+          "Rewrites https:// -> wss:// and http:// -> ws://; otherwise passes through unchanged.",
+          "Used to derive WS endpoints from the same currentConfig.apiBaseUrl that REST uses, so dev/prod switches automatically."
+        ]
+      }
+    },
+
+    "Utils.Audio": {
+      "invariants": {
+        "playSound": [
+          "Creates a fresh <audio> element on every call; the element is not added to the DOM and is garbage-collected after the play completes.",
+          "Sound paths are hardcoded under /assets/sounds/; the web server must serve them.",
+          "Browser autoplay policies may silently block playback if no user gesture has occurred; this is a browser-level behavior, not handled here."
+        ]
+      }
+    }
+
+  }
+}
