@@ -370,6 +370,7 @@ let
       echo "Copyright (C) ${licenseConfig.years} ${licenseConfig.holder}. Licensed under the ${licenseConfig.name}."
       echo "This is free software with ABSOLUTELY NO WARRANTY; see LICENSE for terms."
       echo ""
+      ${containerHelpText}
       echo "Available commands:"
       echo ""
       echo "  Database:"
@@ -397,8 +398,7 @@ let
       echo "  Frontend:  vite  spago-watch  codegen  dev"
       echo "  Testing:   test-unit  test-integration  test-integration-tls  test-suite  test-smoke"
       echo ""
-            echo "Secrets:"
-      ${sopsModule.loadSecretsHook}
+      echo "Secrets:"
       echo ""
       echo "  Secrets / TLS:"
       echo "    sops-init-key          - Derive age key from ~/.ssh/id_ed25519"
@@ -417,7 +417,7 @@ let
       echo "    bootstrap-admin        - Create admin user, store password in sops"
       echo "    admin-password-info    - Check whether admin_password is in sops"
       echo "    sops-get admin_password - Reveal stored admin password"
-      ${containerHelpText}
+      ${sopsModule.loadSecretsHook}
       toilet ${lib.toSentenceCase name} -t --metal
     '';
   };
