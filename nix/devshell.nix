@@ -398,7 +398,10 @@ let
       echo "  Frontend:  vite  spago-watch  codegen  dev"
       echo "  Testing:   test-unit  test-integration  test-integration-tls  test-suite  test-smoke"
       echo ""
-      echo "Secrets:"
+      echo "  Auth Bootstrap (run once after first pg-start):"
+      echo "    bootstrap-admin        - Create admin user, store password in sops"
+      echo "    admin-password-info    - Check whether admin_password is in sops"
+      echo "    sops-get admin_password - Reveal stored admin password"
       echo ""
       echo "  Secrets / TLS:"
       echo "    sops-init-key          - Derive age key from ~/.ssh/id_ed25519"
@@ -412,11 +415,6 @@ let
       echo "    tls-sops-extract       - Extract sops certs to local cert path"
       echo "    tls-info               - Show certificate details"
       echo "    sops secrets/${name}.yaml - Edit secrets directly"
-      echo ""
-      echo "  Auth Bootstrap (run once after first pg-start):"
-      echo "    bootstrap-admin        - Create admin user, store password in sops"
-      echo "    admin-password-info    - Check whether admin_password is in sops"
-      echo "    sops-get admin_password - Reveal stored admin password"
       ${sopsModule.loadSecretsHook}
       toilet ${lib.toSentenceCase name} -t --metal
     '';
