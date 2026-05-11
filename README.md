@@ -1,6 +1,6 @@
 # Cheeblr: Dispensary Management System
 
-A full-stack dispensary point-of-sale and inventory management system built with PureScript (frontend) and Haskell (backend) on PostgreSQL, emphasizing type safety, functional programming, and reproducible builds via Nix.
+A full-stack cannabis dispensary point-of-sale and inventory management system built with PureScript (frontend) and Haskell (backend) on PostgreSQL, emphasizing type safety, functional programming, and reproducible builds via Nix.
 
 [![License](https://www.gnu.org/graphics/agplv3-155x51.png)](https://www.gnu.org/licenses/agpl-3.0.html)
 
