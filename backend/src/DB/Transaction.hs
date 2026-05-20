@@ -4,12 +4,10 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
--- Register functions live in DB.Register.
--- Standalone reservation helpers live in DB.Reservation.
 module DB.Transaction where
 
 import Control.Exception (Exception, throwIO)
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Data.Int (Int32)
 import Data.Scientific (fromFloatDigits)
 import Data.Text (Text, pack)
@@ -33,8 +31,6 @@ data InventoryException
 
 instance Exception InventoryException
 
--- | DDL for all transaction-family tables (includes register and reservation
--- since they are logically part of the same group and set up once at startup).
 createTransactionTables :: DBPool -> IO ()
 createTransactionTables pool = do
   runSession pool $ do
@@ -313,35 +309,79 @@ voidTransaction pool txId reason = do
     Just tx -> pure tx
     Nothing -> throwIO $ userError $ "Transaction not found after void: " <> show txId
 
-refundTransaction :: DBPool -> UUID -> UUID -> Text -> IO Transaction
-refundTransaction pool txId refundId reason = do
+refundTransaction ::
+  DBPool ->
+  UUID ->
+  UUID ->
+  Text ->
+  [UUID] ->
+  [UUID] ->
+  IO Transaction
+refundTransaction pool txId refundId reason refundItemIds refundPaymentIds = do
   mOrig <- getTransactionById pool txId
   case mOrig of
     Nothing   -> throwIO $ userError $ "Original transaction not found: " <> show txId
     Just orig -> do
+      let origItems    = transactionItems orig
+          origPayments = transactionPayments orig
+      when (length refundItemIds /= length origItems) $
+        throwIO $
+          userError $
+            "refundTransaction: expected "
+              <> show (length origItems)
+              <> " item ids, got "
+              <> show (length refundItemIds)
+      when (length refundPaymentIds /= length origPayments) $
+        throwIO $
+          userError $
+            "refundTransaction: expected "
+              <> show (length origPayments)
+              <> " payment ids, got "
+              <> show (length refundPaymentIds)
       now <- getCurrentTime
-      let refund =
-            orig
-              { transactionId                     = refundId
-              , transactionStatus                 = Completed
-              , transactionCreated                = now
-              , transactionCompleted              = Just now
-              , transactionSubtotal               = negate (transactionSubtotal orig)
-              , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
-              , transactionTaxTotal               = negate (transactionTaxTotal orig)
-              , transactionTotal                  = negate (transactionTotal orig)
-              , transactionType                   = Return
-              , transactionIsVoided               = False
-              , transactionVoidReason             = Nothing
-              , transactionIsRefunded             = False
-              , transactionRefundReason           = Nothing
-              , transactionReferenceTransactionId = Just txId
-              , transactionNotes                  =
-                  Just $
-                    "Refund for transaction " <> pack (toString txId) <> ": " <> reason
-              , transactionItems    = map negateTransactionItem (transactionItems orig)
-              , transactionPayments = map negatePaymentTransaction (transactionPayments orig)
-              }
+      let
+        refundItems =
+          zipWith
+            ( \newId i ->
+                (negateTransactionItem i)
+                  { transactionItemId            = newId
+                  , transactionItemTransactionId = refundId
+                  }
+            )
+            refundItemIds
+            origItems
+        refundPayments =
+          zipWith
+            ( \newId p ->
+                (negatePaymentTransaction p)
+                  { paymentId            = newId
+                  , paymentTransactionId = refundId
+                  }
+            )
+            refundPaymentIds
+            origPayments
+        refund =
+          orig
+            { transactionId                     = refundId
+            , transactionStatus                 = Completed
+            , transactionCreated                = now
+            , transactionCompleted              = Just now
+            , transactionSubtotal               = negate (transactionSubtotal orig)
+            , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
+            , transactionTaxTotal               = negate (transactionTaxTotal orig)
+            , transactionTotal                  = negate (transactionTotal orig)
+            , transactionType                   = Return
+            , transactionIsVoided               = False
+            , transactionVoidReason             = Nothing
+            , transactionIsRefunded             = False
+            , transactionRefundReason           = Nothing
+            , transactionReferenceTransactionId = Just txId
+            , transactionNotes                  =
+                Just $
+                  "Refund for transaction " <> pack (toString txId) <> ": " <> reason
+            , transactionItems                  = refundItems
+            , transactionPayments               = refundPayments
+            }
       newRefund <- createTransaction pool refund
       runSession pool $
         Session.statement () $
@@ -831,10 +871,27 @@ getDiscountPercent :: DiscountType -> Maybe Double
 getDiscountPercent (PercentOff pct) = Just (realToFrac pct)
 getDiscountPercent _                = Nothing
 
+-- | Decode a discount row into its typed 'DiscountType'.
+--
+-- The amount column is now passed explicitly so the AMOUNT_OFF and CUSTOM
+-- arms can recover the value that was stored. The percent column is passed
+-- through as 'Maybe Double' without rounding so PERCENT_OFF round-trips
+-- preserve the decimal value.
+--
+-- Round-trip behavior (with 'discountDomainToRow' on the encode side):
+--
+-- * @AmountOff 100@ ↔ @(type="AMOUNT_OFF", amount=100, percent=Nothing)@
+-- * @PercentOff 0.20@ ↔ @(type="PERCENT_OFF", amount=resolved, percent=Just 0.20)@
+-- * @BuyOneGetOne@ ↔ @(type="BUY_ONE_GET_ONE", amount=0, percent=Nothing)@
+-- * @Custom typ amt@ encodes as type=\"CUSTOM\" (the inner text is currently
+--   lost; see 'showDiscountType'); decoding therefore yields @Custom "CUSTOM" amt@.
 discountRowToDomain :: DiscountRow Result -> DiscountRecord
 discountRowToDomain row =
   DiscountRecord
-    { discountType       = parseDiscountType (discRowType row) (fmap round (discRowPercent row))
+    { discountType       = parseDiscountType
+                             (discRowType row)
+                             (discRowPercent row)
+                             (fromIntegral (discRowAmount row))
     , discountAmount     = fromIntegral (discRowAmount row)
     , discountReason     = discRowReason row
     , discountApprovedBy = discRowApprovedBy row
@@ -934,12 +991,21 @@ showDiscountType (AmountOff _)  = "AMOUNT_OFF"
 showDiscountType BuyOneGetOne   = "BUY_ONE_GET_ONE"
 showDiscountType (Custom _ _)   = "CUSTOM"
 
-parseDiscountType :: Text -> Maybe Int -> DiscountType
-parseDiscountType "PERCENT_OFF"     (Just v) = PercentOff (fromIntegral v / 100)
-parseDiscountType "AMOUNT_OFF"      (Just v) = AmountOff v
-parseDiscountType "BUY_ONE_GET_ONE" _        = BuyOneGetOne
-parseDiscountType typ               (Just v) = Custom typ v
-parseDiscountType _                 _        = AmountOff 0
+-- | Parse a discount row's type column, percent column, and amount column
+-- into a typed 'DiscountType'.
+--
+-- The amount parameter is consulted for @AMOUNT_OFF@ and unknown (custom)
+-- discount types — these are the cases where the meaningful numeric value
+-- lives in the amount column and the percent column is null.
+--
+-- The percent parameter is consulted only for @PERCENT_OFF@. It is passed
+-- through 'realToFrac' to 'Scientific' without rounding so values like
+-- @0.20@ survive the round trip.
+parseDiscountType :: Text -> Maybe Double -> Int -> DiscountType
+parseDiscountType "PERCENT_OFF"     mPct _   = PercentOff (maybe 0 realToFrac mPct)
+parseDiscountType "AMOUNT_OFF"      _    amt = AmountOff amt
+parseDiscountType "BUY_ONE_GET_ONE" _    _   = BuyOneGetOne
+parseDiscountType typ               _    amt = Custom typ amt
 
 parseTransactionStatus :: String -> TransactionStatus
 parseTransactionStatus "CREATED"     = Created

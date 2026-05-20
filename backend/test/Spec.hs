@@ -37,6 +37,9 @@ import qualified Test.Types.TraceSpec
 import qualified Test.Types.TransactionSpec
 import qualified Test.Types.Primitives.MoneySpec
 import qualified Test.Types.Primitives.QuantitySpec
+import qualified Test.Types.Transaction.ConversionSpec
+import qualified Test.DB.Transaction.SaleSpec
+import qualified Test.DB.Transaction.RefundSpec
 
 main :: IO ()
 main = hspec $ do
@@ -76,4 +79,6 @@ main = hspec $ do
     Test.State.StockPullMachineSpec.spec
     Test.Effect.StockDbSpec.spec
     Test.Service.StockSpec.spec
-    
+    Test.Types.Transaction.ConversionSpec.spec
+    Test.DB.Transaction.SaleSpec.spec
+    Test.DB.Transaction.RefundSpec.spec 

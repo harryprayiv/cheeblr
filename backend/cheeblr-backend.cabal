@@ -73,8 +73,12 @@ library
                    , DB.Schema
                    , DB.Register 
                    , DB.Reservation
+                   , DB.Transaction.Typed
+                   , DB.Transaction.Refund
+                   , DB.Transaction.Sale
                    , Logging
                    , Server
+                   , State.SaleTransactionMachine
                    , Server.Transaction
                    , Server.Auth
                    , Auth.Session
@@ -109,6 +113,10 @@ library
                    , Types.Primitives.Token
                    , Types.Primitives.Money
                    , Types.Primitives.Quantity
+                   , Types.Transaction.Class
+                   , Types.Transaction.Conversion
+                   , Types.Transaction.Sale
+                   , Types.Transaction.Refund
                    , Types.Events
                    , Types.Events.Availability
                    , Types.Events.Domain
@@ -172,6 +180,8 @@ test-suite cheeblr-unit-tests
         Test.API.OpenApiSpec
         Test.API.AdminSpec
         Test.DB.PureFunctionsSpec
+        Test.DB.Transaction.SaleSpec
+        Test.DB.Transaction.RefundSpec
         Test.GraphQL.SchemaSpec
         Test.GraphQL.ResolversSpec
         Test.State.TransactionMachineSpec
@@ -198,11 +208,13 @@ test-suite cheeblr-unit-tests
         Test.Types.Public.FeedPrivacySpec
         Test.Types.Primitives.MoneySpec
         Test.Types.Primitives.QuantitySpec
+        Test.Types.Transaction.ConversionSpec
         Test.Server.CookieSpec
         Test.App.CspSpec
         Test.App.MiddlewareSpec
     build-depends:
-        cheeblr-backend
+        cheeblr-backend ^>=0.0.0.6
+        , cheeblr-backend
         , hspec
         , hedgehog
         , hspec-hedgehog

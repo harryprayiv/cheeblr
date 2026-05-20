@@ -215,25 +215,21 @@ spec = describe "Types.Transaction" $ do
   -- ──────────────────────────────────────────────
   -- DiscountType
   -- ──────────────────────────────────────────────
-  describe "DiscountType" $ do
     describe "parseDiscountType" $ do
-      it "parses PERCENT_OFF with value" $
-        parseDiscountType "PERCENT_OFF" (Just 1500) `shouldBe` PercentOff 15.0
-
-      it "parses AMOUNT_OFF with value" $
-        parseDiscountType "AMOUNT_OFF" (Just 500) `shouldBe` AmountOff 500
-
-      it "parses BUY_ONE_GET_ONE with value" $
-        parseDiscountType "BUY_ONE_GET_ONE" (Just 0) `shouldBe` BuyOneGetOne
-
-      it "parses BUY_ONE_GET_ONE without value" $
-        parseDiscountType "BUY_ONE_GET_ONE" Nothing `shouldBe` BuyOneGetOne
-
-      it "parses unknown type as Custom" $
-        parseDiscountType "EMPLOYEE_DISCOUNT" (Just 300) `shouldBe` Custom "EMPLOYEE_DISCOUNT" 300
-
-      it "defaults to AmountOff 0 for unknown without value" $
-        parseDiscountType "UNKNOWN" Nothing `shouldBe` AmountOff 0
+      it "parses PERCENT_OFF, percent column preserved as-is" $
+        parseDiscountType "PERCENT_OFF" (Just 15.0) 0 `shouldBe` PercentOff 15.0
+      it "parses PERCENT_OFF with no percent column as PercentOff 0" $
+        parseDiscountType "PERCENT_OFF" Nothing 0 `shouldBe` PercentOff 0
+      it "parses AMOUNT_OFF using the amount column, not the percent column" $
+        parseDiscountType "AMOUNT_OFF" Nothing 500 `shouldBe` AmountOff 500
+      it "parses BUY_ONE_GET_ONE regardless of percent or amount columns" $
+        parseDiscountType "BUY_ONE_GET_ONE" Nothing 0 `shouldBe` BuyOneGetOne
+      it "parses BUY_ONE_GET_ONE even when percent column is set" $
+        parseDiscountType "BUY_ONE_GET_ONE" (Just 0) 0 `shouldBe` BuyOneGetOne
+      it "parses unknown type as Custom carrying the original text and amount" $
+        parseDiscountType "EMPLOYEE_DISCOUNT" Nothing 300 `shouldBe` Custom "EMPLOYEE_DISCOUNT" 300
+      it "parses unknown type without value as Custom with amount 0" $
+        parseDiscountType "UNKNOWN" Nothing 0 `shouldBe` Custom "UNKNOWN" 0
 
     -- ──────────────────────────────────────────────
     -- TaxRecord JSON

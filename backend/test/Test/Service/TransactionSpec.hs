@@ -1,3 +1,5 @@
+-- Test/Service/TransactionSpec.hs
+
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -32,7 +34,7 @@ import Types.Transaction
 -- ---------------------------------------------------------------------------
 
 txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
-txUUID  = read "11111111-1111-1111-1111-111111111111"
+txUUID   = read "11111111-1111-1111-1111-111111111111"
 itemUUID = read "22222222-2222-2222-2222-222222222222"
 pymtUUID = read "33333333-3333-3333-3333-333333333333"
 skuUUID  = read "44444444-4444-4444-4444-444444444444"
@@ -146,28 +148,27 @@ storeWithPayment status =
         , tsInventory = Map.singleton skuUUID 10
         }
 
+-- Completed tx with one item and one payment, suitable as a refund source.
+-- Distinct from storeWithItem / storeWithPayment because the refund tests need
+-- BOTH children present so we exercise the id-threading in both lists.
+storeWithItemAndPaymentCompleted :: TxStore
+storeWithItemAndPaymentCompleted =
+  let tx =
+        (mkTx Completed)
+          { transactionItems    = [testItem]
+          , transactionPayments = [testPayment]
+          , transactionSubtotal = 1000
+          , transactionTotal    = 1000
+          }
+   in emptyTxStore
+        { tsTxs          = Map.singleton txUUID tx
+        , tsItemToTx     = Map.singleton itemUUID txUUID
+        , tsPaymentToTx  = Map.singleton pymtUUID txUUID
+        , tsInventory    = Map.singleton skuUUID 10
+        }
+
 -- ---------------------------------------------------------------------------
 -- Effect stack
---
--- Order matches the runner chain below: each entry corresponds to the
--- interpreter that handles it, applied innermost-first.
---
--- addItem  requires: TransactionDb, StockDb, InventoryDb, Clock, GenUUID
--- voidTx   requires: TransactionDb, StockDb, Clock
--- removeItem requires: TransactionDb, StockDb, Clock
--- all others: TransactionDb, Clock, GenUUID (subset, satisfied by this stack)
---
--- runTransactionDbPure wraps in (a, TxStore)
--- runStockDbPure       wraps in (a, StockStore)
--- runInventoryDbPure   wraps in (a, Map UUID MenuItem)
--- runClockPure         no wrap
--- runGenUUIDPure       wraps in (a, [UUID])
--- runEventEmitter*     no wrap
--- runErrorNoCallStack  wraps in Either ServerError
--- runEff               wraps in IO
---
--- Full result: IO (Either ServerError ((((a, TxStore), StockStore), Map), [UUID]))
--- Extraction:  fmap (fmap (fst . fst . fst . fst))
 -- ---------------------------------------------------------------------------
 
 type TestEffs =
@@ -386,6 +387,59 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       shouldFailWith 404 $
         runTest emptyTxStore (Svc.refundTx txUUID "reason")
 
+  -- Bug fix: previously the refund flow reused original-sale child UUIDs for the
+  -- refund's items and payments, causing PK collision on insert and leaving FKs
+  -- pointing at the original tx. Service layer now generates fresh UUIDs via
+  -- GenUUID and threads them through. Pure interpreter mirrors the production
+  -- code path and rejects id collisions, so these tests catch a regression.
+  describe "refundTx — child id safety" $ do
+    it "refund items have ids distinct from the original sale's items" $ do
+      refund <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
+      let refundItemIds = map transactionItemId (transactionItems refund)
+      length refundItemIds `shouldBe` 1
+      refundItemIds `shouldSatisfy` notElem itemUUID
+
+    it "refund payments have ids distinct from the original sale's payments" $ do
+      refund <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
+      let refundPymtIds = map paymentId (transactionPayments refund)
+      length refundPymtIds `shouldBe` 1
+      refundPymtIds `shouldSatisfy` notElem pymtUUID
+
+    it "refund items reference the refund transaction, not the original" $ do
+      refund <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
+      let refTxId = transactionId refund
+      refTxId `shouldNotBe` txUUID
+      all (\i -> transactionItemTransactionId i == refTxId) (transactionItems refund)
+        `shouldBe` True
+
+    it "refund payments reference the refund transaction, not the original" $ do
+      refund <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
+      let refTxId = transactionId refund
+      all (\p -> paymentTransactionId p == refTxId) (transactionPayments refund)
+        `shouldBe` True
+
+    it "refund item amounts are negated" $ do
+      refund <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
+      map transactionItemSubtotal (transactionItems refund) `shouldBe` [-1000]
+      map transactionItemTotal    (transactionItems refund) `shouldBe` [-1000]
+
+    it "refund payment amounts are negated" $ do
+      refund <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
+      map paymentAmount   (transactionPayments refund) `shouldBe` [-1000]
+      map paymentTendered (transactionPayments refund) `shouldBe` [-1000]
+
   describe "store state after successful operations" $ do
     it "addItem reserves inventory" $ do
       let
@@ -422,15 +476,12 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         Nothing            -> expectationFailure "Expected availability"
 
   describe "event emission" $ do
-    -- addItem now emits two events: TransactionItemAdded and PullRequestCreated.
-    -- The stock pull is created via the pure StockDb interpreter which always
-    -- returns Right (), so PullRequestCreated is always emitted on success.
     it "addItem emits TransactionItemAdded and PullRequestCreated on success" $ do
       (result, evts) <- runTestWithEvents (storeWith Created) (Svc.addItem testItem)
       result `shouldSatisfy` either (const False) (const True)
-      let txAdded   = [() | TransactionEvt (TransactionItemAdded {teTxId}) <- evts, teTxId == txUUID]
+      let txAdded     = [() | TransactionEvt (TransactionItemAdded {teTxId}) <- evts, teTxId == txUUID]
           pullCreated = [() | StockEvt (PullRequestCreated {}) <- evts]
-      txAdded    `shouldSatisfy` (not . null)
+      txAdded     `shouldSatisfy` (not . null)
       pullCreated `shouldSatisfy` (not . null)
 
     it "addItem emits no events on state machine rejection (Completed)" $ do
@@ -443,7 +494,6 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
           Svc.addItem testItem {transactionItemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
       evts `shouldBe` []
 
-    -- voidTx with an empty StockStore has no pulls to cancel, so only one event.
     it "voidTx emits TransactionVoided on success (no open pulls)" $ do
       (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.voidTx txUUID "fraud")
       result `shouldSatisfy` either (const False) (const True)
