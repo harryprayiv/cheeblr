@@ -1,0 +1,1 @@
+build Newtypes (or refined types) for domain primitives. Money, SKU, UPC, ProductId, SessionToken, Quantity, TaxRate, DiscountPct should each be a distinct type. If Money is a raw Scientific and ProductId is a raw Int, that's the highest-leverage refactor on the table. Plain newtypes plus smart constructors cover most of it; refined adds boundary validation.
