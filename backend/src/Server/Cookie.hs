@@ -1,22 +1,34 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Server.Cookie (
-  sessionCookie,
-  clearSessionCookie,
-) where
+-- | Set-Cookie header construction for the session cookie.
+--
+-- The cookie name is @cheeblr_session@. Attributes are fixed:
+-- HttpOnly, Secure, SameSite=Strict, Path=/, Max-Age=28800 (8 hours,
+-- matching the hardcoded session TTL in 'DB.Auth.createSession').
+--
+-- If the session TTL is ever made configurable, the Max-Age value
+-- here must be threaded from the same source.
+module Server.Cookie
+  ( sessionCookie
+  , clearSessionCookie
+  ) where
 
-import Data.Text (Text)
+import           Data.Text                (Text)
+import qualified Data.Text                as T
 
--- HttpOnly   – JS cannot read the token
--- Secure     – HTTPS only
--- SameSite=Strict – not sent on cross-site navigation (correct for a POS)
--- Max-Age=28800  – 8 hours, matches session TTL
-sessionCookie :: Text -> Text
-sessionCookie token =
-  "cheeblr_session=" <> token
-    <> "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800"
+import           Types.Primitives.Token   (SessionToken, revealSessionToken)
 
--- Zero Max-Age evicts the cookie from the browser immediately on logout.
+-- | Construct the Set-Cookie value that installs a session cookie
+-- carrying the given token.
+sessionCookie :: SessionToken -> Text
+sessionCookie tok =
+  T.concat
+    [ "cheeblr_session="
+    , revealSessionToken tok
+    , "; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800"
+    ]
+
+-- | Set-Cookie value that immediately expires the session cookie.
 clearSessionCookie :: Text
 clearSessionCookie =
   "cheeblr_session=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0"

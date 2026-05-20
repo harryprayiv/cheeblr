@@ -5,7 +5,6 @@
 
 module DB.Auth (
   NewUser (..),
-  SessionToken,
   createAuthTables,
   createUser,
   lookupUserByUsername,
@@ -31,16 +30,13 @@ import Crypto.Error (
   CryptoFailable (..),
   throwCryptoErrorIO,
  )
-import qualified Crypto.Hash as CH
 import qualified Crypto.KDF.Argon2 as Argon2
-import Data.ByteArray (convert)
 import Data.ByteArray.Encoding (
-  Base (Base16, Base64),
+  Base (Base64),
   convertFromBase,
   convertToBase,
  )
 import Data.ByteString (ByteString)
-import qualified Data.ByteString.Base64.URL as B64U
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -67,6 +63,12 @@ import Types.Location (
   LocationId (..),
   locationIdToUUID,
  )
+import Types.Primitives.Token (
+  SessionToken,
+  generateSessionToken,
+  hashSessionToken,
+  sessionTokenHashText,
+ )
 
 data NewUser = NewUser
   { newUserName    :: Text
@@ -76,8 +78,6 @@ data NewUser = NewUser
   , newLocationId  :: Maybe LocationId
   , newPassword    :: Text
   }
-
-type SessionToken = Text
 
 argonOpts :: Argon2.Options
 argonOpts =
@@ -137,23 +137,6 @@ verifyPassword stored plaintext =
         _ -> False
     _ -> False
 
-hashTokenBytes :: ByteString -> Text
-hashTokenBytes raw =
-  let digest = CH.hash raw :: CH.Digest CH.SHA256
-   in TE.decodeUtf8 $ convertToBase Base16 (convert digest :: ByteString)
-
-encodeTokenBytes :: ByteString -> Text
-encodeTokenBytes =
-  T.dropWhileEnd (== '=') . TE.decodeUtf8 . B64U.encode
-
-decodeTokenText :: Text -> Either String ByteString
-decodeTokenText t =
-  let padded = T.unpack t <> replicate ((4 - T.length t `mod` 4) `mod` 4) '='
-   in B64U.decode (TE.encodeUtf8 (T.pack padded))
-
--- | Convert a DB user row to the domain AuthenticatedUser.
--- Uses Types.Auth.parseUserRole (the single canonical parser) instead of a
--- local duplicate.
 userRowToAuthUser :: UserRow Result -> AuthenticatedUser
 userRowToAuthUser row =
   AuthenticatedUser
@@ -277,12 +260,11 @@ createSession ::
   Text ->
   IO (SessionToken, UTCTime)
 createSession pool uid mRegisterId ua ip = do
-  sid <- nextRandom
-  now <- getCurrentTime
-  raw <- getEntropy 32
+  sid   <- nextRandom
+  now   <- getCurrentTime
+  token <- generateSessionToken
   let
-    tokenText = encodeTokenBytes raw
-    tHash     = hashTokenBytes raw
+    tHash     = sessionTokenHashText (hashSessionToken token)
     expiresAt = addUTCTime (8 * 3600) now
   runSession pool $
     Session.statement () $
@@ -311,69 +293,62 @@ createSession pool uid mRegisterId ua ip = do
             , onConflict = Abort
             , returning  = NoReturning
             }
-  pure (tokenText, expiresAt)
+  pure (token, expiresAt)
 
 lookupSession ::
   DBPool ->
-  Text ->
+  SessionToken ->
   IO (Maybe (SessionRow Result, UserRow Result))
-lookupSession pool rawToken = do
+lookupSession pool token = do
   now <- getCurrentTime
-  case decodeTokenText rawToken of
-    Left _ -> pure Nothing
-    Right raw -> do
-      let tHash = hashTokenBytes raw
-      sessRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-        sess <- each sessionSchema
-        user <- each userSchema
-        where_ $
-          sessTokenHash sess ==. lit tHash
-            &&. sessUserId sess ==. userId user
-            &&. Rel8.not_ (sessRevoked sess)
-            &&. sessExpiresAt sess >. lit now
-            &&. isActive user
-        pure (sess, user)
-      case sessRows of
-        [(sess, user)] -> do
-          runSession pool $
-            Session.statement () $
-              run_ $
-                Rel8.update $
-                  Update
-                    { target      = sessionSchema
-                    , from        = pure ()
-                    , set         = \() row -> row {sessLastSeenAt = lit now}
-                    , updateWhere = \() row -> sessTokenHash row ==. lit tHash
-                    , returning   = NoReturning
-                    }
-          pure (Just (sess, user))
-        _ -> pure Nothing
+  let tHash = sessionTokenHashText (hashSessionToken token)
+  sessRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    sess <- each sessionSchema
+    user <- each userSchema
+    where_ $
+      sessTokenHash sess ==. lit tHash
+        &&. sessUserId sess ==. userId user
+        &&. Rel8.not_ (sessRevoked sess)
+        &&. sessExpiresAt sess >. lit now
+        &&. isActive user
+    pure (sess, user)
+  case sessRows of
+    [(sess, user)] -> do
+      runSession pool $
+        Session.statement () $
+          run_ $
+            Rel8.update $
+              Update
+                { target      = sessionSchema
+                , from        = pure ()
+                , set         = \() row -> row {sessLastSeenAt = lit now}
+                , updateWhere = \() row -> sessTokenHash row ==. lit tHash
+                , returning   = NoReturning
+                }
+      pure (Just (sess, user))
+    _ -> pure Nothing
 
-getSessionRotatedAt :: DBPool -> Text -> IO (Maybe (UUID, UTCTime))
-getSessionRotatedAt pool rawToken = do
+getSessionRotatedAt :: DBPool -> SessionToken -> IO (Maybe (UUID, UTCTime))
+getSessionRotatedAt pool token = do
   now <- getCurrentTime
-  case decodeTokenText rawToken of
-    Left _ -> pure Nothing
-    Right raw -> do
-      let tHash = hashTokenBytes raw
-      rotRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-        sess <- each sessionSchema
-        where_ $
-          sessTokenHash sess ==. lit tHash
-            &&. Rel8.not_ (sessRevoked sess)
-            &&. sessExpiresAt sess >. lit now
-        pure (sessId sess, sessTokenRotatedAt sess)
-      case rotRows of
-        [(sid, rotatedAt)] -> pure (Just (sid, rotatedAt))
-        _                  -> pure Nothing
+  let tHash = sessionTokenHashText (hashSessionToken token)
+  rotRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
+    sess <- each sessionSchema
+    where_ $
+      sessTokenHash sess ==. lit tHash
+        &&. Rel8.not_ (sessRevoked sess)
+        &&. sessExpiresAt sess >. lit now
+    pure (sessId sess, sessTokenRotatedAt sess)
+  case rotRows of
+    [(sid, rotatedAt)] -> pure (Just (sid, rotatedAt))
+    _                  -> pure Nothing
 
 rotateSessionToken :: DBPool -> UUID -> IO (SessionToken, UTCTime)
 rotateSessionToken pool sid = do
-  now <- getCurrentTime
-  raw <- getEntropy 32
+  now   <- getCurrentTime
+  token <- generateSessionToken
   let
-    tokenText = encodeTokenBytes raw
-    tHash     = hashTokenBytes raw
+    tHash     = sessionTokenHashText (hashSessionToken token)
     expiresAt = addUTCTime (8 * 3600) now
   runSession pool $
     Session.statement () $
@@ -392,7 +367,7 @@ rotateSessionToken pool sid = do
             , updateWhere = \() row -> sessId row ==. lit sid
             , returning   = NoReturning
             }
-  pure (tokenText, expiresAt)
+  pure (token, expiresAt)
 
 cleanupExpiredSessions :: DBPool -> IO ()
 cleanupExpiredSessions pool = runSession pool $ do

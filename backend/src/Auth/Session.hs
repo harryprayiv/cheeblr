@@ -1,9 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- Auth.Session: session-based authentication resolver.
--- Replaces Auth.Simple.lookupUser for the real-auth path.
--- Step 3 will wire resolveSession into existing handlers behind
--- the USE_REAL_AUTH flag; for now it is used only by Server.Auth.
 module Auth.Session (
   SessionContext (..),
   resolveSession,
@@ -26,27 +22,34 @@ import DB.Auth (lookupSession, userRowToAuthUser)
 import DB.Database (DBPool)
 import DB.Schema (sessId)
 import Types.Auth (AuthenticatedUser)
+import Types.Primitives.Token (mkSessionToken)
 
 data SessionContext = SessionContext
   { scUser :: AuthenticatedUser
   , scSessionId :: UUID
   }
 
--- Strip "Bearer " prefix and return the raw token string.
+-- | Strip the "Bearer " prefix from an Authorization header value.
+-- Does not validate the token format; that happens in 'resolveSession'.
 extractBearer :: Maybe Text -> Maybe Text
 extractBearer (Just h)
   | "Bearer " `T.isPrefixOf` h = Just (T.drop 7 h)
 extractBearer _ = Nothing
 
--- Validate the Authorization header, return a SessionContext,
--- or throw 401 for any missing / invalid / expired token.
 resolveSession :: DBPool -> Maybe Text -> Handler SessionContext
 resolveSession pool mHeader = do
-  token <- case extractBearer mHeader of
+  rawText <- case extractBearer mHeader of
     Nothing ->
       throwError
         err401
           { errBody = LBS.pack "Missing or malformed Authorization header"
+          }
+    Just t -> pure t
+  token <- case mkSessionToken rawText of
+    Nothing ->
+      throwError
+        err401
+          { errBody = LBS.pack "Invalid or expired session"
           }
     Just t -> pure t
   mResult <- liftIO $ lookupSession pool token

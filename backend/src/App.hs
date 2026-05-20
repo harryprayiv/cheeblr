@@ -88,6 +88,11 @@ import Types.Events.Domain (DomainEvent)
 import Types.Events.Log (LogEvent)
 import Types.Events (StockEvent)
 import Types.Location (locationIdToUUID)
+import Types.Primitives.Token (
+  SessionToken,
+  mkSessionToken,
+  revealSessionToken,
+ )
 import Types.Public.AvailableItem (PublicLocationId (..))
 
 run :: IO ()
@@ -192,7 +197,7 @@ runWithEnv env = do
     app =
       tracingMiddleware
         . securityHeadersMiddleware (cfgApiPublicUrl cfg) (cfgImgSrcDomain cfg)
-        . handleOptionsMiddleware mAllowed   -- now enforces cfgAllowedOrigin
+        . handleOptionsMiddleware mAllowed
         . reflectOriginMiddleware
         . cookieAuthMiddleware pool (cfgTokenRotationSecs cfg)
         $ coreApp
@@ -230,14 +235,16 @@ cookieAuthMiddleware pool rotationThreshold app req rspnd =
   case extractCookieToken req of
     Nothing ->
       app req rspnd
-    Just tokenText -> do
-      mRotation <- checkAndRotate pool rotationThreshold tokenText
+    Just token -> do
+      mRotation <- checkAndRotate pool rotationThreshold token
       let
         (effectiveToken, mNewCookieHdr) = case mRotation of
-          Nothing          -> (tokenText, Nothing)
+          Nothing          -> (token, Nothing)
           Just (newTok, _) -> (newTok, Just (sessionCookie newTok))
         newHdrs =
-          (hAuthorization, "Bearer " <> TE.encodeUtf8 effectiveToken)
+          ( hAuthorization
+          , "Bearer " <> TE.encodeUtf8 (revealSessionToken effectiveToken)
+          )
             : requestHeaders req
       app req {requestHeaders = newHdrs} $ \response ->
         rspnd $ case mNewCookieHdr of
@@ -247,20 +254,20 @@ cookieAuthMiddleware pool rotationThreshold app req rspnd =
               ((CI.mk (B8.pack "Set-Cookie"), TE.encodeUtf8 hdr) :)
               response
 
-extractCookieToken :: Request -> Maybe T.Text
+extractCookieToken :: Request -> Maybe SessionToken
 extractCookieToken req = do
   cookieHdr <- lookup "Cookie" (requestHeaders req)
   tokenBS   <- lookup "cheeblr_session" (parseCookies cookieHdr)
-  pure (TE.decodeUtf8 tokenBS)
+  mkSessionToken (TE.decodeUtf8 tokenBS)
 
 checkAndRotate
   :: DBPool
   -> Data.Time.NominalDiffTime
-  -> T.Text
-  -> IO (Maybe (T.Text, Data.Time.UTCTime))
-checkAndRotate pool threshold tokenText = do
+  -> SessionToken
+  -> IO (Maybe (SessionToken, Data.Time.UTCTime))
+checkAndRotate pool threshold token = do
   now   <- Data.Time.getCurrentTime
-  mInfo <- getSessionRotatedAt pool tokenText
+  mInfo <- getSessionRotatedAt pool token
   case mInfo of
     Nothing -> pure Nothing
     Just (sid, rotatedAt)
@@ -321,11 +328,6 @@ securityHeadersMiddleware apiPublicUrl mImgDomain app req sendResponse =
         )
         response
 
--- | Previously reflected any origin the client sent unconditionally,
--- overriding the CORS policy set by the wai-cors middleware above it.
--- Now accepts the configured allowed origin and enforces it:
---   Just origin → always respond with that origin (browser rejects mismatches)
---   Nothing     → open mode: reflect whatever the client sent (dev default)
 handleOptionsMiddleware :: Maybe T.Text -> Middleware
 handleOptionsMiddleware mAllowed app req responder =
   if requestMethod req == methodOptions

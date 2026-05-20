@@ -106,6 +106,7 @@ library
                    , Server.Metrics
                    , Server.Feed
                    , Server.Cookie
+                   , Types.Primitives.Token
                    , Types.Events
                    , Types.Events.Availability
                    , Types.Events.Domain
