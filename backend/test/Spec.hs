@@ -35,6 +35,8 @@ import qualified Test.Types.Public.FeedFrameSpec
 import qualified Test.Types.Public.FeedPrivacySpec
 import qualified Test.Types.TraceSpec
 import qualified Test.Types.TransactionSpec
+import qualified Test.Types.Primitives.MoneySpec
+import qualified Test.Types.Primitives.QuantitySpec
 
 main :: IO ()
 main = hspec $ do
@@ -46,6 +48,8 @@ main = hspec $ do
     Test.Types.Public.AvailableItemSpec.spec
     Test.Types.Public.FeedFrameSpec.spec
     Test.Types.Public.FeedPrivacySpec.spec
+    Test.Types.Primitives.MoneySpec.spec
+    Test.Types.Primitives.QuantitySpec.spec
     Test.API.TransactionSpec.spec
     Test.API.OpenApiSpec.spec
     Test.API.AdminSpec.spec
@@ -72,3 +76,4 @@ main = hspec $ do
     Test.State.StockPullMachineSpec.spec
     Test.Effect.StockDbSpec.spec
     Test.Service.StockSpec.spec
+    

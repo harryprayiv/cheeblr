@@ -107,6 +107,8 @@ library
                    , Server.Feed
                    , Server.Cookie
                    , Types.Primitives.Token
+                   , Types.Primitives.Money
+                   , Types.Primitives.Quantity
                    , Types.Events
                    , Types.Events.Availability
                    , Types.Events.Domain
@@ -194,6 +196,8 @@ test-suite cheeblr-unit-tests
         Test.Service.StockSpec
         Test.Types.Public.FeedFrameSpec
         Test.Types.Public.FeedPrivacySpec
+        Test.Types.Primitives.MoneySpec
+        Test.Types.Primitives.QuantitySpec
         Test.Server.CookieSpec
         Test.App.CspSpec
         Test.App.MiddlewareSpec

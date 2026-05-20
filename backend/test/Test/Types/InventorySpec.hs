@@ -8,6 +8,7 @@ import Data.Maybe (isJust)
 import Data.UUID (UUID)
 import qualified Data.Vector as V
 import Test.Hspec
+    ( Spec, describe, it, expectationFailure, shouldBe, shouldSatisfy )
 import Types.Inventory (
   Inventory (..),
   ItemCategory (
