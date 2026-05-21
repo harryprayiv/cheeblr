@@ -12,10 +12,10 @@
       "name": "nix",
       "path": "nix"
     },
-    {
-      "name": "Helpers",
-      "path": "script"
-    },
+    // {
+    //   "name": "Helpers",
+    //   "path": "script"
+    // },
     {
       "name": "Root",
       "path": "./"
@@ -26,8 +26,8 @@
       "frontend": false,
       "backend": false,
       "nix": false,
-      "direnv.restart.automatic": true
     },
+    "direnv.restart.automatic": true,
     "[purescript]": {
       "editor.defaultFormatter": "nwolverson.ide-purescript",
       "editor.fontFamily": "Hasklig",
@@ -42,11 +42,6 @@
       "editor.fontSize": 14
     },
     "[nix]": {
-      // "editor.defaultFormatter": "haskell.haskell",
-      // "haskell.formattingProvider": "fourmolu",
-      // "editor.fontFamily": "Hasklig",
-      // "editor.fontLigatures": true,
-      
       "editor.fontSize": 14
     },
     "purescript.addSpagoSources": true,
@@ -62,7 +57,8 @@
       "**/dist-newstyle/**": true,
       "**/.spago/**": true,
       "**/output/**": true,
-      "**/.psci_modules/**": true
+      "**/.psci_modules/**": true,
+      "**/script/**": true,
     }
   },
   "extensions": {
