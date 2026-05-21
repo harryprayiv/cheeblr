@@ -2,7 +2,7 @@ module Services.RegisterService where
 
 import Prelude
 
-import API.Transaction as API
+import API.Register as API
 import Data.DateTime (DateTime)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
@@ -12,7 +12,7 @@ import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Services.AuthService (UserId)
 import Types.Register (Register)
-import Types.UUID (UUID, parseUUID, genUUID)
+import Types.UUID (UUID, genUUID, parseUUID)
 import Web.HTML (window)
 import Web.HTML.Window (localStorage)
 import Web.Storage.Storage (getItem, setItem)
@@ -37,7 +37,7 @@ createAndOpenRegister
   -> (Register -> Effect Unit)
   -> (String -> Effect Unit)
   -> Effect Unit
-createAndOpenRegister userId registerId locationId employeeId onSuccess onError = do
+createAndOpenRegister userId registerId locationId employeeId onSuccess onError =
   launchAff_ do
     let
       newRegister =
@@ -60,7 +60,7 @@ createAndOpenRegister userId registerId locationId employeeId onSuccess onError 
           , openRegisterStartingCash: 0
           }
           register.registerId
-        liftEffect $ case openResult of
+        liftEffect case openResult of
           Right opened -> do
             onSuccess opened
             Console.log $ "Register created and opened: " <> opened.registerName
@@ -75,14 +75,14 @@ openExistingRegister
   -> (Register -> Effect Unit)
   -> (String -> Effect Unit)
   -> Effect Unit
-openExistingRegister userId employeeId register onSuccess onError = do
+openExistingRegister userId employeeId register onSuccess onError =
   launchAff_ do
     openResult <- API.openRegister userId
       { openRegisterEmployeeId: employeeId
       , openRegisterStartingCash: 0
       }
       register.registerId
-    liftEffect $ case openResult of
+    liftEffect case openResult of
       Right opened -> do
         onSuccess opened
         Console.log $ "Register opened: " <> opened.registerName
@@ -92,18 +92,18 @@ getOrInitLocalRegister
   :: UserId
   -> UUID
   -> UUID
-  -> ({ registerCurrentDrawerAmount :: Int
-     , registerExpectedDrawerAmount :: Int
-     , registerId :: UUID
-     , registerIsOpen :: Boolean
-     , registerLastTransactionTime :: Maybe DateTime
-     , registerLocationId :: UUID
-     , registerName :: String
-     , registerOpenedAt :: Maybe DateTime
-     , registerOpenedBy :: Maybe UUID
-     }
-     -> Effect Unit
-    )
+  -> ( { registerCurrentDrawerAmount :: Int
+       , registerExpectedDrawerAmount :: Int
+       , registerId :: UUID
+       , registerIsOpen :: Boolean
+       , registerLastTransactionTime :: Maybe DateTime
+       , registerLocationId :: UUID
+       , registerName :: String
+       , registerOpenedAt :: Maybe DateTime
+       , registerOpenedBy :: Maybe UUID
+       }
+       -> Effect Unit
+     )
   -> (String -> Effect Unit)
   -> Effect Unit
 getOrInitLocalRegister userId locationId employeeId onSuccess onError = do
@@ -112,13 +112,22 @@ getOrInitLocalRegister userId locationId employeeId onSuccess onError = do
     getResult <- API.getRegister userId registerId
     case getResult of
       Right register ->
-        liftEffect $ do
+        liftEffect do
           Console.log $ "Using existing register: " <> register.registerName
           onSuccess register
       Left _ ->
-        liftEffect $ createAndOpenRegister userId registerId locationId employeeId onSuccess onError
+        liftEffect $
+          createAndOpenRegister userId registerId locationId employeeId
+            onSuccess
+            onError
 
-initLocalRegister :: UserId -> UUID -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
+initLocalRegister
+  :: UserId
+  -> UUID
+  -> UUID
+  -> (Register -> Effect Unit)
+  -> (String -> Effect Unit)
+  -> Effect Unit
 initLocalRegister userId locationId employeeId onSuccess onError = do
   registerId <- getOrCreateRegisterId
   launchAff_ do
@@ -126,19 +135,25 @@ initLocalRegister userId locationId employeeId onSuccess onError = do
     case getResult of
       Right register ->
         liftEffect $
-          if register.registerIsOpen
-            then do
-              Console.log $ "Register already open: " <> register.registerName
-              onSuccess register
-            else openExistingRegister userId employeeId register onSuccess onError
+          if register.registerIsOpen then do
+            Console.log $ "Register already open: " <> register.registerName
+            onSuccess register
+          else openExistingRegister userId employeeId register onSuccess onError
       Left _ ->
-        liftEffect $ createAndOpenRegister userId registerId locationId employeeId onSuccess onError
+        liftEffect $
+          createAndOpenRegister userId registerId locationId employeeId
+            onSuccess
+            onError
 
-createLocalRegister :: UserId -> String -> UUID -> (Register -> Effect Unit) -> (String -> Effect Unit) -> Effect Unit
-createLocalRegister userId name locationId setRegister setError = do
+createLocalRegister
+  :: UserId
+  -> String
+  -> UUID
+  -> (Register -> Effect Unit)
+  -> (String -> Effect Unit)
+  -> Effect Unit
+createLocalRegister userId name locationId setRegister setError =
   launchAff_ do
-
-    _ <- liftEffect genUUID
     registerId <- liftEffect genUUID
 
     let
@@ -160,11 +175,17 @@ createLocalRegister userId name locationId setRegister setError = do
       Right register -> do
         setRegister register
         Console.log $ "Register created successfully: " <> register.registerName
-      Left err -> do
+      Left err ->
         setError ("Failed to create register: " <> err)
 
-closeLocalRegister :: UserId -> UUID -> UUID -> Int -> (String -> Effect Unit) -> Effect Unit
-closeLocalRegister userId registerId employeeId countedCash setMessage = do
+closeLocalRegister
+  :: UserId
+  -> UUID
+  -> UUID
+  -> Int
+  -> (String -> Effect Unit)
+  -> Effect Unit
+closeLocalRegister userId registerId employeeId countedCash setMessage =
   launchAff_ do
     let
       closeRequest =
@@ -183,6 +204,5 @@ closeLocalRegister userId registerId employeeId countedCash setMessage = do
             else " with no variance"
         setMessage $ "Register closed successfully" <> varMsg
         Console.log $ "Register closed: " <> show registerId
-
-      Left err -> do
+      Left err ->
         setMessage $ "Failed to close register: " <> err

@@ -6,7 +6,6 @@ import Data.Array (filter, find, null, (:))
 import Data.Array as Array
 import Data.Either (Either(..))
 import Data.Finance.Money (Discrete(..))
-import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Foldable (for_)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
@@ -30,12 +29,19 @@ import Effect.Class.Console as Console
 import FRP.Poll (Poll)
 import Services.AuthService (UserId)
 import Services.Cart (addItemToCart, removeItemFromCart)
-import Services.TransactionService (emptyCartTotals, getRemainingBalance, paymentsCoversTotal)
+import Services.TransactionService
+  ( emptyCartTotals
+  , getRemainingBalance
+  , paymentsCoversTotal
+  )
 import Services.TransactionService as TransactionService
 import Types.Inventory (Inventory(..), MenuItem(..), findItemNameBySku)
+import Types.Primitives.Money (saleMoneyDiscrete)
+import Types.Primitives.Quantity (saleQuantityCount)
 import Types.Register (Register)
-import Types.Transaction (PaymentMethod(..), PaymentTransaction(..), Transaction(..), TransactionItem(..), TransactionStatus(..), TransactionType(..))
-import Types.UUID (UUID(..))
+import Types.Transaction (PaymentMethod(..), TransactionStatus(..))
+import Types.Transaction.Sale as Sale
+import Types.UUID (UUID)
 import Utils.Formatting (formatCentsToDollars)
 import Utils.Money (formatDiscretePrice)
 import Web.Event.Event (target)
@@ -44,7 +50,6 @@ import Web.HTML.HTMLInputElement as Input
 import Web.PointerEvent.PointerEvent as PointerEvent
 
 -- | Renders a payment method selection tab.
--- | Extracted to avoid repeating the klass/click pattern eight times.
 paymentMethodBtn
   :: PaymentMethod
   -> String
@@ -59,10 +64,33 @@ paymentMethodBtn method label methodPoll setMethod =
     ]
     [ text_ label ]
 
-createTransaction :: UserId -> Poll Inventory -> Poll Transaction -> Register -> Nut
+-- | Display label for the status pill. Mirrors backend Haskell 'Show'.
+formatStatus :: TransactionStatus -> String
+formatStatus = case _ of
+  Created    -> "Created"
+  InProgress -> "In Progress"
+  Completed  -> "Completed"
+  Voided     -> "Voided"
+  Refunded   -> "Refunded"
+
+-- | CSS class fragment for the status pill.
+statusClass :: TransactionStatus -> String
+statusClass = case _ of
+  Created    -> "created"
+  InProgress -> "in-progress"
+  Completed  -> "completed"
+  Voided     -> "voided"
+  Refunded   -> "refunded"
+
+createTransaction
+  :: UserId
+  -> Poll Inventory
+  -> Poll Sale.SaleTransaction
+  -> Register
+  -> Nut
 createTransaction userId inventoryPoll transactionPoll register = Deku.do
 
-  setCartItems         /\ cartItemsValue       <- useHot []
+  setCartItems         /\ cartItemsValue        <- useHot []
   setCartTotals        /\ cartTotalsValue       <- useHot emptyCartTotals
   setPayments          /\ paymentsValue         <- useState []
   setSearchText        /\ searchTextValue       <- useState ""
@@ -75,31 +103,41 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
   setTenderedAmount    /\ tenderedAmountValue   <- useState ""
   setPaymentReference  /\ paymentReferenceValue <- useState ""
   setAuthorizationCode /\ authorizationCodeValue <- useState ""
-  setTransactionStatus /\ transactionStatusValue <- useState "CREATED"
+  setTransactionStatus /\ transactionStatusValue <- useState Created
   setInventoryErrors   /\ inventoryErrorsValue  <- useState []
   setCheckingInventory /\ checkingInventoryValue <- useState false
-
-  let
-    _ = transactionPoll <#> \(Transaction txData) -> do
-      Console.log $ "Transaction received with ID: " <> show txData.transactionId
-      setTransactionStatus (show txData.transactionStatus)
-      setStatusMessage "Transaction ready"
-      unless (null txData.transactionItems) do
-        setCartItems txData.transactionItems
-        setPayments txData.transactionPayments
-        let
-          subtotal      = toDiscrete txData.transactionSubtotal
-          taxTotal      = toDiscrete txData.transactionTaxTotal
-          total         = toDiscrete txData.transactionTotal
-          discountTotal = toDiscrete txData.transactionDiscountTotal
-        setCartTotals { subtotal, taxTotal, total, discountTotal }
 
   D.div
     [ DA.klass_ "transaction-container"
     , DL.load_ \_ ->
         liftEffect $ Console.log "CreateTransaction component loading"
     ]
-    [ D.div
+    [ -- ── Server-state subscription (hidden) ──────────────────────────
+      -- Re-mounts on every transactionPoll emission, so DL.load_ fires
+      -- each time, hydrating local cart/payment/totals state from the
+      -- server-side sale. The `null saleItems` guard prevents wiping
+      -- locally-edited state when the server emits an empty fresh sale.
+      transactionPoll <#~> \txData ->
+        D.span
+          [ DA.style_ "display:none"
+          , DL.load_ \_ -> do
+              liftEffect $ Console.log $
+                "Transaction received with ID: " <> show txData.saleId
+              setTransactionStatus txData.saleStatus
+              setStatusMessage "Transaction ready"
+              unless (null txData.saleItems) do
+                setCartItems txData.saleItems
+                setPayments txData.salePayments
+                let
+                  subtotal      = saleMoneyDiscrete txData.saleSubtotal
+                  taxTotal      = saleMoneyDiscrete txData.saleTaxTotal
+                  total         = saleMoneyDiscrete txData.saleTotal
+                  discountTotal = saleMoneyDiscrete txData.saleDiscountTotal
+                setCartTotals { subtotal, taxTotal, total, discountTotal }
+          ]
+          []
+
+    , D.div
         [ DA.klass_ "transaction-content" ]
         [ -- ── Left panel: inventory browser ────────────────────────────
           D.div
@@ -231,13 +269,13 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                                                           then "low-stock"
                                                           else ""
                                                       existingItem = find
-                                                        (\(TransactionItem item) ->
-                                                          item.transactionItemMenuItemSku
+                                                        (\item ->
+                                                          item.itemMenuItemSku
                                                             == record.sku)
                                                         cartItems
                                                       currentQty = case existingItem of
-                                                        Just (TransactionItem item) ->
-                                                          item.transactionItemQuantity
+                                                        Just item ->
+                                                          saleQuantityCount item.itemQuantity
                                                         Nothing -> 0
                                                     in
                                                       D.div
@@ -282,7 +320,7 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                                                                             menuItem
                                                                             qtyVal
                                                                             cartItems
-                                                                            (unwrap transaction).transactionId
+                                                                            transaction.saleId
                                                                             setCartItems
                                                                             setCartTotals
                                                                             setStatusMessage
@@ -339,30 +377,30 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                               ]
                           , D.div
                               [ DA.klass_ "cart-items-body" ]
-                              ( cartItems <#> \(TransactionItem itemData) ->
+                              ( cartItems <#> \itemData ->
                                   let itemName =
                                         findItemNameBySku
-                                          itemData.transactionItemMenuItemSku
+                                          itemData.itemMenuItemSku
                                           inventory
                                   in
                                     D.div [ DA.klass_ "cart-item-row" ]
                                       [ D.div [ DA.klass_ "col item-col" ]
                                           [ text_ itemName ]
                                       , D.div [ DA.klass_ "col qty-col" ]
-                                          [ text_ (show itemData.transactionItemQuantity) ]
+                                          [ text_ (show (saleQuantityCount itemData.itemQuantity)) ]
                                       , D.div [ DA.klass_ "col price-col" ]
                                           [ text_ (formatDiscretePrice
-                                              (toDiscrete itemData.transactionItemPricePerUnit)) ]
+                                              (saleMoneyDiscrete itemData.itemPricePerUnit)) ]
                                       , D.div [ DA.klass_ "col total-col" ]
                                           [ text_ (formatDiscretePrice
-                                              (toDiscrete itemData.transactionItemTotal)) ]
+                                              (saleMoneyDiscrete itemData.itemTotal)) ]
                                       , D.div [ DA.klass_ "col actions-col" ]
                                           [ D.button
                                               [ DA.klass_ "remove-btn"
                                               , DL.click_ \_ ->
                                                   removeItemFromCart
                                                     userId
-                                                    itemData.transactionItemId
+                                                    itemData.itemId
                                                     cartItems
                                                     setCartItems
                                                     setCartTotals
@@ -407,15 +445,13 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
 
                 , D.div
                     [ DA.klass_ "payment-methods" ]
-                    [ paymentMethodBtn Cash       "Cash"          paymentMethodValue setPaymentMethod
+                    [ paymentMethodBtn Cash        "Cash"          paymentMethodValue setPaymentMethod
                     , paymentMethodBtn Credit      "Credit"        paymentMethodValue setPaymentMethod
                     , paymentMethodBtn Debit       "Debit"         paymentMethodValue setPaymentMethod
                     , paymentMethodBtn ACH         "ACH"           paymentMethodValue setPaymentMethod
                     , paymentMethodBtn GiftCard    "Gift Card"     paymentMethodValue setPaymentMethod
                     , paymentMethodBtn StoredValue "Stored Value"  paymentMethodValue setPaymentMethod
                     , paymentMethodBtn Mixed       "Split Payment" paymentMethodValue setPaymentMethod
-                    -- "Other" cannot use paymentMethodBtn because its active check
-                    -- is a pattern match, not an equality check.
                     , D.div
                         [ DA.klass $ paymentMethodValue <#> \method ->
                             "payment-method" <>
@@ -503,7 +539,7 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                                 void $ launchAff_ do
                                   result <- TransactionService.addPayment
                                     userId
-                                    (unwrap txn).transactionId
+                                    txn.saleId
                                     method
                                     amountInCents
                                     tenderedInCents
@@ -542,13 +578,14 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                             [ D.div [ DA.klass_ "payments-header" ]
                                 [ text_ "Current Payments:" ]
                             , D.div_
-                                ( payments <#> \(PaymentTransaction p) ->
+                                ( payments <#> \p ->
                                     D.div
                                       [ DA.klass_ "payment-item" ]
                                       [ D.div [ DA.klass_ "payment-method" ]
                                           [ text_ (show p.paymentMethod) ]
                                       , D.div [ DA.klass_ "payment-amount" ]
-                                          [ text_ (show p.paymentAmount) ]
+                                          [ text_ (formatDiscretePrice
+                                              (saleMoneyDiscrete p.paymentAmount)) ]
                                       , D.button
                                           [ DA.klass_ "payment-remove"
                                           , DA.disabled $ isProcessingValue <#> \ip ->
@@ -557,12 +594,12 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                                               ( \currPayments ->
                                                   void $ launchAff_ do
                                                     result <-
-                                                      TransactionService.removePaymentTransaction
+                                                      TransactionService.removeSalePayment
                                                         userId p.paymentId
                                                     liftEffect $ case result of
                                                       Right _ -> do
                                                         let updated = filter
-                                                              (\(PaymentTransaction pay) ->
+                                                              (\pay ->
                                                                 pay.paymentId /= p.paymentId)
                                                               currPayments
                                                         setPayments updated
@@ -595,8 +632,8 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                       setIsProcessing true
                       setStatusMessage "Clearing cart..."
                       void $ launchAff_ do
-                        result <- TransactionService.clearTransaction
-                          userId (unwrap transaction).transactionId
+                        result <- TransactionService.clearSale
+                          userId transaction.saleId
                         liftEffect $ case result of
                           Right _ -> do
                             setCartItems []
@@ -615,30 +652,7 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
             [ (Tuple <$> cartTotalsValue <*> paymentsValue) <#~>
                 \(Tuple totals payments) ->
                   let
-                    dummyTx = Transaction
-                      { transactionId:                     UUID ""
-                      , transactionStatus:                 InProgress
-                      , transactionCreated:                bottom
-                      , transactionCompleted:              Nothing
-                      , transactionCustomerId:             Nothing
-                      , transactionEmployeeId:             UUID ""
-                      , transactionRegisterId:             UUID ""
-                      , transactionLocationId:             UUID ""
-                      , transactionItems:                  []
-                      , transactionPayments:               []
-                      , transactionSubtotal:               fromDiscrete' totals.subtotal
-                      , transactionDiscountTotal:          fromDiscrete' (Discrete 0)
-                      , transactionTaxTotal:               fromDiscrete' totals.taxTotal
-                      , transactionTotal:                  fromDiscrete' totals.total
-                      , transactionType:                   Sale
-                      , transactionIsVoided:               false
-                      , transactionVoidReason:             Nothing
-                      , transactionIsRefunded:             false
-                      , transactionRefundReason:           Nothing
-                      , transactionReferenceTransactionId: Nothing
-                      , transactionNotes:                  Nothing
-                      }
-                    remaining  = getRemainingBalance payments dummyTx
+                    remaining  = getRemainingBalance payments totals.total
                     paidClass  = if remaining <= Discrete 0 then "paid" else "unpaid"
                   in
                     D.div
@@ -658,52 +672,27 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
                 ( \cartItems currPayments totals transaction ->
                     if null cartItems then
                       setStatusMessage "Cannot complete: No items in transaction"
+                    else if not (paymentsCoversTotal currPayments totals.total) then
+                      setStatusMessage
+                        "Cannot complete: Payment amount is insufficient"
                     else do
-                      let
-                        dummyTx = Transaction
-                          { transactionId:                     UUID ""
-                          , transactionStatus:                 InProgress
-                          , transactionCreated:                bottom
-                          , transactionCompleted:              Nothing
-                          , transactionCustomerId:             Nothing
-                          , transactionEmployeeId:             UUID ""
-                          , transactionRegisterId:             UUID ""
-                          , transactionLocationId:             UUID ""
-                          , transactionItems:                  []
-                          , transactionPayments:               []
-                          , transactionSubtotal:               fromDiscrete' totals.subtotal
-                          , transactionDiscountTotal:          fromDiscrete' (Discrete 0)
-                          , transactionTaxTotal:               fromDiscrete' totals.taxTotal
-                          , transactionTotal:                  fromDiscrete' totals.total
-                          , transactionType:                   Sale
-                          , transactionIsVoided:               false
-                          , transactionVoidReason:             Nothing
-                          , transactionIsRefunded:             false
-                          , transactionRefundReason:           Nothing
-                          , transactionReferenceTransactionId: Nothing
-                          , transactionNotes:                  Nothing
-                          }
-                      if not (paymentsCoversTotal currPayments dummyTx) then
-                        setStatusMessage
-                          "Cannot complete: Payment amount is insufficient"
-                      else do
-                        setIsProcessing true
-                        setStatusMessage "Finalizing transaction..."
-                        void $ launchAff_ do
-                          result <- TransactionService.finalizeTransaction
-                            userId (unwrap transaction).transactionId
-                          liftEffect $ case result of
-                            Right _ -> do
-                              setCartItems []
-                              setPayments []
-                              setCartTotals emptyCartTotals
-                              setTransactionStatus "Completed"
-                              setInventoryErrors []
-                              setStatusMessage "Transaction completed successfully"
-                            Left err ->
-                              setStatusMessage $
-                                "Error finalizing transaction: " <> err
-                          liftEffect $ setIsProcessing false
+                      setIsProcessing true
+                      setStatusMessage "Finalizing transaction..."
+                      void $ launchAff_ do
+                        result <- TransactionService.finalizeSale
+                          userId transaction.saleId
+                        liftEffect $ case result of
+                          Right _ -> do
+                            setCartItems []
+                            setPayments []
+                            setCartTotals emptyCartTotals
+                            setTransactionStatus Completed
+                            setInventoryErrors []
+                            setStatusMessage "Transaction completed successfully"
+                          Left err ->
+                            setStatusMessage $
+                              "Error finalizing transaction: " <> err
+                        liftEffect $ setIsProcessing false
                 ) <$> cartItemsValue
                   <*> paymentsValue
                   <*> cartTotalsValue
@@ -727,13 +716,9 @@ createTransaction userId inventoryPoll transactionPoll register = Deku.do
             [ D.span [ DA.klass_ "status-label" ] [ text_ "Transaction Status: " ]
             , D.span
                 [ DA.klass $ transactionStatusValue <#> \status ->
-                    "status-value " <> case status of
-                      "Completed"   -> "completed"
-                      "CREATED"     -> "created"
-                      "In Progress" -> "in-progress"
-                      _             -> ""
+                    "status-value " <> statusClass status
                 ]
-                [ text transactionStatusValue ]
+                [ text (transactionStatusValue <#> formatStatus) ]
             ]
         ]
     ]

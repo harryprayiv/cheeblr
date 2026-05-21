@@ -11,15 +11,17 @@ import FRP.Poll (Poll)
 import Services.AuthService (AuthState, UserId)
 import Types.Inventory (Inventory(..))
 import Types.Register (Register)
-import Types.Transaction (Transaction)
+import Types.Transaction.Sale as Sale
 import UI.Inventory.ItemForm (renderError)
 import UI.Transaction.CreateTransaction as TransactionUI
 
 data TxPageStatus
   = TxPageLoading
-  | TxPageReady Inventory Register Transaction
-  | TxPageDegraded String Register Transaction  -- inventory failed; tx still usable
-  | TxPageError String                          -- register/tx failed; fatal
+  | TxPageReady    Inventory Register Sale.SaleTransaction
+  | TxPageDegraded String    Register Sale.SaleTransaction
+  -- ^ inventory failed; sale still usable
+  | TxPageError    String
+  -- ^ register/sale failed; fatal
 
 page :: Poll AuthState -> UserId -> Poll TxPageStatus -> Nut
 page _authPoll userId statusPoll =

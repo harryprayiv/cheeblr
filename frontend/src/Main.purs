@@ -46,7 +46,7 @@ import Services.TransactionService as TransactionService
 import Types.Auth (UserCapabilities)
 import Types.Inventory (Inventory(..), MenuItem(..))
 import Types.Register (Register)
-import Types.Transaction (Transaction)
+import Types.Transaction.Sale as Sale
 import Types.UUID (UUID, genUUID)
 import Pages.Stock.Interface as Pages.Stock.Interface
 
@@ -128,20 +128,20 @@ loadTxPageData userId = do
 
   loadRegisterAndStartTx
     :: String
-    -> Aff (Either String { register :: Register, transaction :: Transaction })
+    -> Aff (Either String { register :: Register, transaction :: Sale.SaleTransaction })
   loadRegisterAndStartTx uid = do
     regResult <- getOrInitRegisterAff uid dummyLocationId dummyEmployeeId
     case regResult of
       Left err     -> pure $ Left err
       Right register -> do
-        txResult <- TransactionService.startTransaction uid
+        txResult <- TransactionService.startSale uid
           { employeeId: fromMaybe register.registerId register.registerOpenedBy
           , registerId: register.registerId
           , locationId: register.registerLocationId
           }
         pure $ case txResult of
           Right transaction -> Right { register, transaction }
-          Left err          -> Left ("Failed to create transaction: " <> err)
+          Left err          -> Left ("Failed to create sale: " <> err)
 
 main :: Effect Unit
 main = do
@@ -266,12 +266,8 @@ main = do
         ]
     )
 
-  -- Session restore: validateSession sends the HttpOnly cookie automatically.
-  -- No token is read from localStorage. If the cookie is present and valid,
-  -- the server returns the session; otherwise we land on Login.
-  --
-  -- RegisterService.initLocalRegister is only called after confirmed auth so
-  -- it never fires unauthenticated (which caused the 401s on mount).
+  -- Session restore via the HttpOnly cookie. RegisterService.initLocalRegister
+  -- only runs after auth so we don't fire unauthenticated 401s on mount.
   launchAff_ do
     initialRoute <- do
       result <- validateSession
@@ -289,7 +285,6 @@ main = do
 
     liftEffect do
       userId <- Ref.read tokenRef
-      -- Only pre-init register when we have a real authenticated user.
       when (userId /= "") $
         RegisterService.initLocalRegister
           userId

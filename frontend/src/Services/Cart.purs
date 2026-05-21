@@ -4,8 +4,6 @@ import Prelude
 
 import Data.Array (filter, find, (:))
 import Data.Either (Either(..))
-import Data.Finance.Money (Discrete(..))
-import Data.Finance.Money.Extended (fromDiscrete', toDiscrete)
 import Data.Int as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (unwrap)
@@ -14,20 +12,32 @@ import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Services.AuthService (UserId)
-import Services.TransactionService (calculateCartTotals)
-import Services.TransactionService as TransactionService
-import Types.Inventory (MenuItem(..), Inventory(..))
+import Services.TransactionService
+  ( calculateCartTotals
+  , createSaleItem
+  , removeSaleItem
+  )
+import Types.Inventory (Inventory(..), MenuItem(..))
+import Types.Primitives.Money
+  ( saleMoneyCents
+  , unsafeMkSaleMoney
+  )
+import Types.Primitives.Quantity
+  ( saleQuantityCount
+  , unsafeMkSaleQuantity
+  )
 import Types.Register (CartTotals)
-import Types.Transaction (TaxCategory(..), TransactionItem(..))
+import Types.Transaction (TaxCategory(..))
+import Types.Transaction.Sale as Sale
 import Types.UUID (UUID, genUUID)
 
-getCartQuantityForSku :: UUID -> Array TransactionItem -> Int
+getCartQuantityForSku :: UUID -> Array Sale.Item -> Int
 getCartQuantityForSku sku cartItems =
-  case find (\(TransactionItem item) -> item.transactionItemMenuItemSku == sku) cartItems of
-    Just (TransactionItem item) -> item.transactionItemQuantity
+  case find (\item -> item.itemMenuItemSku == sku) cartItems of
+    Just item -> saleQuantityCount item.itemQuantity
     Nothing -> 0
 
-isItemAvailable :: MenuItem -> Int -> Array TransactionItem -> Boolean
+isItemAvailable :: MenuItem -> Int -> Array Sale.Item -> Boolean
 isItemAvailable (MenuItem item) requestedQty cartItems =
   let
     currentInCart = getCartQuantityForSku item.sku cartItems
@@ -35,138 +45,130 @@ isItemAvailable (MenuItem item) requestedQty cartItems =
   in
     totalRequestedQty <= item.quantity
 
-getAvailableQuantity :: MenuItem -> Array TransactionItem -> Int
+getAvailableQuantity :: MenuItem -> Array Sale.Item -> Int
 getAvailableQuantity (MenuItem item) cartItems =
   let
     currentInCart = getCartQuantityForSku item.sku cartItems
   in
     item.quantity - currentInCart
 
-findUnavailableItems :: Array TransactionItem -> Inventory -> Array { id :: UUID, name :: String }
+findUnavailableItems
+  :: Array Sale.Item
+  -> Inventory
+  -> Array { id :: UUID, name :: String }
 findUnavailableItems cartItems (Inventory inventory) =
   cartItems
-    # filter (\(TransactionItem item) ->
-        case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
-          Just (MenuItem menuItem) ->
-            menuItem.quantity < item.transactionItemQuantity
-          Nothing ->
-            true
-      )
-    # map (\(TransactionItem item) ->
-        let
-          name = case find (\(MenuItem menuItem) -> menuItem.sku == item.transactionItemMenuItemSku) inventory of
-            Just (MenuItem menuItem) -> menuItem.name
-            Nothing -> "Unknown Item"
-        in
-          { id: item.transactionItemId, name }
-      )
+    # filter
+        ( \item ->
+            case
+              find (\(MenuItem m) -> m.sku == item.itemMenuItemSku) inventory
+              of
+              Just (MenuItem m) ->
+                m.quantity < saleQuantityCount item.itemQuantity
+              Nothing -> true
+        )
+    # map
+        ( \item ->
+            let
+              name = case
+                find
+                  (\(MenuItem m) -> m.sku == item.itemMenuItemSku)
+                  inventory
+                of
+                Just (MenuItem m) -> m.name
+                Nothing -> "Unknown Item"
+            in
+              { id: item.itemId, name }
+        )
 
-findExistingItem :: MenuItem -> Array TransactionItem -> Maybe TransactionItem
+findExistingItem :: MenuItem -> Array Sale.Item -> Maybe Sale.Item
 findExistingItem (MenuItem menuItem) items =
-  find (\(TransactionItem txItem) -> txItem.transactionItemMenuItemSku == menuItem.sku) items
+  find (\item -> item.itemMenuItemSku == menuItem.sku) items
 
 removeItemFromTransaction
   :: UUID
-  -> Array TransactionItem
-  -> (Array TransactionItem -> Effect Unit)
+  -> Array Sale.Item
+  -> (Array Sale.Item -> Effect Unit)
   -> Effect Unit
-removeItemFromTransaction itemId currentItems updateItems = do
-  updateItems
-    (filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems)
+removeItemFromTransaction itemId currentItems updateItems =
+  updateItems (filter (\item -> item.itemId /= itemId) currentItems)
 
+-- | Local optimistic cart manipulation (no server round-trip). Kept available
+-- | for offline-style UX. Server-side reservation is authoritative once
+-- | 'addItemToCart' fires.
 addItemToTransaction
   :: MenuItem
   -> Int
-  -> Array TransactionItem
-  -> (Array TransactionItem -> Effect Unit)
+  -> Array Sale.Item
+  -> (Array Sale.Item -> Effect Unit)
   -> Effect Unit
-addItemToTransaction menuItem@(MenuItem item) qty currentItems updateItems = do
+addItemToTransaction (MenuItem item) qty currentItems updateItems =
   launchAff_ do
     itemId <- liftEffect genUUID
     transactionId <- liftEffect genUUID
 
     let
-      priceAsMoney = fromDiscrete' item.price
-
       priceInCents = unwrap item.price
       subtotalInCents = priceInCents * qty
-      subtotalDiscrete = Discrete subtotalInCents
-      subtotalAsMoney = fromDiscrete' subtotalDiscrete
-
       taxRate = 0.15
       taxRateInt = Int.floor (taxRate * 100.0)
       taxAmountInCents = (subtotalInCents * taxRateInt) / 100
-      taxDiscrete = Discrete taxAmountInCents
-      taxAsMoney = fromDiscrete' taxDiscrete
-
       totalInCents = subtotalInCents + taxAmountInCents
-      totalDiscrete = Discrete totalInCents
-      totalAsMoney = fromDiscrete' totalDiscrete
 
-      newItem = TransactionItem
-        { transactionItemId: itemId
-        , transactionItemTransactionId: transactionId
-        , transactionItemMenuItemSku: item.sku
-        , transactionItemQuantity: qty
-        , transactionItemPricePerUnit: priceAsMoney
-        , transactionItemDiscounts: []
-        , transactionItemTaxes:
-            [ { taxCategory: RegularSalesTax
-              , taxRate: taxRate
-              , taxAmount: taxAsMoney
-              , taxDescription: "Sales Tax"
-              }
-            ]
-        , transactionItemSubtotal: subtotalAsMoney
-        , transactionItemTotal: totalAsMoney
+      newTax :: Sale.Tax
+      newTax =
+        { taxCategory: RegularSalesTax
+        , taxRate: taxRate
+        , taxAmount: unsafeMkSaleMoney taxAmountInCents
+        , taxDescription: "Sales Tax"
+        }
+
+      newItem :: Sale.Item
+      newItem =
+        { itemId: itemId
+        , itemTransactionId: transactionId
+        , itemMenuItemSku: item.sku
+        , itemQuantity: unsafeMkSaleQuantity qty
+        , itemPricePerUnit: unsafeMkSaleMoney priceInCents
+        , itemDiscounts: []
+        , itemTaxes: [ newTax ]
+        , itemSubtotal: unsafeMkSaleMoney subtotalInCents
+        , itemTotal: unsafeMkSaleMoney totalInCents
         }
 
     liftEffect do
-      let
-        existingItem = find
-          (\(TransactionItem i) -> i.transactionItemMenuItemSku == item.sku)
-          currentItems
-
-      case existingItem of
-        Just (TransactionItem existing) ->
+      let existing = find (\i -> i.itemMenuItemSku == item.sku) currentItems
+      case existing of
+        Just ex ->
           let
-            newQty = existing.transactionItemQuantity + qty
-
-            existingPriceDiscrete = toDiscrete existing.transactionItemPricePerUnit
-            existingPriceInCents = unwrap existingPriceDiscrete
-
+            newQty = saleQuantityCount ex.itemQuantity + qty
+            existingPriceInCents = saleMoneyCents ex.itemPricePerUnit
             newSubtotalInCents = existingPriceInCents * newQty
             newTaxInCents = (newSubtotalInCents * taxRateInt) / 100
             newTotalInCents = newSubtotalInCents + newTaxInCents
 
-            newSubtotalDiscrete = Discrete newSubtotalInCents
-            newTaxDiscrete = Discrete newTaxInCents
-            newTotalDiscrete = Discrete newTotalInCents
-
-            newSubtotalAsMoney = fromDiscrete' newSubtotalDiscrete
-            newTaxAsMoney = fromDiscrete' newTaxDiscrete
-            newTotalAsMoney = fromDiscrete' newTotalDiscrete
-
-            newTaxRecord =
+            mergedTax :: Sale.Tax
+            mergedTax =
               { taxCategory: RegularSalesTax
               , taxRate: taxRate
-              , taxAmount: newTaxAsMoney
+              , taxAmount: unsafeMkSaleMoney newTaxInCents
               , taxDescription: "Sales Tax"
               }
 
-            updatedItem = TransactionItem $ existing
-              { transactionItemQuantity = newQty
-              , transactionItemSubtotal = newSubtotalAsMoney
-              , transactionItemTotal = newTotalAsMoney
-              , transactionItemTaxes = [ newTaxRecord ]
+            updated :: Sale.Item
+            updated = ex
+              { itemQuantity = unsafeMkSaleQuantity newQty
+              , itemSubtotal = unsafeMkSaleMoney newSubtotalInCents
+              , itemTotal = unsafeMkSaleMoney newTotalInCents
+              , itemTaxes = [ mergedTax ]
               }
 
-            updatedItems = map
-              ( \i@(TransactionItem currItem) ->
-                  if currItem.transactionItemMenuItemSku == item.sku then updatedItem
-                  else i
-              )
-              currentItems
+            updatedItems =
+              map
+                ( \i ->
+                    if i.itemMenuItemSku == item.sku then updated else i
+                )
+                currentItems
           in
             updateItems updatedItems
 
@@ -177,90 +179,81 @@ addItemToCart
   :: UserId
   -> MenuItem
   -> Int
-  -> Array TransactionItem
-  -> UUID
-  -> (Array TransactionItem -> Effect Unit)
+  -> Array Sale.Item
+  -> UUID -- saleId
+  -> (Array Sale.Item -> Effect Unit)
   -> (CartTotals -> Effect Unit)
   -> (String -> Effect Unit)
   -> (Boolean -> Effect Unit)
   -> Effect Unit
 addItemToCart
   userId
-  menuItem@(MenuItem record)
+  (MenuItem record)
   qty
   currentItems
-  transactionId
+  saleId
   setItems
   setTotals
   setStatusMessage
-  setCheckingInventory = do
-
+  setCheckingInventory =
   if qty <= 0 then
     setStatusMessage "Quantity must be greater than 0"
   else do
     setCheckingInventory true
     setStatusMessage "Checking inventory..."
 
-    let existingItem = find
-          (\(TransactionItem item) -> item.transactionItemMenuItemSku == record.sku)
-          currentItems
-
-    let currentQtyInCart = case existingItem of
-          Just (TransactionItem item) -> item.transactionItemQuantity
-          Nothing -> 0
-
-    let totalRequestedQty = currentQtyInCart + qty
+    let
+      existing = find (\i -> i.itemMenuItemSku == record.sku) currentItems
+      currentQtyInCart = case existing of
+        Just i -> saleQuantityCount i.itemQuantity
+        Nothing -> 0
+      totalRequestedQty = currentQtyInCart + qty
 
     void $ launchAff_ do
-      result <- TransactionService.createTransactionItem
-        userId
-        transactionId
-        record.sku
-        qty
-        (unwrap record.price)
+      result <- createSaleItem userId saleId record.sku qty (unwrap record.price)
 
-      liftEffect $ case result of
+      liftEffect case result of
         Right newItem -> do
-          let updatedItems = case existingItem of
-                Just (TransactionItem existing) ->
-                  -- Recalculate subtotal, taxes, and total for the new cumulative
-                  -- quantity. Only patching quantity leaves the money fields stale,
-                  -- causing calculateCartTotals to report single-item prices regardless
-                  -- of how many units are in the cart.
-                  let
-                    priceInCents  = unwrap (toDiscrete existing.transactionItemPricePerUnit)
-                    newSubtotal   = priceInCents * totalRequestedQty
-                    -- Preserve the tax rate from the existing record if present,
-                    -- otherwise fall back to the server item's rate.
-                    taxRate = case existing.transactionItemTaxes of
+          let
+            updatedItems = case existing of
+              Just ex ->
+                let
+                  priceInCents = saleMoneyCents ex.itemPricePerUnit
+                  newSubtotal = priceInCents * totalRequestedQty
+                  taxRate = case ex.itemTaxes of
+                    [ t ] -> t.taxRate
+                    _ -> case newItem.itemTaxes of
                       [ t ] -> t.taxRate
-                      _     -> case (unwrap newItem).transactionItemTaxes of
-                        [ t ] -> t.taxRate
-                        _     -> 0.08
-                    taxAmount     = Int.floor (Int.toNumber newSubtotal * taxRate)
-                    newTotal      = newSubtotal + taxAmount
-                    mergedTaxes   =
-                      [ { taxCategory:   RegularSalesTax
-                        , taxRate:       taxRate
-                        , taxAmount:     fromDiscrete' (Discrete taxAmount)
-                        , taxDescription: "Sales Tax"
-                        }
-                      ]
-                    mergedItem = TransactionItem $ existing
-                      { transactionItemQuantity = totalRequestedQty
-                      , transactionItemSubtotal = fromDiscrete' (Discrete newSubtotal)
-                      , transactionItemTaxes    = mergedTaxes
-                      , transactionItemTotal    = fromDiscrete' (Discrete newTotal)
-                      }
-                  in
-                    map (\i@(TransactionItem ti) ->
-                      if ti.transactionItemMenuItemSku == record.sku then mergedItem
-                      else i
-                    ) currentItems
-                Nothing ->
-                  newItem : currentItems
+                      _ -> 0.08
+                  taxAmount = Int.floor (Int.toNumber newSubtotal * taxRate)
+                  newTotal = newSubtotal + taxAmount
 
-          let newTotals = TransactionService.calculateCartTotals updatedItems
+                  mergedTax :: Sale.Tax
+                  mergedTax =
+                    { taxCategory: RegularSalesTax
+                    , taxRate: taxRate
+                    , taxAmount: unsafeMkSaleMoney taxAmount
+                    , taxDescription: "Sales Tax"
+                    }
+
+                  merged :: Sale.Item
+                  merged = ex
+                    { itemQuantity = unsafeMkSaleQuantity totalRequestedQty
+                    , itemSubtotal = unsafeMkSaleMoney newSubtotal
+                    , itemTaxes = [ mergedTax ]
+                    , itemTotal = unsafeMkSaleMoney newTotal
+                    }
+                in
+                  map
+                    ( \i ->
+                        if i.itemMenuItemSku == record.sku then merged else i
+                    )
+                    currentItems
+              Nothing ->
+                newItem : currentItems
+
+            newTotals = calculateCartTotals updatedItems
+
           setItems updatedItems
           setTotals newTotals
           setCheckingInventory false
@@ -273,34 +266,34 @@ addItemToCart
 removeItemFromCart
   :: UserId
   -> UUID
-  -> Array TransactionItem
-  -> (Array TransactionItem -> Effect Unit)
+  -> Array Sale.Item
+  -> (Array Sale.Item -> Effect Unit)
   -> (CartTotals -> Effect Unit)
   -> (Boolean -> Effect Unit)
   -> Effect Unit
 removeItemFromCart userId itemId currentItems setItems setTotals setIsProcessing = do
   setIsProcessing true
 
-  let itemInfo = case find (\(TransactionItem item) -> item.transactionItemId == itemId) currentItems of
-                   Just (TransactionItem item) -> ", SKU: " <> show item.transactionItemMenuItemSku
-                   Nothing -> ""
+  let
+    itemInfo = case find (\i -> i.itemId == itemId) currentItems of
+      Just i -> ", SKU: " <> show i.itemMenuItemSku
+      Nothing -> ""
 
   Console.log $ "Removing item ID: " <> show itemId <> itemInfo
 
   void $ launchAff_ do
-    result <- TransactionService.removeTransactionItem userId itemId
+    result <- removeSaleItem userId itemId
 
-    liftEffect $ case result of
+    liftEffect case result of
       Right _ -> do
         let
-          newItems = filter (\(TransactionItem item) -> item.transactionItemId /= itemId) currentItems
-        let newTotals = calculateCartTotals newItems
-
+          newItems = filter (\i -> i.itemId /= itemId) currentItems
+          newTotals = calculateCartTotals newItems
         setTotals newTotals
         setItems newItems
-        Console.log $ "Successfully removed item and released reservation: " <> show itemId
+        Console.log $ "Successfully removed item: " <> show itemId
 
-      Left err -> do
+      Left err ->
         Console.error $ "Error removing item: " <> err
 
     liftEffect $ setIsProcessing false
