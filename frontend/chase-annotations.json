@@ -15,12 +15,108 @@
           ],
           "blocking": ["clean multi-environment deploy"],
           "affects": ["currentConfig"]
+        },
+        {
+          "name": "HttpsRequiredForLocalhost",
+          "what": "localConfig hardcodes https:// for both apiBaseUrl and appOrigin, which requires a working dev certificate for localhost",
+          "why": [
+            "If the dev cert is missing or untrusted, the browser silently refuses to send cookies cross-origin, and Set-Cookie on /auth/login is dropped without a clear error.",
+            "Symptom: login appears to succeed (2xx response) but /auth/me immediately returns 401 on the next request.",
+            "Mixing http and https between apiBaseUrl and appOrigin would also break CORS preflight.",
+            "Mitigated in this repo by mkcert-style local cert tooling, but breaks for anyone who clones without the setup."
+          ],
+          "blocking": ["a clean first-time-clone dev experience"],
+          "affects": ["localConfig", "networkConfig"]
         }
       ],
       "invariants": {
         "currentConfig": [
           "Always returns localConfig in the current source. Edit this binding to switch environments.",
           "Other modules import currentConfig and use it for apiBaseUrl and appOrigin (sent as the CORS Origin header)."
+        ]
+      }
+    },
+
+    "Config.Auth": {
+      "decisions": [
+        {
+          "name": "FourHardcodedDevUsersWithFixedUUIDs",
+          "what": "allDevUsers is a hardcoded list of four DevUser records (Customer, Cashier, Manager, Admin) each with a fixed UUID",
+          "why": [
+            "The fixed UUIDs let the backend seed matching user rows so dev sessions resolve to real DB entries.",
+            "findDevUserByRole maps a backend session role to one of these four; if production ever has multiple users per role, this is a 1:N collapse and the wrong user identity gets attached.",
+            "defaultDevUser = devAdmin: any unmatched role falls back to Admin, which is a privilege-escalation footgun if the backend role enum ever drifts (see Pages.Login.AdminFallbackOnUnknownRole).",
+            "Customer/Cashier/Manager/Admin is the canonical role hierarchy used everywhere downstream."
+          ],
+          "affects": ["allDevUsers", "defaultDevUser", "findDevUserByRole", "findDevUserById"]
+        }
+      ],
+      "invariants": {
+        "defaultDevUser": [
+          "Set to devAdmin, the highest-privilege dev user.",
+          "Used as the fallback when no role-to-DevUser match is found; see openIssue in Pages.Login."
+        ],
+        "toAuthenticatedUser": [
+          "Lossy conversion: DevUser -> AuthenticatedUser drops nothing essential but fills in auCreatedAt with defaultDateTime (epoch), since dev users have no real creation timestamp."
+        ]
+      }
+    },
+
+    "Config.Entity": {
+      "openIssues": [
+        {
+          "name": "DummyIdsUsedInProductionCodePaths",
+          "what": "dummyAccountId, dummyPaymentId, dummyTransactionId, dummyEmployeeId, dummyRegisterId, dummyLocationId are hardcoded UUIDs used by Main and Services.RegisterService at runtime",
+          "why": [
+            "Main.main calls RegisterService.initLocalRegister with dummyLocationId and dummyEmployeeId at boot. These hardcoded IDs must match seeded DB rows or register pre-init fails.",
+            "Pages.Stock.Interface uses dummyLocationId to filter the pull queue. In a multi-location production, this is wrong.",
+            "These are real foreign-key references on the backend; they are not test fixtures, despite the 'dummy' name.",
+            "Replacing requires threading the real location/employee through from the session response and the register selection UI."
+          ],
+          "blocking": ["multi-location production deploy", "real employee assignment for register operations"],
+          "affects": ["dummyLocationId", "dummyEmployeeId", "dummyRegisterId"]
+        }
+      ],
+      "invariants": {
+        "dummyLocationId": [
+          "Used by Main and Pages.Stock.Interface as the location filter. See openIssue DummyIdsUsedInProductionCodePaths."
+        ]
+      }
+    },
+
+    "Config.LiveView": {
+      "decisions": [
+        {
+          "name": "GqlModeAsDefaultQueryMode",
+          "what": "defaultViewConfig.mode = GqlMode; the LiveView page reaches for GraphQL by default rather than REST or static JSON",
+          "why": [
+            "GraphQL is the most expressive of the three (lets the UI pick exactly the fields it needs).",
+            "JsonMode is the offline fallback (reads ./inventory.json); HttpMode is the REST path.",
+            "Changing mode currently requires editing defaultViewConfig source; no runtime switch.",
+            "See API.Inventory.QueryModeDispatchInFetchInventory for the dispatch logic."
+          ],
+          "affects": ["defaultViewConfig"]
+        }
+      ],
+      "invariants": {
+        "defaultViewConfig": [
+          "Default sort: Quantity descending, then Category ascending, then Species descending. Multi-field comparator from Types.Inventory.compareMenuItems.",
+          "hideOutOfStock defaults to false (out-of-stock items rendered, marked as 0 stock).",
+          "refreshRate is 5000ms but is not currently used anywhere; LiveView relies on poll updates, not polling."
+        ]
+      }
+    },
+
+    "Config.InventoryFields": {
+      "invariants": {
+        "priceConfig": [
+          "Internally stores cents (Int) but displays dollars via formatCentsToDisplayDollars at form-init time.",
+          "Validation uses dollarAmount (non-negative Number); on form submit, Types.Inventory.validateMenuItem floors (value * 100) back to cents.",
+          "Inputs with more than 2 decimal places lose precision silently; see Types.Inventory.PriceAsDiscreteUSDFromCentsInteger."
+        ],
+        "skuConfig": [
+          "validation = always-true; SKU validity is checked at submit time via validateUUID in Types.Inventory.validateMenuItem, not in this field's validation rule.",
+          "Trims input but does not enforce UUID format inline; user can type garbage and see the validation error only on submit."
         ]
       }
     },
@@ -34,6 +130,16 @@
             "The backend issues an HttpOnly session cookie on successful login; subsequent /auth/me calls validate via that cookie.",
             "credentials: Include is required to BOTH receive the Set-Cookie on login AND send the cookie on /auth/me.",
             "Cross-origin requests do not send cookies by default; this opt-in is the load-bearing detail of the cookie auth scheme."
+          ],
+          "affects": ["login", "logout", "validateSession"]
+        },
+        {
+          "name": "DoesNotUseApiRequestHelpers",
+          "what": "login/logout/validateSession use raw Fetch directly rather than the API.Request helpers",
+          "why": [
+            "At login time there is no userId yet for the Bearer header, so API.Request.authPost (which requires UserId) doesn't fit.",
+            "validateSession likewise has no userId until after the cookie is validated; chicken-and-egg.",
+            "Could be refactored to a single 'unauthenticatedPost' helper in API.Request, but the duplication is contained to three functions here."
           ],
           "affects": ["login", "logout", "validateSession"]
         }
@@ -58,7 +164,11 @@
           "consumes": [
             "Main (inside the launchAff_ block at boot time)"
           ]
-        }
+        },
+        "logout": [
+          "Fire-and-forget: any error is swallowed into Left but logout always sets local state to SignedOut afterward (Route.nav's handler ignores the result and calls clearToken + pushAuth SignedOut unconditionally).",
+          "POST /auth/logout tells the backend to invalidate the session; if the network call fails, the user is logged out locally anyway, which is the safer default."
+        ]
       }
     },
 
@@ -70,7 +180,7 @@
           "why": [
             "Most backend endpoints return JSON-shaped error bodies on 4xx/5xx, which authPost handles by letting fromJSON parse them and downstream code pattern-matches on success/error fields.",
             "authPostChecked exists for endpoints that return raw error text (not JSON) on failure; without the status check, fromJSON would fail and the actual error message would be lost.",
-            "Currently used by Types.Transaction's createTransaction and addTransactionItem paths; everything else uses authPost."
+            "Currently used by API.Sale.createSale, addSaleItem, addSalePayment; everything else uses authPost. See API.Sale.AsymmetricUseOfAuthPostChecked."
           ],
           "affects": ["authPost", "authPostChecked"]
         },
@@ -93,7 +203,7 @@
         ],
         "authPostChecked": [
           "Status code check happens BEFORE JSON parse; non-2xx returns the raw response.text in the Left error.",
-          "Used for endpoints (createTransaction, addTransactionItem) where backend errors arrive as plain text rather than parseable JSON.",
+          "Used for endpoints (createSale, addSaleItem, addSalePayment) where backend errors arrive as plain text rather than parseable JSON.",
           "Logs every error to console.error in addition to surfacing it; useful for debugging but noisy."
         ],
         "runRequest": [
@@ -126,6 +236,165 @@
         "fetchInventory": [
           "Three-way dispatch on QueryMode; the default is GqlMode per Config.LiveView.defaultViewConfig.",
           "JsonMode and HttpMode are alternatives for development or fallback; the production path is GqlMode."
+        ]
+      }
+    },
+
+    "API.Sale": {
+      "openIssues": [
+        {
+          "name": "AsymmetricUseOfAuthPostChecked",
+          "what": "createSale, addSaleItem, and addSalePayment use authPostChecked (status-validating); voidSale, refundSale, finalizeSale use plain authPost",
+          "why": [
+            "authPostChecked surfaces non-2xx as Left with the raw error text. authPost runs fromJSON regardless of status, so a 4xx with a plain-text error body becomes a confusing JSON parse error.",
+            "The split is not principled: there is no reason void/refund/finalize would never return a plain-text error.",
+            "Symptom: a 403 on finalizeSale shows the user 'Error finalizing transaction: Failed to parse JSON: unexpected token at position 0' instead of the actual permission denial.",
+            "Fix: switch all mutation endpoints to authPostChecked. The asymmetry is historical, not intentional."
+          ],
+          "blocking": ["meaningful error surfaces for void/refund/finalize"],
+          "affects": ["voidSale", "refundSale", "finalizeSale"]
+        }
+      ],
+      "invariants": {
+        "createSale": [
+          "Uses authPostChecked; non-2xx responses surface as Left with raw error text.",
+          "Returns the freshly-created SaleTransaction (with server-assigned timestamps if any)."
+        ],
+        "finalizeSale": [
+          "POST /sale/finalize/<id> with empty body via authPostEmpty.",
+          "Backend transitions sale to Completed status and triggers downstream effects (inventory commit, ledger entries).",
+          "Uses authPost, not authPostChecked; see openIssue AsymmetricUseOfAuthPostChecked."
+        ],
+        "voidSale": [
+          "POST /sale/void/<id> with reason string as the body.",
+          "Body serialization is the raw string via writeJSON; the backend parses it as a JSON string literal, not a structured request."
+        ]
+      }
+    },
+
+    "API.Stock": {
+      "decisions": [
+        {
+          "name": "PerEndpointApiRequestRatherThanApiRequestHelpers",
+          "what": "API.Stock defines its own apiRequest/apiRequestUnit helpers instead of using API.Request.authGet/authPost",
+          "why": [
+            "The stock endpoints use a body-or-nobody pattern (some POSTs have empty bodies, some have JSON) that doesn't fit cleanly into authPost's WriteForeign req requirement.",
+            "The local helpers take a Maybe String body, which is more flexible at the cost of duplication.",
+            "Could be unified by adding authPostEmpty + authPostString to API.Request; not done because the pattern is contained to this module."
+          ],
+          "affects": ["apiRequest", "apiRequestUnit"]
+        }
+      ],
+      "invariants": {
+        "getQueue": [
+          "Optional LocationId filter appended as ?locationId=<uuid> query param; without it, returns all queues across all locations.",
+          "Pages.Stock.Interface passes Just (LocationId dummyLocationId) so it sees only the configured location's queue. See Config.Entity.DummyIdsUsedInProductionCodePaths."
+        ],
+        "cancelPull": [
+          "POST with body {irNote: reason}; the backend records the reason as the cancellation note.",
+          "Cancellation is terminal; the pull cannot be reopened, only a fresh pull request created."
+        ]
+      }
+    },
+
+    "API.Admin": {
+      "invariants": {
+        "logStreamUrl": [
+          "Builds a URL with ?authorization=<token> query parameter because EventSource doesn't support custom headers in standard browsers.",
+          "The 'token' here is the user UUID per API.Request.BearerHeaderCarriesUserIdNotSessionToken; same dual-auth concerns.",
+          "Used by Pages.Admin.Tabs.LogViewer for the SSE log stream."
+        ],
+        "getLogs": [
+          "All filter arguments are currently ignored: the implementation discards _ _ _ _ and calls Request.authGet userId '/admin/logs' unconditionally.",
+          "Backend pagination/filtering is presumably not yet implemented; the type signature documents the intended interface."
+        ]
+      }
+    },
+
+    "API.Manager": {
+      "invariants": {
+        "activityStreamUrl": [
+          "Builds an SSE URL with ?authorization=Bearer+<token> (plus-encoded space) for the activity stream.",
+          "Used by manager dashboard for live transaction monitoring; same browser-quirk auth as logStreamUrl in API.Admin."
+        ],
+        "getDailyReport": [
+          "Takes a date string and locationId string in the request body; the report is computed server-side, not client-side."
+        ]
+      }
+    },
+
+    "API.Refund": {
+      "invariants": {
+        "getRefund": [
+          "Fetches a single refund by UUID; the path is /refund/<id>.",
+          "Returns Refund.RefundTransaction whose money fields are RefundMoney (non-positive cents); see Types.Primitives.Money."
+        ]
+      }
+    },
+
+    "API.Register": {
+      "invariants": {
+        "openRegister": [
+          "POST /register/open/<id> with OpenRegisterRequest body (employee + starting cash).",
+          "Idempotent on the backend per Services.RegisterService.initLocalRegister: opening an already-open register is a no-op there."
+        ],
+        "closeRegister": [
+          "Returns CloseRegisterResult with the variance between counted and expected drawer amounts.",
+          "Zero variance is the success case; non-zero is informational but does not fail the close."
+        ]
+      }
+    },
+
+    "API.Reservation": {
+      "invariants": {
+        "reserveInventory": [
+          "Reserves a quantity of an item for a transaction; returns the resulting InventoryReservation record.",
+          "Reservations are released by either finalize (commits the deduction) or releaseInventoryReservation (rolls back)."
+        ]
+      }
+    },
+
+    "GraphQL.API.Inventory": {
+      "decisions": [
+        {
+          "name": "GqlPostUsesAuthorizationBearerNotCookies",
+          "what": "gqlPost sets Authorization: Bearer <userId> in the header and credentials: Include for cookies; same dual-auth as REST",
+          "why": [
+            "GraphQL endpoint at /graphql/inventory is on the same backend, so the same auth model applies.",
+            "Cookie auth provides the real session check; the Bearer header carries the user UUID for the backend to identify the actor.",
+            "See API.Request.BearerHeaderCarriesUserIdNotSessionToken for the broader concern."
+          ],
+          "affects": ["gqlPost"]
+        },
+        {
+          "name": "RawGraphqlQueryStringNoSchemaCodegen",
+          "what": "Queries and mutations are raw string templates with no codegen or type-safe builder",
+          "why": [
+            "Yoga.JSON's writeJSON handles serializing MenuItem into the mutation input.",
+            "No PureScript GraphQL schema codegen exists in this project; a mismatch between the query string and the schema would only surface at runtime.",
+            "Acceptable because there are only four operations (read/write/update/delete inventory); a larger surface would justify codegen."
+          ],
+          "affects": ["inventoryQuery", "readInventoryGql", "writeInventoryGql", "updateInventoryGql", "deleteInventoryGql"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "DeleteMutationUsesStringInterpolationForSku",
+          "what": "deleteInventoryGql interpolates sku into the GraphQL query string with manual quoting: deleteMenuItem(sku: \\\"\" <> sku <> \"\\\")",
+          "why": [
+            "If sku ever contains a backslash, double-quote, or newline, the mutation breaks (best case) or becomes injection-shaped (worst case).",
+            "GraphQL parsers do escape-handle string literals, but the client-side interpolation here doesn't escape anything.",
+            "Currently safe because parseUUID guarantees the input matches [0-9a-f-]+ only, but the guarantee is implicit and easily lost.",
+            "Fix: use a variables block: { query: 'mutation D($sku: ID!) { deleteMenuItem(sku: $sku) { ... } }', variables: { sku } }."
+          ],
+          "blocking": [],
+          "affects": ["deleteInventoryGql"]
+        }
+      ],
+      "invariants": {
+        "inventoryQuery": [
+          "Hardcoded query string requesting every field on every menu item; no field selection or pagination.",
+          "Fine because inventories are small; would need rework for thousands of items."
         ]
       }
     },
@@ -238,6 +507,94 @@
       }
     },
 
+    "Types.Transaction.Sale": {
+      "decisions": [
+        {
+          "name": "SaleSpecificMoneyAndQuantityTypes",
+          "what": "Sale.Item uses SaleMoney and SaleQuantity rather than raw Discrete USD / Int; payments and totals likewise use SaleMoney",
+          "why": [
+            "SaleMoney is a smart-constructor newtype that requires non-negative cents; refunds use the inverted RefundMoney type.",
+            "Compile-time prevents accidentally placing refund amounts into a sale record or vice versa.",
+            "All field-level money/qty types in Sale.* are SaleMoney/SaleQuantity; converting to refund is an explicit operation via Types.Primitives.Money.negateToRefund.",
+            "See Types.Primitives.Money and Types.Primitives.Quantity for the smart constructor invariants.",
+            "Alongside the money types, SaleType is an enum of StandardSale/Exchange/InventoryAdjustment/ManagerComp/Administrative (serialized as PascalCase via WriteForeign). It distinguishes the business purpose of a sale transaction: StandardSale drives the normal POS flow, the others are special-purpose. Services.TransactionService.startSale always creates StandardSale; other SaleType variants would require a different entry point."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Transaction.Refund": {
+      "decisions": [
+        {
+          "name": "RefundMoneyAndRefundQuantityForAllRefundFields",
+          "what": "Refund.Item, Refund.Payment, RefundTransaction all use RefundMoney and RefundQuantity (non-positive newtype wrappers)",
+          "why": [
+            "Refunds are negative-direction transactions; the sign convention is enforced at the type level.",
+            "RefundMoney requires cents <= 0; RefundQuantity requires count <= 0.",
+            "A refund of $50 is RefundMoney (Discrete -5000), not RefundMoney (Discrete 5000). Display formatters strip the sign for human-readable output.",
+            "Refund.Item's itemPricePerUnit is the exception: it's SaleMoney (positive), since the per-unit price is the original sale price; the negation is in the quantity/totals.",
+            "Subtotal = pricePerUnit * quantity, where quantity is negative, so subtotal naturally comes out negative."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Primitives.Money": {
+      "decisions": [
+        {
+          "name": "SaleMoneyNonNegativeRefundMoneyNonPositive",
+          "what": "SaleMoney is a smart-constructor newtype requiring cents >= 0; RefundMoney requires cents <= 0",
+          "why": [
+            "Sign convention is enforced at the type level so a refund value cannot accidentally appear in a sale record (and vice versa).",
+            "negateToRefund / negateFromRefund are the explicit conversion functions when crossing between sale and refund contexts.",
+            "mkSaleMoney / mkRefundMoney return Maybe; unsafeMkSaleMoney / unsafeMkRefundMoney skip validation (used in pure-computation paths where the sign is structurally guaranteed).",
+            "ReadForeign uses the safe constructor and fails parsing with a clear error if the sign is wrong; never silently truncates."
+          ],
+          "affects": ["mkSaleMoney", "mkRefundMoney", "unsafeMkSaleMoney", "unsafeMkRefundMoney", "negateToRefund", "negateFromRefund"]
+        }
+      ],
+      "invariants": {
+        "unsafeMkSaleMoney": [
+          "Skips the >= 0 check; caller must guarantee non-negativity.",
+          "Used in Services.Cart and Services.TransactionService where the value is computed from existing SaleMoney values and the sign is structurally preserved."
+        ],
+        "subtractSale": [
+          "Returns Maybe SaleMoney; subtracting a larger amount yields Nothing (would violate the non-negative invariant).",
+          "Use case: discount application can't reduce a price below zero."
+        ],
+        "negateToRefund": [
+          "Converts SaleMoney -> RefundMoney by negating the cents.",
+          "If applied to SaleMoney 0, returns RefundMoney 0 (which is valid in both sign domains).",
+          "Inverse: negateFromRefund."
+        ]
+      }
+    },
+
+    "Types.Primitives.Quantity": {
+      "decisions": [
+        {
+          "name": "SaleQuantityNonNegativeRefundQuantityNonPositive",
+          "what": "SaleQuantity requires count >= 0; RefundQuantity requires count <= 0; parallels Money sign convention",
+          "why": [
+            "Same logic as SaleMoney/RefundMoney: the sign distinguishes sale vs refund context at the type level.",
+            "toRefundQuantity / toSaleQuantity are the explicit conversions; they negate the count."
+          ],
+          "affects": ["mkSaleQuantity", "mkRefundQuantity", "toRefundQuantity", "toSaleQuantity"]
+        }
+      ],
+      "invariants": {
+        "oneSaleQuantity": [
+          "Defined as SaleQuantity 1 for ergonomic comparison; the most common single-unit cart addition value."
+        ],
+        "subtractSaleQuantity": [
+          "Returns Maybe SaleQuantity; subtracting more than available yields Nothing.",
+          "Use case: removing items from a cart line cannot reduce qty below zero."
+        ]
+      }
+    },
+
     "Types.Inventory": {
       "decisions": [
         {
@@ -295,6 +652,132 @@
       }
     },
 
+    "Types.Location": {
+      "invariants": {
+        "parseLocationId": [
+          "Reverses locationIdToString via parseUUID; returns Nothing on invalid UUID format.",
+          "LocationId itself is a newtype wrapper around UUID; exists purely to prevent accidental mixing of LocationId with other UUID-typed fields (RegisterId, EmployeeId, etc).",
+          "Show, ReadForeign, WriteForeign on LocationId all delegate to the underlying UUID, so wire format is indistinguishable from a bare UUID."
+        ]
+      }
+    },
+
+    "Types.Register": {
+      "decisions": [
+        {
+          "name": "CartTotalsAsInFlightCalculationRecord",
+          "what": "CartTotals is a plain record (subtotal/taxTotal/total/discountTotal as Discrete USD); not wrapped in a newtype",
+          "why": [
+            "Used as the in-flight calculation result before the totals get folded into a Sale.SaleTransaction.",
+            "Services.TransactionService.calculateCartTotals is the primary producer; UI.Transaction.CreateTransaction is the primary consumer.",
+            "Discrete USD here (not SaleMoney) because CartTotals is not yet bound to a sale context; the conversion to SaleMoney happens at the Sale.SaleTransaction boundary.",
+            "Trade-off: nothing prevents constructing a CartTotals with negative values; the type system doesn't enforce non-negativity on this transient shape."
+          ],
+          "affects": []
+        },
+        {
+          "name": "RegisterWireShapeMirrorsHaskellRecord",
+          "what": "Register is a plain record matching the Haskell backend's Register record field-for-field",
+          "why": [
+            "registerIsOpen drives the UI's open/close button state; backend enforces invariants like 'cannot open already-open register'.",
+            "Maybe fields (registerOpenedAt, registerOpenedBy, registerLastTransactionTime) are Nothing for never-opened registers.",
+            "currentDrawerAmount vs expectedDrawerAmount: variance = current - expected, computed at close time."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Session": {
+      "decisions": [
+        {
+          "name": "SessionResponseCarriesBackendCapabilities",
+          "what": "SessionResponse (returned by /auth/me and /auth/login) includes sessionCapabilities, the backend's authoritative view of what the user can do",
+          "why": [
+            "Services.AuthService.resolveCapabilities prefers sessionCapabilities over locally-derived caps from the DevUser's role.",
+            "Means the backend can grant or revoke individual capabilities per-user without changing role definitions.",
+            "Without this, frontend would have to either trust roles entirely or maintain a parallel capability table that could drift from the backend's actual enforcement."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Admin": {
+      "decisions": [
+        {
+          "name": "AdminActionAsTaggedSumWithPositionalContents",
+          "what": "AdminAction is a sum type (RevokeSession, ForceCloseRegister, ClearRateLimitForIp, SetLowStockThreshold, TriggerSnapshotExport); WriteForeign emits {tag, contents} with constructor-shape-dependent contents",
+          "why": [
+            "{tag, contents} matches the backend's expected JSON shape; the tag is the constructor name, contents is the argument(s).",
+            "ForceCloseRegister has TWO args (uuid, reason) and serializes as a positional array [uuidString, reason]; the backend expects positional args here, not a named object. Adding a third arg to ForceCloseRegister means coordinating with the backend's positional decoder.",
+            "TriggerSnapshotExport has no args; serializes as just {tag: 'TriggerSnapshotExport'}."
+          ],
+          "affects": []
+        },
+        {
+          "name": "AdminSnapshotIsPointInTimeServerState",
+          "what": "AdminSnapshot is a wide record bundling uptime, sessions, registers, inventory summary, DB pool stats, broadcaster queue depths",
+          "why": [
+            "Rendered as the dashboard Overview tab; designed to fit on one screen as a grid of stat cards.",
+            "Adding a field requires backend coordination since the wire shape is shared.",
+            "Snapshot is fetched on demand (mount and refresh button); there's no streaming snapshot - bcAvailabilitySeq is the closest thing to a freshness watermark."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Manager": {
+      "decisions": [
+        {
+          "name": "ManagerAlertRawIsFlatRecordNotSumType",
+          "what": "ManagerAlertRaw is the wire shape and uses Maybe fields rather than a sum type, despite ManagerAlert (a real sum type) being defined alongside it",
+          "why": [
+            "The backend serializes all alert variants into one flat shape with a 'tag' string discriminator and per-variant nullable fields.",
+            "Pages.Manager.Panels.AlertsPanel.renderAlert pattern-matches on the 'tag' field string to discriminate ('LowInventoryAlert', 'StaleTransactionAlert', 'RegisterVarianceAlert').",
+            "ManagerAlert (the typed sum) is defined but UNUSED; nothing decodes ManagerAlertRaw into ManagerAlert. The typed alternative is dead code.",
+            "Cost of the flat wire shape: adding a new alert variant means adding a new Maybe field to the record AND a new case in renderAlert; both sides drift independently.",
+            "Cleaner: implement a parseManagerAlert :: ManagerAlertRaw -> Maybe ManagerAlert at the API boundary and have the UI dispatch on the typed sum."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Feed": {
+      "decisions": [
+        {
+          "name": "FeedFrameWireShapeUsesFullStateNotDeltas",
+          "what": "FeedFrame is { seq, payload, timestamp } where payload is the entire AvailableItem; each frame is the full current state of one item, not a delta",
+          "why": [
+            "Simplifies the consumer: no need to apply a diff against prior state; latest frame wins.",
+            "seq is a monotonically-increasing per-location sequence number that clients can use to detect gaps.",
+            "Cost: bandwidth-per-change is the full item record vs a tiny delta. Acceptable for retail-scale item counts; would not scale to high-frequency-trading-style updates.",
+            "If gap detection becomes important, the consumer needs to re-fetch the snapshot endpoint after a seq jump."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Types.Formatting": {
+      "decisions": [
+        {
+          "name": "TwoLayerValidationTypeclasses",
+          "what": "FormValue and FieldValidator typeclasses both exist; FormValue returns ValidationResult, FieldValidator returns Either String",
+          "why": [
+            "FormValue is the older API used by direct form field reads; ValidationResult is a custom sum (Success a | Error String).",
+            "FieldValidator is newer and uses Either String for compatibility with V (Array String) accumulation in Types.Inventory.validateMenuItem.",
+            "Both exist for transitional reasons; FormValue should probably be removed once everything uses FieldValidator + V.",
+            "The Validated newtype + its FieldValidator instance bridges the two.",
+            "Beneath both layers, ValidationRule is a newtype String -> Boolean; the simplest possible primitive, composed via Utils.Validation.allOf / anyOf. Rules carry no error message of their own - the field config carries a separate errorMessage, so if a field has multiple failure modes, the same message shows regardless of which rule failed."
+          ],
+          "affects": ["fromFormValue", "validateField"]
+        }
+      ]
+    },
+
     "Types.Stock": {
       "decisions": [
         {
@@ -341,7 +824,7 @@
       }
     },
 
-"Services.AuthService": {
+    "Services.AuthService": {
       "decisions": [
         {
           "name": "DevModeAuthBypassesRealLogin",
@@ -443,65 +926,81 @@
       "decisions": [
         {
           "name": "DiscreteUSDForAllMoney",
-          "what": "All monetary values use Discrete USD (cents-as-Int) wrapped in DiscreteMoney for transport across module boundaries",
+          "what": "All monetary values use Discrete USD (cents-as-Int) wrapped via Types.Primitives.Money's SaleMoney newtype for transport across module boundaries",
           "why": [
             "Floating point money is a source of off-by-one errors at every level of a financial app.",
             "Discrete from purescript-money is an Int wrapper that prevents accidental Number arithmetic.",
-            "DiscreteMoney USD adds a phantom currency tag preventing accidental cross-currency mixing.",
+            "SaleMoney further constrains to non-negative cents at the type level (see Types.Primitives.Money.SaleMoneyNonNegativeRefundMoneyNonPositive).",
             "Conversion to/from Number happens only at display boundaries via Utils.Money formatters."
           ],
           "affects": [
-            "startTransaction",
-            "createTransactionItem",
+            "startSale",
+            "createSaleItem",
             "calculateCartTotals",
             "addPayment",
             "calculateTotalPayments",
             "getRemainingBalance"
           ]
+        },
+        {
+          "name": "SaleNamespaceMigrationFromTransaction",
+          "what": "This module's functions are named startSale/createSaleItem/addSaleItem/etc rather than the older startTransaction/createTransactionItem; the data type is Sale.SaleTransaction, not the older Transaction",
+          "why": [
+            "The Sale.* and Refund.* namespaces split the older Transaction type so sale-vs-refund sign conventions can be enforced at the type level (SaleMoney vs RefundMoney).",
+            "Services.Cart's addItemToTransaction is the last surviving 'Transaction'-named API surface here, and it's dead code (see Services.Cart.DeadAddItemToTransactionWithDivergentTaxRate).",
+            "The earlier annotations referenced startTransaction / createTransactionItem; those names no longer exist."
+          ],
+          "affects": ["startSale", "createSaleItem", "addSaleItem", "removeSaleItem", "clearSale", "voidSale", "refundSale"]
         }
       ],
       "openIssues": [
         {
           "name": "TaxRateHardcodedAndDivergesFromCart",
-          "what": "createTransactionItem hardcodes salesTaxRate = 0.08; Services.Cart.addItemToTransaction hardcodes taxRate = 0.15. Two source-of-truth tax rates for the same conceptual quantity.",
+          "what": "createSaleItem uses defaultSalesTaxRate = 0.08; Services.Cart.addItemToTransaction (dead code) hardcodes 0.15. Two source-of-truth tax rates for the same conceptual quantity.",
           "why": [
-            "createTransactionItem (called via Services.Cart.addItemToCart, which is the live UI path) uses 0.08.",
+            "createSaleItem (called via Services.Cart.addItemToCart, which is the live UI path) uses 0.08 (defaultSalesTaxRate).",
             "Services.Cart.addItemToTransaction uses 0.15 but is currently dead code (no caller imports it).",
             "If anyone wires addItemToTransaction in by accident, totals will be wrong and the discrepancy will be hard to find.",
             "Fix: pick one rate, define it in one place (Config.Tax or similar), have both call sites read from there. Or delete addItemToTransaction since it's dead.",
-            "Worth confirming whether 0.08 is the intended rate; both 0.08 and 0.15 are plausible for different jurisdictions."
+            "Worth confirming whether 0.08 is the intended rate; both 0.08 and 0.15 are plausible for different jurisdictions.",
+            "defaultSalesTaxRate is exported but only used inside this module; promoting it to a Config module would make it the obvious one true rate."
           ],
           "blocking": ["accurate cart totals when running cart-only flows offline"],
-          "affects": ["createTransactionItem"]
+          "affects": ["createSaleItem", "defaultSalesTaxRate"]
         }
       ],
       "invariants": {
-        "createTransactionItem": [
-          "Tax rate hardcoded to 0.08 (8%); see openIssue TaxRateHardcodedAndDivergesFromCart.",
+        "createSaleItem": [
+          "Tax rate hardcoded to defaultSalesTaxRate (0.08, 8%); see openIssue TaxRateHardcodedAndDivergesFromCart.",
           "Generates a fresh UUID for the item via Effect.Random; not deterministic.",
           "Subtotal = price * quantity; tax = floor(subtotal * 0.08); total = subtotal + tax. Floor is the rounding rule (not banker's rounding).",
-          "Calls API.addTransactionItem; the round-trip is the source of truth, not the locally-computed values."
+          "Calls API.addSaleItem; the round-trip is the source of truth, not the locally-computed values."
         ],
-        "startTransaction": {
-          "intent": "Create a new in-progress Transaction on the backend with empty items/payments and current timestamp",
-          "effects": ["IO (genUUID, nowDateTime)", "API call (createTransaction)"],
+        "startSale": {
+          "intent": "Create a new Created-status SaleTransaction on the backend with empty items/payments and current timestamp",
+          "effects": ["IO (genUUID, nowDateTime)", "API call (createSale)"],
           "notes": [
             "Status is Created (not InProgress); transitions happen as items are added and payment is taken.",
-            "Logs params (employeeId, registerId, locationId) to console at debug level; not sensitive but verbose."
+            "Logs the new saleId to console at debug level.",
+            "saleKind defaults to StandardSale; other SaleType variants would require a different entry point."
           ]
         },
         "calculateCartTotals": [
-          "Folds over TransactionItems, summing subtotal/tax/total/discount columns separately.",
+          "Folds over Sale.Items, summing subtotal/tax/total/discount columns separately.",
           "Discount total is NOT computed from items here; it carries forward from the input value (currently always 0).",
           "Pure; no API call."
         ],
         "paymentsCoversTotal": [
-          "Returns true iff sum of payment amounts >= transaction total. Strict >=, so exact match qualifies.",
-          "Used as the gate for finalizeTransaction in the UI."
+          "Returns true iff sum of payment amounts >= sale total. Strict >=, so exact match qualifies.",
+          "Used as the gate for finalizeSale in the UI."
         ],
         "getRemainingBalance": [
           "max with Discrete 0 prevents negative balances on overpayment; the actual change is computed elsewhere (in addPayment).",
-          "Returns the unpaid portion of the transaction total."
+          "Returns the unpaid portion of the sale total."
+        ],
+        "addPayment": [
+          "Computes change as max 0 (tendered - amount); change is recorded on the payment record even for non-cash methods (where it's always 0).",
+          "paymentApproved is hardcoded to true; there is no real payment gateway integration here."
         ]
       }
     },
@@ -512,7 +1011,7 @@
           "name": "DeadAddItemToTransactionWithDivergentTaxRate",
           "what": "addItemToTransaction is exported but has no callers; it hardcodes tax rate 0.15 while the live path uses 0.08",
           "why": [
-            "addItemToCart is the live path used by UI.Transaction.CreateTransaction. It calls TransactionService.createTransactionItem (rate 0.08) and TransactionService.addTransactionItem.",
+            "addItemToCart is the live path used by UI.Transaction.CreateTransaction. It calls TransactionService.createSaleItem (rate 0.08) and TransactionService.addSaleItem.",
             "addItemToTransaction is a parallel, no-API in-memory implementation that hardcodes rate 0.15. Exported but the only consumer (UI.Transaction.CreateTransaction) imports addItemToCart instead.",
             "If anyone wires addItemToTransaction in by accident (intellisense temptation: similar name), totals will be wildly wrong and the discrepancy will be hard to find because the backend round-trip in addItemToCart masks the local computation.",
             "Fix: either delete addItemToTransaction or unify the rate constant somewhere both paths read.",
@@ -524,8 +1023,8 @@
       ],
       "invariants": {
         "addItemToCart": {
-          "intent": "Add a menu item to the active transaction, calling the backend, merging with any existing line item, and updating UI state via callbacks",
-          "effects": ["API call (createTransactionItem -> addTransactionItem)", "callbacks (setItems, setTotals, setStatusMessage, setCheckingInventory)"],
+          "intent": "Add a menu item to the active sale, calling the backend, merging with any existing line item, and updating UI state via callbacks",
+          "effects": ["API call (createSaleItem)", "callbacks (setItems, setTotals, setStatusMessage, setCheckingInventory)"],
           "notes": [
             "Quantity <= 0 short-circuits with a status message and no API call.",
             "If the SKU is already in the cart, merges quantities and recomputes subtotal/tax/total. The merge takes the EXISTING item's tax rate, not the new item's, which means rate changes mid-transaction don't propagate.",
@@ -543,7 +1042,7 @@
         ],
         "removeItemFromCart": {
           "notes": [
-            "Calls API.removeTransactionItem to release the inventory reservation, then updates UI state.",
+            "Calls API.removeSaleItem to delete the line item, then updates UI state.",
             "On API failure, logs to console but UI state is NOT rolled back; the item stays visible until the next refresh.",
             "Sets isProcessing during the API round-trip so the UI can disable interaction."
           ]
@@ -624,47 +1123,146 @@
       }
     },
 
-    "Pages.Stock.Interface": {
-      "decisions": [
+    "Route": {
+      "openIssues": [
         {
-          "name": "SSEPushTriggersFullQueueReload",
-          "what": "The SSE stream from /stock/queue/stream is used purely as a 'queue changed' notification; the handler ignores the event payload and calls loadQueue to refetch",
+          "name": "NavBarHasNoCapabilityGates",
+          "what": "Route.nav renders Admin / Manager / Stock / Feed nav links unconditionally; no whenCapable wrappers",
           "why": [
-            "Avoids encoding the full PullRequest type in the SSE event format; the REST endpoint is the source of truth.",
-            "Trades extra HTTP requests for simpler protocol and avoids drift between SSE event shape and REST response shape.",
-            "Cost: one extra round-trip per queue change; acceptable because changes are infrequent (human-initiated)."
+            "A Customer-role user sees links to /#/admin, /#/manager, etc. Clicking them shows the page chrome but data loads fail with 403.",
+            "The 403 surface is unfriendly and reveals that the routes exist. A clean fix would conditionally render nav items via UI.Components.AuthGuard.whenCapable.",
+            "Backend authorization still works; this is purely a UI polish issue and a minor information disclosure (the routes are discoverable in the JS bundle anyway).",
+            "Login / Logout button does correctly switch based on AuthState; the nav-link guarding pattern just hasn't been extended to the other items."
           ],
-          "affects": ["page"]
-        },
+          "blocking": ["clean role-aware nav presentation"],
+          "affects": ["nav"]
+        }
+      ],
+      "invariants": {
+        "route": [
+          "RouteDuplex' definition: bidirectional parser/printer between Route and URL hash strings.",
+          "Edit and Delete take a (string segment) URL parameter; the slug 'test' is special-cased in Main to substitute testItemUUID."
+        ],
+        "nav": [
+          "Renders an unconditional list of nav items plus a conditional Login/Logout button bound to AuthState.",
+          "Logout handler calls logout (fire-and-forget Aff) then clearToken + pushAuth SignedOut; the API call result is not awaited before clearing local state."
+        ]
+      }
+    },
+
+    "Pages.Login": {
+      "openIssues": [
         {
-          "name": "NewPullDetectionViaPrevQueueDiff",
-          "what": "New pull requests are detected by diffing prevQueueRef against the new fetch result rather than from a 'created' event type",
+          "name": "AdminFallbackOnUnknownRole",
+          "what": "findDevUserByRole sessionResp.sessionRole falls back to defaultDevUser (devAdmin) on no match; in production this means an unrecognized backend role logs in as Admin",
           "why": [
-            "The SSE event payload is ignored (see SSEPushTriggersFullQueueReload), so we can't tell from the event whether it was a create or an update.",
-            "Diffing by prId catches creates without needing event-type discrimination.",
-            "Side effect: only triggers audio + browser notification + alert banner for new pulls, not for status updates. Edits to existing pulls are silent.",
-            "If the prev queue is empty (initial load), no notifications fire even if pulls are present; this is intentional to avoid spamming the user on app start."
+            "findDevUserByRole only matches Customer/Cashier/Manager/Admin. If the backend ever returns a fifth role (or, worse, an empty/garbage role), the fallback is Admin.",
+            "This is a privilege escalation footgun if the role enum ever drifts between front and back ends.",
+            "Fix: fall back to SignedOut + an explicit error, NOT to Admin. The 'safe default' for unknown role is no access.",
+            "Same pattern appears in Main's session restoration block; both should be fixed together."
           ],
+          "blocking": ["safe production behavior on backend role drift"],
           "affects": ["page"]
         }
       ],
       "invariants": {
         "page": {
-          "intent": "Render the stockroom dashboard: queue of pull requests, action buttons per request, message thread for selected request, audio + browser notifications on new requests",
-          "effects": ["IO (SSE connection, audio playback, browser notifications, fetch)"],
+          "intent": "Render the login form, call API.Auth.login on submit, push the corresponding AuthState on success, navigate to /#/ on success",
+          "effects": ["IO (fetch, push auth state, set window.location)"],
           "notes": [
-            "loadQueue is called on mount, on every SSE message, and when an action completes.",
-            "newPullValue holds the most-recent newly-arrived pull for the AlertBanner UI; setNewPull Nothing dismisses it.",
-            "useRef helper uses unsafePerformEffect; safe here because Ref creation is idempotent and the Ref is component-scoped.",
-            "playSound SoundInfo and showPullNotification both fire on each new pull; can be noisy if many arrive at once."
-          ],
-          "consumes": [
-            "API.Stock.getQueue, getMessages, sendMessage, acceptPull, startPull, fulfillPull, retryPull, cancelPull, reportIssue (the entire stock action surface)"
+            "Maps the backend's session role to a DevUser via findDevUserByRole; falls back to defaultDevUser (Admin) if no match. See openIssue AdminFallbackOnUnknownRole.",
+            "Sets submitting to true on click and false on response; double-click guard relies on this state.",
+            "Hard-redirect via window.location instead of Routing.Hash; the auth state push needs to fully propagate before the new page mounts."
           ]
-        },
-        "useRef": [
-          "unsafePerformEffect-based Ref creation; safe because Ref.new is idempotent and the Ref is captured in the continuation's closure.",
-          "Workaround for not having a useRef hook in Deku; revisit if Deku adds one."
+        }
+      }
+    },
+
+    "Pages.LiveView": {
+      "invariants": {
+        "page": [
+          "Thin wrapper around UI.Inventory.MenuLiveView.renderInventory; the loading/error states are handled here before delegating.",
+          "Receives an InventoryLoadStatus poll from Main and pattern-matches on it for the three render branches.",
+          "Does NOT subscribe to live updates; Pages.Feed.Monitor is the live-feed equivalent."
+        ]
+      }
+    },
+
+    "Pages.CreateItem": {
+      "invariants": {
+        "page": [
+          "Trivially delegates to UI.Inventory.ItemForm.itemForm in CreateMode with the pre-generated UUID from Main.",
+          "UUID is generated in Main (not here) so route changes don't regenerate it mid-edit."
+        ]
+      }
+    },
+
+    "Pages.EditItem": {
+      "invariants": {
+        "page": [
+          "Pattern-matches on EditItemStatus from Main's loadEditItem; renders ItemForm in EditMode on EditReady, or an error on EditNotFound / EditError.",
+          "EditNotFound vs EditError distinction: NotFound is a successful inventory fetch with no matching SKU; Error is a fetch failure."
+        ]
+      }
+    },
+
+    "Pages.DeleteItem": {
+      "invariants": {
+        "page": [
+          "Pattern-matches on DeleteItemStatus from Main's loadDeleteItem; renders the delete confirmation UI on DeleteReady.",
+          "Confirmation UI is UI.Inventory.DeleteItem.renderDeleteConfirmation."
+        ]
+      }
+    },
+
+    "Pages.CreateTransaction": {
+      "invariants": {
+        "page": [
+          "Pattern-matches on TxPageStatus; renders the POS UI on TxPageReady or TxPageDegraded.",
+          "TxPageDegraded shows a warning banner about missing inventory but lets the user proceed with an empty inventory poll; SKU-only lookups still work."
+        ]
+      }
+    },
+
+    "Pages.Feed.Monitor": {
+      "invariants": {
+        "page": [
+          "Trivial wrapper around Pages.Admin.Tabs.FeedMonitor.feedMonitor.",
+          "Lives at /#/feed (non-admin) so non-admin users can watch the feed without admin dashboard access; whether this is appropriate depends on the capability model."
+        ]
+      }
+    },
+
+    "Pages.Admin.Dashboard": {
+      "invariants": {
+        "page": [
+          "Orchestrates the admin dashboard: tab state, snapshot fetch, refresh button, tab content.",
+          "Snapshot is loaded once on mount and refreshed on click of the Refresh button; no auto-refresh.",
+          "Each tab delegates to a Pages.Admin.Tabs.* module."
+        ]
+      }
+    },
+
+    "Pages.Admin.State": {
+      "decisions": [
+        {
+          "name": "AdminDashboardTabAndSnapshotStateTypes",
+          "what": "AdminTab enumerates the admin dashboard tabs (TabOverview, TabLogViewer, TabFeedMonitor, etc); SnapshotStatus is a three-state ADT (Loading / Loaded / Error) for the snapshot fetch lifecycle",
+          "why": [
+            "AdminTab.allTabs is the ordered list rendered as buttons in Pages.Admin.Dashboard; tab ordering is controlled here.",
+            "Several tabs (EventStream, Transactions, Sessions, Registers, DomainEvents, Actions) are placeholders rendering 'coming soon' content. The tab list outpaces the implementations.",
+            "SnapshotStatus's three states are the standard async-resource shape; adding cache invalidation or stale-but-revalidating semantics would require a fourth state."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Pages.Admin.Tabs.Overview": {
+      "invariants": {
+        "overview": [
+          "Renders the SnapshotStatus poll as a grid of statCards.",
+          "statCard is a simple label/value pair; no formatting beyond raw stringification of the values."
         ]
       }
     },
@@ -748,17 +1346,338 @@
       }
     },
 
-    "Pages.Login": {
+    "Pages.Admin.Components.SSEStatus": {
+      "invariants": {
+        "sseStatus": [
+          "Renders an SSEStatus poll as a span with a color-coded class and a label.",
+          "Pure presentation; consumes only the status poll exposed by Utils.SSE.openSSE."
+        ]
+      }
+    },
+
+    "Pages.Manager.Dashboard": {
+      "invariants": {
+        "page": [
+          "Orchestrates the manager dashboard: tab state, activity fetch, refresh button, tab content.",
+          "Activity is loaded once on mount and refreshed on click of the Refresh button.",
+          "Override tab is a placeholder showing 'coming in Phase 8' content."
+        ]
+      }
+    },
+
+    "Pages.Manager.State": {
+      "decisions": [
+        {
+          "name": "ManagerDashboardTabAndActivityStateTypes",
+          "what": "ManagerTab enumerates the dashboard tabs (Activity, Alerts, Stats, Reports, Override); ActivityStatus is the three-state ADT for the activity fetch lifecycle",
+          "why": [
+            "allManagerTabs is the ordered tab list rendered by Pages.Manager.Dashboard.",
+            "TabOverride is currently a 'coming in Phase 8' placeholder; the rest are wired to real panels.",
+            "ActivityStatus mirrors SnapshotStatus in the admin module; same async-resource pattern."
+          ],
+          "affects": []
+        }
+      ]
+    },
+
+    "Pages.Manager.Panels.ActivityFeed": {
+      "invariants": {
+        "activityFeed": [
+          "Renders the live transactions list and open-register count.",
+          "renderTxSummary marks stale transactions (tsIsStale flag from backend) with a CSS class for visual emphasis."
+        ]
+      }
+    },
+
+    "Pages.Manager.Panels.AlertsPanel": {
+      "invariants": {
+        "alertsPanel": [
+          "Renders the alerts array from ActivitySummary; empty state renders a 'no active alerts' message.",
+          "renderAlert pattern-matches on the alert's 'tag' string field to discriminate alert types (low inventory, stale tx, register variance).",
+          "Unknown tag strings render empty class and label; future alert types added on the backend appear as unstyled rows until this is updated."
+        ]
+      }
+    },
+
+    "Pages.Manager.Panels.ReportsPanel": {
+      "invariants": {
+        "reportsPanel": [
+          "Manual fetch on button click; no auto-refresh.",
+          "Hardcoded request: dailyReportDate = 'today', dailyReportLocationId = '' (empty string means all-locations on the backend).",
+          "No UI for selecting date or location yet; the values are placeholder."
+        ]
+      }
+    },
+
+    "Pages.Manager.Panels.StatsPanel": {
+      "invariants": {
+        "statsPanel": [
+          "Renders the asTodayStats field from ActivitySummary as a grid of label/value rows.",
+          "Money values are formatted via Utils.Formatting.formatCentsToDollars; non-money values stringified directly."
+        ]
+      }
+    },
+
+    "Pages.Stock.Interface": {
+      "decisions": [
+        {
+          "name": "SSEPushTriggersFullQueueReload",
+          "what": "The SSE stream from /stock/queue/stream is used purely as a 'queue changed' notification; the handler ignores the event payload and calls loadQueue to refetch",
+          "why": [
+            "Avoids encoding the full PullRequest type in the SSE event format; the REST endpoint is the source of truth.",
+            "Trades extra HTTP requests for simpler protocol and avoids drift between SSE event shape and REST response shape.",
+            "Cost: one extra round-trip per queue change; acceptable because changes are infrequent (human-initiated)."
+          ],
+          "affects": ["page"]
+        },
+        {
+          "name": "NewPullDetectionViaPrevQueueDiff",
+          "what": "New pull requests are detected by diffing prevQueueRef against the new fetch result rather than from a 'created' event type",
+          "why": [
+            "The SSE event payload is ignored (see SSEPushTriggersFullQueueReload), so we can't tell from the event whether it was a create or an update.",
+            "Diffing by prId catches creates without needing event-type discrimination.",
+            "Side effect: only triggers audio + browser notification + alert banner for new pulls, not for status updates. Edits to existing pulls are silent.",
+            "If the prev queue is empty (initial load), no notifications fire even if pulls are present; this is intentional to avoid spamming the user on app start."
+          ],
+          "affects": ["page"]
+        }
+      ],
       "invariants": {
         "page": {
-          "intent": "Render the login form, call API.Auth.login on submit, push the corresponding AuthState on success, navigate to /#/ on success",
-          "effects": ["IO (fetch, push auth state, set window.location)"],
+          "intent": "Render the stockroom dashboard: queue of pull requests, action buttons per request, message thread for selected request, audio + browser notifications on new requests",
+          "effects": ["IO (SSE connection, audio playback, browser notifications, fetch)"],
           "notes": [
-            "Maps the backend's session role to a DevUser via findDevUserByRole; falls back to defaultDevUser if no match (which means production without a corresponding dev user would always log in as defaultDevUser regardless of actual role).",
-            "Sets submitting to true on click and false on response; double-click guard relies on this state.",
-            "Hard-redirect via window.location instead of Routing.Hash; the auth state push needs to fully propagate before the new page mounts."
+            "loadQueue is called on mount, on every SSE message, and when an action completes.",
+            "newPullValue holds the most-recent newly-arrived pull for the AlertBanner UI; setNewPull Nothing dismisses it.",
+            "useRef helper uses unsafePerformEffect; safe here because Ref creation is idempotent and the Ref is component-scoped.",
+            "playSound SoundInfo and showPullNotification both fire on each new pull; can be noisy if many arrive at once.",
+            "Queue filter is hardcoded to dummyLocationId; see Config.Entity.DummyIdsUsedInProductionCodePaths."
+          ],
+          "consumes": [
+            "API.Stock.getQueue, getMessages, sendMessage, acceptPull, startPull, fulfillPull, retryPull, cancelPull, reportIssue (the entire stock action surface)"
+          ]
+        },
+        "useRef": [
+          "unsafePerformEffect-based Ref creation; safe because Ref.new is idempotent and the Ref is captured in the continuation's closure.",
+          "Workaround for not having a useRef hook in Deku; revisit if Deku adds one."
+        ]
+      }
+    },
+
+    "Pages.Stock.Components.AlertBanner": {
+      "invariants": {
+        "alertBanner": [
+          "Renders the most-recent new pull request as a dismissable banner with View / X buttons.",
+          "onSelect fires the parent's pull-selection handler AND calls onDismiss to clear the banner.",
+          "Uses foreign imports showPullNotification and requestNotificationPermission to integrate with the browser Notification API.",
+          "If the user denies notification permission, the banner still works; only the OS-level notification is skipped."
+        ]
+      }
+    },
+
+    "Pages.Stock.Components.MessageThread": {
+      "invariants": {
+        "messageThread": [
+          "Renders a scrollable message list with a compose box at the bottom.",
+          "Send button is gated on non-empty draft; pressing Send clears the draft on success (whether or not the message actually delivered).",
+          "Roles are styled via class names ('role-cashier', 'role-stocker', etc.); presentation only."
+        ]
+      }
+    },
+
+    "Pages.Stock.Components.PullCard": {
+      "invariants": {
+        "pullCard": [
+          "Renders a single pull request as a card with status badge, transaction ID, item details, and action buttons.",
+          "Action buttons are computed from prStatus via Types.Stock.validActions; an unrecognized status produces zero buttons (see Types.Stock.PullVertexAndStringStatusInParallel).",
+          "Messages button is always rendered regardless of status; selecting it opens the MessageThread for this pull."
+        ],
+        "actionBtnClass": [
+          "Maps PullAction to a button-style class (success/danger/warning/primary).",
+          "Used for visual distinction of destructive (Cancel) vs constructive (Fulfill) vs ambiguous (Report Issue) actions."
+        ]
+      }
+    },
+
+    "Pages.TransactionHistory": {
+      "invariants": {
+        "page": [
+          "Placeholder 'Coming Soon' stub; no real implementation yet."
+        ]
+      }
+    },
+
+    "UI.Components.AuthGuard": {
+      "decisions": [
+        {
+          "name": "WhenCapableUsesGuardForReactiveGating",
+          "what": "whenCapable wraps children in Deku.Hooks.guard so the children are only mounted (not just hidden) when the capability is true",
+          "why": [
+            "guard fully unmounts vs hides; this avoids hidden but mounted children running event handlers or holding refs.",
+            "Means capability changes during a session (e.g. role downgrade) immediately remove the gated UI.",
+            "Cost: re-mounting on cap toggle drops any component-local state. For most caps this is fine because they don't toggle mid-session."
+          ],
+          "affects": ["whenCapable", "withFallback"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "DisabledUnlessIsNoOp",
+          "what": "disabledUnless ignores both arguments and returns children unchanged",
+          "why": [
+            "Probably intended to add a 'disabled' attribute to children based on capability, but the implementation is a passthrough.",
+            "Currently no callers, so this hasn't caused visible problems, but the name lies about what it does.",
+            "Either implement properly (would need to know how to attribute-mutate Nuts) or delete the function."
+          ],
+          "blocking": [],
+          "affects": ["disabledUnless"]
+        }
+      ],
+      "invariants": {
+        "whenRoleAtLeast": [
+          "Compares the user's role to a minimum via the Ord instance; relies on Types.Auth.FourRoleHierarchyWithMonotonicCapabilities.",
+          "Cleanest gate for 'manager or higher' checks; the per-capability gates are more granular but require knowing the right cap name."
+        ]
+      }
+    },
+
+    "UI.Components.Form": {
+      "invariants": {
+        "makeTextField": [
+          "Has a special case for label == 'Description': renders a textarea instead of an input.",
+          "Special-casing by label is fragile; if any other field is ever labeled 'Description' it would also get the textarea treatment.",
+          "Both keyup and input events are wired with identical handlers; redundant but harmless."
+        ],
+        "makeDropdown": [
+          "Initializes the validation state on mount based on whether the default value matches the (optional) empty option.",
+          "Logs every dropdown change to console; useful for dev, noisy for prod."
+        ]
+      }
+    },
+
+    "UI.Components.UserSelector": {
+      "invariants": {
+        "userSelector": [
+          "Dev-only UI for switching the active dev user without re-logging in.",
+          "Renders all four DevUsers as buttons with role badges and the current selection highlighted.",
+          "compactUserSelector is an alternative compact dropdown form (currently with a no-op change handler; the dev intent didn't get wired up).",
+          "capabilityIndicator displays a textual listing of capabilities for the current user's role; uses capabilitiesForRoleUI which is a hardcoded label list separate from Types.Auth.capabilitiesForRole. Drift risk: capabilities could be added in Types.Auth without updating the UI label list."
+        ]
+      }
+    },
+
+    "UI.Inventory.ItemForm": {
+      "decisions": [
+        {
+          "name": "PerFieldHooksRatherThanOneFormStateRecord",
+          "what": "Each form field has its own useHot pair (setter + poll); no single record-of-state hook",
+          "why": [
+            "Deku's hook ergonomics encourage per-cell signals because changes only propagate to subscribers of that specific signal.",
+            "A single record state would cause every field's setter to invalidate every field's poll, which is wasteful and could cause input-field re-mounts that lose focus.",
+            "Cost: a lot of boilerplate (twenty-something setX / xV pairs). Worth it for the targeted reactivity.",
+            "The isFormValid Poll combines all the individual valid* polls via Applicative ado; this is the one place all the state comes together."
+          ],
+          "affects": ["itemForm"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "EditModeAssumesAllFieldsValid",
+          "what": "v0 = if isEdit then Just true else Just false; in EditMode, every field is marked valid before the user has touched anything",
+          "why": [
+            "Assumes the existing record was valid when it was saved, so re-displaying it preserves validity.",
+            "BUT: if validation rules have tightened since the record was saved (e.g. a new max-length added), the form will let the user re-save invalid data.",
+            "Also: if the record has empty optional fields that the validator marks as invalid, the user can't tell because no error is shown until they edit.",
+            "Cleaner: run each field's validation rule against the initial value and set v0 to the actual result per field."
+          ],
+          "blocking": [],
+          "affects": ["itemForm"]
+        }
+      ],
+      "invariants": {
+        "itemForm": {
+          "intent": "Render a 30+ field form for creating or editing a MenuItem, validate it, submit to the appropriate API endpoint",
+          "effects": ["IO (form rendering, API calls)"],
+          "notes": [
+            "Mode (CreateMode | EditMode) drives the title, submit label, API endpoint (write vs update), and post-submit behavior (reset form vs no-op).",
+            "validateMenuItem is called on submit; failure produces a single comma-separated error string in the status message.",
+            "SKU is read-only in both modes (CreateMode shows the pre-generated UUID; EditMode shows the existing SKU). The SKU validation is permissive in Config.InventoryFields.skuConfig but enforced at submit via Types.Inventory.validateMenuItem.",
+            "Internal helper resetForm (a local let-binding, not a top-level function) is the post-Create cleanup path: manual setter calls for every field (~30 setX calls). EditMode never resets after submit; the user stays on the edited record."
           ]
         }
+      }
+    },
+
+    "UI.Inventory.DeleteItem": {
+      "invariants": {
+        "deleteItem": [
+          "Two-state UI: confirmation prompt -> success or error message after submit.",
+          "On success, displays a 'Return to Inventory' link; the user must click it (no auto-redirect).",
+          "Submit button is disabled while submitting to prevent double-clicks."
+        ]
+      }
+    },
+
+    "UI.Inventory.MenuLiveView": {
+      "invariants": {
+        "renderInventory": [
+          "Filters out-of-stock items if config.hideOutOfStock is true; then sorts via Types.Inventory.compareMenuItems.",
+          "Empty inventory shows an 'empty-inventory' message; otherwise renders a grid via renderItem.",
+          "Stats footer shows total item count BEFORE filtering."
+        ],
+        "renderItem": [
+          "Renders one MenuItem as a card with image, brand, name, category, species, strain, price, description, quantity, and edit/delete action links.",
+          "Description is summarized via Utils.Formatting.summarizeLongText (100-char limit with ellipsis).",
+          "Action links are <a> tags using URL hashes (/#/edit/<sku>, /#/delete/<sku>); no JS handler, the router catches the hash change."
+        ]
+      }
+    },
+
+    "UI.Transaction.CreateTransaction": {
+      "decisions": [
+        {
+          "name": "DualCartStateLocalAndRemote",
+          "what": "Cart state is held both in local Deku state (cartItemsValue, cartTotalsValue) AND on the backend in the SaleTransaction; updates round-trip through the backend",
+          "why": [
+            "The backend Sale is the source of truth: every Add Item is an API call, every Remove Item is an API call, every Add Payment is an API call.",
+            "Local state mirrors the backend for fast UI updates; if the API call succeeds, local state is updated to match what the backend now holds.",
+            "API failure leaves local state unchanged; the UI continues showing the pre-call state.",
+            "Cost: every interaction has a network round-trip; for offline operation, the local state branch (Services.Cart.addItemToTransaction) was the planned escape hatch, but it's dead.",
+            "transactionPoll re-syncs local state to the backend's view via the load_ handler; navigating away and back resets local state to backend state."
+          ],
+          "affects": ["createTransaction"]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "InventoryFilteringByCategoryUsesShow",
+          "what": "Category filter compares show item.category against the category string from the tab; relies on the Show instance matching the tab label exactly",
+          "why": [
+            "Adding a new ItemCategory requires updating Types.Inventory.Show instance to match the desired tab label. Drift risk.",
+            "categoriesArray includes 'All Items' (handled specially) plus all show-derived category names from the inventory.",
+            "If the Show instance ever changes (e.g. 'PreRolls' becomes 'Pre-Rolls'), the filter breaks silently because the strings no longer match."
+          ],
+          "blocking": [],
+          "affects": ["createTransaction"]
+        }
+      ],
+      "invariants": {
+        "createTransaction": {
+          "intent": "Render the POS UI: inventory grid (filterable), cart (with totals), payment section, action bar (clear / process payment)",
+          "effects": ["IO (API calls for every cart mutation, payment add/remove, finalize/clear)"],
+          "notes": [
+            "Inventory grid filters by category tab and search text, both client-side.",
+            "Cart mutations (add / remove) go through Services.Cart.addItemToCart / removeItemFromCart.",
+            "Payment section supports all PaymentMethod variants; non-cash methods hide the Tendered field.",
+            "Finalize button is gated on (paymentsCoversTotal && non-empty cart && not currently processing).",
+            "Status messages persist across actions; only cleared by the next action's status message."
+          ]
+        },
+        "paymentMethodBtn": [
+          "Pure presentation: a clickable div styled as a tab.",
+          "Active state computed from the methodPoll; click sets the method.",
+          "The Other constructor case is handled inline (not via this helper) because Other carries a String parameter."
+        ]
       }
     },
 
@@ -807,6 +1726,93 @@
           "Creates a fresh <audio> element on every call; the element is not added to the DOM and is garbage-collected after the play completes.",
           "Sound paths are hardcoded under /assets/sounds/; the web server must serve them.",
           "Browser autoplay policies may silently block playback if no user gesture has occurred; this is a browser-level behavior, not handled here."
+        ]
+      }
+    },
+
+    "Utils.Formatting": {
+      "invariants": {
+        "formatCentsToDollars": [
+          "Integer division and modulo; never produces floating-point arithmetic error.",
+          "Always emits exactly two decimal places (pads cents < 10 with a leading zero).",
+          "Negative cents would produce a malformed output (e.g. -50 cents becomes '0.-50'); RefundMoney consumers should format the absolute value."
+        ],
+        "formatDollarAmount": [
+          "Round-trips a string through Number.fromString; non-numeric input passes through unchanged.",
+          "Pads to exactly 2 decimals; truncates beyond 2 (does NOT round)."
+        ],
+        "parseCommaList": [
+          "Splits on comma, trims each, drops empty.",
+          "Empty input returns []; this is the inverse of joining with ', '."
+        ],
+        "summarizeLongText": [
+          "Replaces newlines with spaces, collapses runs of whitespace, truncates to 100 chars with '...' suffix.",
+          "Uses unsafePartial on the regex compile; the regex is a string literal so the partial is safe."
+        ],
+        "getAllEnumValues": [
+          "Returns all values of a BoundedEnum via catMaybes (toEnum <$> range 0 (fromEnum top)).",
+          "Used for dropdown population in Config.InventoryFields."
+        ]
+      }
+    },
+
+    "Utils.Validation": {
+      "decisions": [
+        {
+          "name": "ValidationRuleAsNewtypePredicate",
+          "what": "ValidationRule is a newtype String -> Boolean; allOf / anyOf compose them via array fold",
+          "why": [
+            "Simplest possible primitive; predicates are easy to write and test.",
+            "Composition is just && and || under the hood, but the array form is more readable in field configs.",
+            "Trade-off: no error messages from the rule itself; the field config carries a separate errorMessage. If the field has multiple failure modes, the same message shows regardless of which rule failed."
+          ],
+          "affects": ["allOf", "anyOf"]
+        }
+      ],
+      "invariants": {
+        "validUrl": [
+          "Regex requires http:// or https:// prefix; rejects bare hostnames and file:// URLs.",
+          "Permits IPv4-style hosts but not IPv6 (the regex character class wouldn't accept the brackets).",
+          "Not a full URL parser; catches obvious typos but won't reject 'https://://' or similar pathologies."
+        ],
+        "validMeasurementUnit": [
+          "Hardcoded list of accepted units (g, mg, kg, oz, lb, ml, l, ea, etc).",
+          "Case-insensitive (lowercase comparison after trim).",
+          "Adding a new unit requires editing this function; no config table."
+        ],
+        "unsafeRegex": [
+          "Calls unsafeCrashWith on regex compile failure; only safe with string literal patterns.",
+          "Used internally for the validate* helpers (validatePercentage, validateUrl) that have fixed patterns."
+        ]
+      }
+    },
+
+    "Utils.Money": {
+      "invariants": {
+        "fromDollars": [
+          "Floors (dollars * 100); inputs with more than 2 decimal places lose the third decimal.",
+          "Matches the convention in Types.Inventory.validateMenuItem for consistency."
+        ],
+        "formatDiscretePrice": [
+          "Uses numeric (no currency symbol) format from purescript-money.",
+          "Consumers in the UI typically prepend '$' as a separate text node."
+        ],
+        "parseMoneyString": [
+          "Trims input then calls Number.fromString; non-numeric input returns Nothing.",
+          "Does NOT handle currency symbols, commas, or whitespace within the number; caller is responsible for normalization."
+        ]
+      }
+    },
+
+    "Utils.Storage": {
+      "invariants": {
+        "storeItem": [
+          "Writes to window.localStorage; throws if storage quota is exceeded or if the browser is in private mode that blocks localStorage.",
+          "No error handling here; callers see the raw exception via Aff.attempt or Effect.Exception.try."
+        ],
+        "clearStorage": [
+          "Wipes ALL localStorage for the origin, not just app-specific keys.",
+          "Should be used with care; the register_id key in particular would be lost (see Services.RegisterService.RegisterIdInLocalStorage)."
         ]
       }
     }
