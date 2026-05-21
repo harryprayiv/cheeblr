@@ -79,14 +79,6 @@
             "Server.Auth.loginHandler (only password verifier in production)"
           ]
         },
-        "hashTokenBytes": [
-          "SHA-256 in lowercase hex over raw token bytes",
-          "raw token bytes are never persisted; only this hash is stored"
-        ],
-        "encodeTokenBytes": [
-          "URL-safe base64, '=' stripped",
-          "decodeTokenText re-pads symmetrically"
-        ],
         "createAuthTables": {
           "intent": "Idempotent DDL for users, sessions, login_attempts",
           "effects": ["DBPool", "IO"],
@@ -127,9 +119,9 @@
           "intent": "Create a new session row with an 8h expiry, return raw token",
           "effects": ["DBPool", "Entropy", "IO"],
           "notes": [
-            "32 random bytes from getEntropy",
+            "32 random bytes via Types.Primitives.Token.generateSessionToken (getEntropy underneath)",
             "expires_at = now + 8h, HARDCODED; cfgSessionTtlSeconds is NOT consulted here",
-            "raw token returned to caller; only SHA-256 stored in DB",
+            "raw SessionToken returned to caller; only sessionTokenHashText (SHA-256 base64url) stored in DB",
             "tokenRotatedAt initialized to now"
           ],
           "spec": [
@@ -140,9 +132,10 @@
           ]
         },
         "lookupSession": {
-          "intent": "Resolve a raw bearer token to (SessionRow, UserRow) and bump last_seen_at",
+          "intent": "Resolve a raw SessionToken to (SessionRow, UserRow) and bump last_seen_at",
           "effects": ["DBPool", "IO"],
           "notes": [
+            "hashes the supplied SessionToken via Types.Primitives.Token.hashSessionToken before lookup",
             "SIDE EFFECT: updates last_seen_at on every successful lookup (write-on-read)",
             "returns Nothing on multi-row result (defensive against hash collision)",
             "filters on NOT revoked AND expires_at > now AND user.isActive",
@@ -521,7 +514,7 @@
           "consumes": [
             "DB.Transaction.getTransactionById",
             "DB.Transaction.getAllTransactions (mapM hydrateTx over rows)",
-            "Service.Transaction.loadTx (transitively)"
+            "Service.Transaction.loadSale (transitively, via DB.Transaction.Typed)"
           ]
         },
         "createTransaction": [
@@ -536,18 +529,6 @@
           ],
           "consumes": [
             "Service.Transaction.voidTx (only caller in production)"
-          ]
-        },
-        "refundTransaction": {
-          "intent": "Create a NEW Transaction row with negated amounts pointing back at the original",
-          "effects": ["DBPool", "IO"],
-          "notes": [
-            "refundId is supplied by the caller (Service.Transaction generates the UUID)",
-            "original tx is marked is_refunded=true with refund_reason; refund tx has reference_transaction_id pointing to original",
-            "negation walks ALL items and payments via negateTransactionItem / negatePaymentTransaction"
-          ],
-          "consumes": [
-            "Service.Transaction.refundTx (only caller in production)"
           ]
         },
         "clearTransaction": {
@@ -769,7 +750,7 @@
             "If the emit fails after DB success, downstream consumers miss the event but DB state is correct.",
             "Asymmetric and acceptable for a POS that prioritizes books-and-records integrity over event-stream completeness."
           ],
-          "affects": ["addItem", "removeItem", "addPayment", "removePayment", "finalizeTx", "voidTx", "refundTx", "createTransactionSvc"]
+          "affects": ["addItem", "removeItem", "addPayment", "removePayment", "finalizeTx", "voidTx", "refundTx", "createSaleSvc"]
         },
         {
           "name": "StockPullsAreBestEffort",
@@ -793,13 +774,17 @@
         }
       ],
       "invariants": {
-        "loadTx": [
-          "throws err404 if not found; never returns Nothing",
-          "constructs SomeTxState from current DB status (single source of truth on load)"
+        "loadSale": [
+          "throws err404 on TypedNotFound; err500 on TypedDecodeFailed; err409 on TypedWrongKind (refund row addressed as a sale)",
+          "single source of truth for sale loading in the service layer; never returns Nothing"
         ],
-        "guardTxEvent": [
+        "guardSaleTxEvent": [
           "translates InvalidTxCommand to err409 with reason in the body",
-          "all other events fall through silently"
+          "all other SaleTxEvent variants fall through silently"
+        ],
+        "requireTxId": [
+          "wraps a Maybe-returning lookup (getTxIdByItemId / getTxIdByPaymentId) into err404 + supplied body",
+          "used to resolve item/payment id -> parent tx id BEFORE issuing deletes"
         ],
         "persistStatusChange": [
           "no-op if the new status equals the current status",
@@ -816,38 +801,38 @@
             "downstream PullRequestCreated event is consumed by stockroom dashboard SSE"
           ]
         },
-        "createTransactionSvc": {
+        "createSaleSvc": {
           "notes": [
-            "thin wrapper: createTransaction then emit TransactionCreated",
-            "no state machine guard; new transactions are always valid"
+            "thin wrapper: createSale then emit TransactionCreated (via saleToLegacyTransaction for the event payload)",
+            "no state machine guard; new sales are always valid"
           ],
           "consumes": [
-            "Server.Transaction POST /transactions"
+            "Server.Transaction POST /sale"
           ]
         },
         "addItem": {
-          "intent": "Add an item to a transaction with state-machine enforcement and inventory reservation",
+          "intent": "Add an item to a sale with state-machine enforcement and inventory reservation",
           "effects": ["TransactionDb", "StockDb", "InventoryDb", "EventEmitter", "Clock", "GenUUID", "Error ServerError"],
           "notes": [
-            "ORDER: state-guard, persistStatusChange, addTransactionItem, emit TransactionItemAdded, createStockPull",
-            "if addTransactionItem fails (inventory), the transaction status was ALREADY persisted as InProgress",
+            "ORDER: loadSale, state-guard, persistStatusChange, addSaleItem, emit TransactionItemAdded, createStockPull",
+            "if addSaleItem fails (inventory), the sale status was ALREADY persisted as InProgress",
             "createStockPull failures do NOT roll back the item or status change",
             "ItemNotFound -> err404; InsufficientInventory -> err400 with both numbers in body"
           ],
           "spec": [
-            { "input": "addItem on Created tx",         "expected": "Right item, status -> InProgress, ItemAdded + PullRequestCreated emitted" },
-            { "input": "addItem on Completed tx",       "expected": "err409 InvalidTxCommand" },
-            { "input": "addItem with unknown sku",      "expected": "err404 Item not found" },
-            { "input": "addItem with qty > available",  "expected": "err400 Insufficient inventory" }
+            { "input": "addItem on Created sale",        "expected": "Right item, status -> InProgress, ItemAdded + PullRequestCreated emitted" },
+            { "input": "addItem on Completed sale",      "expected": "err409 InvalidTxCommand" },
+            { "input": "addItem with unknown sku",       "expected": "err404 Item not found" },
+            { "input": "addItem with qty > available",   "expected": "err400 Insufficient inventory" }
           ],
           "consumes": [
-            "Server.Transaction POST /transactions/:id/items"
+            "Server.Transaction POST /sale/item"
           ]
         },
         "removeItem": [
           "looks up the item BEFORE deletion to capture sku and qty for the event",
           "cancels pulls for this (txId, sku) AFTER the DB delete",
-          "emits PullRequestCancelled per pull that was actually cancelled (filtered by current vertex)"
+          "emits PullRequestCancelled per pull that was actually cancelled (filtered by current vertex, excluding PullFulfilled and PullCancelled)"
         ],
         "addPayment": [
           "state-machine guard runs against the stored status, not a recomputed one",
@@ -859,39 +844,40 @@
         "finalizeTx": {
           "intent": "Transition InProgress -> Completed; decrement inventory; mark reservations Completed",
           "notes": [
-            "underlying TransactionDb.finalizeTransaction does inventory adjustment AND reservation completion",
+            "underlying TransactionDb.finalizeSale does inventory adjustment AND reservation completion",
             "no rollback if emit fails (broadcaster publish is fire-and-forget)"
           ],
           "spec": [
-            { "input": "finalizeTx on InProgress tx",  "expected": "Right tx{status=Completed}, inventory decremented, TransactionFinalized emitted" },
-            { "input": "finalizeTx on Created tx",     "expected": "err409 Cannot Finalize from Created" }
+            { "input": "finalizeTx on InProgress sale", "expected": "Right sale{status=Completed}, inventory decremented, TransactionFinalized emitted" },
+            { "input": "finalizeTx on Created sale",    "expected": "err409 Cannot Finalize from Created" }
           ],
           "consumes": [
-            "Server.Transaction POST /transactions/:id/finalize"
+            "Server.Transaction POST /sale/finalize/:id"
           ]
         },
         "voidTx": {
-          "intent": "Void a transaction (valid from Created, InProgress, or Completed); cancel any open stock pulls",
+          "intent": "Void a sale (valid from Created, InProgress, or Completed); cancel any open stock pulls",
           "notes": [
             "captures pulls list BEFORE void to know what to cancel",
-            "ORDER: state guard, voidTransaction (DB), emit TransactionVoided, cancelPullsForTransaction, emit PullRequestCancelled per non-terminal pull"
+            "ORDER: state guard, getPullsByTransaction, voidSale (DB), emit TransactionVoided, cancelPullsForTransaction, emit PullRequestCancelled per non-terminal pull"
           ],
           "spec": [
-            { "input": "voidTx on Created tx",    "expected": "Right tx{status=Voided}, TransactionVoided + PullRequestCancelled emitted" },
-            { "input": "voidTx on Voided tx",     "expected": "err409 Transaction is voided" }
+            { "input": "voidTx on Created sale", "expected": "Right sale{status=Voided}, TransactionVoided + PullRequestCancelled emitted" },
+            { "input": "voidTx on Voided sale",  "expected": "err409 Transaction is voided" }
           ],
           "consumes": [
-            "Server.Transaction POST /transactions/:id/void"
+            "Server.Transaction POST /sale/void/:id"
           ]
         },
         "refundTx": {
           "notes": [
-            "GENERATES the refund UUID at the service layer (not the DB)",
-            "refund is a SEPARATE Transaction row with negated amounts and Type=Return",
-            "original tx is marked is_refunded=true; refund tx points back via reference_transaction_id"
+            "GENERATES the refund UUID, per-item UUIDs, and per-payment UUIDs at the service layer (not the DB)",
+            "builds the typed Refund.RefundTransaction via toRefundTransaction; err500 if conversion fails",
+            "writes via writeRefund (which is DB.Transaction.Refund.writeTypedRefund under the hood)",
+            "original sale is marked is_refunded=true; refund tx points back via reference_transaction_id"
           ],
           "consumes": [
-            "Server.Transaction POST /transactions/:id/refund"
+            "Server.Transaction POST /sale/refund/:id"
           ]
         }
       }
