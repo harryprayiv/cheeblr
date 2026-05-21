@@ -1,16 +1,27 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Types.Transaction.Refund
-  ( -- * Line-item types
+  (
     Item (..)
   , Discount (..)
   , Tax (..)
   , Payment (..)
-    -- * Aggregate
+
   , RefundTransaction (..)
   ) where
 
+import qualified Data.Aeson as Aeson
+import Data.Aeson (FromJSON (..), ToJSON (..))
+import qualified Data.Char as Char
+import qualified Data.List as List
+import Data.OpenApi
+  ( SchemaOptions (..)
+  , ToSchema (..)
+  , fromAesonOptions
+  , genericDeclareNamedSchema
+  )
 import Data.Scientific (Scientific)
 import Data.Text (Text)
 import Data.Time (UTCTime)
@@ -24,7 +35,7 @@ import Types.Transaction (DiscountType, PaymentMethod, TaxCategory)
 import Types.Transaction.Class (IsTransaction (..))
 
 -- ---------------------------------------------------------------------------
--- Line-item types (unchanged from 2C-1/2)
+-- Types
 -- ---------------------------------------------------------------------------
 
 data Item = Item
@@ -33,9 +44,8 @@ data Item = Item
   , itemMenuItemSku   :: UUID
   , itemQuantity      :: RefundQuantity
   , itemPricePerUnit  :: SaleMoney
-  -- ^ Unit price stays non-negative; the line subtotal and total are
-  -- 'RefundMoney'. The catalog still prices items in positive cents; the
-  -- refund-ness shows up in line aggregates.
+  -- ^ Catalog price stays non-negative; the refund-ness shows up in
+  -- 'itemSubtotal' and 'itemTotal', which are 'RefundMoney'.
   , itemDiscounts     :: [Discount]
   , itemTaxes         :: [Tax]
   , itemSubtotal      :: RefundMoney
@@ -72,26 +82,6 @@ data Payment = Payment
   }
   deriving stock (Show, Eq, Generic)
 
--- ---------------------------------------------------------------------------
--- Aggregate
--- ---------------------------------------------------------------------------
-
--- | A refund transaction.
---
--- Distinct from 'Types.Transaction.Sale.SaleTransaction' on:
---
--- * 'refundReferenceTransactionId' is REQUIRED. Every refund references an
---   original sale; a refund without one is meaningless.
--- * No status field. Refunds are created Completed and have no lifecycle.
--- * No type field. There is exactly one kind of refund.
--- * No void or refund-of-refund tracking. Refunds aren't voided or refunded
---   themselves; corrective sales handle the rare case where a refund was
---   issued in error.
--- * Money fields use 'RefundMoney' (non-positive invariant).
--- * 'refundReason' is REQUIRED. A refund without a stated reason fails
---   compliance review.
--- * 'refundCompleted' is non-optional. Refunds are created Completed; the
---   field is set at construction.
 data RefundTransaction = RefundTransaction
   { refundId                     :: UUID
   , refundCreated                :: UTCTime
@@ -118,3 +108,107 @@ instance IsTransaction RefundTransaction where
   txEmployeeId = refundEmployeeId
   txRegisterId = refundRegisterId
   txLocationId = refundLocationId
+
+-- ---------------------------------------------------------------------------
+-- Wire format (Phase 2H-2)
+-- ---------------------------------------------------------------------------
+--
+-- Same conventions as 'Types.Transaction.Sale'. Field names strip the
+-- type-specific prefix; schema names are forced to "RefundItem",
+-- "RefundDiscount", etc to avoid collision with the Sale-side schemas
+-- in the OpenAPI definitions map.
+
+stripFieldPrefix :: String -> String -> String
+stripFieldPrefix prefix s = case List.stripPrefix prefix s of
+  Just (c : rest) -> Char.toLower c : rest
+  Just []         -> s
+  Nothing         -> s
+
+itemAesonOptions :: Aeson.Options
+itemAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = stripFieldPrefix "item" }
+
+discountAesonOptions :: Aeson.Options
+discountAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = stripFieldPrefix "discount" }
+
+taxAesonOptions :: Aeson.Options
+taxAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = stripFieldPrefix "tax" }
+
+paymentAesonOptions :: Aeson.Options
+paymentAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = stripFieldPrefix "payment" }
+
+refundTransactionAesonOptions :: Aeson.Options
+refundTransactionAesonOptions = Aeson.defaultOptions
+  { Aeson.fieldLabelModifier = stripFieldPrefix "refund" }
+
+namedSchema :: String -> Aeson.Options -> SchemaOptions
+namedSchema schemaName opts =
+  (fromAesonOptions opts) { datatypeNameModifier = const schemaName }
+
+-- Item
+
+instance ToJSON Item where
+  toJSON     = Aeson.genericToJSON itemAesonOptions
+  toEncoding = Aeson.genericToEncoding itemAesonOptions
+
+instance FromJSON Item where
+  parseJSON = Aeson.genericParseJSON itemAesonOptions
+
+instance ToSchema Item where
+  declareNamedSchema =
+    genericDeclareNamedSchema (namedSchema "RefundItem" itemAesonOptions)
+
+-- Discount
+
+instance ToJSON Discount where
+  toJSON     = Aeson.genericToJSON discountAesonOptions
+  toEncoding = Aeson.genericToEncoding discountAesonOptions
+
+instance FromJSON Discount where
+  parseJSON = Aeson.genericParseJSON discountAesonOptions
+
+instance ToSchema Discount where
+  declareNamedSchema =
+    genericDeclareNamedSchema (namedSchema "RefundDiscount" discountAesonOptions)
+
+-- Tax
+
+instance ToJSON Tax where
+  toJSON     = Aeson.genericToJSON taxAesonOptions
+  toEncoding = Aeson.genericToEncoding taxAesonOptions
+
+instance FromJSON Tax where
+  parseJSON = Aeson.genericParseJSON taxAesonOptions
+
+instance ToSchema Tax where
+  declareNamedSchema =
+    genericDeclareNamedSchema (namedSchema "RefundTax" taxAesonOptions)
+
+-- Payment
+
+instance ToJSON Payment where
+  toJSON     = Aeson.genericToJSON paymentAesonOptions
+  toEncoding = Aeson.genericToEncoding paymentAesonOptions
+
+instance FromJSON Payment where
+  parseJSON = Aeson.genericParseJSON paymentAesonOptions
+
+instance ToSchema Payment where
+  declareNamedSchema =
+    genericDeclareNamedSchema (namedSchema "RefundPayment" paymentAesonOptions)
+
+-- RefundTransaction
+
+instance ToJSON RefundTransaction where
+  toJSON     = Aeson.genericToJSON refundTransactionAesonOptions
+  toEncoding = Aeson.genericToEncoding refundTransactionAesonOptions
+
+instance FromJSON RefundTransaction where
+  parseJSON = Aeson.genericParseJSON refundTransactionAesonOptions
+
+instance ToSchema RefundTransaction where
+  declareNamedSchema =
+    genericDeclareNamedSchema (namedSchema "RefundTransaction" refundTransactionAesonOptions)

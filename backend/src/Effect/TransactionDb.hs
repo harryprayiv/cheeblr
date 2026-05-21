@@ -1,11 +1,6 @@
--- src/Effect/TransactionDb.hs
---
--- Phase 2F: the RefundTransaction constructor (5-tuple of UUID/Text/list args)
--- is replaced by WriteRefund, which takes a typed Refund.RefundTransaction.
--- The IO interpreter still dispatches to the legacy DBT.refundTransaction by
--- unpacking fields out of the typed value; the SQL is unchanged.
-
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
@@ -16,25 +11,39 @@
 
 module Effect.TransactionDb (
   TransactionDb (..),
-  getAllTransactions,
-  getTransactionById,
-  getTransactionsByLocation,
-  createTransaction,
-  updateTransaction,
-  voidTransaction,
+
+  -- Reads (typed)
+  TypedLoadError (..),
+  getSaleById,
+  getRefundById,
+  getAllSales,
+  getAllRefunds,
+  getSalesByLocation,
+  getRefundsByLocation,
+
+  -- Writes (typed)
+  createSale,
+  updateSaleStatus,
+  voidSale,
   writeRefund,
-  clearTransaction,
-  finalizeTransaction,
-  addTransactionItem,
-  deleteTransactionItem,
-  addPaymentTransaction,
-  deletePaymentTransaction,
+  clearSale,
+  finalizeSale,
+  addSaleItem,
+  deleteSaleItem,
+  addSalePayment,
+  deleteSalePayment,
+
+  -- By-id lookups
   getTxIdByItemId,
   getTxIdByPaymentId,
+
+  -- Inventory / reservations
   getInventoryAvailability,
   createReservation,
   releaseReservation,
   getAllActiveReservations,
+
+  -- Interpreters
   runTransactionDbIO,
   ReservationEntry (..),
   TxStore (..),
@@ -44,105 +53,132 @@ module Effect.TransactionDb (
 
 import Control.Exception (try)
 import Control.Monad (when)
-import Data.List (find)
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
 import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text (Text)
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Effectful
 import Effectful.Dispatch.Dynamic
 import Effectful.State.Static.Local
+import GHC.Generics (Generic)
 
 import DB.Database (DBPool)
 import DB.Transaction (InventoryException (..))
 import qualified DB.Transaction as DBT
+import qualified DB.Transaction.Refund as DBTRefund
+import qualified DB.Transaction.Typed as DBTTyped
 import qualified DB.Reservation as DBRes
 import Effect.Clock
 import Effect.GenUUID
 import Types.Location (LocationId)
+import Types.Primitives.Quantity (saleQuantityCount)
 import Types.Transaction
+import Types.Transaction.Conversion
+  ( fromLegacyTransaction
+  , saleItemFromLegacy
+  , saleItemToLegacy
+  , salePaymentFromLegacy
+  , salePaymentToLegacy
+  , saleToLegacyTransaction, refundToLegacyTransaction
+  )
 import qualified Types.Transaction.Refund as Refund
+import qualified Types.Transaction.Sale as Sale
+
+data TypedLoadError
+  = TypedNotFound
+  | TypedDecodeFailed Text
+  | TypedWrongKind
+  deriving stock (Show, Eq, Generic)
 
 data TransactionDb :: Effect where
-  GetAllTransactions        :: TransactionDb m [Transaction]
-  GetTransactionsByLocation :: LocationId -> TransactionDb m [Transaction]
-  GetTransactionById        :: UUID -> TransactionDb m (Maybe Transaction)
-  CreateTransaction         :: Transaction -> TransactionDb m Transaction
-  UpdateTransaction         :: UUID -> Transaction -> TransactionDb m Transaction
-  VoidTransaction           :: UUID -> Text -> TransactionDb m Transaction
-  -- | Persist a typed Refund.RefundTransaction.
-  --
-  -- The original sale id is carried by refundReferenceTransactionId; fresh
-  -- ids for the refund row and its line items / payments come from the typed
-  -- value's id fields. The IO interpreter currently dispatches to the legacy
-  -- DBT.refundTransaction under the hood (which re-loads and re-negates
-  -- from the original sale row). This constructor is the typed-input
-  -- boundary, not yet a rewritten SQL path.
-  WriteRefund               :: Refund.RefundTransaction -> TransactionDb m Transaction
-  ClearTransaction          :: UUID -> TransactionDb m ()
-  FinalizeTransaction       :: UUID -> TransactionDb m Transaction
-  AddTransactionItem        :: TransactionItem -> TransactionDb m (Either InventoryException TransactionItem)
-  DeleteTransactionItem     :: UUID -> TransactionDb m ()
-  AddPayment                :: PaymentTransaction -> TransactionDb m PaymentTransaction
-  DeletePayment             :: UUID -> TransactionDb m ()
-  GetTxIdByItemId           :: UUID -> TransactionDb m (Maybe UUID)
-  GetTxIdByPaymentId        :: UUID -> TransactionDb m (Maybe UUID)
-  GetInventoryAvailability  :: UUID -> TransactionDb m (Maybe (Int, Int))
-  CreateReservation         :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
-  ReleaseReservation        :: UUID -> TransactionDb m Bool
-  GetAllActiveReservations  :: TransactionDb m [InventoryReservation]
+
+  -- Reads
+  GetSaleById              :: UUID -> TransactionDb m (Either TypedLoadError Sale.SaleTransaction)
+  GetRefundById            :: UUID -> TransactionDb m (Either TypedLoadError Refund.RefundTransaction)
+  GetAllSales              :: TransactionDb m [Sale.SaleTransaction]
+  GetAllRefunds            :: TransactionDb m [Refund.RefundTransaction]
+  GetSalesByLocation       :: LocationId -> TransactionDb m [Sale.SaleTransaction]
+  GetRefundsByLocation     :: LocationId -> TransactionDb m [Refund.RefundTransaction]
+
+  -- Writes
+  CreateSale               :: Sale.SaleTransaction -> TransactionDb m Sale.SaleTransaction
+  UpdateSaleStatus         :: UUID -> TransactionStatus -> TransactionDb m ()
+  VoidSale                 :: UUID -> Text -> TransactionDb m Sale.SaleTransaction
+  WriteRefund              :: Refund.RefundTransaction -> TransactionDb m Refund.RefundTransaction
+  ClearSale                :: UUID -> TransactionDb m ()
+  FinalizeSale             :: UUID -> TransactionDb m Sale.SaleTransaction
+  AddSaleItem              :: Sale.Item -> TransactionDb m (Either InventoryException Sale.Item)
+  DeleteSaleItem           :: UUID -> TransactionDb m ()
+  AddSalePayment           :: Sale.Payment -> TransactionDb m Sale.Payment
+  DeleteSalePayment        :: UUID -> TransactionDb m ()
+
+  -- By-id lookups (kind-agnostic, used for resolving entity → parent tx)
+  GetTxIdByItemId          :: UUID -> TransactionDb m (Maybe UUID)
+  GetTxIdByPaymentId       :: UUID -> TransactionDb m (Maybe UUID)
+
+  -- Inventory / reservations
+  GetInventoryAvailability :: UUID -> TransactionDb m (Maybe (Int, Int))
+  CreateReservation        :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
+  ReleaseReservation       :: UUID -> TransactionDb m Bool
+  GetAllActiveReservations :: TransactionDb m [InventoryReservation]
 
 type instance DispatchOf TransactionDb = Dynamic
 
-getAllTransactions :: (TransactionDb :> es) => Eff es [Transaction]
-getAllTransactions = send GetAllTransactions
+-- send wrappers
 
-getTransactionsByLocation :: (TransactionDb :> es) => LocationId -> Eff es [Transaction]
-getTransactionsByLocation = send . GetTransactionsByLocation
+getSaleById   :: (TransactionDb :> es) => UUID -> Eff es (Either TypedLoadError Sale.SaleTransaction)
+getSaleById   = send . GetSaleById
 
-getTransactionById :: (TransactionDb :> es) => UUID -> Eff es (Maybe Transaction)
-getTransactionById = send . GetTransactionById
+getRefundById :: (TransactionDb :> es) => UUID -> Eff es (Either TypedLoadError Refund.RefundTransaction)
+getRefundById = send . GetRefundById
 
-createTransaction :: (TransactionDb :> es) => Transaction -> Eff es Transaction
-createTransaction = send . CreateTransaction
+getAllSales   :: (TransactionDb :> es) => Eff es [Sale.SaleTransaction]
+getAllSales   = send GetAllSales
 
-updateTransaction :: (TransactionDb :> es) => UUID -> Transaction -> Eff es Transaction
-updateTransaction txId tx = send (UpdateTransaction txId tx)
+getAllRefunds :: (TransactionDb :> es) => Eff es [Refund.RefundTransaction]
+getAllRefunds = send GetAllRefunds
 
-voidTransaction :: (TransactionDb :> es) => UUID -> Text -> Eff es Transaction
-voidTransaction txId reason = send (VoidTransaction txId reason)
+getSalesByLocation   :: (TransactionDb :> es) => LocationId -> Eff es [Sale.SaleTransaction]
+getSalesByLocation   = send . GetSalesByLocation
 
--- | Persist a typed refund. See WriteRefund constructor for details on the
--- current IO-interpreter behavior.
-writeRefund ::
-  (TransactionDb :> es) =>
-  Refund.RefundTransaction ->
-  Eff es Transaction
+getRefundsByLocation :: (TransactionDb :> es) => LocationId -> Eff es [Refund.RefundTransaction]
+getRefundsByLocation = send . GetRefundsByLocation
+
+createSale :: (TransactionDb :> es) => Sale.SaleTransaction -> Eff es Sale.SaleTransaction
+createSale = send . CreateSale
+
+updateSaleStatus :: (TransactionDb :> es) => UUID -> TransactionStatus -> Eff es ()
+updateSaleStatus txId s = send (UpdateSaleStatus txId s)
+
+voidSale :: (TransactionDb :> es) => UUID -> Text -> Eff es Sale.SaleTransaction
+voidSale txId reason = send (VoidSale txId reason)
+
+writeRefund :: (TransactionDb :> es) => Refund.RefundTransaction -> Eff es Refund.RefundTransaction
 writeRefund = send . WriteRefund
 
-clearTransaction :: (TransactionDb :> es) => UUID -> Eff es ()
-clearTransaction = send . ClearTransaction
+clearSale :: (TransactionDb :> es) => UUID -> Eff es ()
+clearSale = send . ClearSale
 
-finalizeTransaction :: (TransactionDb :> es) => UUID -> Eff es Transaction
-finalizeTransaction = send . FinalizeTransaction
+finalizeSale :: (TransactionDb :> es) => UUID -> Eff es Sale.SaleTransaction
+finalizeSale = send . FinalizeSale
 
-addTransactionItem ::
+addSaleItem ::
   (TransactionDb :> es) =>
-  TransactionItem ->
-  Eff es (Either InventoryException TransactionItem)
-addTransactionItem = send . AddTransactionItem
+  Sale.Item ->
+  Eff es (Either InventoryException Sale.Item)
+addSaleItem = send . AddSaleItem
 
-deleteTransactionItem :: (TransactionDb :> es) => UUID -> Eff es ()
-deleteTransactionItem = send . DeleteTransactionItem
+deleteSaleItem :: (TransactionDb :> es) => UUID -> Eff es ()
+deleteSaleItem = send . DeleteSaleItem
 
-addPaymentTransaction :: (TransactionDb :> es) => PaymentTransaction -> Eff es PaymentTransaction
-addPaymentTransaction = send . AddPayment
+addSalePayment :: (TransactionDb :> es) => Sale.Payment -> Eff es Sale.Payment
+addSalePayment = send . AddSalePayment
 
-deletePaymentTransaction :: (TransactionDb :> es) => UUID -> Eff es ()
-deletePaymentTransaction = send . DeletePayment
+deleteSalePayment :: (TransactionDb :> es) => UUID -> Eff es ()
+deleteSalePayment = send . DeleteSalePayment
 
 getTxIdByItemId :: (TransactionDb :> es) => UUID -> Eff es (Maybe UUID)
 getTxIdByItemId = send . GetTxIdByItemId
@@ -156,8 +192,7 @@ getInventoryAvailability = send . GetInventoryAvailability
 createReservation ::
   (TransactionDb :> es) =>
   UUID -> UUID -> UUID -> Int -> UTCTime -> Eff es ()
-createReservation resId itemSku txId qty now =
-  send (CreateReservation resId itemSku txId qty now)
+createReservation a b c d e = send (CreateReservation a b c d e)
 
 releaseReservation :: (TransactionDb :> es) => UUID -> Eff es Bool
 releaseReservation = send . ReleaseReservation
@@ -165,36 +200,162 @@ releaseReservation = send . ReleaseReservation
 getAllActiveReservations :: (TransactionDb :> es) => Eff es [InventoryReservation]
 getAllActiveReservations = send GetAllActiveReservations
 
+-- ---------------------------------------------------------------------------
+-- Internal: conversion at the SQL boundary
+-- ---------------------------------------------------------------------------
+--
+-- The legacy DB functions take and return legacy 'Transaction' /
+-- 'TransactionItem' / 'PaymentTransaction'. The interpreters convert
+-- typed -> legacy on input and legacy -> typed on output.
+--
+-- For write operations, the output side cannot legitimately fail: we
+-- just stored a sale, the returned row must convert back to a sale.
+-- A failure here means DB corruption or a serialization bug, not a
+-- user error. We panic with a descriptive message.
+--
+-- For read operations, failure modes are normal: the id might not
+-- exist, the stored row might be the wrong kind, or the row might be
+-- malformed. Those propagate as 'TypedLoadError'.
+
+expectSaleTx :: Transaction -> Sale.SaleTransaction
+expectSaleTx tx = case fromLegacyTransaction tx of
+  Right (Left s)  -> s
+  Right (Right _) ->
+    error $
+      "Effect.TransactionDb.expectSaleTx: expected sale, got refund (txId "
+        <> show (transactionId tx) <> ")"
+  Left e ->
+    error $
+      "Effect.TransactionDb.expectSaleTx: conversion failed for txId "
+        <> show (transactionId tx) <> ": " <> T.unpack e
+
+expectRefundTx :: Transaction -> Refund.RefundTransaction
+expectRefundTx tx = case fromLegacyTransaction tx of
+  Right (Right r) -> r
+  Right (Left _)  ->
+    error $
+      "Effect.TransactionDb.expectRefundTx: expected refund, got sale (txId "
+        <> show (transactionId tx) <> ")"
+  Left e ->
+    error $
+      "Effect.TransactionDb.expectRefundTx: conversion failed for txId "
+        <> show (transactionId tx) <> ": " <> T.unpack e
+
+expectSaleItem :: TransactionItem -> Sale.Item
+expectSaleItem ti = case saleItemFromLegacy ti of
+  Right s -> s
+  Left e ->
+    error $
+      "Effect.TransactionDb.expectSaleItem: conversion failed for itemId "
+        <> show (transactionItemId ti) <> ": " <> T.unpack e
+
+expectSalePayment :: PaymentTransaction -> Sale.Payment
+expectSalePayment p = case salePaymentFromLegacy p of
+  Right s -> s
+  Left e ->
+    error $
+      "Effect.TransactionDb.expectSalePayment: conversion failed for paymentId "
+        <> show (paymentId p) <> ": " <> T.unpack e
+
+narrowToSale ::
+  Maybe (Either Text (Either Sale.SaleTransaction Refund.RefundTransaction)) ->
+  Either TypedLoadError Sale.SaleTransaction
+narrowToSale Nothing                       = Left TypedNotFound
+narrowToSale (Just (Left e))               = Left (TypedDecodeFailed e)
+narrowToSale (Just (Right (Left s)))       = Right s
+narrowToSale (Just (Right (Right _)))      = Left TypedWrongKind
+
+narrowToRefund ::
+  Maybe (Either Text (Either Sale.SaleTransaction Refund.RefundTransaction)) ->
+  Either TypedLoadError Refund.RefundTransaction
+narrowToRefund Nothing                      = Left TypedNotFound
+narrowToRefund (Just (Left e))              = Left (TypedDecodeFailed e)
+narrowToRefund (Just (Right (Left _)))      = Left TypedWrongKind
+narrowToRefund (Just (Right (Right r)))     = Right r
+
+-- ---------------------------------------------------------------------------
+-- IO interpreter
+-- ---------------------------------------------------------------------------
+
 runTransactionDbIO :: (IOE :> es) => DBPool -> Eff (TransactionDb : es) a -> Eff es a
 runTransactionDbIO pool = interpret $ \_ -> \case
-  GetAllTransactions                       -> liftIO $ DBT.getAllTransactions pool
-  GetTransactionById u                     -> liftIO $ DBT.getTransactionById pool u
-  GetTransactionsByLocation locId          -> liftIO $ do
-    txs <- DBT.getAllTransactions pool
-    pure (filter (\tx -> transactionLocationId tx == locId) txs)
-  CreateTransaction tx                     -> liftIO $ DBT.createTransaction pool tx
-  UpdateTransaction u tx                   -> liftIO $ DBT.updateTransaction pool u tx
-  VoidTransaction u r                      -> liftIO $ DBT.voidTransaction pool u r
-  WriteRefund refund                       -> liftIO $
-    DBT.refundTransaction
-      pool
-      (Refund.refundReferenceTransactionId refund)
-      (Refund.refundId refund)
-      (Refund.refundReason refund)
-      (map Refund.itemId (Refund.refundItems refund))
-      (map Refund.paymentId (Refund.refundPayments refund))
-  ClearTransaction u                       -> liftIO $ DBT.clearTransaction pool u
-  FinalizeTransaction u                    -> liftIO $ DBT.finalizeTransaction pool u
-  AddTransactionItem ti                    -> liftIO $ try @InventoryException $ DBT.addTransactionItem pool ti
-  DeleteTransactionItem u                  -> liftIO $ DBT.deleteTransactionItem pool u
-  AddPayment p                             -> liftIO $ DBT.addPaymentTransaction pool p
-  DeletePayment u                          -> liftIO $ DBT.deletePaymentTransaction pool u
-  GetTxIdByItemId u                        -> liftIO $ DBT.getTransactionIdByItemId pool u
-  GetTxIdByPaymentId u                     -> liftIO $ DBT.getTransactionIdByPaymentId pool u
-  GetInventoryAvailability u               -> liftIO $ DBT.getInventoryAvailability pool u
-  CreateReservation a b c d e              -> liftIO $ DBRes.createInventoryReservation pool a b c d e
-  ReleaseReservation u                     -> liftIO $ DBRes.releaseInventoryReservation pool u
-  GetAllActiveReservations                 -> liftIO $ DBRes.getAllActiveReservations pool
+
+  GetSaleById uuid -> liftIO $ do
+    r <- DBTTyped.getTransactionByIdTyped pool uuid
+    pure (narrowToSale r)
+
+  GetRefundById uuid -> liftIO $ do
+    r <- DBTTyped.getTransactionByIdTyped pool uuid
+    pure (narrowToRefund r)
+
+  GetAllSales -> liftIO $ do
+    results <- DBTTyped.getAllTransactionsTyped pool
+    -- Decode failures are silently dropped. See critical notes.
+    pure [s | Right (Left s) <- results]
+
+  GetAllRefunds -> liftIO $ do
+    results <- DBTTyped.getAllTransactionsTyped pool
+    pure [r | Right (Right r) <- results]
+
+  GetSalesByLocation locId -> liftIO $ do
+    results <- DBTTyped.getTransactionsByLocationTyped pool locId
+    pure [s | Right (Left s) <- results]
+
+  GetRefundsByLocation locId -> liftIO $ do
+    results <- DBTTyped.getTransactionsByLocationTyped pool locId
+    pure [r | Right (Right r) <- results]
+
+  CreateSale sale -> liftIO $ do
+    let legacyTx = saleToLegacyTransaction sale
+    result <- DBT.createTransaction pool legacyTx
+    pure (expectSaleTx result)
+
+  UpdateSaleStatus txId status -> liftIO $
+    DBT.updateTransactionStatus pool txId status
+
+  VoidSale txId reason -> liftIO $ do
+    result <- DBT.voidTransaction pool txId reason
+    pure (expectSaleTx result)
+
+  WriteRefund refund -> liftIO $ do
+    result <- DBTRefund.writeTypedRefund pool refund
+    pure (expectRefundTx result)
+
+  ClearSale txId -> liftIO $
+    DBT.clearTransaction pool txId
+
+  FinalizeSale txId -> liftIO $ do
+    result <- DBT.finalizeTransaction pool txId
+    pure (expectSaleTx result)
+
+  AddSaleItem item -> liftIO $ do
+    let legacyItem = saleItemToLegacy item
+    res <- try @InventoryException $ DBT.addTransactionItem pool legacyItem
+    pure $ case res of
+      Left e            -> Left e
+      Right addedLegacy -> Right (expectSaleItem addedLegacy)
+
+  DeleteSaleItem itemId -> liftIO $
+    DBT.deleteTransactionItem pool itemId
+
+  AddSalePayment payment -> liftIO $ do
+    let legacyPayment = salePaymentToLegacy payment
+    result <- DBT.addPaymentTransaction pool legacyPayment
+    pure (expectSalePayment result)
+
+  DeleteSalePayment pymtId -> liftIO $
+    DBT.deletePaymentTransaction pool pymtId
+
+  GetTxIdByItemId u -> liftIO $ DBT.getTransactionIdByItemId pool u
+  GetTxIdByPaymentId u -> liftIO $ DBT.getTransactionIdByPaymentId pool u
+  GetInventoryAvailability u -> liftIO $ DBT.getInventoryAvailability pool u
+  CreateReservation a b c d e -> liftIO $ DBRes.createInventoryReservation pool a b c d e
+  ReleaseReservation u -> liftIO $ DBRes.releaseInventoryReservation pool u
+  GetAllActiveReservations -> liftIO $ DBRes.getAllActiveReservations pool
+
+-- ---------------------------------------------------------------------------
+-- Pure interpreter
+-- ---------------------------------------------------------------------------
 
 data ReservationEntry = ReservationEntry
   { reSku    :: UUID
@@ -204,6 +365,9 @@ data ReservationEntry = ReservationEntry
   }
   deriving (Show, Eq)
 
+-- | The store still holds legacy 'Transaction' rows. Typed effect ops
+-- convert at each touch. Pure-interpreter consumers (tests) never see
+-- the legacy representation directly.
 data TxStore = TxStore
   { tsTxs          :: Map UUID Transaction
   , tsItemToTx     :: Map UUID UUID
@@ -226,35 +390,71 @@ runTransactionDbPure ::
   Eff (TransactionDb : es) a ->
   Eff es (a, TxStore)
 runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
-  GetAllTransactions ->
-    gets @TxStore (Map.elems . tsTxs)
-  GetTransactionById txId ->
-    gets @TxStore (Map.lookup txId . tsTxs)
-  GetTransactionsByLocation locId ->
-    gets @TxStore (filter (\tx -> transactionLocationId tx == locId) . Map.elems . tsTxs)
-  CreateTransaction tx -> do
+
+  GetSaleById txId ->
+    gets @TxStore $ \st ->
+      narrowToSale (fmap fromLegacyTransaction (Map.lookup txId (tsTxs st)))
+
+  GetRefundById txId ->
+    gets @TxStore $ \st ->
+      narrowToRefund (fmap fromLegacyTransaction (Map.lookup txId (tsTxs st)))
+
+  GetAllSales ->
+    gets @TxStore $ \st ->
+      [s | tx <- Map.elems (tsTxs st), Right (Left s) <- [fromLegacyTransaction tx]]
+
+  GetAllRefunds ->
+    gets @TxStore $ \st ->
+      [r | tx <- Map.elems (tsTxs st), Right (Right r) <- [fromLegacyTransaction tx]]
+
+  GetSalesByLocation locId ->
+    gets @TxStore $ \st ->
+      [ s
+      | tx <- Map.elems (tsTxs st)
+      , transactionLocationId tx == locId
+      , Right (Left s) <- [fromLegacyTransaction tx]
+      ]
+
+  GetRefundsByLocation locId ->
+    gets @TxStore $ \st ->
+      [ r
+      | tx <- Map.elems (tsTxs st)
+      , transactionLocationId tx == locId
+      , Right (Right r) <- [fromLegacyTransaction tx]
+      ]
+
+  CreateSale sale -> do
+    let legacyTx = saleToLegacyTransaction sale
     modify @TxStore $ \st ->
       st
-        { tsTxs = Map.insert (transactionId tx) tx (tsTxs st)
+        { tsTxs = Map.insert (Sale.saleId sale) legacyTx (tsTxs st)
         , tsItemToTx =
             foldl
-              (\m i -> Map.insert (transactionItemId i) (transactionId tx) m)
+              (\m i -> Map.insert (Sale.itemId i) (Sale.saleId sale) m)
               (tsItemToTx st)
-              (transactionItems tx)
+              (Sale.saleItems sale)
         , tsPaymentToTx =
             foldl
-              (\m p -> Map.insert (paymentId p) (transactionId tx) m)
+              (\m p -> Map.insert (Sale.paymentId p) (Sale.saleId sale) m)
               (tsPaymentToTx st)
-              (transactionPayments tx)
+              (Sale.salePayments sale)
         }
-    pure tx
-  UpdateTransaction txId tx -> do
-    modify @TxStore $ \st -> st {tsTxs = Map.insert txId tx (tsTxs st)}
-    pure tx
-  VoidTransaction txId reason -> do
+    pure sale
+
+  UpdateSaleStatus txId nextStatus ->
+    modify @TxStore $ \st ->
+      st
+        { tsTxs =
+            Map.adjust
+              (\tx -> tx {transactionStatus = nextStatus})
+              txId
+              (tsTxs st)
+        }
+
+  VoidSale txId reason -> do
     st <- get @TxStore
     case Map.lookup txId (tsTxs st) of
-      Nothing -> error $ "VoidTransaction: not found: " <> show txId
+      Nothing -> error $ "VoidSale: not found: " <> show txId
       Just tx -> do
         let voided =
               tx
@@ -263,115 +463,65 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                 , transactionVoidReason = Just reason
                 }
         put @TxStore st {tsTxs = Map.insert txId voided (tsTxs st)}
-        pure voided
+        pure (expectSaleTx voided)
+
   WriteRefund refund -> do
-    -- Unpack the typed refund into the legacy 5-arg shape this interpreter
-    -- already knew how to handle. The negated subtotals/totals carried by
-    -- the typed value are IGNORED here; we re-derive them from the original
-    -- sale row in the in-memory store, matching the IO interpreter's
-    -- behavior (which dispatches to DBT.refundTransaction and likewise
-    -- re-derives from the SQL row). Both paths converging on the original
-    -- row keeps the pure and IO interpreters consistent. The price is that
-    -- toRefundTransaction's math doesn't have a single source of truth yet;
-    -- 2F-2 will fix that by writing from the typed value directly.
-    let txId     = Refund.refundReferenceTransactionId refund
-        refundId = Refund.refundId refund
-        reason   = Refund.refundReason refund
-        itemIds  = map Refund.itemId (Refund.refundItems refund)
-        pymtIds  = map Refund.paymentId (Refund.refundPayments refund)
+    let refundTxId    = Refund.refundId refund
+        origTxId      = Refund.refundReferenceTransactionId refund
+        reason        = Refund.refundReason refund
+        refundItemIds = map Refund.itemId (Refund.refundItems refund)
+        refundPymtIds = map Refund.paymentId (Refund.refundPayments refund)
+        refundLegacy  = refundToLegacyTransaction refund
+    -- We need refundToLegacyTransaction here. Until it's imported, fall
+    -- back to the conversion the test fixture actually needs:
+    --   import Types.Transaction.Conversion (refundToLegacyTransaction)
+    -- and replace the placeholder line with:
+    --   refundLegacy = refundToLegacyTransaction refund
     st <- get @TxStore
-    case Map.lookup txId (tsTxs st) of
-      Nothing   -> error $ "WriteRefund: not found: " <> show txId
+    case Map.lookup origTxId (tsTxs st) of
+      Nothing   -> error $ "WriteRefund: original sale not found: " <> show origTxId
       Just orig -> do
-        let origItems    = transactionItems orig
-            origPayments = transactionPayments orig
-        when (length itemIds /= length origItems) $
+        let origItemCount   = length (transactionItems orig)
+            origPymtCount   = length (transactionPayments orig)
+            refundItemCount = length refundItemIds
+            refundPymtCount = length refundPymtIds
+        when (refundItemCount /= origItemCount) $
           error $
-            "WriteRefund (pure): expected "
-              <> show (length origItems)
-              <> " item ids, got "
-              <> show (length itemIds)
-        when (length pymtIds /= length origPayments) $
+            "WriteRefund (pure): refund has " <> show refundItemCount
+              <> " items but original sale has " <> show origItemCount
+        when (refundPymtCount /= origPymtCount) $
           error $
-            "WriteRefund (pure): expected "
-              <> show (length origPayments)
-              <> " payment ids, got "
-              <> show (length pymtIds)
-        when (any (\iid -> Map.member iid (tsItemToTx st)) itemIds) $
-          error "WriteRefund (pure): refund item id collides with existing tracked item id"
-        when (any (\pid -> Map.member pid (tsPaymentToTx st)) pymtIds) $
-          error "WriteRefund (pure): refund payment id collides with existing tracked payment id"
-        now <- currentTime
-        let
-          refundItems =
-            zipWith
-              ( \newId i ->
-                  i
-                    { transactionItemId            = newId
-                    , transactionItemTransactionId = refundId
-                    , transactionItemSubtotal      = negate (transactionItemSubtotal i)
-                    , transactionItemTotal         = negate (transactionItemTotal i)
-                    }
-              )
-              itemIds
-              origItems
-          refundPayments =
-            zipWith
-              ( \newId p ->
-                  p
-                    { paymentId            = newId
-                    , paymentTransactionId = refundId
-                    , paymentAmount        = negate (paymentAmount p)
-                    , paymentTendered      = negate (paymentTendered p)
-                    , paymentChange        = negate (paymentChange p)
-                    }
-              )
-              pymtIds
-              origPayments
-          refundRow =
-            orig
-              { transactionId                     = refundId
-              , transactionStatus                 = Completed
-              , transactionCreated                = now
-              , transactionCompleted              = Just now
-              , transactionSubtotal               = negate (transactionSubtotal orig)
-              , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
-              , transactionTaxTotal               = negate (transactionTaxTotal orig)
-              , transactionTotal                  = negate (transactionTotal orig)
-              , transactionType                   = Return
-              , transactionIsVoided               = False
-              , transactionVoidReason             = Nothing
-              , transactionIsRefunded             = False
-              , transactionRefundReason           = Nothing
-              , transactionReferenceTransactionId = Just txId
-              , transactionNotes                  = Just $ "Refund: " <> T.pack (show txId)
-              , transactionItems                  = refundItems
-              , transactionPayments               = refundPayments
-              }
-          origUpdated =
-            orig
-              { transactionIsRefunded   = True
-              , transactionRefundReason = Just reason
-              }
+            "WriteRefund (pure): refund has " <> show refundPymtCount
+              <> " payments but original sale has " <> show origPymtCount
+        when (any (`Map.member` tsItemToTx st) refundItemIds) $
+          error "WriteRefund (pure): refund item id collides with existing"
+        when (any (`Map.member` tsPaymentToTx st) refundPymtIds) $
+          error "WriteRefund (pure): refund payment id collides with existing"
+        let origUpdated =
+              orig
+                { transactionIsRefunded   = True
+                , transactionRefundReason = Just reason
+                }
         put @TxStore
           st
             { tsTxs =
-                Map.insert refundId refundRow
-                  . Map.insert txId origUpdated
+                Map.insert refundTxId refundLegacy
+                  . Map.insert origTxId origUpdated
                   $ tsTxs st
             , tsItemToTx =
                 foldl
-                  (\m iid -> Map.insert iid refundId m)
+                  (\m iid -> Map.insert iid refundTxId m)
                   (tsItemToTx st)
-                  itemIds
+                  refundItemIds
             , tsPaymentToTx =
                 foldl
-                  (\m pid -> Map.insert pid refundId m)
+                  (\m pid -> Map.insert pid refundTxId m)
                   (tsPaymentToTx st)
-                  pymtIds
+                  refundPymtIds
             }
-        pure refundRow
-  ClearTransaction txId ->
+        pure refund
+
+  ClearSale txId ->
     modify @TxStore $ \st ->
       st
         { tsTxs =
@@ -398,11 +548,12 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
               )
               (tsReservations st)
         }
-  FinalizeTransaction txId -> do
+
+  FinalizeSale txId -> do
     st  <- get @TxStore
     now <- currentTime
     case Map.lookup txId (tsTxs st) of
-      Nothing -> error $ "FinalizeTransaction: not found: " <> show txId
+      Nothing -> error $ "FinalizeSale: not found: " <> show txId
       Just tx -> do
         let active =
               [ (k, r)
@@ -427,46 +578,47 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
             , tsReservations = newReservations
             , tsInventory    = newInventory
             }
-        pure finalized
-  AddTransactionItem ti -> do
+        pure (expectSaleTx finalized)
+
+  AddSaleItem item -> do
+    let legacyItem = saleItemToLegacy item
+        sku = Sale.itemMenuItemSku item
+        qty = saleQuantityCount (Sale.itemQuantity item)
     st <- get @TxStore
-    let
-      sku = transactionItemMenuItemSku ti
-      qty = transactionItemQuantity ti
     if not (Map.member sku (tsInventory st))
       then pure $ Left (ItemNotFound sku)
       else do
-        let
-          total     = fromMaybe 0 (Map.lookup sku (tsInventory st))
-          reserved  = activeReservedQty sku (tsReservations st)
-          available = total - reserved
+        let total     = fromMaybe 0 (Map.lookup sku (tsInventory st))
+            reserved  = activeReservedQty sku (tsReservations st)
+            available = total - reserved
         if available < qty
           then pure $ Left (InsufficientInventory sku qty available)
           else do
             resId <- nextUUID
-            let
-              txId   = transactionItemTransactionId ti
-              newRes = ReservationEntry sku txId qty "Reserved"
+            let txId   = Sale.itemTransactionId item
+                newRes = ReservationEntry sku txId qty "Reserved"
             modify @TxStore $ \s ->
               s
-                { tsItemToTx     = Map.insert (transactionItemId ti) txId (tsItemToTx s)
+                { tsItemToTx     = Map.insert (Sale.itemId item) txId (tsItemToTx s)
                 , tsReservations = Map.insert resId newRes (tsReservations s)
                 , tsTxs          =
                     Map.adjust
-                      (\tx -> tx {transactionItems = ti : transactionItems tx})
+                      (\tx -> tx {transactionItems = legacyItem : transactionItems tx})
                       txId
                       (tsTxs s)
                 }
-            pure $ Right ti
-  DeleteTransactionItem itemId -> do
+            pure $ Right item
+
+  DeleteSaleItem itemId -> do
     st <- get @TxStore
     case Map.lookup itemId (tsItemToTx st) of
       Nothing   -> pure ()
       Just txId -> do
-        let mItem =
+        let mLegacyItem =
               Map.lookup txId (tsTxs st) >>= \tx ->
-                find (\i -> transactionItemId i == itemId) (transactionItems tx)
-        case mItem of
+                lookup itemId
+                  [ (transactionItemId i, i) | i <- transactionItems tx ]
+        case mLegacyItem of
           Nothing   -> pure ()
           Just item -> do
             let sku = transactionItemMenuItemSku item
@@ -492,19 +644,23 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                       txId
                       (tsTxs s)
                 }
-  AddPayment p -> do
-    let txId = paymentTransactionId p
+
+  AddSalePayment payment -> do
+    let legacyPayment = salePaymentToLegacy payment
+        txId          = Sale.paymentTransactionId payment
     modify @TxStore $ \st ->
       st
-        { tsPaymentToTx = Map.insert (paymentId p) txId (tsPaymentToTx st)
+        { tsPaymentToTx =
+            Map.insert (Sale.paymentId payment) txId (tsPaymentToTx st)
         , tsTxs         =
             Map.adjust
-              (\tx -> tx {transactionPayments = p : transactionPayments tx})
+              (\tx -> tx {transactionPayments = legacyPayment : transactionPayments tx})
               txId
               (tsTxs st)
         }
-    pure p
-  DeletePayment pymtId -> do
+    pure payment
+
+  DeleteSalePayment pymtId -> do
     st <- get @TxStore
     case Map.lookup pymtId (tsPaymentToTx st) of
       Nothing   -> pure ()
@@ -523,15 +679,19 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                   txId
                   (tsTxs s)
             }
+
   GetTxIdByItemId itemId ->
     gets @TxStore (Map.lookup itemId . tsItemToTx)
+
   GetTxIdByPaymentId pymtId ->
     gets @TxStore (Map.lookup pymtId . tsPaymentToTx)
+
   GetInventoryAvailability sku -> do
     st <- get @TxStore
     case Map.lookup sku (tsInventory st) of
       Nothing    -> pure Nothing
       Just total -> pure $ Just (total, activeReservedQty sku (tsReservations st))
+
   CreateReservation resId itemSku txId qty _now ->
     modify @TxStore $ \st ->
       st
@@ -541,6 +701,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
               (ReservationEntry itemSku txId qty "Reserved")
               (tsReservations st)
         }
+
   ReleaseReservation resId -> do
     st <- get @TxStore
     case Map.lookup resId (tsReservations st) of
@@ -555,6 +716,7 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                 }
             pure True
           else pure False
+
   GetAllActiveReservations ->
     gets @TxStore $ \st ->
       [ InventoryReservation

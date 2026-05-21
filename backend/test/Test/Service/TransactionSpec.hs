@@ -1,6 +1,5 @@
--- Test/Service/TransactionSpec.hs
-
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
@@ -27,7 +26,13 @@ import qualified Service.Transaction as Svc
 import Types.Events.Domain
 import Types.Events
 import Types.Location (LocationId (..))
+import Types.Primitives.Money (refundMoneyCents, unsafeMkSaleMoney)
+import Types.Primitives.Quantity (unsafeMkSaleQuantity)
 import Types.Transaction
+import Types.Transaction.Conversion (saleItemToLegacy, salePaymentToLegacy)
+import qualified Types.Transaction.Refund as Refund
+import qualified Types.Transaction.Sale as Sale
+import Types.Transaction.Sale (itemId, itemMenuItemSku)
 
 -- ---------------------------------------------------------------------------
 -- Fixed UUIDs
@@ -95,33 +100,44 @@ mkTx status =
     , transactionNotes = Nothing
     }
 
-testItem :: TransactionItem
-testItem =
-  TransactionItem
-    { transactionItemId = itemUUID
-    , transactionItemTransactionId = txUUID
-    , transactionItemMenuItemSku = skuUUID
-    , transactionItemQuantity = 1
-    , transactionItemPricePerUnit = 1000
-    , transactionItemDiscounts = []
-    , transactionItemTaxes = []
-    , transactionItemSubtotal = 1000
-    , transactionItemTotal = 1000
+-- | Typed item fixture used in service-call arguments.
+testSaleItem :: Sale.Item
+testSaleItem =
+  Sale.Item
+    { itemId            = itemUUID
+    , itemTransactionId = txUUID
+    , itemMenuItemSku   = skuUUID
+    , itemQuantity      = unsafeMkSaleQuantity 1
+    , itemPricePerUnit  = unsafeMkSaleMoney 1000
+    , itemDiscounts     = []
+    , itemTaxes         = []
+    , itemSubtotal      = unsafeMkSaleMoney 1000
+    , itemTotal         = unsafeMkSaleMoney 1000
     }
 
-testPayment :: PaymentTransaction
-testPayment =
-  PaymentTransaction
-    { paymentId = pymtUUID
-    , paymentTransactionId = txUUID
-    , paymentMethod = Cash
-    , paymentAmount = 1000
-    , paymentTendered = 1000
-    , paymentChange = 0
-    , paymentReference = Nothing
-    , paymentApproved = True
+-- | Legacy item used inside store fixtures. Derived from the typed one
+-- so the two stay in sync.
+testItem :: TransactionItem
+testItem = saleItemToLegacy testSaleItem
+
+-- | Typed payment fixture used in service-call arguments.
+testSalePayment :: Sale.Payment
+testSalePayment =
+  Sale.Payment
+    { paymentId                = pymtUUID
+    , paymentTransactionId     = txUUID
+    , paymentMethod            = Cash
+    , paymentAmount            = unsafeMkSaleMoney 1000
+    , paymentTendered          = unsafeMkSaleMoney 1000
+    , paymentChange            = unsafeMkSaleMoney 0
+    , paymentReference         = Nothing
+    , paymentApproved          = True
     , paymentAuthorizationCode = Nothing
     }
+
+-- | Legacy payment used inside store fixtures.
+testPayment :: PaymentTransaction
+testPayment = salePaymentToLegacy testSalePayment
 
 storeWith :: TransactionStatus -> TxStore
 storeWith status =
@@ -148,9 +164,6 @@ storeWithPayment status =
         , tsInventory = Map.singleton skuUUID 10
         }
 
--- Completed tx with one item and one payment, suitable as a refund source.
--- Distinct from storeWithItem / storeWithPayment because the refund tests need
--- BOTH children present so we exercise the id-threading in both lists.
 storeWithItemAndPaymentCompleted :: TxStore
 storeWithItemAndPaymentCompleted =
   let tx =
@@ -244,38 +257,38 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
 
   describe "addItem — state machine guards" $ do
     it "succeeds from Created (transitions tx to InProgress)" $ do
-      item <- shouldSucceed $ runTest (storeWith Created) (Svc.addItem testItem)
-      transactionItemId item `shouldBe` itemUUID
+      item <- shouldSucceed $ runTest (storeWith Created) (Svc.addItem testSaleItem)
+      Sale.itemId item `shouldBe` itemUUID
 
     it "succeeds from InProgress" $ do
-      let item2 = testItem {transactionItemId = freshUUID, transactionItemMenuItemSku = skuUUID}
+      let item2 = testSaleItem {itemId = freshUUID, itemMenuItemSku = skuUUID}
       void $ shouldSucceed $ runTest (storeWith InProgress) (Svc.addItem item2)
 
     it "rejects from Completed with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Completed) (Svc.addItem testItem)
+        runTest (storeWith Completed) (Svc.addItem testSaleItem)
 
     it "rejects from Voided with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Voided) (Svc.addItem testItem)
+        runTest (storeWith Voided) (Svc.addItem testSaleItem)
 
     it "rejects from Refunded with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Refunded) (Svc.addItem testItem)
+        runTest (storeWith Refunded) (Svc.addItem testSaleItem)
 
   describe "addItem — DB-level errors" $ do
     it "returns 404 for non-existent transaction" $
       shouldFailWith 404 $
-        runTest emptyTxStore (Svc.addItem testItem)
+        runTest emptyTxStore (Svc.addItem testSaleItem)
 
     it "returns 404 when SKU not in inventory" $
       shouldFailWith 404 $
         runTest (storeWith Created) $
-          Svc.addItem testItem {transactionItemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
+          Svc.addItem testSaleItem {itemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
 
     it "returns 400 when insufficient inventory" $ do
       let store = (storeWith Created) {tsInventory = Map.singleton skuUUID 0}
-      shouldFailWith 400 $ runTest store (Svc.addItem testItem)
+      shouldFailWith 400 $ runTest store (Svc.addItem testSaleItem)
 
   describe "removeItem — state machine guards" $ do
     it "succeeds from InProgress" $
@@ -297,16 +310,16 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
 
   describe "addPayment — state machine guards" $ do
     it "succeeds from InProgress" $ do
-      p <- shouldSucceed $ runTest (storeWith InProgress) (Svc.addPayment testPayment)
-      paymentId p `shouldBe` pymtUUID
+      p <- shouldSucceed $ runTest (storeWith InProgress) (Svc.addPayment testSalePayment)
+      Sale.paymentId p `shouldBe` pymtUUID
 
     it "rejects from Created with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Created) (Svc.addPayment testPayment)
+        runTest (storeWith Created) (Svc.addPayment testSalePayment)
 
     it "rejects from Completed with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Completed) (Svc.addPayment testPayment)
+        runTest (storeWith Completed) (Svc.addPayment testSalePayment)
 
   describe "removePayment — state machine guards" $ do
     it "succeeds from InProgress" $
@@ -324,8 +337,8 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
 
   describe "finalizeTx — state machine guards" $ do
     it "succeeds from InProgress" $ do
-      tx <- shouldSucceed $ runTest (storeWith InProgress) (Svc.finalizeTx txUUID)
-      transactionStatus tx `shouldBe` Completed
+      sale <- shouldSucceed $ runTest (storeWith InProgress) (Svc.finalizeTx txUUID)
+      Sale.saleStatus sale `shouldBe` Completed
 
     it "rejects from Created with 409" $
       shouldFailWith 409 $
@@ -341,18 +354,18 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
 
   describe "voidTx — state machine guards" $ do
     it "succeeds from Created" $ do
-      tx <- shouldSucceed $ runTest (storeWith Created) (Svc.voidTx txUUID "test reason")
-      transactionStatus tx `shouldBe` Voided
-      transactionIsVoided tx `shouldBe` True
-      transactionVoidReason tx `shouldBe` Just "test reason"
+      sale <- shouldSucceed $ runTest (storeWith Created) (Svc.voidTx txUUID "test reason")
+      Sale.saleStatus     sale `shouldBe` Voided
+      Sale.saleIsVoided   sale `shouldBe` True
+      Sale.saleVoidReason sale `shouldBe` Just "test reason"
 
     it "succeeds from InProgress" $ do
-      tx <- shouldSucceed $ runTest (storeWith InProgress) (Svc.voidTx txUUID "fraud")
-      transactionIsVoided tx `shouldBe` True
+      sale <- shouldSucceed $ runTest (storeWith InProgress) (Svc.voidTx txUUID "fraud")
+      Sale.saleIsVoided sale `shouldBe` True
 
     it "succeeds from Completed" $ do
-      tx <- shouldSucceed $ runTest (storeWith Completed) (Svc.voidTx txUUID "error")
-      transactionStatus tx `shouldBe` Voided
+      sale <- shouldSucceed $ runTest (storeWith Completed) (Svc.voidTx txUUID "error")
+      Sale.saleStatus sale `shouldBe` Voided
 
     it "rejects from Voided with 409" $
       shouldFailWith 409 $
@@ -367,9 +380,13 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         runTest emptyTxStore (Svc.voidTx txUUID "reason")
 
   describe "refundTx — state machine guards" $ do
+    -- The result type is now 'Refund.RefundTransaction'; the
+    -- "is this a refund?" question is settled by the type system, so
+    -- we assert on the refund-specific fields instead.
     it "succeeds from Completed" $ do
-      tx <- shouldSucceed $ runTest (storeWith Completed) (Svc.refundTx txUUID "defective")
-      transactionType tx `shouldBe` Return
+      refund <- shouldSucceed $ runTest (storeWith Completed) (Svc.refundTx txUUID "defective")
+      Refund.refundReason                 refund `shouldBe` "defective"
+      Refund.refundReferenceTransactionId refund `shouldBe` txUUID
 
     it "rejects from InProgress with 409" $
       shouldFailWith 409 $
@@ -387,17 +404,12 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       shouldFailWith 404 $
         runTest emptyTxStore (Svc.refundTx txUUID "reason")
 
-  -- Bug fix: previously the refund flow reused original-sale child UUIDs for the
-  -- refund's items and payments, causing PK collision on insert and leaving FKs
-  -- pointing at the original tx. Service layer now generates fresh UUIDs via
-  -- GenUUID and threads them through. Pure interpreter mirrors the production
-  -- code path and rejects id collisions, so these tests catch a regression.
   describe "refundTx — child id safety" $ do
     it "refund items have ids distinct from the original sale's items" $ do
       refund <-
         shouldSucceed $
           runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
-      let refundItemIds = map transactionItemId (transactionItems refund)
+      let refundItemIds = map Refund.itemId (Refund.refundItems refund)
       length refundItemIds `shouldBe` 1
       refundItemIds `shouldSatisfy` notElem itemUUID
 
@@ -405,7 +417,7 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       refund <-
         shouldSucceed $
           runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
-      let refundPymtIds = map paymentId (transactionPayments refund)
+      let refundPymtIds = map Refund.paymentId (Refund.refundPayments refund)
       length refundPymtIds `shouldBe` 1
       refundPymtIds `shouldSatisfy` notElem pymtUUID
 
@@ -413,38 +425,38 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       refund <-
         shouldSucceed $
           runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
-      let refTxId = transactionId refund
+      let refTxId = Refund.refundId refund
       refTxId `shouldNotBe` txUUID
-      all (\i -> transactionItemTransactionId i == refTxId) (transactionItems refund)
+      all (\i -> Refund.itemTransactionId i == refTxId) (Refund.refundItems refund)
         `shouldBe` True
 
     it "refund payments reference the refund transaction, not the original" $ do
       refund <-
         shouldSucceed $
           runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
-      let refTxId = transactionId refund
-      all (\p -> paymentTransactionId p == refTxId) (transactionPayments refund)
+      let refTxId = Refund.refundId refund
+      all (\p -> Refund.paymentTransactionId p == refTxId) (Refund.refundPayments refund)
         `shouldBe` True
 
     it "refund item amounts are negated" $ do
       refund <-
         shouldSucceed $
           runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
-      map transactionItemSubtotal (transactionItems refund) `shouldBe` [-1000]
-      map transactionItemTotal    (transactionItems refund) `shouldBe` [-1000]
+      map (refundMoneyCents . Refund.itemSubtotal) (Refund.refundItems refund) `shouldBe` [-1000]
+      map (refundMoneyCents . Refund.itemTotal)    (Refund.refundItems refund) `shouldBe` [-1000]
 
     it "refund payment amounts are negated" $ do
       refund <-
         shouldSucceed $
           runTest storeWithItemAndPaymentCompleted (Svc.refundTx txUUID "defective")
-      map paymentAmount   (transactionPayments refund) `shouldBe` [-1000]
-      map paymentTendered (transactionPayments refund) `shouldBe` [-1000]
+      map (refundMoneyCents . Refund.paymentAmount)   (Refund.refundPayments refund) `shouldBe` [-1000]
+      map (refundMoneyCents . Refund.paymentTendered) (Refund.refundPayments refund) `shouldBe` [-1000]
 
   describe "store state after successful operations" $ do
     it "addItem reserves inventory" $ do
       let
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
-        action = Svc.addItem testItem >> getInventoryAvailability skuUUID
+        action = Svc.addItem testSaleItem >> getInventoryAvailability skuUUID
       result <- shouldSucceed $ runTest store action
       case result of
         Just (_, reserved) -> reserved `shouldBe` 1
@@ -452,10 +464,10 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
 
     it "two addItem calls consume two units" $ do
       let
-        item2  = testItem {transactionItemId = freshUUID}
+        item2  = testSaleItem {itemId = freshUUID}
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
-          _ <- Svc.addItem testItem
+          _ <- Svc.addItem testSaleItem
           _ <- Svc.addItem item2
           getInventoryAvailability skuUUID
       result <- shouldSucceed $ runTest store action
@@ -467,7 +479,7 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       let
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
-          _ <- Svc.addItem testItem
+          _ <- Svc.addItem testSaleItem
           Svc.removeItem itemUUID
           getInventoryAvailability skuUUID
       result <- shouldSucceed $ runTest store action
@@ -477,7 +489,7 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
 
   describe "event emission" $ do
     it "addItem emits TransactionItemAdded and PullRequestCreated on success" $ do
-      (result, evts) <- runTestWithEvents (storeWith Created) (Svc.addItem testItem)
+      (result, evts) <- runTestWithEvents (storeWith Created) (Svc.addItem testSaleItem)
       result `shouldSatisfy` either (const False) (const True)
       let txAdded     = [() | TransactionEvt (TransactionItemAdded {teTxId}) <- evts, teTxId == txUUID]
           pullCreated = [() | StockEvt (PullRequestCreated {}) <- evts]
@@ -485,13 +497,13 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       pullCreated `shouldSatisfy` (not . null)
 
     it "addItem emits no events on state machine rejection (Completed)" $ do
-      (_, evts) <- runTestWithEvents (storeWith Completed) (Svc.addItem testItem)
+      (_, evts) <- runTestWithEvents (storeWith Completed) (Svc.addItem testSaleItem)
       evts `shouldBe` []
 
     it "addItem emits no events when SKU not in inventory" $ do
       (_, evts) <-
         runTestWithEvents (storeWith Created) $
-          Svc.addItem testItem {transactionItemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
+          Svc.addItem testSaleItem {itemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
       evts `shouldBe` []
 
     it "voidTx emits TransactionVoided on success (no open pulls)" $ do
@@ -515,7 +527,7 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         _ -> expectationFailure $ "Expected [TransactionFinalized], got " <> show (length evts) <> " events"
 
     it "addPayment emits TransactionPaymentAdded on success" $ do
-      (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.addPayment testPayment)
+      (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.addPayment testSalePayment)
       result `shouldSatisfy` either (const False) (const True)
       case evts of
         [TransactionEvt (TransactionPaymentAdded {teTxId})] ->

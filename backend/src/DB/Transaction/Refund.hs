@@ -1,21 +1,29 @@
+-- src/DB/Transaction/Refund.hs
+
 {-# LANGUAGE DisambiguateRecordFields #-}
 
--- | Hasql/Rel8 row encoders and decoders for the refund-side
--- transaction line types.
+-- | Hasql/Rel8 row encoders and decoders for the refund-side transaction
+-- line types, plus the typed refund WRITE path.
 --
--- Mirrors 'DB.Transaction.Sale' for the refund types. Note that
--- 'itemPricePerUnit' is 'SaleMoney' on both sides (it's a non-negative
--- rate, not a directional flow), so it encodes and decodes the same
--- way regardless of which side this module belongs to. The aggregate
--- monetary fields ('itemSubtotal', 'itemTotal', 'discountAmount',
--- 'taxAmount', 'paymentAmount', etc.) are 'RefundMoney' — stored as
--- negative 'Int32' values in the DB.
+-- The line-level encoders / decoders mirror 'DB.Transaction.Sale'. The
+-- aggregate monetary fields are 'RefundMoney' — stored as negative
+-- 'Int32' values in the DB. 'itemPricePerUnit' is 'SaleMoney' on both
+-- sides (it's a non-negative rate, not a directional flow).
 --
--- 'itemQuantity' is 'RefundQuantity' — distinct from 'SaleQuantity'
--- at the type level but with the same non-negative invariant, so it
--- encodes to the same non-negative 'Int32' as a sale quantity would.
--- See the module documentation in 'Types.Primitives.Quantity' for the
--- rationale.
+-- 'refundTxDomainToRow' encodes a full typed refund as a
+-- 'TransactionRow' by going through the legacy 'Legacy.Transaction'
+-- shape via 'refundToLegacyTransaction'. The intermediate legacy value
+-- is throwaway; this composition is just DRY against the existing
+-- 'DBT.txDomainToRow'.
+--
+-- 'writeTypedRefund' is the typed counterpart of the legacy
+-- 'DB.Transaction.refundTransaction'. It takes a pre-built
+-- 'Refund.RefundTransaction' and writes it directly to the DB, then
+-- marks the original sale row as refunded. Unlike the legacy function,
+-- it does NOT re-load the original sale to re-derive negations; the
+-- typed value's pre-computed amounts go straight to the columns. The
+-- 'toRefundTransaction' computation is now the single source of truth
+-- for refund math.
 module DB.Transaction.Refund
   ( -- * Item
     itemDomainToRow
@@ -29,30 +37,35 @@ module DB.Transaction.Refund
     -- * Payment
   , paymentDomainToRow
   , paymentRowToDomain
+    -- * Transaction (refund-shaped)
+  , refundTxDomainToRow
+  , writeTypedRefund
   ) where
 
+import Control.Exception (throwIO)
+import Control.Monad (forM_)
 import Data.Scientific (fromFloatDigits)
 import qualified Data.Text as T
 import Data.UUID (UUID)
+import Data.UUID.V4 (nextRandom)
+import qualified Hasql.Session as Session
 import Rel8
 
-import DB.Schema (
-  DiscountRow (..),
-  PaymentRow (..),
-  TaxRow (..),
-  TransactionItemRow (..),
- )
+import DB.Database (DBPool, runSession)
+import DB.Schema
 import qualified DB.Transaction as DBT
-import Types.Primitives.Money (
-  refundMoneyCents,
-  saleMoneyCents,
-  unsafeMkRefundMoney,
-  unsafeMkSaleMoney,
- )
-import Types.Primitives.Quantity (
-  refundQuantityCount,
-  unsafeMkRefundQuantity,
- )
+import Types.Primitives.Money
+  ( refundMoneyCents
+  , saleMoneyCents
+  , unsafeMkRefundMoney
+  , unsafeMkSaleMoney
+  )
+import Types.Primitives.Quantity
+  ( refundQuantityCount
+  , unsafeMkRefundQuantity
+  )
+import qualified Types.Transaction as Legacy
+import Types.Transaction.Conversion (refundToLegacyTransaction)
 import qualified Types.Transaction.Refund as Refund
 
 --------------------------------------------------------------------------------
@@ -172,3 +185,129 @@ paymentRowToDomain row =
     , Refund.paymentApproved      = pymtApproved row
     , Refund.paymentAuthorizationCode = pymtAuthorizationCode row
     }
+
+--------------------------------------------------------------------------------
+-- Transaction (refund-shaped)
+
+-- | Encode a typed refund as a 'TransactionRow Expr' for insert.
+--
+-- Implemented by routing through 'refundToLegacyTransaction' and
+-- 'DBT.txDomainToRow'. The intermediate legacy value is throwaway; this
+-- avoids a parallel copy of the column construction logic.
+refundTxDomainToRow :: Refund.RefundTransaction -> TransactionRow Expr
+refundTxDomainToRow = DBT.txDomainToRow . refundToLegacyTransaction
+
+-- | Persist a typed 'Refund.RefundTransaction'.
+--
+-- Inserts the refund transaction row, its items (each with its taxes
+-- and discounts), and its payments, then marks the original sale row's
+-- @is_refunded@ flag. The amounts written are the typed value's pre-
+-- computed fields; nothing is re-derived from the original sale.
+--
+-- Atomicity: NOT atomic. Each insert and the final update each run in
+-- their own session. Matches the legacy 'DB.Transaction.refundTransaction'
+-- semantics. A crash mid-write leaves a partially-inserted refund or a
+-- refund without the original marked. Future cleanup: batch into one
+-- session under a SQL transaction.
+--
+-- Existence check: a one-row read against the original sale before any
+-- inserts, matching legacy behavior. Catches the narrow race where the
+-- sale was deleted between the Service-layer load and this call.
+--
+-- Return value: the typed refund converted back via
+-- 'refundToLegacyTransaction'. We do not re-read via 'hydrateTx'; the
+-- typed value already has every field that hydrate would produce, by
+-- construction.
+writeTypedRefund :: DBPool -> Refund.RefundTransaction -> IO Legacy.Transaction
+writeTypedRefund pool refund = do
+  let origTxId = Refund.refundReferenceTransactionId refund
+      reason   = Refund.refundReason refund
+
+  -- Existence check on the original sale. Race-narrow guard; the
+  -- service layer also loads the sale.
+  mOrig <- DBT.getTransactionById pool origTxId
+  case mOrig of
+    Nothing -> throwIO $ userError $ "Original transaction not found: " <> show origTxId
+    Just _  -> pure ()
+
+  -- 1. Insert the refund transaction row.
+  runSession pool $
+    Session.statement () $
+      run_ $
+        Rel8.insert $
+          Insert
+            { into       = transactionSchema
+            , rows       = values [refundTxDomainToRow refund]
+            , onConflict = Abort
+            , returning  = NoReturning
+            }
+
+  -- 2. Insert the refund items, each with its taxes and discounts.
+  forM_ (Refund.refundItems refund) $ \ri -> do
+    runSession pool $
+      Session.statement () $
+        run_ $
+          Rel8.insert $
+            Insert
+              { into       = transactionItemSchema
+              , rows       = values [itemDomainToRow ri]
+              , onConflict = Abort
+              , returning  = NoReturning
+              }
+    forM_ (Refund.itemTaxes ri) $ \tax -> do
+      taxId <- nextRandom
+      runSession pool $
+        Session.statement () $
+          run_ $
+            Rel8.insert $
+              Insert
+                { into       = taxSchema
+                , rows       = values [taxDomainToRow taxId (Refund.itemId ri) tax]
+                , onConflict = Abort
+                , returning  = NoReturning
+                }
+    forM_ (Refund.itemDiscounts ri) $ \disc -> do
+      discId <- nextRandom
+      runSession pool $
+        Session.statement () $
+          run_ $
+            Rel8.insert $
+              Insert
+                { into       = discountSchema
+                , rows       = values [discountDomainToRow discId (Refund.itemId ri) Nothing disc]
+                , onConflict = Abort
+                , returning  = NoReturning
+                }
+
+  -- 3. Insert the refund payments.
+  forM_ (Refund.refundPayments refund) $ \rp ->
+    runSession pool $
+      Session.statement () $
+        run_ $
+          Rel8.insert $
+            Insert
+              { into       = paymentSchema
+              , rows       = values [paymentDomainToRow rp]
+              , onConflict = Abort
+              , returning  = NoReturning
+              }
+
+  -- 4. Mark the original sale as refunded.
+  runSession pool $
+    Session.statement () $
+      run_ $
+        Rel8.update $
+          Update
+            { target      = transactionSchema
+            , from        = pure ()
+            , set         = \() row ->
+                row
+                  { txIsRefunded   = lit True
+                  , txRefundReason = lit (Just reason)
+                  }
+            , updateWhere = \() row -> DB.Schema.txId row ==. lit origTxId
+            , returning   = NoReturning
+            }
+
+  -- 5. Return the refund as a legacy 'Legacy.Transaction'.
+  pure (refundToLegacyTransaction refund)

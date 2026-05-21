@@ -12,25 +12,49 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import GHC.Generics (Generic)
 import Servant
+
 import Types.Location
 import Types.Transaction
+import qualified Types.Transaction.Refund as Refund
+import qualified Types.Transaction.Sale as Sale
 
 type AuthHeader = Header "Authorization" Text
 
-type TransactionAPI =
-  "transaction" :> AuthHeader :> Get '[JSON] [Transaction]
-    :<|> "transaction" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Transaction
-    :<|> "transaction" :> AuthHeader :> ReqBody '[JSON] Transaction :> Post '[JSON] Transaction
-    :<|> "transaction" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Transaction :> Put '[JSON] Transaction
-    :<|> "transaction" :> "void" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Transaction
-    :<|> "transaction" :> "refund" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Transaction
-    :<|> "transaction" :> "item" :> AuthHeader :> ReqBody '[JSON] TransactionItem :> Post '[JSON] TransactionItem
-    :<|> "transaction" :> "item" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
-    :<|> "transaction" :> "payment" :> AuthHeader :> ReqBody '[JSON] PaymentTransaction :> Post '[JSON] PaymentTransaction
-    :<|> "transaction" :> "payment" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
-    :<|> "transaction" :> "finalize" :> AuthHeader :> Capture "id" UUID :> Post '[JSON] Transaction
-    :<|> "transaction" :> "clear" :> AuthHeader :> Capture "id" UUID :> Post '[JSON] NoContent
-    :<|> "inventory" :> "available" :> AuthHeader :> Capture "sku" UUID :> Get '[JSON] AvailableInventory
+-- | Sale lifecycle and operations on sales.
+--
+-- The refund-of-a-sale operation lives here (it's an operation against
+-- a sale id) but returns a 'Refund.RefundTransaction', not a sale.
+-- Direct creation of refunds is intentionally not exposed; refunds are
+-- always derivative of an existing sale.
+--
+-- 'PUT /sale/:id' is a holdover whole-row update and bypasses the
+-- state machine. Audit consumers before relying on it; this endpoint
+-- is the next dead-code candidate.
+type SaleAPI =
+  "sale" :> AuthHeader :> Get '[JSON] [Sale.SaleTransaction]
+    :<|> "sale" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Sale.SaleTransaction
+    :<|> "sale" :> AuthHeader :> ReqBody '[JSON] Sale.SaleTransaction :> Post '[JSON] Sale.SaleTransaction
+    :<|> "sale" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Sale.SaleTransaction :> Put '[JSON] Sale.SaleTransaction
+    :<|> "sale" :> "void" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Sale.SaleTransaction
+    :<|> "sale" :> "refund" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Refund.RefundTransaction
+    :<|> "sale" :> "item" :> AuthHeader :> ReqBody '[JSON] Sale.Item :> Post '[JSON] Sale.Item
+    :<|> "sale" :> "item" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
+    :<|> "sale" :> "payment" :> AuthHeader :> ReqBody '[JSON] Sale.Payment :> Post '[JSON] Sale.Payment
+    :<|> "sale" :> "payment" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
+    :<|> "sale" :> "finalize" :> AuthHeader :> Capture "id" UUID :> Post '[JSON] Sale.SaleTransaction
+    :<|> "sale" :> "clear" :> AuthHeader :> Capture "id" UUID :> Post '[JSON] NoContent
+
+-- | Refunds are read-only via this API. New refunds come from
+-- @POST /sale/refund/:id@.
+type RefundAPI =
+  "refund" :> AuthHeader :> Get '[JSON] [Refund.RefundTransaction]
+    :<|> "refund" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Refund.RefundTransaction
+
+-- | Inventory reservation endpoints. Carried over from the legacy
+-- 'TransactionAPI'. The reservation types are not part of the typed
+-- transaction split and have not been refactored.
+type ReservationAPI =
+  "inventory" :> "available" :> AuthHeader :> Capture "sku" UUID :> Get '[JSON] AvailableInventory
     :<|> "inventory" :> "reserve" :> AuthHeader :> ReqBody '[JSON] ReservationRequest :> Post '[JSON] InventoryReservation
     :<|> "inventory" :> "release" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
 
@@ -56,7 +80,9 @@ type ComplianceAPI =
     :<|> "compliance" :> "report" :> AuthHeader :> ReqBody '[JSON] ComplianceReportRequest :> Post '[JSON] ComplianceReportResult
 
 type PosAPI =
-  TransactionAPI
+  SaleAPI
+    :<|> RefundAPI
+    :<|> ReservationAPI
     :<|> RegisterAPI
     :<|> LedgerAPI
     :<|> ComplianceAPI

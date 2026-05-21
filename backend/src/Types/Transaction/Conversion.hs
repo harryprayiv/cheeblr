@@ -1,56 +1,15 @@
--- src/Types/Transaction/Conversion.hs
-
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Conversions between the typed 'Sale.SaleTransaction' / 'Refund.RefundTransaction'
--- aggregates and the legacy untyped 'Legacy.Transaction', plus the typed
--- 'Sale' to 'Refund' direction used when issuing a refund.
---
--- Two directions:
---
--- [Sale to Refund] The typed conversion boundary that 2E-5 will use as
--- the named refund operation. 'toRefundTransaction' takes a
--- 'Sale.SaleTransaction', fresh UUIDs for the refund tx and each refund
--- child, a timestamp, and a reason, and produces a
--- 'Refund.RefundTransaction'. The amount-negation logic that used to live
--- inside 'DB.Transaction.refundTransaction' (and was duplicated in the pure
--- interpreter) now lives here as 'negateToRefund' calls at the typed
--- primitive layer.
---
--- [Legacy to Typed] 'fromLegacyTransaction' decodes the untyped
--- 'Legacy.Transaction' into 'Either Sale.SaleTransaction Refund.RefundTransaction'
--- based on 'Legacy.transactionType'. The outer 'Either Text' captures
--- conversion failures, which occur when:
---
---   * A sale-shaped legacy row carries a negative subtotal/total
---     ('SaleMoney' rejects negatives).
---   * A refund-shaped legacy row carries a positive subtotal/total
---     ('RefundMoney' rejects positives).
---   * A refund-shaped legacy row is missing required refund fields
---     ('transactionReferenceTransactionId', 'transactionRefundReason',
---     'transactionCompleted').
---
--- These failures should never happen on data we wrote ourselves; they
--- indicate either historical corruption or external mutation. Surfacing
--- them as 'Left' lets the DB hydration layer (2E-4) report the bad row
--- instead of silently producing an invariant-violating typed value.
---
--- Information loss in legacy-to-typed conversion (intentional):
---
---   * Sale-shaped legacy rows discard 'transactionReferenceTransactionId'.
---     Per the architecture decision, sales (including exchanges) do not
---     carry that field. Pre-existing data that uses it for exchanges loses
---     the link; record it elsewhere if you need it.
 module Types.Transaction.Conversion
-  ( -- * Sale to Refund
+  ( -- * Typed sale → typed refund
     toRefundItem
   , toRefundDiscount
   , toRefundTax
   , toRefundPayment
   , toRefundTransaction
 
-    -- * Legacy to typed
+    -- * Legacy → typed
   , fromLegacyTransaction
   , saleItemFromLegacy
   , refundItemFromLegacy
@@ -60,6 +19,21 @@ module Types.Transaction.Conversion
   , refundTaxFromLegacy
   , salePaymentFromLegacy
   , refundPaymentFromLegacy
+
+    -- * Typed refund → legacy
+  , refundToLegacyTransaction
+  , refundItemToLegacy
+  , refundDiscountToLegacy
+  , refundTaxToLegacy
+  , refundPaymentToLegacy
+
+    -- * Typed sale → legacy (2G-2)
+  , saleToLegacyTransaction
+  , saleItemToLegacy
+  , saleDiscountToLegacy
+  , saleTaxToLegacy
+  , salePaymentToLegacy
+  , saleTypeToLegacy
   ) where
 
 import Control.Monad (when)
@@ -67,6 +41,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
+import qualified Data.UUID as UUID
 
 import Types.Primitives.Money
 import Types.Primitives.Quantity
@@ -74,18 +49,10 @@ import qualified Types.Transaction as Legacy
 import qualified Types.Transaction.Refund as Refund
 import qualified Types.Transaction.Sale as Sale
 
---------------------------------------------------------------------------------
--- Sale to Refund
---------------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Typed sale → typed refund
+-- ---------------------------------------------------------------------------
 
--- | Convert a sale-side 'Sale.Item' into the refund-side shape with negated
--- aggregate amounts.
---
--- IDs are preserved; if the refund needs fresh IDs (it does for DB inserts
--- to avoid PK collision with the original sale), the caller overwrites
--- 'Refund.itemId' and 'Refund.itemTransactionId' after this call.
--- 'toRefundTransaction' does this in lockstep when it assembles the
--- aggregate.
 toRefundItem :: Sale.Item -> Refund.Item
 toRefundItem si =
   Refund.Item
@@ -132,26 +99,12 @@ toRefundPayment sp =
     , Refund.paymentAuthorizationCode = Sale.paymentAuthorizationCode sp
     }
 
--- | Construct a 'Refund.RefundTransaction' from a sale.
---
--- The caller supplies fresh UUIDs for the refund tx and for each refund line
--- item and payment, plus a timestamp and a reason. The item-id and
--- payment-id lists are positionally matched against the sale's children;
--- mismatched lengths return 'Left' with a diagnostic. Both new IDs replace
--- the original sale's IDs on the refund children, and
--- 'Refund.itemTransactionId' / 'Refund.paymentTransactionId' are repointed
--- at the new refund tx so the DB FKs are correct.
 toRefundTransaction
   :: UTCTime
-  -- ^ refund creation timestamp; also used for 'refundCompleted'
   -> UUID
-  -- ^ fresh refund transaction id
   -> [UUID]
-  -- ^ fresh refund item ids, one per sale item, in order
   -> [UUID]
-  -- ^ fresh refund payment ids, one per sale payment, in order
   -> Text
-  -- ^ reason
   -> Sale.SaleTransaction
   -> Either Text Refund.RefundTransaction
 toRefundTransaction now refTxId itemIds pymtIds reason sale = do
@@ -209,17 +162,10 @@ toRefundTransaction now refTxId itemIds pymtIds reason sale = do
       , Refund.refundNotes                  = Nothing
       }
 
---------------------------------------------------------------------------------
--- Legacy to typed
---------------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- Legacy → typed
+-- ---------------------------------------------------------------------------
 
--- | Decode a legacy 'Legacy.Transaction' into the typed Sale-or-Refund split.
---
--- Dispatches on 'Legacy.transactionType'. 'Legacy.Return' becomes a
--- 'Refund.RefundTransaction'; all other variants become a
--- 'Sale.SaleTransaction' with the corresponding 'Sale.SaleType'. Returns
--- 'Left' on any invariant violation surfaced by the typed-primitive smart
--- constructors (negative sale money, positive refund money, etc.).
 fromLegacyTransaction
   :: Legacy.Transaction
   -> Either Text (Either Sale.SaleTransaction Refund.RefundTransaction)
@@ -302,9 +248,6 @@ fromLegacyToRefund tx = do
       , Refund.refundReason                 = reason
       , Refund.refundNotes                  = Legacy.transactionNotes tx
       }
-
---------------------------------------------------------------------------------
--- Legacy line items
 
 saleItemFromLegacy :: Legacy.TransactionItem -> Either Text Sale.Item
 saleItemFromLegacy ti = do
@@ -428,9 +371,6 @@ refundPaymentFromLegacy p = do
       , Refund.paymentAuthorizationCode = Legacy.paymentAuthorizationCode p
       }
 
---------------------------------------------------------------------------------
--- Internal validation helpers
-
 saleMoneyOr :: Text -> Int -> Either Text SaleMoney
 saleMoneyOr fieldName n = case mkSaleMoney n of
   Just m  -> Right m
@@ -450,3 +390,179 @@ refundQuantityOr :: Text -> Int -> Either Text RefundQuantity
 refundQuantityOr fieldName n = case mkRefundQuantity n of
   Just q  -> Right q
   Nothing -> Left $ "refund " <> fieldName <> " must be >= 0, got " <> T.pack (show n)
+
+-- ---------------------------------------------------------------------------
+-- Typed refund → legacy
+-- ---------------------------------------------------------------------------
+
+refundToLegacyTransaction :: Refund.RefundTransaction -> Legacy.Transaction
+refundToLegacyTransaction r =
+  Legacy.Transaction
+    { Legacy.transactionId                     = Refund.refundId r
+    , Legacy.transactionStatus                 = Legacy.Completed
+    , Legacy.transactionCreated                = Refund.refundCreated r
+    , Legacy.transactionCompleted              = Just (Refund.refundCompleted r)
+    , Legacy.transactionCustomerId             = Refund.refundCustomerId r
+    , Legacy.transactionEmployeeId             = Refund.refundEmployeeId r
+    , Legacy.transactionRegisterId             = Refund.refundRegisterId r
+    , Legacy.transactionLocationId             = Refund.refundLocationId r
+    , Legacy.transactionItems                  = map refundItemToLegacy (Refund.refundItems r)
+    , Legacy.transactionPayments               = map refundPaymentToLegacy (Refund.refundPayments r)
+    , Legacy.transactionSubtotal               = refundMoneyCents (Refund.refundSubtotal r)
+    , Legacy.transactionDiscountTotal          = refundMoneyCents (Refund.refundDiscountTotal r)
+    , Legacy.transactionTaxTotal               = refundMoneyCents (Refund.refundTaxTotal r)
+    , Legacy.transactionTotal                  = refundMoneyCents (Refund.refundTotal r)
+    , Legacy.transactionType                   = Legacy.Return
+    , Legacy.transactionIsVoided               = False
+    , Legacy.transactionVoidReason             = Nothing
+    , Legacy.transactionIsRefunded             = False
+    , Legacy.transactionRefundReason           = Nothing
+    , Legacy.transactionReferenceTransactionId = Just (Refund.refundReferenceTransactionId r)
+    , Legacy.transactionNotes                  =
+        Just $
+          "Refund for transaction "
+            <> T.pack (UUID.toString (Refund.refundReferenceTransactionId r))
+            <> ": "
+            <> Refund.refundReason r
+    }
+
+refundItemToLegacy :: Refund.Item -> Legacy.TransactionItem
+refundItemToLegacy ri =
+  Legacy.TransactionItem
+    { Legacy.transactionItemId            = Refund.itemId ri
+    , Legacy.transactionItemTransactionId = Refund.itemTransactionId ri
+    , Legacy.transactionItemMenuItemSku   = Refund.itemMenuItemSku ri
+    , Legacy.transactionItemQuantity      = refundQuantityCount (Refund.itemQuantity ri)
+    , Legacy.transactionItemPricePerUnit  = saleMoneyCents (Refund.itemPricePerUnit ri)
+    , Legacy.transactionItemDiscounts     = map refundDiscountToLegacy (Refund.itemDiscounts ri)
+    , Legacy.transactionItemTaxes         = map refundTaxToLegacy (Refund.itemTaxes ri)
+    , Legacy.transactionItemSubtotal      = refundMoneyCents (Refund.itemSubtotal ri)
+    , Legacy.transactionItemTotal         = refundMoneyCents (Refund.itemTotal ri)
+    }
+
+refundDiscountToLegacy :: Refund.Discount -> Legacy.DiscountRecord
+refundDiscountToLegacy d =
+  Legacy.DiscountRecord
+    { Legacy.discountType       = Refund.discountType d
+    , Legacy.discountAmount     = refundMoneyCents (Refund.discountAmount d)
+    , Legacy.discountReason     = Refund.discountReason d
+    , Legacy.discountApprovedBy = Refund.discountApprovedBy d
+    }
+
+refundTaxToLegacy :: Refund.Tax -> Legacy.TaxRecord
+refundTaxToLegacy t =
+  Legacy.TaxRecord
+    { Legacy.taxCategory    = Refund.taxCategory t
+    , Legacy.taxRate        = Refund.taxRate t
+    , Legacy.taxAmount      = refundMoneyCents (Refund.taxAmount t)
+    , Legacy.taxDescription = Refund.taxDescription t
+    }
+
+refundPaymentToLegacy :: Refund.Payment -> Legacy.PaymentTransaction
+refundPaymentToLegacy p =
+  Legacy.PaymentTransaction
+    { Legacy.paymentId                = Refund.paymentId p
+    , Legacy.paymentTransactionId     = Refund.paymentTransactionId p
+    , Legacy.paymentMethod            = Refund.paymentMethod p
+    , Legacy.paymentAmount            = refundMoneyCents (Refund.paymentAmount p)
+    , Legacy.paymentTendered          = refundMoneyCents (Refund.paymentTendered p)
+    , Legacy.paymentChange            = refundMoneyCents (Refund.paymentChange p)
+    , Legacy.paymentReference         = Refund.paymentReference p
+    , Legacy.paymentApproved          = Refund.paymentApproved p
+    , Legacy.paymentAuthorizationCode = Refund.paymentAuthorizationCode p
+    }
+
+-- ---------------------------------------------------------------------------
+-- Typed sale → legacy (2G-2)
+-- ---------------------------------------------------------------------------
+
+-- | Convert a typed 'Sale.SaleTransaction' to a legacy 'Legacy.Transaction'.
+--
+-- The typed sale model does not carry a referenced transaction id, so
+-- 'transactionReferenceTransactionId' is always 'Nothing'. Sales are not
+-- voided-or-refunded at this layer (those flags are domain-level state
+-- on the typed value); they map across directly.
+--
+-- Round-trip property:
+-- @fromLegacyToSale st (saleToLegacyTransaction s) = Right s@
+-- holds when @Sale.saleType s == st@. The legacy projection has no slot
+-- for 'Sale.SaleType' separate from 'Legacy.TransactionType'; 'saleTypeToLegacy'
+-- is total and surjective onto the non-'Return' constructors.
+saleToLegacyTransaction :: Sale.SaleTransaction -> Legacy.Transaction
+saleToLegacyTransaction s =
+  Legacy.Transaction
+    { Legacy.transactionId                     = Sale.saleId s
+    , Legacy.transactionStatus                 = Sale.saleStatus s
+    , Legacy.transactionCreated                = Sale.saleCreated s
+    , Legacy.transactionCompleted              = Sale.saleCompleted s
+    , Legacy.transactionCustomerId             = Sale.saleCustomerId s
+    , Legacy.transactionEmployeeId             = Sale.saleEmployeeId s
+    , Legacy.transactionRegisterId             = Sale.saleRegisterId s
+    , Legacy.transactionLocationId             = Sale.saleLocationId s
+    , Legacy.transactionItems                  = map saleItemToLegacy (Sale.saleItems s)
+    , Legacy.transactionPayments               = map salePaymentToLegacy (Sale.salePayments s)
+    , Legacy.transactionSubtotal               = saleMoneyCents (Sale.saleSubtotal s)
+    , Legacy.transactionDiscountTotal          = saleMoneyCents (Sale.saleDiscountTotal s)
+    , Legacy.transactionTaxTotal               = saleMoneyCents (Sale.saleTaxTotal s)
+    , Legacy.transactionTotal                  = saleMoneyCents (Sale.saleTotal s)
+    , Legacy.transactionType                   = saleTypeToLegacy (Sale.saleType s)
+    , Legacy.transactionIsVoided               = Sale.saleIsVoided s
+    , Legacy.transactionVoidReason             = Sale.saleVoidReason s
+    , Legacy.transactionIsRefunded             = Sale.saleIsRefunded s
+    , Legacy.transactionRefundReason           = Sale.saleRefundReason s
+    , Legacy.transactionReferenceTransactionId = Nothing
+    , Legacy.transactionNotes                  = Sale.saleNotes s
+    }
+
+saleItemToLegacy :: Sale.Item -> Legacy.TransactionItem
+saleItemToLegacy si =
+  Legacy.TransactionItem
+    { Legacy.transactionItemId            = Sale.itemId si
+    , Legacy.transactionItemTransactionId = Sale.itemTransactionId si
+    , Legacy.transactionItemMenuItemSku   = Sale.itemMenuItemSku si
+    , Legacy.transactionItemQuantity      = saleQuantityCount (Sale.itemQuantity si)
+    , Legacy.transactionItemPricePerUnit  = saleMoneyCents (Sale.itemPricePerUnit si)
+    , Legacy.transactionItemDiscounts     = map saleDiscountToLegacy (Sale.itemDiscounts si)
+    , Legacy.transactionItemTaxes         = map saleTaxToLegacy (Sale.itemTaxes si)
+    , Legacy.transactionItemSubtotal      = saleMoneyCents (Sale.itemSubtotal si)
+    , Legacy.transactionItemTotal         = saleMoneyCents (Sale.itemTotal si)
+    }
+
+saleDiscountToLegacy :: Sale.Discount -> Legacy.DiscountRecord
+saleDiscountToLegacy d =
+  Legacy.DiscountRecord
+    { Legacy.discountType       = Sale.discountType d
+    , Legacy.discountAmount     = saleMoneyCents (Sale.discountAmount d)
+    , Legacy.discountReason     = Sale.discountReason d
+    , Legacy.discountApprovedBy = Sale.discountApprovedBy d
+    }
+
+saleTaxToLegacy :: Sale.Tax -> Legacy.TaxRecord
+saleTaxToLegacy t =
+  Legacy.TaxRecord
+    { Legacy.taxCategory    = Sale.taxCategory t
+    , Legacy.taxRate        = Sale.taxRate t
+    , Legacy.taxAmount      = saleMoneyCents (Sale.taxAmount t)
+    , Legacy.taxDescription = Sale.taxDescription t
+    }
+
+salePaymentToLegacy :: Sale.Payment -> Legacy.PaymentTransaction
+salePaymentToLegacy p =
+  Legacy.PaymentTransaction
+    { Legacy.paymentId                = Sale.paymentId p
+    , Legacy.paymentTransactionId     = Sale.paymentTransactionId p
+    , Legacy.paymentMethod            = Sale.paymentMethod p
+    , Legacy.paymentAmount            = saleMoneyCents (Sale.paymentAmount p)
+    , Legacy.paymentTendered          = saleMoneyCents (Sale.paymentTendered p)
+    , Legacy.paymentChange            = saleMoneyCents (Sale.paymentChange p)
+    , Legacy.paymentReference         = Sale.paymentReference p
+    , Legacy.paymentApproved          = Sale.paymentApproved p
+    , Legacy.paymentAuthorizationCode = Sale.paymentAuthorizationCode p
+    }
+
+saleTypeToLegacy :: Sale.SaleType -> Legacy.TransactionType
+saleTypeToLegacy Sale.StandardSale        = Legacy.Sale
+saleTypeToLegacy Sale.Exchange            = Legacy.Exchange
+saleTypeToLegacy Sale.InventoryAdjustment = Legacy.InventoryAdjustment
+saleTypeToLegacy Sale.ManagerComp         = Legacy.ManagerComp
+saleTypeToLegacy Sale.Administrative      = Legacy.Administrative

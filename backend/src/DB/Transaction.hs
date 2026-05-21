@@ -309,6 +309,20 @@ voidTransaction pool txId reason = do
     Just tx -> pure tx
     Nothing -> throwIO $ userError $ "Transaction not found after void: " <> show txId
 
+updateTransactionStatus :: DBPool -> UUID -> TransactionStatus -> IO ()
+updateTransactionStatus pool txId status =
+  runSession pool $
+    Session.statement () $
+      run_ $
+        Rel8.update $
+          Update
+            { target      = transactionSchema
+            , from        = pure ()
+            , set         = \() row -> row {txStatus = lit (showStatus status)}
+            , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+            , returning   = NoReturning
+            }
+
 refundTransaction ::
   DBPool ->
   UUID ->

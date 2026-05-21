@@ -33,7 +33,8 @@ spec = describe "API.OpenApi" $ do
     it "includes /inventory" $ hasPath "/inventory" `shouldBe` True
     it "includes /session" $ hasPath "/session" `shouldBe` True
     it "includes /graphql/inventory" $ hasPath "/graphql/inventory" `shouldBe` True
-    it "includes /transaction" $ hasPath "/transaction" `shouldBe` True
+    it "includes /sale" $ hasPath "/sale" `shouldBe` True
+    it "includes /refund" $ hasPath "/refund" `shouldBe` True
     it "includes /register" $ hasPath "/register" `shouldBe` True
     it "includes /openapi.json" $ hasPath "/openapi.json" `shouldBe` True
 
@@ -54,3 +55,15 @@ spec = describe "API.OpenApi" $ do
     it "includes Register" $ hasSchema "Register" `shouldBe` True
     it "includes GQLRequest" $ hasSchema "GQLRequest" `shouldBe` True
     it "includes GQLResponse" $ hasSchema "GQLResponse" `shouldBe` True
+
+  describe "component schemas (typed transactions)" $ do
+    it "includes SaleTransaction" $ hasSchema "SaleTransaction" `shouldBe` True
+    it "includes RefundTransaction" $ hasSchema "RefundTransaction" `shouldBe` True
+    it "includes SaleItem" $ hasSchema "SaleItem" `shouldBe` True
+    it "includes RefundItem" $ hasSchema "RefundItem" `shouldBe` True
+    it "includes SalePayment" $ hasSchema "SalePayment" `shouldBe` True
+    it "includes RefundPayment" $ hasSchema "RefundPayment" `shouldBe` True
+    it "includes SaleMoney" $ hasSchema "SaleMoney" `shouldBe` True
+    it "includes RefundMoney" $ hasSchema "RefundMoney" `shouldBe` True
+    it "includes SaleQuantity" $ hasSchema "SaleQuantity" `shouldBe` True
+    it "includes RefundQuantity" $ hasSchema "RefundQuantity" `shouldBe` True

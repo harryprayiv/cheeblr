@@ -1,21 +1,10 @@
--- src/Service/Transaction.hs
---
--- Service layer for transactions. Phase 2F: refundTx no longer discards the
--- typed Refund.RefundTransaction; it passes it to writeRefund.
---
--- Everything else is unchanged from 2E-5: typed internals, legacy I/O at
--- the service boundary. Mutating ops on refund-shaped rows are rejected as
--- 409 (loadSaleAndLegacy). Conversion failures split across 400 (input not
--- coercible to Sale.Item / Sale.Payment) and 500 (loaded DB row not
--- coercible by fromLegacyTransaction).
-
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeOperators #-}
 
 module Service.Transaction (
-  createTransactionSvc,
+  createSaleSvc,
   addItem,
   removeItem,
   addPayment,
@@ -25,9 +14,10 @@ module Service.Transaction (
   refundTx,
 ) where
 
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, when)
 import qualified Data.ByteString.Lazy as LBS
-import Data.Text (Text, pack)
+import Data.List (find)
+import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (UTCTime)
@@ -53,11 +43,14 @@ import State.SaleTransactionMachine
   , someTxStatus
   )
 import State.StockPullMachine (PullVertex (..))
+-- import Types.Primitives.Money (saleMoneyCents)
+import Types.Primitives.Quantity (saleQuantityCount)
+import qualified Types.Transaction.Refund as Refund
 import qualified Types.Transaction.Sale as Sale
 import Types.Transaction.Conversion
-  ( fromLegacyTransaction
-  , saleItemFromLegacy
-  , salePaymentFromLegacy
+  ( saleItemToLegacy
+  , salePaymentToLegacy
+  , saleToLegacyTransaction
   , toRefundTransaction
   )
 import Types.Events.Domain
@@ -65,27 +58,28 @@ import Types.Events
 import Types.Inventory (Inventory (..))
 import qualified Types.Inventory as TI
 import Types.Stock (PullRequest (..))
-import Types.Transaction
+-- import Types.Transaction
 
-loadSaleAndLegacy ::
+-- | Load only the typed Sale view of a transaction.
+loadSale ::
   (TransactionDb :> es, Error ServerError :> es) =>
   UUID ->
-  Eff es (Transaction, Sale.SaleTransaction)
-loadSaleAndLegacy txId = do
-  maybeTx <- getTransactionById txId
-  case maybeTx of
-    Nothing -> throwError err404 {errBody = "Transaction not found"}
-    Just legacy -> case fromLegacyTransaction legacy of
-      Left reason ->
-        throwError
-          err500
-            { errBody =
-                LBS.fromStrict . TE.encodeUtf8 $
-                  "Transaction failed typed conversion: " <> reason
-            }
-      Right (Left sale) -> pure (legacy, sale)
-      Right (Right _refund) ->
-        throwError err409 {errBody = "Cannot modify a refund transaction"}
+  Eff es Sale.SaleTransaction
+loadSale txId = do
+  result <- getSaleById txId
+  case result of
+    Right sale -> pure sale
+    Left TypedNotFound ->
+      throwError err404 {errBody = "Transaction not found"}
+    Left (TypedDecodeFailed e) ->
+      throwError
+        err500
+          { errBody =
+              LBS.fromStrict . TE.encodeUtf8 $
+                "Transaction failed typed conversion: " <> e
+          }
+    Left TypedWrongKind ->
+      throwError err409 {errBody = "Cannot modify a refund transaction"}
 
 guardSaleTxEvent :: (Error ServerError :> es) => SaleTxEvent -> Eff es ()
 guardSaleTxEvent (InvalidTxCommand msg) =
@@ -106,76 +100,45 @@ requireTxId lookupFn notFoundMsg entityId = do
 
 persistStatusChange ::
   (TransactionDb :> es) =>
-  Transaction ->
+  Sale.SaleTransaction ->
   SomeSaleTxState ->
   Eff es ()
-persistStatusChange legacy nextState = do
+persistStatusChange sale nextState = do
   let nextStatus = someTxStatus nextState
-  if transactionStatus legacy == nextStatus
-    then pure ()
-    else
-      void $
-        updateTransaction
-          (transactionId legacy)
-          legacy {transactionStatus = nextStatus}
+  when (Sale.saleStatus sale /= nextStatus) $
+    updateSaleStatus (Sale.saleId sale) nextStatus
 
-requireSaleItem ::
-  (Error ServerError :> es) =>
-  TransactionItem ->
-  Eff es Sale.Item
-requireSaleItem ti = case saleItemFromLegacy ti of
-  Right item -> pure item
-  Left reason ->
-    throwError
-      err400
-        { errBody =
-            LBS.fromStrict . TE.encodeUtf8 $
-              "Invalid sale item: " <> reason
-        }
-
-requireSalePayment ::
-  (Error ServerError :> es) =>
-  PaymentTransaction ->
-  Eff es Sale.Payment
-requireSalePayment p = case salePaymentFromLegacy p of
-  Right payment -> pure payment
-  Left reason ->
-    throwError
-      err400
-        { errBody =
-            LBS.fromStrict . TE.encodeUtf8 $
-              "Invalid sale payment: " <> reason
-        }
-
+-- | Best-effort creation of a stock pull for an item just added to a
+-- sale.
 createStockPull ::
   ( StockDb.StockDb :> es
   , EffInv.InventoryDb :> es
   , EventEmitter :> es
   , GenUUID :> es
   ) =>
-  Transaction ->
-  TransactionItem ->
+  Sale.SaleTransaction ->
+  Sale.Item ->
   UTCTime ->
   Eff es ()
-createStockPull tx ti now = do
+createStockPull sale item now = do
   pullId <- nextUUID
   Inventory invVec <- EffInv.getAllMenuItems
   let
-    itemSku  = transactionItemMenuItemSku ti
+    itemSku  = Sale.itemMenuItemSku item
     itemName =
       maybe (T.pack $ show itemSku) TI.name $
         V.find (\m -> TI.sku m == itemSku) invVec
     pr =
       PullRequest
         { prId             = pullId
-        , prTransactionId  = transactionItemTransactionId ti
+        , prTransactionId  = Sale.itemTransactionId item
         , prItemSku        = itemSku
         , prItemName       = itemName
-        , prQuantityNeeded = transactionItemQuantity ti
+        , prQuantityNeeded = saleQuantityCount (Sale.itemQuantity item)
         , prStatus         = PullPending
-        , prCashierId      = Just (transactionEmployeeId tx)
-        , prRegisterId     = Just (transactionRegisterId tx)
-        , prLocationId     = transactionLocationId tx
+        , prCashierId      = Just (Sale.saleEmployeeId sale)
+        , prRegisterId     = Just (Sale.saleRegisterId sale)
+        , prLocationId     = Sale.saleLocationId sale
         , prCreatedAt      = now
         , prUpdatedAt      = now
         , prFulfilledAt    = Nothing
@@ -185,20 +148,20 @@ createStockPull tx ti now = do
     Right () -> emit $ StockEvt $ PullRequestCreated {sePull = pr, seTimestamp = now}
     Left _   -> pure ()
 
-createTransactionSvc ::
+createSaleSvc ::
   ( TransactionDb :> es
   , EventEmitter :> es
   , Clock :> es
   ) =>
-  Transaction ->
-  Eff es Transaction
-createTransactionSvc tx = do
-  result <- createTransaction tx
-  now <- currentTime
+  Sale.SaleTransaction ->
+  Eff es Sale.SaleTransaction
+createSaleSvc sale = do
+  result <- createSale sale
+  now    <- currentTime
   emit $
     TransactionEvt $
       TransactionCreated
-        { teTx        = result
+        { teTx        = saleToLegacyTransaction result
         , teTimestamp = now
         }
   pure result
@@ -212,34 +175,33 @@ addItem ::
   , GenUUID :> es
   , Error ServerError :> es
   ) =>
-  TransactionItem ->
-  Eff es TransactionItem
+  Sale.Item ->
+  Eff es Sale.Item
 addItem item = do
-  saleItem <- requireSaleItem item
-  (legacy, sale) <- loadSaleAndLegacy (transactionItemTransactionId item)
+  sale <- loadSale (Sale.itemTransactionId item)
   let someState        = fromSaleTransaction sale
-      (evt, nextState) = runTxCommand someState (AddItemCmd saleItem)
+      (evt, nextState) = runTxCommand someState (AddItemCmd item)
   guardSaleTxEvent evt
-  persistStatusChange legacy nextState
-  result <- addTransactionItem item
+  persistStatusChange sale nextState
+  result <- addSaleItem item
   case result of
-    Right ti -> do
+    Right addedItem -> do
       now <- currentTime
       emit $
         TransactionEvt $
           TransactionItemAdded
-            { teTxId      = transactionItemTransactionId item
-            , teItem      = ti
+            { teTxId      = Sale.itemTransactionId item
+            , teItem      = saleItemToLegacy addedItem
             , teTimestamp = now
             }
-      createStockPull legacy ti now
-      pure ti
+      createStockPull sale addedItem now
+      pure addedItem
     Left (ItemNotFound sku) ->
       throwError
         err404
           { errBody =
               LBS.fromStrict . TE.encodeUtf8 $
-                "Item not found: " <> pack (show sku)
+                "Item not found: " <> T.pack (show sku)
           }
     Left (InsufficientInventory sku requested available) ->
       throwError
@@ -247,11 +209,11 @@ addItem item = do
           { errBody =
               LBS.fromStrict . TE.encodeUtf8 $
                 "Insufficient inventory for "
-                  <> pack (show sku)
+                  <> T.pack (show sku)
                   <> ": "
-                  <> pack (show available)
+                  <> T.pack (show available)
                   <> " available, "
-                  <> pack (show requested)
+                  <> T.pack (show requested)
                   <> " requested"
           }
 
@@ -266,27 +228,24 @@ removeItem ::
   Eff es ()
 removeItem itemId = do
   txId <- requireTxId getTxIdByItemId "Item not found" itemId
-  (legacy, sale) <- loadSaleAndLegacy txId
+  sale <- loadSale txId
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState (RemoveItemCmd itemId)
   guardSaleTxEvent evt
-  let mItem =
-        foldr
-          (\i acc -> if transactionItemId i == itemId then Just i else acc)
-          Nothing
-          (transactionItems legacy)
-  deleteTransactionItem itemId
+  let mItem = find (\i -> Sale.itemId i == itemId) (Sale.saleItems sale)
+  deleteSaleItem itemId
   now <- currentTime
   case mItem of
     Just item -> do
-      let itemSku = transactionItemMenuItemSku item
+      let itemSku = Sale.itemMenuItemSku item
+          itemQty = saleQuantityCount (Sale.itemQuantity item)
       emit $
         TransactionEvt $
           TransactionItemRemoved
             { teTxId      = txId
             , teItemId    = itemId
             , teItemSku   = itemSku
-            , teQty       = transactionItemQuantity item
+            , teQty       = itemQty
             , teTimestamp = now
             }
       pulls <- StockDb.getPullsByTransaction txId
@@ -314,21 +273,20 @@ addPayment ::
   , Clock :> es
   , Error ServerError :> es
   ) =>
-  PaymentTransaction ->
-  Eff es PaymentTransaction
+  Sale.Payment ->
+  Eff es Sale.Payment
 addPayment payment = do
-  salePayment <- requireSalePayment payment
-  (_, sale)   <- loadSaleAndLegacy (paymentTransactionId payment)
+  sale <- loadSale (Sale.paymentTransactionId payment)
   let someState = fromSaleTransaction sale
-      (evt, _)  = runTxCommand someState (AddPaymentCmd salePayment)
+      (evt, _)  = runTxCommand someState (AddPaymentCmd payment)
   guardSaleTxEvent evt
-  result <- addPaymentTransaction payment
+  result <- addSalePayment payment
   now    <- currentTime
   emit $
     TransactionEvt $
       TransactionPaymentAdded
-        { teTxId      = paymentTransactionId payment
-        , tePayment   = result
+        { teTxId      = Sale.paymentTransactionId payment
+        , tePayment   = salePaymentToLegacy result
         , teTimestamp = now
         }
   pure result
@@ -342,12 +300,12 @@ removePayment ::
   UUID ->
   Eff es ()
 removePayment pymtId = do
-  txId      <- requireTxId getTxIdByPaymentId "Payment not found" pymtId
-  (_, sale) <- loadSaleAndLegacy txId
+  txId <- requireTxId getTxIdByPaymentId "Payment not found" pymtId
+  sale <- loadSale txId
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState (RemovePaymentCmd pymtId)
   guardSaleTxEvent evt
-  deletePaymentTransaction pymtId
+  deleteSalePayment pymtId
   now <- currentTime
   emit $
     TransactionEvt $
@@ -364,19 +322,19 @@ finalizeTx ::
   , Error ServerError :> es
   ) =>
   UUID ->
-  Eff es Transaction
+  Eff es Sale.SaleTransaction
 finalizeTx txId = do
-  (_, sale) <- loadSaleAndLegacy txId
+  sale <- loadSale txId
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState FinalizeCmd
   guardSaleTxEvent evt
-  result <- finalizeTransaction txId
+  result <- finalizeSale txId
   now    <- currentTime
   emit $
     TransactionEvt $
       TransactionFinalized
         { teTxId      = txId
-        , teTx        = result
+        , teTx        = saleToLegacyTransaction result
         , teTimestamp = now
         }
   pure result
@@ -390,14 +348,14 @@ voidTx ::
   ) =>
   UUID ->
   Text ->
-  Eff es Transaction
+  Eff es Sale.SaleTransaction
 voidTx txId reason = do
-  (_, sale) <- loadSaleAndLegacy txId
+  sale <- loadSale txId
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState (VoidCmd reason)
   guardSaleTxEvent evt
   pulls  <- StockDb.getPullsByTransaction txId
-  result <- voidTransaction txId reason
+  result <- voidSale txId reason
   now    <- currentTime
   emit $
     TransactionEvt $
@@ -419,20 +377,6 @@ voidTx txId reason = do
             }
   pure result
 
--- | Refund a sale.
---
--- Phase 2F: typed conversion result now flows downstream.
---
--- toRefundTransaction produces a Refund.RefundTransaction value, which is
--- passed to writeRefund. The previous "compute then discard" pattern is gone.
--- The IO interpreter for WriteRefund still calls the legacy DBT.refundTransaction
--- under the hood; the SQL hasn't changed yet. What HAS changed is that the
--- typed value is now a first-class participant in the call graph rather than
--- a validation-only side-effect.
---
--- Conversion failures (toRefundTransaction returns Left) surface as 500
--- because they indicate the sale-as-loaded cannot be coherently expressed
--- as a refund, which is data-shape failure rather than user error.
 refundTx ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -442,9 +386,9 @@ refundTx ::
   ) =>
   UUID ->
   Text ->
-  Eff es Transaction
+  Eff es Refund.RefundTransaction
 refundTx txId reason = do
-  (_, sale)     <- loadSaleAndLegacy txId
+  sale          <- loadSale txId
   refundId      <- nextUUID
   refundItemIds <- mapM (const nextUUID) (Sale.saleItems sale)
   refundPymtIds <- mapM (const nextUUID) (Sale.salePayments sale)
