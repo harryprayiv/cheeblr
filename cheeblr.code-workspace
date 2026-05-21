@@ -1,23 +1,23 @@
 {
   "folders": [
     {
-      "name": "PS_frontend",
+      "name": "PS Frontend",
       "path": "frontend"
     },
     {
-      "name": "HS_backend",
+      "name": "HS Backend",
       "path": "backend"
     },
     {
       "name": "nix",
       "path": "nix"
     },
-    // {
-    //   "name": "Helpers",
-    //   "path": "script"
-    // },
     {
-      "name": "Root",
+      "name": "tools",
+      "path": "script"
+    },
+    {
+      "name": "/",
       "path": "./"
     }
   ],
