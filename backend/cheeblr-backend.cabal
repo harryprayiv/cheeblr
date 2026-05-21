@@ -1,6 +1,6 @@
 cabal-version: 3.14
 name: cheeblr-backend
-version: 0.0.0.6
+version: 0.0.0.7
 category: web
 author: Harry Pray IV
 maintainer: harryprayiv@harryprayiv.com
