@@ -51,6 +51,7 @@ module Effect.TransactionDb (
   runTransactionDbPure,
 ) where
 
+
 import Control.Exception (try)
 import Control.Monad (when)
 import qualified Data.Map.Strict as Map
@@ -472,11 +473,6 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
         refundItemIds = map Refund.itemId (Refund.refundItems refund)
         refundPymtIds = map Refund.paymentId (Refund.refundPayments refund)
         refundLegacy  = refundToLegacyTransaction refund
-    -- We need refundToLegacyTransaction here. Until it's imported, fall
-    -- back to the conversion the test fixture actually needs:
-    --   import Types.Transaction.Conversion (refundToLegacyTransaction)
-    -- and replace the placeholder line with:
-    --   refundLegacy = refundToLegacyTransaction refund
     st <- get @TxStore
     case Map.lookup origTxId (tsTxs st) of
       Nothing   -> error $ "WriteRefund: original sale not found: " <> show origTxId

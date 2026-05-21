@@ -7,14 +7,14 @@
 module DB.Transaction where
 
 import Control.Exception (Exception, throwIO)
-import Control.Monad (forM_, when)
+import Control.Monad (forM_)
 import Data.Int (Int32)
 import Data.Scientific (fromFloatDigits)
-import Data.Text (Text, pack)
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime)
 import Data.Typeable (Typeable)
-import Data.UUID (UUID, toString)
+import Data.UUID (UUID)
 import Data.UUID.V4 (nextRandom)
 import qualified Hasql.Session as Session
 import Rel8
@@ -268,23 +268,23 @@ insertPaymentTransaction pool payment = do
             }
   pure payment
 
-updateTransaction :: DBPool -> UUID -> Transaction -> IO Transaction
-updateTransaction pool txId tx = do
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.update $
-          Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() _ -> txDomainToRow tx
-            , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
-            }
-  mTx <- getTransactionById pool txId
-  case mTx of
-    Just updated -> pure updated
-    Nothing      -> throwIO $ userError $ "Transaction not found after update: " <> show txId
+-- updateTransaction :: DBPool -> UUID -> Transaction -> IO Transaction
+-- updateTransaction pool txId tx = do
+--   runSession pool $
+--     Session.statement () $
+--       run_ $
+--         Rel8.update $
+--           Update
+--             { target      = transactionSchema
+--             , from        = pure ()
+--             , set         = \() _ -> txDomainToRow tx
+--             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+--             , returning   = NoReturning
+--             }
+--   mTx <- getTransactionById pool txId
+--   case mTx of
+--     Just updated -> pure updated
+--     Nothing      -> throwIO $ userError $ "Transaction not found after update: " <> show txId
 
 voidTransaction :: DBPool -> UUID -> Text -> IO Transaction
 voidTransaction pool txId reason = do
@@ -322,97 +322,6 @@ updateTransactionStatus pool txId status =
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
             , returning   = NoReturning
             }
-
-refundTransaction ::
-  DBPool ->
-  UUID ->
-  UUID ->
-  Text ->
-  [UUID] ->
-  [UUID] ->
-  IO Transaction
-refundTransaction pool txId refundId reason refundItemIds refundPaymentIds = do
-  mOrig <- getTransactionById pool txId
-  case mOrig of
-    Nothing   -> throwIO $ userError $ "Original transaction not found: " <> show txId
-    Just orig -> do
-      let origItems    = transactionItems orig
-          origPayments = transactionPayments orig
-      when (length refundItemIds /= length origItems) $
-        throwIO $
-          userError $
-            "refundTransaction: expected "
-              <> show (length origItems)
-              <> " item ids, got "
-              <> show (length refundItemIds)
-      when (length refundPaymentIds /= length origPayments) $
-        throwIO $
-          userError $
-            "refundTransaction: expected "
-              <> show (length origPayments)
-              <> " payment ids, got "
-              <> show (length refundPaymentIds)
-      now <- getCurrentTime
-      let
-        refundItems =
-          zipWith
-            ( \newId i ->
-                (negateTransactionItem i)
-                  { transactionItemId            = newId
-                  , transactionItemTransactionId = refundId
-                  }
-            )
-            refundItemIds
-            origItems
-        refundPayments =
-          zipWith
-            ( \newId p ->
-                (negatePaymentTransaction p)
-                  { paymentId            = newId
-                  , paymentTransactionId = refundId
-                  }
-            )
-            refundPaymentIds
-            origPayments
-        refund =
-          orig
-            { transactionId                     = refundId
-            , transactionStatus                 = Completed
-            , transactionCreated                = now
-            , transactionCompleted              = Just now
-            , transactionSubtotal               = negate (transactionSubtotal orig)
-            , transactionDiscountTotal          = negate (transactionDiscountTotal orig)
-            , transactionTaxTotal               = negate (transactionTaxTotal orig)
-            , transactionTotal                  = negate (transactionTotal orig)
-            , transactionType                   = Return
-            , transactionIsVoided               = False
-            , transactionVoidReason             = Nothing
-            , transactionIsRefunded             = False
-            , transactionRefundReason           = Nothing
-            , transactionReferenceTransactionId = Just txId
-            , transactionNotes                  =
-                Just $
-                  "Refund for transaction " <> pack (toString txId) <> ": " <> reason
-            , transactionItems                  = refundItems
-            , transactionPayments               = refundPayments
-            }
-      newRefund <- createTransaction pool refund
-      runSession pool $
-        Session.statement () $
-          run_ $
-            Rel8.update $
-              Update
-                { target      = transactionSchema
-                , from        = pure ()
-                , set         = \() row ->
-                    row
-                      { txIsRefunded   = lit True
-                      , txRefundReason = lit (Just reason)
-                      }
-                , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-                , returning   = NoReturning
-                }
-      pure newRefund
 
 clearTransaction :: DBPool -> UUID -> IO ()
 clearTransaction pool txId = do

@@ -127,7 +127,6 @@ saleServer env =
   getAllSalesHandler
     :<|> getSaleHandler
     :<|> createSaleHandler
-    :<|> updateSaleHandler
     :<|> voidSaleHandler
     :<|> refundSaleHandler
     :<|> addSaleItemHandler
@@ -177,18 +176,18 @@ saleServer env =
     -- audited before relying on it. Status changes go through specific
     -- endpoints (void, finalize, etc.) which use 'UpdateSaleStatus' and
     -- the state machine.
-    updateSaleHandler :: Maybe Text -> UUID -> Sale.SaleTransaction -> Handler Sale.SaleTransaction
-    updateSaleHandler mHeader _txId sale = do
-      ctx <- requireAuth env mHeader
-      liftIO $ logHttpRequest logEnv "PUT" ("/sale/" <> showT (Sale.saleId sale))
-        (showT (auUserId (scUser ctx)))
-      -- No service-layer wrapper exists for whole-row replace, and the
-      -- old `updateTransaction` effect op was removed in 2H-3b. This
-      -- handler is currently a placeholder that 501s. Replace with a
-      -- state-machine-aware update if a real use case appears, or
-      -- delete the endpoint outright.
-      Servant.throwError err501
-        { errBody = "PUT /sale/:id: not implemented in the typed service layer" }
+    -- updateSaleHandler :: Maybe Text -> UUID -> Sale.SaleTransaction -> Handler Sale.SaleTransaction
+    -- updateSaleHandler mHeader _txId sale = do
+    --   ctx <- requireAuth env mHeader
+    --   liftIO $ logHttpRequest logEnv "PUT" ("/sale/" <> showT (Sale.saleId sale))
+    --     (showT (auUserId (scUser ctx)))
+    --   -- No service-layer wrapper exists for whole-row replace, and the
+    --   -- old `updateTransaction` effect op was removed in 2H-3b. This
+    --   -- handler is currently a placeholder that 501s. Replace with a
+    --   -- state-machine-aware update if a real use case appears, or
+    --   -- delete the endpoint outright.
+    --   Servant.throwError err501
+    --     { errBody = "PUT /sale/:id: not implemented in the typed service layer" }
 
     voidSaleHandler :: Maybe Text -> UUID -> Text -> Handler Sale.SaleTransaction
     voidSaleHandler mHeader txId reason = do

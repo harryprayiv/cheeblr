@@ -34,7 +34,6 @@ type SaleAPI =
   "sale" :> AuthHeader :> Get '[JSON] [Sale.SaleTransaction]
     :<|> "sale" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Sale.SaleTransaction
     :<|> "sale" :> AuthHeader :> ReqBody '[JSON] Sale.SaleTransaction :> Post '[JSON] Sale.SaleTransaction
-    :<|> "sale" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Sale.SaleTransaction :> Put '[JSON] Sale.SaleTransaction
     :<|> "sale" :> "void" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Sale.SaleTransaction
     :<|> "sale" :> "refund" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Refund.RefundTransaction
     :<|> "sale" :> "item" :> AuthHeader :> ReqBody '[JSON] Sale.Item :> Post '[JSON] Sale.Item
