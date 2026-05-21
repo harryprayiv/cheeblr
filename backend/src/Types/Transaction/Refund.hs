@@ -12,14 +12,12 @@ module Types.Transaction.Refund
   , RefundTransaction (..)
   ) where
 
-import qualified Data.Aeson as Aeson
-import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Char as Char
-import qualified Data.List as List
+import Data.Aeson (FromJSON, ToJSON)
 import Data.OpenApi
-  ( SchemaOptions (..)
+  ( SchemaOptions
   , ToSchema (..)
-  , fromAesonOptions
+  , datatypeNameModifier
+  , defaultSchemaOptions
   , genericDeclareNamedSchema
   )
 import Data.Scientific (Scientific)
@@ -110,105 +108,53 @@ instance IsTransaction RefundTransaction where
   txLocationId = refundLocationId
 
 -- ---------------------------------------------------------------------------
--- Wire format (Phase 2H-2)
+-- Wire format
 -- ---------------------------------------------------------------------------
 --
--- Same conventions as 'Types.Transaction.Sale'. Field names strip the
--- type-specific prefix; schema names are forced to "RefundItem",
--- "RefundDiscount", etc to avoid collision with the Sale-side schemas
--- in the OpenAPI definitions map.
+-- Same conventions as 'Types.Transaction.Sale': JSON field names match
+-- the Haskell record field names verbatim; schema names are forced to
+-- "RefundItem", "RefundDiscount", etc to avoid collision with the
+-- Sale-side schemas in the OpenAPI definitions map.
 
-stripFieldPrefix :: String -> String -> String
-stripFieldPrefix prefix s = case List.stripPrefix prefix s of
-  Just (c : rest) -> Char.toLower c : rest
-  Just []         -> s
-  Nothing         -> s
-
-itemAesonOptions :: Aeson.Options
-itemAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "item" }
-
-discountAesonOptions :: Aeson.Options
-discountAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "discount" }
-
-taxAesonOptions :: Aeson.Options
-taxAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "tax" }
-
-paymentAesonOptions :: Aeson.Options
-paymentAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "payment" }
-
-refundTransactionAesonOptions :: Aeson.Options
-refundTransactionAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "refund" }
-
-namedSchema :: String -> Aeson.Options -> SchemaOptions
-namedSchema schemaName opts =
-  (fromAesonOptions opts) { datatypeNameModifier = const schemaName }
+nameAs :: String -> SchemaOptions
+nameAs n = defaultSchemaOptions { datatypeNameModifier = const n }
 
 -- Item
 
-instance ToJSON Item where
-  toJSON     = Aeson.genericToJSON itemAesonOptions
-  toEncoding = Aeson.genericToEncoding itemAesonOptions
-
-instance FromJSON Item where
-  parseJSON = Aeson.genericParseJSON itemAesonOptions
+instance ToJSON Item
+instance FromJSON Item
 
 instance ToSchema Item where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "RefundItem" itemAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "RefundItem")
 
 -- Discount
 
-instance ToJSON Discount where
-  toJSON     = Aeson.genericToJSON discountAesonOptions
-  toEncoding = Aeson.genericToEncoding discountAesonOptions
-
-instance FromJSON Discount where
-  parseJSON = Aeson.genericParseJSON discountAesonOptions
+instance ToJSON Discount
+instance FromJSON Discount
 
 instance ToSchema Discount where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "RefundDiscount" discountAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "RefundDiscount")
 
 -- Tax
 
-instance ToJSON Tax where
-  toJSON     = Aeson.genericToJSON taxAesonOptions
-  toEncoding = Aeson.genericToEncoding taxAesonOptions
-
-instance FromJSON Tax where
-  parseJSON = Aeson.genericParseJSON taxAesonOptions
+instance ToJSON Tax
+instance FromJSON Tax
 
 instance ToSchema Tax where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "RefundTax" taxAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "RefundTax")
 
 -- Payment
 
-instance ToJSON Payment where
-  toJSON     = Aeson.genericToJSON paymentAesonOptions
-  toEncoding = Aeson.genericToEncoding paymentAesonOptions
-
-instance FromJSON Payment where
-  parseJSON = Aeson.genericParseJSON paymentAesonOptions
+instance ToJSON Payment
+instance FromJSON Payment
 
 instance ToSchema Payment where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "RefundPayment" paymentAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "RefundPayment")
 
 -- RefundTransaction
 
-instance ToJSON RefundTransaction where
-  toJSON     = Aeson.genericToJSON refundTransactionAesonOptions
-  toEncoding = Aeson.genericToEncoding refundTransactionAesonOptions
-
-instance FromJSON RefundTransaction where
-  parseJSON = Aeson.genericParseJSON refundTransactionAesonOptions
+instance ToJSON RefundTransaction
+instance FromJSON RefundTransaction
 
 instance ToSchema RefundTransaction where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "RefundTransaction" refundTransactionAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "RefundTransaction")

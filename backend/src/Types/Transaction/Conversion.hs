@@ -1,3 +1,4 @@
+-- FILE: backend/src/Types/Transaction/Conversion.hs
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -204,7 +205,7 @@ fromLegacyToSale st tx = do
       , Sale.saleDiscountTotal = discountTotal
       , Sale.saleTaxTotal      = taxTotal
       , Sale.saleTotal         = total
-      , Sale.saleType          = st
+      , Sale.saleKind          = st
       , Sale.saleIsVoided      = Legacy.transactionIsVoided tx
       , Sale.saleVoidReason    = Legacy.transactionVoidReason tx
       , Sale.saleIsRefunded    = Legacy.transactionIsRefunded tx
@@ -485,7 +486,7 @@ refundPaymentToLegacy p =
 --
 -- Round-trip property:
 -- @fromLegacyToSale st (saleToLegacyTransaction s) = Right s@
--- holds when @Sale.saleType s == st@. The legacy projection has no slot
+-- holds when @Sale.saleKind s == st@. The legacy projection has no slot
 -- for 'Sale.SaleType' separate from 'Legacy.TransactionType'; 'saleTypeToLegacy'
 -- is total and surjective onto the non-'Return' constructors.
 saleToLegacyTransaction :: Sale.SaleTransaction -> Legacy.Transaction
@@ -505,7 +506,7 @@ saleToLegacyTransaction s =
     , Legacy.transactionDiscountTotal          = saleMoneyCents (Sale.saleDiscountTotal s)
     , Legacy.transactionTaxTotal               = saleMoneyCents (Sale.saleTaxTotal s)
     , Legacy.transactionTotal                  = saleMoneyCents (Sale.saleTotal s)
-    , Legacy.transactionType                   = saleTypeToLegacy (Sale.saleType s)
+    , Legacy.transactionType                   = saleTypeToLegacy (Sale.saleKind s)
     , Legacy.transactionIsVoided               = Sale.saleIsVoided s
     , Legacy.transactionVoidReason             = Sale.saleVoidReason s
     , Legacy.transactionIsRefunded             = Sale.saleIsRefunded s

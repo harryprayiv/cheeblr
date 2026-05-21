@@ -13,14 +13,12 @@ module Types.Transaction.Sale
   , SaleType (..)
   ) where
 
-import qualified Data.Aeson as Aeson
-import Data.Aeson (FromJSON (..), ToJSON (..))
-import qualified Data.Char as Char
-import qualified Data.List as List
+import Data.Aeson (FromJSON, ToJSON)
 import Data.OpenApi
-  ( SchemaOptions (..)
+  ( SchemaOptions
   , ToSchema (..)
-  , fromAesonOptions
+  , datatypeNameModifier
+  , defaultSchemaOptions
   , genericDeclareNamedSchema
   )
 import Data.Scientific (Scientific)
@@ -104,7 +102,7 @@ data SaleTransaction = SaleTransaction
   , saleDiscountTotal :: SaleMoney
   , saleTaxTotal      :: SaleMoney
   , saleTotal         :: SaleMoney
-  , saleType          :: SaleType
+  , saleKind          :: SaleType
   , saleIsVoided      :: Bool
   , saleVoidReason    :: Maybe Text
   , saleIsRefunded    :: Bool
@@ -121,108 +119,61 @@ instance IsTransaction SaleTransaction where
   txLocationId = saleLocationId
 
 -- ---------------------------------------------------------------------------
--- Wire format (Phase 2H-2)
+-- Wire format
 -- ---------------------------------------------------------------------------
 --
--- Aeson field naming: strip the type-specific prefix and lowercase the
--- first letter. 'saleId' becomes "id", 'itemMenuItemSku' becomes
--- "menuItemSku", 'discountApprovedBy' becomes "approvedBy", etc. Matches
--- the convention already used in 'Types.Public.AvailableItem'.
+-- JSON field names match the Haskell record field names verbatim. This
+-- replaces the previous 'stripFieldPrefix' convention (which produced
+-- "id"/"menuItemSku"/etc.) — that convention collided with PureScript
+-- reserved words ('type' as a record label) and offered no value
+-- commensurate with the blast radius across consumers.
 --
--- OpenAPI schema naming: because 'Sale.Item' / 'Refund.Item' (and the
--- other line types) share Generic type names, every typed schema gets
--- an explicit 'datatypeNameModifier' to force a unique top-level name
--- ("SaleItem", "RefundItem", etc). Without this, the second-registered
--- schema would silently overwrite the first in the OpenAPI definitions
--- map.
+-- The 'saleType' field was renamed to 'saleKind' as part of this revert
+-- so the wire field is "saleKind" rather than "saleType".
 --
--- 'SaleType' uses default options. Its constructors are nullary so the
--- Aeson default (allNullaryToStringTag = True) yields plain string
--- values like "StandardSale" on the wire.
+-- OpenAPI schema naming still needs disambiguation: 'Sale.Item' and
+-- 'Refund.Item' (and the other line types) share Generic type names,
+-- so every typed schema gets an explicit 'datatypeNameModifier' to
+-- force a unique top-level name ("SaleItem", "RefundItem", etc).
+-- Without this, the second-registered schema would silently overwrite
+-- the first in the OpenAPI definitions map.
 
-stripFieldPrefix :: String -> String -> String
-stripFieldPrefix prefix s = case List.stripPrefix prefix s of
-  Just (c : rest) -> Char.toLower c : rest
-  Just []         -> s
-  Nothing         -> s
-
-itemAesonOptions :: Aeson.Options
-itemAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "item" }
-
-discountAesonOptions :: Aeson.Options
-discountAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "discount" }
-
-taxAesonOptions :: Aeson.Options
-taxAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "tax" }
-
-paymentAesonOptions :: Aeson.Options
-paymentAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "payment" }
-
-saleTransactionAesonOptions :: Aeson.Options
-saleTransactionAesonOptions = Aeson.defaultOptions
-  { Aeson.fieldLabelModifier = stripFieldPrefix "sale" }
-
-namedSchema :: String -> Aeson.Options -> SchemaOptions
-namedSchema schemaName opts =
-  (fromAesonOptions opts) { datatypeNameModifier = const schemaName }
+nameAs :: String -> SchemaOptions
+nameAs n = defaultSchemaOptions { datatypeNameModifier = const n }
 
 -- Item
 
-instance ToJSON Item where
-  toJSON     = Aeson.genericToJSON itemAesonOptions
-  toEncoding = Aeson.genericToEncoding itemAesonOptions
-
-instance FromJSON Item where
-  parseJSON = Aeson.genericParseJSON itemAesonOptions
+instance ToJSON Item
+instance FromJSON Item
 
 instance ToSchema Item where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "SaleItem" itemAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "SaleItem")
 
 -- Discount
 
-instance ToJSON Discount where
-  toJSON     = Aeson.genericToJSON discountAesonOptions
-  toEncoding = Aeson.genericToEncoding discountAesonOptions
-
-instance FromJSON Discount where
-  parseJSON = Aeson.genericParseJSON discountAesonOptions
+instance ToJSON Discount
+instance FromJSON Discount
 
 instance ToSchema Discount where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "SaleDiscount" discountAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "SaleDiscount")
 
 -- Tax
 
-instance ToJSON Tax where
-  toJSON     = Aeson.genericToJSON taxAesonOptions
-  toEncoding = Aeson.genericToEncoding taxAesonOptions
-
-instance FromJSON Tax where
-  parseJSON = Aeson.genericParseJSON taxAesonOptions
+instance ToJSON Tax
+instance FromJSON Tax
 
 instance ToSchema Tax where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "SaleTax" taxAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "SaleTax")
 
 -- Payment
 
-instance ToJSON Payment where
-  toJSON     = Aeson.genericToJSON paymentAesonOptions
-  toEncoding = Aeson.genericToEncoding paymentAesonOptions
-
-instance FromJSON Payment where
-  parseJSON = Aeson.genericParseJSON paymentAesonOptions
+instance ToJSON Payment
+instance FromJSON Payment
 
 instance ToSchema Payment where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "SalePayment" paymentAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "SalePayment")
 
--- SaleType (nullary sum type; default options)
+-- SaleType (nullary sum type; default options yield string-tag wire format)
 
 instance ToJSON SaleType
 instance FromJSON SaleType
@@ -230,13 +181,8 @@ instance ToSchema SaleType
 
 -- SaleTransaction
 
-instance ToJSON SaleTransaction where
-  toJSON     = Aeson.genericToJSON saleTransactionAesonOptions
-  toEncoding = Aeson.genericToEncoding saleTransactionAesonOptions
-
-instance FromJSON SaleTransaction where
-  parseJSON = Aeson.genericParseJSON saleTransactionAesonOptions
+instance ToJSON SaleTransaction
+instance FromJSON SaleTransaction
 
 instance ToSchema SaleTransaction where
-  declareNamedSchema =
-    genericDeclareNamedSchema (namedSchema "SaleTransaction" saleTransactionAesonOptions)
+  declareNamedSchema = genericDeclareNamedSchema (nameAs "SaleTransaction")
