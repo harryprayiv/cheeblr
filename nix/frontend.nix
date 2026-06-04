@@ -77,8 +77,19 @@ let
         cleanup_port "$VITE_PORT"
       fi
 
+      if [ ! -d node_modules ] || [ ! -x node_modules/.bin/vite ]; then
+        if [ -f package-lock.json ]; then
+          echo "node_modules missing or incomplete, running npm ci..."
+          npm ci
+        else
+          echo "ERROR: no package-lock.json found in $(pwd)."
+          echo "Pin vite in package.json and run 'npm install' once to generate the lock file."
+          exit 1
+        fi
+      fi
+
       export ${lib.toUpper name}_BASE_PATH="${toString ../.}"
-      npx vite --port "$VITE_PORT" --host --open
+      node_modules/.bin/vite --port "$VITE_PORT" --host --open
       trap 'cleanup_port "$VITE_PORT"' EXIT
     '';
   };
@@ -241,7 +252,7 @@ let
       tmux new-session -d -s dev-session
       tmux send-keys "cd ../backend && cabal run" C-m
       tmux split-window -h
-      tmux send-keys "cd ../frontend && npx vite --host $IP" C-m
+      tmux send-keys "cd ../frontend && node_modules/.bin/vite --host $IP" C-m
       tmux attach-session -t dev-session
     '';
   };

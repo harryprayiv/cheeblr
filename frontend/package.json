@@ -1,0 +1,7 @@
+{
+  "name": "cheeblr-frontend",
+  "private": true,
+  "devDependencies": {
+    "vite": "7.3.3"
+  }
+}
