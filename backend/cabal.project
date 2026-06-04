@@ -13,13 +13,6 @@ source-repository-package
   tag: 4a9a1ee353e6790267c10c96d5372efc522e9d1a
   --sha256: 0rlmmkylg0mzhxjbmhlb1vjkkfbyb7w40l43hln30lgfc1khldzv
 
--- Add these repositories if needed
--- repository head.hackage
---   url: https://head.hackage.haskell.org/
---   secure: True
---   root-keys: ...
---   key-threshold: 3
-
 package cheeblr-backend
   flags: +use-pkg-config
   ghc-options: -Wall

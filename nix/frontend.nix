@@ -42,7 +42,7 @@ let
 
   vite = pkgs.writeShellApplication {
     name = "vite";
-    runtimeInputs = with pkgs; [ nodejs-slim lsof ];
+    runtimeInputs = with pkgs; [ nodejs_latest lsof ];
     text = ''
       VITE_PORT=5173
 
@@ -207,7 +207,7 @@ let
   dev = pkgs.writeShellApplication {
     name = "dev";
     runtimeInputs = with pkgs; [
-      nodejs-slim
+      nodejs_latest
       spago-watch
       vite
       concurrent

@@ -15,7 +15,7 @@
     };
 
     CHaP = {
-      url = "github:IntersectMBO/cardano-haskell-packages?rev=4a6ecceb08b7980b0368907537a47215cae2e61f";
+      url = "github:IntersectMBO/cardano-haskell-packages?rev=fba092bc615bc3cd641d43d2dd01853ab62e1ab3";
       flake = false;
     };
 
