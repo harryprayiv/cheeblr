@@ -4,9 +4,6 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 
 [![License](https://www.gnu.org/graphics/agplv3-155x51.png)](https://www.gnu.org/licenses/agpl-3.0.html)
 
-[![Nix Environment](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/nix-check.yml)
-[![CI & Unit Tests](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/harryprayiv/cheeblr/actions/workflows/ci.yml)
-
 ## Documentation
 
 - [Frontend Documentation](./Docs/FrontEnd.md) — PureScript/Deku SPA architecture, async loading pattern, page modules, services
