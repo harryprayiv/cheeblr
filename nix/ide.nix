@@ -2,20 +2,23 @@
 
 let
   # Extension IDs only. We never build or wrap an editor here.
-  # The user's own codium/code picks these up from .vscode/extensions.json.
+  # NOTE: with mutableExtensionsDir = false in home-manager, these are
+  # documentation for anyone cloning the repo — they cannot install on a
+  # machine whose extension set is Nix-managed. Keep home-manager's list a
+  # superset of everything recommended here.
   langs = {
     nix = {
       recommendations = [ "jnoortheen.nix-ide" ];
       unwanted = [
-        "bbenoist.nix"              # competing .nix grammar
+        "bbenoist.nix"               # competing .nix grammar
         "arrterian.nix-env-selector" # obsolete under direnv
       ];
       settings = {
         "nix.enableLanguageServer" = true;
-        "nix.serverPath" = "nixd";           # bare name: resolved from devshell PATH
-        "nix.formatterPath" = "nixpkgs-fmt";
+        "nix.serverPath" = "nixd";       # bare name: resolved from devshell PATH
+        "nix.formatterPath" = "nixfmt";
         "nix.serverSettings" = {
-          nixd.formatting.command = [ "nixpkgs-fmt" ];
+          nixd.formatting.command = [ "nixfmt" ];
         };
         "[nix]" = {
           "editor.defaultFormatter" = "jnoortheen.nix-ide";
@@ -29,8 +32,8 @@ let
       unwanted = [ "hoovercj.haskell-linter" ]; # dead; HLS runs hlint natively
       settings = {
         # Critical: without this the extension downloads its own HLS via GHCup
-        # on first open and throws dialogs at you. haskell.nix already gives us
-        # a matching HLS on PATH.
+        # on first open and throws dialogs at you. haskell.nix already puts a
+        # matching HLS on PATH via inputsFrom.
         "haskell.manageHLS" = "PATH";
         "haskell.formattingProvider" = "fourmolu";
         "haskell.plugin.hlint.globalOn" = true;
@@ -56,7 +59,7 @@ let
         "purescript.spagoExe" = "spago";
         "purescript.formatter" = "purs-tidy";
         "purescript.addSpagoSources" = true;
-        "purescript.addNpmPath" = false;      # tools come from Nix, not node_modules
+        "purescript.addNpmPath" = false;   # tools come from Nix, not node_modules
         "purescript.autoStartPscIde" = true;
         "purescript.buildCommand" = "spago build --purs-args --json-errors";
         "[purescript]" = {
@@ -70,18 +73,10 @@ let
   base = {
     recommendations = [ "mkhl.direnv" ];
     unwanted = [
-      "cab404.vscode-direnv"   # conflicts with mkhl.direnv; source of reload popups
+      "cab404.vscode-direnv"  # conflicts with mkhl.direnv; source of reload popups
     ];
     settings = {
       "direnv.restart.automatic" = true;
-
-      # Stop the editor nagging about things Nix owns.
-      "extensions.autoUpdate" = false;
-      "extensions.autoCheckUpdates" = false;
-      "update.mode" = "none";
-      "telemetry.telemetryLevel" = "off";
-      "npm.autoDetect" = "off";
-      "typescript.tsc.autoDetect" = "off";
 
       # Build artefacts. Watching these is why the editor stalls and prompts.
       "files.watcherExclude" = {
@@ -138,7 +133,7 @@ in
   # LSP + formatter binaries the settings above refer to by bare name.
   # HLS / fourmolu / hlint / cabal come from the haskell.nix shell (inputsFrom).
   # purs / purs-tidy / purescript-language-server come from ps-tools in build.nix.
-  tools = [ pkgs.nixd pkgs.nixpkgs-fmt ];
+  tools = [ pkgs.nixd pkgs.nixfmt ];
 
   sync = pkgs.writeShellApplication {
     name = "${name}-ide-sync";
