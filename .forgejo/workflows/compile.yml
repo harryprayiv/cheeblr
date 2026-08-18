@@ -1,0 +1,102 @@
+# Cheeblr: does it compile? Nothing else.
+#
+# No tests, no postgres, no TLS. Two questions only: does the Haskell backend
+# build and does the PureScript frontend build. Everything else is test.yml.
+#
+# Builds the flake outputs — .#backend from haskell.nix, .#frontend from
+# purs-nix — not `cabal build` / `spago build`. Those are the devshell's
+# non-hermetic iteration path; these are what actually ship. Bare `nix build`
+# is not enough: packages.default is the backend exe, so it would leave the
+# frontend untested.
+#
+# Sized for a two-core, 7.8 GB machine that is also a desktop. GHC linking a
+# Servant backend is the heaviest thing this hardware ever does, so the settings
+# below trade wall-clock time for staying under the memory cap. A build that
+# takes hours and finishes is worth more than a fast one that gets OOM-killed.
+#
+# PREREQUISITE: the runner's nix user must be in trusted-users on blade.
+# haskell.nix cannot evaluate without allow-import-from-derivation, and
+# untrusted users have that silently ignored even with --accept-flake-config.
+# Same for extra-substituters — without cache.iog.io this builds GHC 9.10 from
+# source. Verify with: nix show-config | grep -E 'trusted-users|import-from'
+name: compile
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: compile-${{ github.ref }}
+  # A cold build is most of a day on this hardware. Do not throw one away
+  # because a README fix landed while it was running.
+  cancel-in-progress: false
+
+env:
+  HOME: /var/tmp/cheeblr-ci-home
+  # -j1 and one core. Two derivations each linking GHC will exceed the runner
+  # slice's memory cap, and on two cores under a CPUQuota there is nothing to
+  # gain from parallelism anyway: four threads fighting over one core is slower
+  # than one thread having it.
+  NIX_ARGS: >-
+    --accept-flake-config
+    --print-build-logs
+    --max-jobs 1
+    --cores 1
+
+jobs:
+  compile:
+    runs-on: nix
+    # 24h. The forgejo default is one hour and a cold GHC build on this hardware
+    # will exceed it. Raise further if a run is still killed at the ceiling.
+    timeout-minutes: 1440
+    steps:
+      - name: clone
+        run: |
+          set -eu
+          mkdir -p "$HOME"
+          export GIT_PAGER=cat PAGER=cat
+          repo="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY}}"
+          sha="${FORGEJO_SHA:-${GITHUB_SHA}}"
+          git clone "http://127.0.0.1:3000/${repo}.git" src
+          cd src
+          git checkout --detach "${sha}"
+          git --no-pager log --oneline -1
+
+      # haskell.nix fails at eval, not at build, after several minutes of
+      # silence. Its own step so the failure is legible.
+      - name: evaluate
+        run: |
+          set -eu
+          cd src
+          nix eval $NIX_ARGS --raw .#packages.x86_64-linux.backend.drvPath  > /dev/null
+          nix eval $NIX_ARGS --raw .#packages.x86_64-linux.frontend.drvPath > /dev/null
+          echo "evaluation ok"
+
+      # One invocation, so --keep-going does what its name says: a frontend
+      # failure is still reported when the backend succeeds. Separate out-links
+      # so the second build does not orphan the first one's closure — on this
+      # hardware an orphaned GHC build is most of a day thrown away.
+      - name: build
+        run: |
+          set -eu
+          cd src
+          nix build $NIX_ARGS --keep-going \
+            --out-link result-backend  .#backend \
+            --out-link result-frontend .#frontend
+
+      - name: report
+        if: always()
+        run: |
+          set -eu
+          cd src
+          rc=0
+          for l in result-backend result-frontend; do
+            if [ -e "$l" ]; then
+              printf '%-16s %s\n' "$l" "$(readlink -f "$l")"
+            else
+              printf '%-16s MISSING\n' "$l"
+              rc=1
+            fi
+          done
+          exit $rc

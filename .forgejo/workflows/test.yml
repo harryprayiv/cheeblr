@@ -1,0 +1,116 @@
+# Cheeblr: the test scripts, run exactly as the devshell runs them.
+#
+# Deliberately a thin wrapper. All logic lives in nix/test-suite.nix so that
+# `test-unit` here and `test-unit` at your prompt are the same binary. If a test
+# needs to change, change it there.
+#
+# Unlike compile.yml this is NOT hermetic: cabal and spago reach the network,
+# and an ephemeral postgres is started on a unix socket under TMPDIR. Slower and
+# flakier, so it is scheduled rather than attached to push until it is stable.
+#
+# The scripts cd into ./backend and ./frontend themselves, so every command must
+# run from the repo root. That is why each step is `cd src` and nothing deeper.
+name: test
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  HOME: /var/tmp/cheeblr-ci-home
+  # Short TMPDIR on purpose: test-suite.nix puts the postgres unix socket inside
+  # $TEST_PGDATA under $TMPDIR, and sockets are capped at 107 characters.
+  TMPDIR: /tmp
+  # mkcert writes its CA here. Must be writable and stable across steps.
+  CAROOT: /var/tmp/cheeblr-ci-home/.local/share/mkcert
+  NIX_ARGS: >-
+    --accept-flake-config
+    --print-build-logs
+    --max-jobs 1
+    --cores 1
+
+jobs:
+  test:
+    runs-on: nix
+    timeout-minutes: 1440
+    steps:
+      - name: clone
+        run: |
+          set -eu
+          mkdir -p "$HOME" "$CAROOT"
+          export GIT_PAGER=cat PAGER=cat
+          repo="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY}}"
+          sha="${FORGEJO_SHA:-${GITHUB_SHA}}"
+          git clone "http://127.0.0.1:3000/${repo}.git" src
+          cd src
+          git checkout --detach "${sha}"
+          git --no-pager log --oneline -1
+
+      # Realising the ci shell is itself a build. Doing it as its own step means
+      # a shell failure is reported as a shell failure, not as a confusing
+      # failure inside test-unit.
+      - name: ci shell
+        run: |
+          set -eu
+          cd src
+          nix develop $NIX_ARGS .#ci --command bash -eu -c '
+            ghc --version
+            cabal --version
+            purs --version
+            spago --version
+            postgres --version
+            mkcert -CAROOT
+          '
+
+      # Prebuild the backend so the integration steps use BACKEND_BIN and skip
+      # `cabal run`. Without this each integration script links the backend
+      # again, which on two cores is the whole runtime of the job.
+      - name: prebuild backend
+        run: |
+          set -eu
+          cd src
+          nix build $NIX_ARGS --out-link result-backend .#backend
+          ls -l result-backend/bin/
+
+      - name: unit
+        run: |
+          set -eu
+          cd src
+          nix develop $NIX_ARGS .#ci --command bash -eu -c '
+            cabal update
+            test-unit
+          '
+
+      # if: always() on the remaining suites. A red backend suite and a red
+      # frontend suite should both be visible from one run, not require a second
+      # run to discover the second failure.
+      - name: integration (http)
+        if: always()
+        run: |
+          set -eu
+          cd src
+          BACKEND_BIN="$PWD/result-backend/bin/cheeblr-backend" \
+            nix develop $NIX_ARGS .#ci --command test-integration
+
+      # test-integration-tls calls tls-setup, which runs mkcert. On a
+      # self-hosted runner there is no passwordless sudo for
+      # update-ca-certificates, so trust the CA by pointing the standard
+      # env vars at it instead of installing it system-wide.
+      - name: integration (tls)
+        if: always()
+        run: |
+          set -eu
+          cd src
+          nix develop $NIX_ARGS .#ci --command bash -eu -c 'mkcert -install || true'
+          if [ -f "$CAROOT/rootCA.pem" ]; then
+            export SSL_CERT_FILE="$CAROOT/rootCA.pem"
+            export NIX_SSL_CERT_FILE="$CAROOT/rootCA.pem"
+            export CURL_CA_BUNDLE="$CAROOT/rootCA.pem"
+          fi
+          BACKEND_BIN="$PWD/result-backend/bin/cheeblr-backend" \
+            nix develop $NIX_ARGS .#ci --command test-integration-tls

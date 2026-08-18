@@ -40,9 +40,7 @@ let
 
   testSuiteModule = import ./test-suite.nix { inherit pkgs name; };
 
-  # ── sops ──────────────────────────────────────────────────────────────
   sopsModule = import ./sops-dev.nix { inherit pkgs lib name; };
-  # ──────────────────────────────────────────────────────────────────────
 
   manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
@@ -76,80 +74,22 @@ let
     echo "Ports 8080 and 5173 open (until reboot)"
   '';
 
-  extensions = (with pkgs.vscode-extensions; [
-    mkhl.direnv
-    bbenoist.nix
-    haskell.haskell
-    justusadam.language-haskell
-    arrterian.nix-env-selector
-    jnoortheen.nix-ide
-    gruntfuggly.todo-tree
-  ]) ++ pkgs.vscode-utils.extensionsFromVscodeMarketplace [
-    {
-      publisher = "cab404"; name = "vscode-direnv"; version = "1.0.0";
-      sha256 = "sha256-+nLH+T9v6TQCqKZw6HPN/ZevQ65FVm2SAo2V9RecM3Y=";
-    }
-    {
-      publisher = "nwolverson"; name = "language-purescript"; version = "0.2.9";
-      sha256 = "sha256-9LBdo6lj+hz2NsvPmMV73nCT7uk6Q/ViguiilngOsGc=";
-    }
-    {
-      publisher = "nwolverson"; name = "ide-purescript"; version = "0.26.6";
-      sha256 = "sha256-zYLAcPgvfouMQj3NJlNJA0DNeayKxQhOYNloRN2YuU8=";
-    }
-    {
-      publisher = "hoovercj"; name = "haskell-linter"; version = "0.0.6";
-      sha256 = "sha256-MjgqR547GC0tMnBJDMsiB60hJE9iqhKhzP6GLhcLZzk=";
-    }
-    {
-      publisher = "justusadam"; name = "language-haskell"; version = "3.6.0";
-      sha256 = "sha256-rZXRzPmu7IYmyRWANtpJp3wp0r/RwB7eGHEJa7hBvoQ=";
-    }
-  ];
-
-  vscodiumWithExtensions = pkgs.vscode-with-extensions.override {
-    vscode           = pkgs.vscodium;
-    vscodeExtensions = extensions;
-  };
-
+  # No editor here, deliberately.
+  #
+  # This shell used to carry vscode-with-extensions and a `code-workspace`
+  # launcher. Both are gone:
+  #
+  #   * vscodiumWithExtensions put a SECOND codium binary on PATH inside this
+  #     repo, sharing ~/.config/VSCodium with the system one. That is why
+  #     `codium .` behaved differently here than in every other project.
+  #   * The shellHook wrote .vscode/argv.json on every direnv reload. argv.json
+  #     is a USER-level file (~/.config/VSCodium/argv.json); the workspace copy
+  #     was read by nothing and only served to trip the editor's file watchers,
+  #     which — with two direnv extensions and nix-env-selector installed —
+  #     re-raised the window on every `cd` into the repo.
+  #
+  # Use your system editor. `codium .` is the whole interface.
   workspaceModule = {
-    code-workspace = pkgs.writeShellApplication {
-      name          = "code-workspace";
-      runtimeInputs = [ vscodiumWithExtensions ];
-      text = ''
-        if [ ! -f "${name}.code-workspace" ]; then
-          cat > ${name}.code-workspace <<EOF
-        {
-          "folders": [
-            { "name": "PS_frontend", "path": "frontend" },
-            { "name": "HS_backend",  "path": "backend" },
-            { "name": "nix",         "path": "nix" },
-            { "name": "Helpers",     "path": "script" },
-            { "name": "Root",        "path": "./" }
-          ],
-          "settings": {
-            "[purescript]": {
-              "editor.defaultFormatter": "nwolverson.ide-purescript",
-              "editor.fontFamily": "Hasklig",
-              "editor.fontSize": 14
-            },
-            "[haskell]": {
-              "editor.defaultFormatter": "haskell.haskell",
-              "haskell.formattingProvider": "fourmolu",
-              "editor.fontFamily": "Hasklig",
-              "editor.fontSize": 14
-            },
-            "purescript.addSpagoSources": true,
-            "haskell.checkProject": true
-          }
-        }
-        EOF
-          echo "Created ${name}.code-workspace"
-        fi
-        codium ${name}.code-workspace
-      '';
-    };
-
     backup-project = pkgs.writeShellApplication {
       name          = "backup-project";
       runtimeInputs = [ pkgs.rsync ];
@@ -164,7 +104,6 @@ let
   };
 
   commonBuildInputs = with pkgs; [
-    # deploy
     deployModule.build-all
     deployModule.deploy-nix
     deployModule.deploy-nix-interactive
@@ -181,7 +120,6 @@ let
     deployModule.frontend-start
     deployModule.frontend-stop
 
-    # frontend
     esbuild
     nodejs_20
     nixpkgs-fmt
@@ -197,10 +135,8 @@ let
     frontendModule.codegen
     frontendModule.dev
 
-    # system
     zlib pgcli pkg-config openssl.dev libiconv openssl
 
-    # TLS
     tlsModule.tls-setup
     tlsModule.tls-info
     tlsModule.tls-clean
@@ -208,7 +144,6 @@ let
     tlsModule.tls-sops-extract
     pkgs.mkcert
 
-    # ── sops: key + secrets management ────────────────────────────────
     sopsModule.sops-init-key
     sopsModule.sops-pubkey
     sopsModule.sops-bootstrap
@@ -218,11 +153,9 @@ let
     pkgs.sops
     pkgs.age
     pkgs.ssh-to-age
-    # ──────────────────────────────────────────────────────────────────
 
     open-firewall
 
-    # postgres
     postgresModule.pg-start
     postgresModule.pg-connect
     postgresModule.pg-stop
@@ -235,16 +168,12 @@ let
     pgadmin4
     gettext
 
-    # project
     toilet rsync tmux
-    vscodiumWithExtensions
     workspaceModule.backup-project
-    workspaceModule.code-workspace
     manifestModule.generateScript
     devScripts.compile-manifest
     devScripts.compile-archive
 
-    # testing
     testSuiteModule.test-unit
     testSuiteModule.test-integration
     testSuiteModule.test-integration-tls
@@ -269,6 +198,9 @@ let
     inherit nativeBuildInputs;
     buildInputs = commonBuildInputs ++ darwinInputs;
 
+    # This hook runs on EVERY direnv reload. Nothing here may write into a
+    # directory the editor watches, or you get a raise-window loop on every
+    # `cd` into the repo. Writes are confined to script/concat_archive/.
     shellHook = ''
       export PGDATA="${dbConfig.dataDir}"
       export PGPORT="${toString dbConfig.port}"
@@ -279,16 +211,6 @@ let
       mkdir -p "$(pwd)/script/concat_archive/output" \
                "$(pwd)/script/concat_archive/archive" \
                "$(pwd)/script/concat_archive/.hashes"
-      mkdir -p "$(pwd)/.vscode"
-
-      cat > "$(pwd)/.vscode/argv.json" <<EOF
-      {
-        "disable-hardware-acceleration": true,
-        "enable-crash-reporter": true,
-        "crash-reporter-id": "4e77d7bd-2f26-4723-9757-4f86cefd7010",
-        "password-store": "gnome"
-      }
-      EOF
 
       echo "Welcome to the ${lib.toSentenceCase name} dev environment!"
       echo ""
