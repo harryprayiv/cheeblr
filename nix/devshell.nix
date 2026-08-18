@@ -291,7 +291,7 @@ let
     toilet rsync tmux
     vscodiumWithExtensions
     workspaceModule.backup-project
-    workspaceModule.code-workspace
+    # workspaceModule.code-workspace
     workspaceModule.project-cleanup
     manifestModule.generateScript
     devScripts.compile-manifest
