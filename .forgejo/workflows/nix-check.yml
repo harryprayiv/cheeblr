@@ -1,0 +1,62 @@
+# Evaluation only. No builds. Runs in seconds and catches the class of failure
+# that otherwise costs you six hours before surfacing: a broken haskell.nix
+# module, a bad purs-nix dependency, a nix/ file that stopped parsing.
+name: nix-check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "flake.nix"
+      - "flake.lock"
+      - "nix/**"
+  workflow_dispatch:
+
+concurrency:
+  group: nix-check-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HOME: /var/tmp/cheeblr-ci-home
+
+jobs:
+  evaluate:
+    runs-on: nix
+    timeout-minutes: 60
+    steps:
+      - name: clone
+        run: |
+          set -eu
+          mkdir -p "$HOME"
+          export GIT_PAGER=cat PAGER=cat
+          repo="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY}}"
+          sha="${FORGEJO_SHA:-${GITHUB_SHA}}"
+          git clone "http://127.0.0.1:3000/${repo}.git" src
+          cd src
+          git checkout --detach "${sha}"
+          git --no-pager log --oneline -1
+
+      # `nix flake show` evaluates every system in build.nix's systems list and
+      # dies with "aarch64-darwin required but I am x86_64-linux" on the
+      # haskell.nix IFD path. Eval named x86_64-linux attributes instead.
+      - name: devshells
+        run: |
+          set -eu
+          cd src
+          for s in default ci; do
+            printf '%-8s ' "$s"
+            nix eval --accept-flake-config --raw ".#devShells.x86_64-linux.$s.name"
+            echo ""
+          done
+
+      # drvPath, not attrNames. attrNames proves the attrset enumerated;
+      # drvPath proves each output instantiates.
+      - name: packages
+        run: |
+          set -eu
+          cd src
+          for p in backend frontend default; do
+            printf '%-9s ' "$p"
+            nix eval --accept-flake-config --raw ".#packages.x86_64-linux.$p.drvPath"
+            echo ""
+          done
