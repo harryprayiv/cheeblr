@@ -260,5 +260,5 @@ let
   };
 
 in {
-  inherit devShell workspaceModule;
+  inherit devShell;
 }
