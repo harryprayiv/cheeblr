@@ -1,0 +1,61 @@
+# Cheeblr: does it compile? Nothing else.
+#
+# No tests, no postgres, no TLS. Two questions only: does the Haskell backend
+# build and does the PureScript frontend build. Everything else waits until this
+# is reliably green.
+#
+# Sized for a two-core, 7.8 GB machine that is also a desktop. GHC linking a
+# Servant backend is the heaviest thing this hardware ever does, so the settings
+# below trade wall-clock time for staying under the memory cap. A build that
+# takes hours and finishes is worth more than a fast one that gets OOM-killed.
+name: compile
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: compile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    runs-on: nix
+    # 24h. The forgejo default is one hour and a cold GHC build on this hardware
+    # will exceed it. Raise further if a run is still killed at the ceiling.
+    timeout-minutes: 1440
+    steps:
+      - name: clone
+        run: |
+          set -eu
+          export GIT_PAGER=cat PAGER=cat
+          repo="${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY}}"
+          sha="${FORGEJO_SHA:-${GITHUB_SHA}}"
+          git clone "http://127.0.0.1:3000/${repo}.git" src
+          cd src
+          git checkout --detach "${sha}"
+          git --no-pager log --oneline -1
+
+      - name: backend
+        run: |
+          set -eu
+          cd src
+          # -j1 and one core. Two parallel derivations each linking GHC will
+          # exceed the runner slice's memory cap, and on two cores under a
+          # CPUQuota there is nothing to gain from parallelism anyway: four
+          # threads fighting over one core is slower than one thread having it.
+          #
+          # --keep-going so a frontend failure is still reported when the backend
+          # succeeds, rather than the run stopping at the first error.
+          nix build --accept-flake-config --print-build-logs \
+            --max-jobs 1 --cores 1 --keep-going \
+            .#backend
+
+      - name: frontend
+        run: |
+          set -eu
+          cd src
+          nix build --accept-flake-config --print-build-logs \
+            --max-jobs 1 --cores 1 --keep-going \
+            .#frontend
