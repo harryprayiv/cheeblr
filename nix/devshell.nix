@@ -114,100 +114,7 @@ let
     vscode           = pkgs.vscodium;
     vscodeExtensions = extensions;
   };
-
-  workspaceModule = {
-    code-workspace = pkgs.writeShellApplication {
-      name          = "code-workspace";
-      runtimeInputs = [ vscodiumWithExtensions ];
-      text = ''
-        if [ ! -f "${name}.code-workspace" ]; then
-          cat > ${name}.code-workspace <<EOF
-        {
-          "folders": [
-            { "name": "PS_frontend", "path": "frontend" },
-            { "name": "HS_backend",  "path": "backend" },
-            { "name": "nix",         "path": "nix" },
-            { "name": "Helpers",     "path": "script" },
-            { "name": "Root",        "path": "./" }
-          ],
-          "settings": {
-            "[purescript]": {
-              "editor.defaultFormatter": "nwolverson.ide-purescript",
-              "editor.fontFamily": "Hasklig",
-              "editor.fontSize": 14
-            },
-            "[haskell]": {
-              "editor.defaultFormatter": "haskell.haskell",
-              "haskell.formattingProvider": "fourmolu",
-              "editor.fontFamily": "Hasklig",
-              "editor.fontSize": 14
-            },
-            "purescript.addSpagoSources": true,
-            "haskell.checkProject": true
-          }
-        }
-        EOF
-          echo "Created ${name}.code-workspace"
-        fi
-        codium ${name}.code-workspace
-      '';
-    };
-
-    backup-project = pkgs.writeShellApplication {
-      name          = "backup-project";
-      runtimeInputs = [ pkgs.rsync ];
-      text = ''
-        rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' \
-          ~/NAS/plutus/workdir/${name}/ ~/NAS/plutus/workspace/scdWs/${name}/
-        rsync -va ~/.local/share/${name}/backups/ ~/NAS/plutus/${name}DB/
-        rsync -va script/concat_archive/ \
-          ~/NAS/plutus/workspace/scdWs/${name}/script/concat_archive/
-      '';
-    };
-
-    project-cleanup = pkgs.writeShellApplication {
-      name = "project-cleanup";
-      text = ''
-        set -euo pipefail
-        PROJECT_ROOT="$(pwd)"
-        echo "Cleaning compiled artifacts for ${name}..."
-        echo "  Project root: $PROJECT_ROOT"
-        echo ""
-
-        remove() {
-          local target="$1"
-          local prefix="$PROJECT_ROOT/"
-          if [ -e "$target" ]; then
-            rm -rf "$target"
-            echo "  + removed ''${target#"$prefix"}"
-          else
-            echo "  - skipped ''${target#"$prefix"}"
-          fi
-        }
-
-        echo "Frontend (${frontendPath}):"
-        remove "$PROJECT_ROOT/${frontendPath}/.spago"
-        remove "$PROJECT_ROOT/${frontendPath}/.vite"
-        remove "$PROJECT_ROOT/${frontendPath}/output"
-        remove "$PROJECT_ROOT/${frontendPath}/.spec-results"
-
-        echo ""
-        echo "Backend (${backendPath}):"
-        remove "$PROJECT_ROOT/${backendPath}/dist-newstyle"
-        remove "$PROJECT_ROOT/${backendPath}/output"
-        remove "$PROJECT_ROOT/${backendPath}/${name}-compliance.log"
-
-        echo ""
-        echo "Project root:"
-        remove "$PROJECT_ROOT/.direnv"
-        remove "$PROJECT_ROOT/.vscode"
-
-        echo ""
-        echo "Done. Run 'nix develop' to re-enter the dev shell."
-      '';
-    };
-  };
-
+  
   containerTools   = if containersModule != null then containersModule.tools else [];
   hasContainerTools = containersModule != null;
 
@@ -290,9 +197,6 @@ let
 
     toilet rsync tmux
     vscodiumWithExtensions
-    workspaceModule.backup-project
-    # workspaceModule.code-workspace
-    workspaceModule.project-cleanup
     manifestModule.generateScript
     devScripts.compile-manifest
     devScripts.compile-archive
@@ -421,5 +325,5 @@ let
   };
 
 in {
-  inherit devShell workspaceModule;
+  inherit devShell;
 }
