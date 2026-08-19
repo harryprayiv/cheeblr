@@ -1,0 +1,32 @@
+# Proves the runner picks up jobs at all. No nix builds, no evaluation.
+# Delete once the pipeline is confirmed working.
+#
+# Push-triggered on delta rather than workflow_dispatch: dispatch only
+# registers for workflows present on the DEFAULT branch, so the manual button
+# does not exist for a workflow that lives only on delta.
+name: smoke
+
+on:
+  push:
+    branches: [delta]
+
+jobs:
+  smoke:
+    runs-on: nix
+    timeout-minutes: 5
+    steps:
+      - name: identify
+        run: |
+          set -eu
+          echo "runner  : $(hostname)"
+          echo "repo    : ${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-unset}}"
+          echo "sha     : ${FORGEJO_SHA:-${GITHUB_SHA:-unset}}"
+          echo "ref     : ${FORGEJO_REF:-${GITHUB_REF:-unset}}"
+          nix --version
+          echo "--- nix config ---"
+          nix show-config | grep -E 'trusted-users|allow-import-from-derivation|substituters' || true
+          echo "--- memory ---"
+          free -h
+          echo "--- cgroup limits as seen from inside the job ---"
+          cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "no memory.max"
+          nproc

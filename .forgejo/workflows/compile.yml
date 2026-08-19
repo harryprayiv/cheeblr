@@ -3,8 +3,8 @@
 # No tests, no postgres, no TLS. Two questions only: does the Haskell backend
 # build and does the PureScript frontend build. Everything else is test.yml.
 #
-# Builds the flake outputs — .#backend from haskell.nix, .#frontend from
-# purs-nix — not `cabal build` / `spago build`. Those are the devshell's
+# Builds the flake outputs, .#backend from haskell.nix and .#frontend from
+# purs-nix, not `cabal build` / `spago build`. Those are the devshell's
 # non-hermetic iteration path; these are what actually ship. Bare `nix build`
 # is not enough: packages.default is the backend exe, so it would leave the
 # frontend untested.
@@ -14,16 +14,20 @@
 # below trade wall-clock time for staying under the memory cap. A build that
 # takes hours and finishes is worth more than a fast one that gets OOM-killed.
 #
+# TRIGGER: workflow_dispatch only, on purpose. A cold GHC 9.10 build is most of
+# a day on this hardware and this workflow has never completed here. Watch one
+# manual run finish, then uncomment the push trigger.
+#
 # PREREQUISITE: the runner's nix user must be in trusted-users on blade.
 # haskell.nix cannot evaluate without allow-import-from-derivation, and
 # untrusted users have that silently ignored even with --accept-flake-config.
-# Same for extra-substituters — without cache.iog.io this builds GHC 9.10 from
+# Same for extra-substituters: without cache.iog.io this builds GHC 9.10 from
 # source. Verify with: nix show-config | grep -E 'trusted-users|import-from'
 name: compile
 
 on:
   push:
-    branches: [main]
+    branches: [delta]
   workflow_dispatch:
 
 concurrency:
@@ -63,6 +67,24 @@ jobs:
           git checkout --detach "${sha}"
           git --no-pager log --oneline -1
 
+      # Fail loudly and immediately if the runner's nix user is untrusted.
+      # Without this the job dies several minutes into evaluation with a
+      # haskell.nix IFD error that says nothing about permissions.
+      - name: preflight
+        run: |
+          set -eu
+          nix show-config | grep -q 'allow-import-from-derivation = true' || {
+            echo "FATAL: allow-import-from-derivation is not set."
+            echo "The runner's nix user is not in trusted-users on blade."
+            echo "haskell.nix cannot evaluate. Fix nix.settings.trusted-users."
+            exit 1
+          }
+          nix show-config | grep -q 'cache.iog.io' || {
+            echo "WARNING: cache.iog.io is not a substituter."
+            echo "This will build GHC 9.10 from source. Expect days, not hours."
+          }
+          free -h
+
       # haskell.nix fails at eval, not at build, after several minutes of
       # silence. Its own step so the failure is legible.
       - name: evaluate
@@ -75,7 +97,7 @@ jobs:
 
       # One invocation, so --keep-going does what its name says: a frontend
       # failure is still reported when the backend succeeds. Separate out-links
-      # so the second build does not orphan the first one's closure — on this
+      # so the second build does not orphan the first one's closure. On this
       # hardware an orphaned GHC build is most of a day thrown away.
       - name: build
         run: |
@@ -99,4 +121,4 @@ jobs:
               rc=1
             fi
           done
-          exit $rc
+          exit $rc</parameter>
