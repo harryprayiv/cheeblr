@@ -27,7 +27,7 @@ name: compile
 
 on:
   push:
-    branches: [delta]
+    branches: [delta, main]
   workflow_dispatch:
 
 concurrency:

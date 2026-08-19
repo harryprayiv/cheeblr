@@ -5,7 +5,7 @@ name: nix-check
 
 on:
   push:
-    branches: [main]
+    branches: [delta, main]
     paths:
       - "flake.nix"
       - "flake.lock"
