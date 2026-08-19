@@ -14,14 +14,24 @@ jobs:
       - name: identify
         run: |
           set -eu
-          echo "runner  : $(hostname)"
-          echo "repo    : ${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-unset}}"
-          echo "sha     : ${FORGEJO_SHA:-${GITHUB_SHA:-unset}}"
-          echo "ref     : ${FORGEJO_REF:-${GITHUB_REF:-unset}}"
+          echo "host : $(uname -n)"
+          echo "user : $(id -un) ($(id -u))"
+          echo "repo : ${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-unset}}"
+          echo "ref  : ${FORGEJO_REF:-${GITHUB_REF:-unset}}"
           nix --version
-          echo "--- nix config ---"
+
+      # The question compile.yml's header raises: is this user trusted?
+      # If allow-import-from-derivation is absent, haskell.nix cannot evaluate
+      # and compile.yml will die minutes in with an error about IFD, not
+      # about permissions.
+      - name: nix trust
+        run: |
+          set -eu
           nix show-config | grep -E 'trusted-users|allow-import-from-derivation|substituters' || true
-          echo "--- limits as the job sees them ---"
+
+      - name: cgroup limits as the job sees them
+        run: |
+          set -eu
           nproc
-          free -h
           cat /sys/fs/cgroup/memory.max 2>/dev/null || echo "no memory.max"
+          cat /sys/fs/cgroup/memory.high 2>/dev/null || echo "no memory.high"
