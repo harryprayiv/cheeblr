@@ -101,7 +101,7 @@
       "https://cache.iog.io"
     ];
     extra-trusted-public-keys = [
-      "neoblade:6dIWhT6gb8CEJo7QRYBtG36hmJ6s88Ni7pXmx4b6D74="
+      "neoblade:f0SnhKCqTBJSyzhIRFJijoHrm89Kcm+brnMOfMWN3ZI="
       "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
       "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
     ];
