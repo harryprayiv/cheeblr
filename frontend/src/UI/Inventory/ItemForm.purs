@@ -1,17 +1,20 @@
-module UI.Inventory.ItemForm where
+module UI.Inventory.ItemForm
+  ( FormMode(..)
+  , itemForm
+  , menuItemForm
+  , renderError
+  ) where
 
 import Prelude
 
 import API.Inventory (writeInventory, updateInventory)
-import Data.Array (all, filter)
 import Data.Either (Either(..))
-import Data.Foldable (for_)
-import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Finance.Money (Discrete(..))
+import Data.Maybe (Maybe(..), maybe)
 import Data.Newtype (unwrap)
-import Data.String (joinWith, trim)
-import Data.String.Common (split) as String
-import Data.String.Pattern (Pattern(..))
+import Data.String (joinWith)
 import Data.Tuple.Nested ((/\))
+import Data.Validation.Semigroup (toEither)
 import Deku.Control (text, text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
@@ -19,19 +22,14 @@ import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot)
-import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
-import FRP.Poll (Poll)
 import Services.AuthService (UserId)
-import Types.Formatting (ValidationRule)
-import Types.Inventory (MenuItem(..), StrainLineage(..), validateMenuItem)
+import Types.Inventory (ItemCategory(..), MenuItem(..), Species(..), StrainLineage(..))
+import UI.Form (Form, isValid, readOnly, runForm, section, select)
+import UI.Form (text, textArea) as F
+import UI.Form.Parser (alphanumeric, anyText, cents, commaList, measurementUnit, nonNegativeInt, percentage, required, url, uuid)
 import Utils.Formatting (formatCentsToDecimal)
-import Utils.Validation (allOf, alphanumeric, dollarAmount, nonEmpty, nonNegativeInteger, percentage, runValidation, validMeasurementUnit, validUrl)
-import Web.Event.Event (target)
-import Web.HTML.HTMLInputElement (fromEventTarget, value) as Input
-import Web.HTML.HTMLSelectElement (fromEventTarget, value) as Select
-import Web.HTML.HTMLTextAreaElement (fromEventTarget, value) as TextArea
 
 renderError :: String -> Nut
 renderError message =
@@ -57,599 +55,263 @@ renderError message =
 
 data FormMode = CreateMode String | EditMode MenuItem
 
-type FormInit =
-  { name :: String
-  , sku :: String
-  , brand :: String
-  , price :: String
-  , quantity :: String
-  , category :: String
-  , subcategory :: String
-  , sort :: String
-  , measureUnit :: String
-  , perPackage :: String
-  , description :: String
-  , tags :: String
-  , effects :: String
-  , strain :: String
-  , species :: String
-  , creator :: String
-  , lineage :: String
-  , thc :: String
-  , cbg :: String
-  , dominantTerpene :: String
-  , terpenes :: String
-  , leaflyUrl :: String
-  , img :: String
-  }
+categoryLabel :: ItemCategory -> String
+categoryLabel = case _ of
+  PreRolls -> "Pre-Rolls"
+  other -> show other
 
-initValues :: FormMode -> FormInit
-initValues (CreateMode uuid) =
-  { name: ""
-  , sku: uuid
-  , brand: ""
-  , price: ""
-  , quantity: ""
-  , category: ""
-  , subcategory: ""
-  , sort: ""
-  , measureUnit: ""
-  , perPackage: ""
-  , description: ""
-  , tags: ""
-  , effects: ""
-  , strain: ""
-  , species: ""
-  , creator: ""
-  , lineage: ""
-  , thc: ""
-  , cbg: ""
-  , dominantTerpene: ""
-  , terpenes: ""
-  , leaflyUrl: ""
-  , img: ""
-  }
-initValues (EditMode (MenuItem i)) =
-  let
-    (StrainLineage sl) = i.strain_lineage
+speciesLabel :: Species -> String
+speciesLabel = case _ of
+  Indica -> "Indica"
+  IndicaDominantHybrid -> "Indica-Dominant Hybrid"
+  Hybrid -> "Hybrid"
+  SativaDominantHybrid -> "Sativa-Dominant Hybrid"
+  Sativa -> "Sativa"
+
+-- The whole item form. Adding a field means adding one line to the section
+-- it belongs in and one name to that section's result record.
+menuItemForm :: FormMode -> Form MenuItem
+menuItemForm mode = ado
+  basic <- section "Basic Info" basicInfo
+  strain <- section "Strain & Lineage" strainInfo
+  compliance <- section "Compliance" complianceInfo
+  media <- section "Media & Links" mediaInfo
   in
-    { name: i.name
-    , sku: show i.sku
-    , brand: i.brand
-    , price: formatCentsToDecimal (unwrap i.price)
-    , quantity: show i.quantity
-    , category: show i.category
-    , subcategory: i.subcategory
-    , sort: show i.sort
-    , measureUnit: i.measure_unit
-    , perPackage: i.per_package
-    , description: i.description
-    , tags: joinWith ", " i.tags
-    , effects: joinWith ", " i.effects
-    , strain: sl.strain
-    , species: show sl.species
-    , creator: sl.creator
-    , lineage: joinWith ", " sl.lineage
-    , thc: sl.thc
-    , cbg: sl.cbg
-    , dominantTerpene: sl.dominant_terpene
-    , terpenes: joinWith ", " sl.terpenes
-    , leaflyUrl: sl.leafly_url
-    , img: sl.img
-    }
+    basic $ StrainLineage
+      { thc: compliance.thc
+      , cbg: compliance.cbg
+      , strain: strain.strain
+      , creator: strain.creator
+      , species: strain.species
+      , dominant_terpene: compliance.dominant_terpene
+      , terpenes: compliance.terpenes
+      , lineage: strain.lineage
+      , leafly_url: media.leafly_url
+      , img: media.img
+      }
+  where
+  existing = case mode of
+    EditMode (MenuItem i) -> Just i
+    CreateMode _ -> Nothing
 
-inputKls :: String
-inputKls =
-  """rounded-md border-gray-300 shadow-sm
-     border-2 mr-2 border-solid
-     focus:border-indigo-500 focus:ring-indigo-500"""
+  existingStrain = existing <#> \i ->
+    let
+      StrainLineage sl = i.strain_lineage
+    in
+      sl
 
-vTextField
-  :: String
-  -> String
-  -> (String -> Effect Unit)
-  -> Poll String
-  -> ValidationRule
-  -> String
-  -> (Maybe Boolean -> Effect Unit)
-  -> Poll (Maybe Boolean)
-  -> Nut
-vTextField label placeholder setValue valuePoll rule errMsg setValid validPoll =
-  D.div [ DA.klass_ "mb-3" ]
-    [ D.div [ DA.klass_ "flex items-center gap-2" ]
-        [ D.label [ DA.klass_ "w-36 text-sm font-medium" ] [ text_ label ]
-        , D.input
-            [ DA.placeholder_ placeholder
-            , DA.value valuePoll
-            , DL.input_ \evt ->
-                for_ (target evt >>= Input.fromEventTarget) \el -> do
-                  v <- Input.value el
-                  let trimmed = trim v
-                  setValue trimmed
-                  setValid (Just (runValidation rule trimmed))
-            , DA.klass_ inputKls
-            ]
-            []
-        , D.span [ DA.klass_ "text-red-500 text-xs" ]
-            [ text $ validPoll <#> case _ of
-                Just false -> errMsg
-                _ -> ""
-            ]
-        ]
-    ]
+  -- Initial text for a field: read from the item being edited, or blank.
+  item :: forall r. (_ -> r) -> (r -> String) -> String
+  item get render = maybe "" (render <<< get) existing
 
-plainTextField
-  :: String -> String -> (String -> Effect Unit) -> Poll String -> Nut
-plainTextField label placeholder setValue valuePoll =
-  D.div [ DA.klass_ "mb-3" ]
-    [ D.div [ DA.klass_ "flex items-center gap-2" ]
-        [ D.label [ DA.klass_ "w-36 text-sm font-medium" ] [ text_ label ]
-        , D.input
-            [ DA.placeholder_ placeholder
-            , DA.value valuePoll
-            , DL.input_ \evt ->
-                for_ (target evt >>= Input.fromEventTarget) \el -> do
-                  v <- Input.value el
-                  setValue (trim v)
-            , DA.klass_ inputKls
-            ]
-            []
-        ]
-    ]
+  lineage :: forall r. (_ -> r) -> (r -> String) -> String
+  lineage get render = maybe "" (render <<< get) existingStrain
 
-readOnlyField :: String -> Poll String -> Nut
-readOnlyField label valuePoll =
-  D.div [ DA.klass_ "mb-3" ]
-    [ D.div [ DA.klass_ "flex items-center gap-2" ]
-        [ D.label [ DA.klass_ "w-36 text-sm font-medium" ] [ text_ label ]
-        , D.input
-            [ DA.klass_ (inputKls <> " bg-gray-100")
-            , DA.value valuePoll
-            , DA.disabled_ "true"
-            ]
-            []
-        ]
-    ]
+  list = joinWith ", "
 
-textAreaField
-  :: String -> String -> String -> (String -> Effect Unit) -> Nut
-textAreaField label placeholder initialValue setValue =
-  D.div [ DA.klass_ "mb-3" ]
-    [ D.div [ DA.klass_ "flex items-start gap-2" ]
-        [ D.label [ DA.klass_ "w-36 text-sm font-medium pt-2" ] [ text_ label ]
-        , D.textarea
-            [ DA.placeholder_ placeholder
-            , DA.cols_ "40"
-            , DA.rows_ "4"
-            , DL.input_ \evt ->
-                for_ (target evt >>= TextArea.fromEventTarget) \el -> do
-                  v <- TextArea.value el
-                  setValue v
-            , DA.klass_ (inputKls <> " resize-y")
-            ]
-            [ text_ initialValue ]
-        ]
-    ]
+  skuText = case mode of
+    CreateMode generated -> generated
+    EditMode (MenuItem i) -> show i.sku
 
-selectField
-  :: String
-  -> Array { value :: String, label :: String }
-  -> String
-  -> (String -> Effect Unit)
-  -> ValidationRule
-  -> String
-  -> (Maybe Boolean -> Effect Unit)
-  -> Poll (Maybe Boolean)
-  -> Nut
-selectField label options initialValue setValue rule errMsg setValid validPoll =
-  D.div [ DA.klass_ "mb-3" ]
-    [ D.div [ DA.klass_ "flex items-center gap-2" ]
-        [ D.label [ DA.klass_ "w-36 text-sm font-medium" ] [ text_ label ]
-        , D.select
-            [ DA.klass_ inputKls
-            , DL.change_ \evt ->
-                for_ (target evt >>= Select.fromEventTarget) \el -> do
-                  v <- Select.value el
-                  setValue v
-                  setValid (Just (runValidation rule v))
-            ]
-            ( map
-                ( \opt ->
-                    D.option
-                      ( [ DA.value_ opt.value ] <>
-                          if opt.value == initialValue && initialValue /= ""
-                            then [ DA.selected_ "selected" ]
-                            else []
-                      )
-                      [ text_ opt.label ]
-                )
-                options
-            )
-        , D.span [ DA.klass_ "text-red-500 text-xs" ]
-            [ text $ validPoll <#> case _ of
-                Just false -> errMsg
-                _ -> ""
-            ]
-        ]
-    ]
+  requiredName = required >=> alphanumeric
 
-sectionHeading :: String -> Nut
-sectionHeading title =
-  D.h3 [ DA.klass_ "text-lg font-semibold mb-3 border-b pb-1" ]
-    [ text_ title ]
+  basicInfo = ado
+    name <- F.text
+      { label: "Name", placeholder: "Item name", initial: item _.name identity }
+      requiredName
+    sku <- readOnly { label: "SKU", value: skuText } uuid
+    brand <- F.text
+      { label: "Brand", placeholder: "Brand name", initial: item _.brand identity }
+      requiredName
+    price <- Discrete <$> F.text
+      { label: "Price"
+      , placeholder: "0.00"
+      , initial: item _.price (formatCentsToDecimal <<< unwrap)
+      }
+      cents
+    quantity <- F.text
+      { label: "Quantity", placeholder: "0", initial: item _.quantity show }
+      nonNegativeInt
+    category <- select
+      { label: "Category"
+      , prompt: "Select category..."
+      , initial: _.category <$> existing
+      , display: categoryLabel
+      }
+    subcategory <- F.text
+      { label: "Subcategory"
+      , placeholder: "e.g. Gummies, Cartridge"
+      , initial: item _.subcategory identity
+      }
+      requiredName
+    sort <- F.text
+      { label: "Sort Order", placeholder: "0", initial: item _.sort show }
+      nonNegativeInt
+    measure_unit <- F.text
+      { label: "Measure Unit"
+      , placeholder: "g, oz, ml"
+      , initial: item _.measure_unit identity
+      }
+      measurementUnit
+    per_package <- F.text
+      { label: "Per Package"
+      , placeholder: "e.g. 3.5g, 1oz"
+      , initial: item _.per_package identity
+      }
+      required
+    description <- F.textArea
+      { label: "Description"
+      , placeholder: "Item description"
+      , initial: item _.description identity
+      }
+      anyText
+    tags <- F.text
+      { label: "Tags", placeholder: "tag1, tag2, tag3", initial: item _.tags list }
+      commaList
+    effects <- F.text
+      { label: "Effects"
+      , placeholder: "relaxed, happy, creative"
+      , initial: item _.effects list
+      }
+      commaList
+    in
+      \strain_lineage -> MenuItem
+        { sort
+        , sku
+        , brand
+        , name
+        , price
+        , measure_unit
+        , per_package
+        , quantity
+        , category
+        , subcategory
+        , description
+        , tags
+        , effects
+        , strain_lineage
+        }
 
-categoryOptions :: Array { value :: String, label :: String }
-categoryOptions =
-  [ { value: "", label: "Select category..." }
-  , { value: "Flower", label: "Flower" }
-  , { value: "PreRolls", label: "Pre-Rolls" }
-  , { value: "Vaporizers", label: "Vaporizers" }
-  , { value: "Edibles", label: "Edibles" }
-  , { value: "Drinks", label: "Drinks" }
-  , { value: "Concentrates", label: "Concentrates" }
-  , { value: "Topicals", label: "Topicals" }
-  , { value: "Tinctures", label: "Tinctures" }
-  , { value: "Accessories", label: "Accessories" }
-  ]
+  strainInfo = ado
+    strain <- F.text
+      { label: "Strain", placeholder: "Strain name", initial: lineage _.strain identity }
+      requiredName
+    species <- select
+      { label: "Species"
+      , prompt: "Select species..."
+      , initial: _.species <$> existingStrain
+      , display: speciesLabel
+      }
+    creator <- F.text
+      { label: "Creator"
+      , placeholder: "Breeder/creator name"
+      , initial: lineage _.creator identity
+      }
+      requiredName
+    lineage' <- F.text
+      { label: "Lineage"
+      , placeholder: "Parent strain 1, Parent strain 2"
+      , initial: lineage _.lineage list
+      }
+      commaList
+    in { strain, species, creator, lineage: lineage' }
 
-speciesOptions :: Array { value :: String, label :: String }
-speciesOptions =
-  [ { value: "", label: "Select species..." }
-  , { value: "Indica", label: "Indica" }
-  , { value: "IndicaDominantHybrid", label: "Indica-Dominant Hybrid" }
-  , { value: "Hybrid", label: "Hybrid" }
-  , { value: "SativaDominantHybrid", label: "Sativa-Dominant Hybrid" }
-  , { value: "Sativa", label: "Sativa" }
-  ]
+  complianceInfo = ado
+    thc <- F.text
+      { label: "THC %", placeholder: "e.g. 25.5%", initial: lineage _.thc identity }
+      percentage
+    cbg <- F.text
+      { label: "CBG %", placeholder: "e.g. 0.8%", initial: lineage _.cbg identity }
+      percentage
+    dominant_terpene <- F.text
+      { label: "Dominant Terpene"
+      , placeholder: "e.g. Myrcene"
+      , initial: lineage _.dominant_terpene identity
+      }
+      requiredName
+    terpenes <- F.text
+      { label: "Terpenes"
+      , placeholder: "Myrcene, Limonene, Caryophyllene"
+      , initial: lineage _.terpenes list
+      }
+      commaList
+    in { thc, cbg, dominant_terpene, terpenes }
 
-splitCommas :: String -> Array String
-splitCommas s = filter (_ /= "") $ map trim $ String.split (Pattern ",") s
+  mediaInfo = ado
+    leafly_url <- F.text
+      { label: "Leafly URL"
+      , placeholder: "https://leafly.com/..."
+      , initial: lineage _.leafly_url identity
+      }
+      url
+    img <- F.text
+      { label: "Image URL", placeholder: "https://...", initial: lineage _.img identity }
+      url
+    in { leafly_url, img }
 
 itemForm :: UserId -> FormMode -> Nut
-itemForm userId mode =
+itemForm userId mode = runForm (menuItemForm mode) \form -> Deku.do
+  setStatusMessage /\ statusMessageV <- useHot ""
+  setSubmitting /\ submittingV <- useHot false
+
   let
-    init = initValues mode
+    valid = isValid form
+
     isEdit = case mode of
       EditMode _ -> true
-      _ -> false
-    v0 = if isEdit then Just true else Just false
-  in
-    Deku.do
+      CreateMode _ -> false
 
-      setName /\ nameV <- useHot init.name
-      setValidName /\ validNameV <- useHot v0
+    formTitle = if isEdit then "Edit Menu Item" else "Create Menu Item"
 
-      _setSku /\ skuV <- useHot init.sku
+    submitLabel = if isEdit then "Update" else "Create"
 
-      setBrand /\ brandV <- useHot init.brand
-      setValidBrand /\ validBrandV <- useHot v0
+    submit menuItem = do
+      setSubmitting true
+      setStatusMessage "Submitting..."
+      launchAff_ do
+        result <-
+          if isEdit then updateInventory userId menuItem
+          else writeInventory userId menuItem
+        liftEffect do
+          setSubmitting false
+          case result of
+            Right { success: true, message: msg } -> do
+              setStatusMessage $ "Success: " <> msg
+              unless isEdit form.reset
+            Right { success: false, message: msg } ->
+              setStatusMessage $ "Error: " <> msg
+            Left err ->
+              setStatusMessage $ "Error: " <> err
 
-      setPrice /\ priceV <- useHot init.price
-      setValidPrice /\ validPriceV <- useHot v0
-
-      setQuantity /\ quantityV <- useHot init.quantity
-      setValidQuantity /\ validQuantityV <- useHot v0
-
-      setCategory /\ categoryV <- useHot init.category
-      setValidCategory /\ validCategoryV <- useHot v0
-
-      setSubcategory /\ subcategoryV <- useHot init.subcategory
-      setValidSubcategory /\ validSubcategoryV <- useHot v0
-
-      setSort /\ sortV <- useHot init.sort
-      setValidSort /\ validSortV <- useHot v0
-
-      setMeasureUnit /\ measureUnitV <- useHot init.measureUnit
-      setValidMeasureUnit /\ validMeasureUnitV <- useHot v0
-
-      setPerPackage /\ perPackageV <- useHot init.perPackage
-      setValidPerPackage /\ validPerPackageV <- useHot v0
-
-      setDescription /\ descriptionV <- useHot init.description
-      setTags /\ tagsV <- useHot init.tags
-      setEffects /\ effectsV <- useHot init.effects
-
-      setStrain /\ strainV <- useHot init.strain
-      setValidStrain /\ validStrainV <- useHot v0
-
-      setSpecies /\ speciesV <- useHot init.species
-      setValidSpecies /\ validSpeciesV <- useHot v0
-
-      setCreator /\ creatorV <- useHot init.creator
-      setValidCreator /\ validCreatorV <- useHot v0
-
-      setLineage /\ lineageV <- useHot init.lineage
-
-      setThc /\ thcV <- useHot init.thc
-      setValidThc /\ validThcV <- useHot v0
-
-      setCbg /\ cbgV <- useHot init.cbg
-      setValidCbg /\ validCbgV <- useHot v0
-
-      setDominantTerpene /\ dominantTerpeneV <- useHot init.dominantTerpene
-      setValidDominantTerpene /\ validDominantTerpeneV <- useHot v0
-
-      setTerpenes /\ terpenesV <- useHot init.terpenes
-
-      setLeaflyUrl /\ leaflyUrlV <- useHot init.leaflyUrl
-      setValidLeaflyUrl /\ validLeaflyUrlV <- useHot v0
-
-      setImg /\ imgV <- useHot init.img
-      setValidImg /\ validImgV <- useHot v0
-
-      setStatusMessage /\ statusMessageV <- useHot ""
-      setSubmitting /\ submittingV <- useHot false
-
-      let
-        isFormValid = ado
-          vN <- validNameV
-          vB <- validBrandV
-          vP <- validPriceV
-          vQ <- validQuantityV
-          vC <- validCategoryV
-          vSub <- validSubcategoryV
-          vS <- validSortV
-          vMU <- validMeasureUnitV
-          vPP <- validPerPackageV
-          vSt <- validStrainV
-          vSp <- validSpeciesV
-          vCr <- validCreatorV
-          vTh <- validThcV
-          vCb <- validCbgV
-          vDT <- validDominantTerpeneV
-          vLU <- validLeaflyUrlV
-          vIm <- validImgV
-          in all (fromMaybe false)
-            [ vN, vB, vP, vQ, vC, vSub, vS, vMU, vPP
-            , vSt, vSp, vCr, vTh, vCb, vDT, vLU, vIm
-            ]
-
-        formTitle =
-          if isEdit then "Edit Menu Item" else "Create Menu Item"
-
-        submitLabel =
-          if isEdit then "Update" else "Create"
-
-        resetForm = do
-          setName ""
-          setValidName (Just false)
-          setBrand ""
-          setValidBrand (Just false)
-          setPrice ""
-          setValidPrice (Just false)
-          setQuantity ""
-          setValidQuantity (Just false)
-          setCategory ""
-          setValidCategory (Just false)
-          setSubcategory ""
-          setValidSubcategory (Just false)
-          setSort ""
-          setValidSort (Just false)
-          setMeasureUnit ""
-          setValidMeasureUnit (Just false)
-          setPerPackage ""
-          setValidPerPackage (Just false)
-          setDescription ""
-          setTags ""
-          setEffects ""
-          setStrain ""
-          setValidStrain (Just false)
-          setSpecies ""
-          setValidSpecies (Just false)
-          setCreator ""
-          setValidCreator (Just false)
-          setLineage ""
-          setThc ""
-          setValidThc (Just false)
-          setCbg ""
-          setValidCbg (Just false)
-          setDominantTerpene ""
-          setValidDominantTerpene (Just false)
-          setTerpenes ""
-          setLeaflyUrl ""
-          setValidLeaflyUrl (Just false)
-          setImg ""
-          setValidImg (Just false)
-
-      D.div [ DA.klass_ "space-y-4 max-w-2xl mx-auto p-6" ]
-        [ D.h2 [ DA.klass_ "text-2xl font-bold mb-6" ] [ text_ formTitle ]
-
-        , D.div [ DA.klass_ "mb-6" ]
-            [ sectionHeading "Basic Info"
-            , vTextField "Name" "Item name"
-                setName nameV
-                (allOf [ nonEmpty, alphanumeric ]) "Name required (text only)"
-                setValidName validNameV
-            , readOnlyField "SKU" skuV
-            , vTextField "Brand" "Brand name"
-                setBrand brandV
-                (allOf [ nonEmpty, alphanumeric ]) "Brand required"
-                setValidBrand validBrandV
-            , vTextField "Price" "0.00"
-                setPrice priceV
-                dollarAmount "Valid price required (e.g. 29.99)"
-                setValidPrice validPriceV
-            , vTextField "Quantity" "0"
-                setQuantity quantityV
-                nonNegativeInteger "Whole number required"
-                setValidQuantity validQuantityV
-            , selectField "Category" categoryOptions init.category
-                setCategory
-                nonEmpty "Category is required"
-                setValidCategory validCategoryV
-            , vTextField "Subcategory" "e.g. Gummies, Cartridge"
-                setSubcategory subcategoryV
-                (allOf [ nonEmpty, alphanumeric ]) "Subcategory required"
-                setValidSubcategory validSubcategoryV
-            , vTextField "Sort Order" "0"
-                setSort sortV
-                nonNegativeInteger "Whole number required"
-                setValidSort validSortV
-            , vTextField "Measure Unit" "g, oz, ml"
-                setMeasureUnit measureUnitV
-                validMeasurementUnit "Valid unit required"
-                setValidMeasureUnit validMeasureUnitV
-            , vTextField "Per Package" "e.g. 3.5g, 1oz"
-                setPerPackage perPackageV
-                (allOf [ nonEmpty ]) "Per-package amount required"
-                setValidPerPackage validPerPackageV
-            , textAreaField "Description" "Item description"
-                init.description setDescription
-            , plainTextField "Tags" "tag1, tag2, tag3"
-                setTags tagsV
-            , plainTextField "Effects" "relaxed, happy, creative"
-                setEffects effectsV
-            ]
-
-        , D.div [ DA.klass_ "mb-6" ]
-            [ sectionHeading "Strain & Lineage"
-            , vTextField "Strain" "Strain name"
-                setStrain strainV
-                (allOf [ nonEmpty, alphanumeric ]) "Strain required"
-                setValidStrain validStrainV
-            , selectField "Species" speciesOptions init.species
-                setSpecies
-                nonEmpty "Species is required"
-                setValidSpecies validSpeciesV
-            , vTextField "Creator" "Breeder/creator name"
-                setCreator creatorV
-                (allOf [ nonEmpty, alphanumeric ]) "Creator required"
-                setValidCreator validCreatorV
-            , plainTextField "Lineage" "Parent strain 1, Parent strain 2"
-                setLineage lineageV
-            ]
-
-        , D.div [ DA.klass_ "mb-6" ]
-            [ sectionHeading "Compliance"
-            , vTextField "THC %" "e.g. 25.5"
-                setThc thcV
-                percentage "Format: XX.XX"
-                setValidThc validThcV
-            , vTextField "CBG %" "e.g. 0.8"
-                setCbg cbgV
-                percentage "Format: XX.XX"
-                setValidCbg validCbgV
-            , vTextField "Dominant Terpene" "e.g. Myrcene"
-                setDominantTerpene dominantTerpeneV
-                (allOf [ nonEmpty, alphanumeric ]) "Required"
-                setValidDominantTerpene validDominantTerpeneV
-            , plainTextField "Terpenes" "Myrcene, Limonene, Caryophyllene"
-                setTerpenes terpenesV
-            ]
-
-        , D.div [ DA.klass_ "mb-6" ]
-            [ sectionHeading "Media & Links"
-            , vTextField "Leafly URL" "https://leafly.com/..."
-                setLeaflyUrl leaflyUrlV
-                validUrl "Valid URL required"
-                setValidLeaflyUrl validLeaflyUrlV
-            , vTextField "Image URL" "https://..."
-                setImg imgV
-                validUrl "Valid URL required"
-                setValidImg validImgV
-            ]
-
-        , D.div [ DA.klass_ "mt-6 flex items-center gap-4" ]
-            [ D.button
-                [ DA.klass $ isFormValid <#> \v ->
-                    "px-6 py-2 rounded-md text-white font-medium " <>
-                      if v then "bg-indigo-600 hover:bg-indigo-700"
-                      else "bg-gray-400 cursor-not-allowed"
-                , DL.runOn DL.click $ ado
-                    name <- nameV
-                    sku <- skuV
-                    brand <- brandV
-                    price <- priceV
-                    quantity <- quantityV
-                    category <- categoryV
-                    subcategory <- subcategoryV
-                    sort' <- sortV
-                    measureUnit <- measureUnitV
-                    perPackage <- perPackageV
-                    description <- descriptionV
-                    tags <- tagsV
-                    effects <- effectsV
-                    strain <- strainV
-                    species <- speciesV
-                    creator <- creatorV
-                    lineage <- lineageV
-                    thc <- thcV
-                    cbg <- cbgV
-                    dominantTerpene <- dominantTerpeneV
-                    terpenes <- terpenesV
-                    leaflyUrl <- leaflyUrlV
-                    img <- imgV
-                    valid <- isFormValid
-                    submitting <- submittingV
-                    in when (valid && not submitting) do
-                      setSubmitting true
-                      setStatusMessage "Submitting..."
-
-                      let
-                        formInput =
-                          { sort: sort'
-                          , name
-                          , sku
-                          , brand
-                          , price
-                          , measure_unit: measureUnit
-                          , per_package: perPackage
-                          , quantity
-                          , category
-                          , subcategory
-                          , description
-                          , tags
-                          , effects
-                          , strain_lineage:
-                              { thc
-                              , cbg
-                              , strain
-                              , creator
-                              , species
-                              , dominant_terpene: dominantTerpene
-                              , terpenes
-                              , lineage
-                              , leafly_url: leaflyUrl
-                              , img
-                              }
-                          }
-
-                      case validateMenuItem formInput of
-                        Left parseErr -> do
-                          setStatusMessage $ "Validation error: " <> parseErr
-                          setSubmitting false
-
-                        Right menuItem ->
-                          launchAff_ do
-                            result <- case mode of
-                              CreateMode _ -> writeInventory userId menuItem
-                              EditMode _   -> updateInventory userId menuItem
-
-                            liftEffect $ case result of
-                              Right { success: true, message: msg } -> do
-                                setStatusMessage $ "Success: " <> msg
-                                setSubmitting false
-                                case mode of
-                                  CreateMode _ -> resetForm
-                                  EditMode _   -> pure unit
-
-                              Right { success: false, message: msg } -> do
-                                setStatusMessage $ "Error: " <> msg
-                                setSubmitting false
-
-                              Left err -> do
-                                setStatusMessage $ "Error: " <> err
-                                setSubmitting false
-                ]
-                [ text $ ado
-                    sub <- submittingV
-                    valid <- isFormValid
-                    in
-                      if sub then "Submitting..."
-                      else if valid then submitLabel
-                      else submitLabel <> " (fix errors)"
-                ]
-            ]
-
-        , D.div [ DA.klass_ "mt-4 text-center" ] [ text statusMessageV ]
-        ]
+  D.div [ DA.klass_ "space-y-4 max-w-2xl mx-auto p-6" ]
+    ( [ D.h2 [ DA.klass_ "text-2xl font-bold mb-6" ] [ text_ formTitle ] ]
+        <> form.view
+        <>
+          [ D.div [ DA.klass_ "mt-6 flex items-center gap-4" ]
+              [ D.button
+                  [ DA.klass $ valid <#> \v ->
+                      "px-6 py-2 rounded-md text-white font-medium " <>
+                        if v then "bg-indigo-600 hover:bg-indigo-700"
+                        else "bg-gray-400 cursor-not-allowed"
+                  , DL.runOn DL.click $
+                      ( \result submitting ->
+                          case toEither result of
+                            Right menuItem | not submitting -> submit menuItem
+                            _ -> pure unit
+                      )
+                        <$> form.result
+                        <*> submittingV
+                  ]
+                  [ text $
+                      ( \sub v ->
+                          if sub then "Submitting..."
+                          else if v then submitLabel
+                          else submitLabel <> " (fix errors)"
+                      )
+                        <$> submittingV
+                        <*> valid
+                  ]
+              ]
+          , D.div [ DA.klass_ "mt-4 text-center" ] [ text statusMessageV ]
+          ]
+    )
