@@ -27,11 +27,14 @@ import FRP.Poll (Poll)
 import Types.RemoteData (RemoteData(..), fromEither)
 
 -- What useRemote hands to a page.
---   value:  the current state of the request
---   reload: sets the state to Loading and runs the request again
+--   value:   the current state of the request
+--   reload:  sets the state to Loading and runs the request again
+--   refresh: runs the request again and keeps showing the current value
+--            until the new one arrives
 type Remote a =
   { value :: Poll (RemoteData a)
   , reload :: Effect Unit
+  , refresh :: Effect Unit
   }
 
 -- A hook that owns one backend request. The first argument is the state
@@ -46,12 +49,14 @@ useRemote
 useRemote initial request cont = Deku.do
   setValue /\ value <- useHot initial
   let
+    refresh = launchAff_ do
+      result <- request
+      liftEffect $ setValue (fromEither result)
+
     reload = do
       setValue Loading
-      launchAff_ do
-        result <- request
-        liftEffect $ setValue (fromEither result)
-  cont { value, reload }
+      refresh
+  cont { value, reload, refresh }
 
 -- Runs an effect once when the element it is attached to is created. The
 -- DOM load event does not fire on a div, so DL.load_ cannot be used for this.

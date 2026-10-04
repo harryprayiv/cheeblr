@@ -45,6 +45,7 @@ data Activity
   | RemovingPayment
   | Clearing
   | Finalizing
+  | StartingSale
 
 derive instance Eq Activity
 
@@ -60,6 +61,7 @@ activityLabel = case _ of
   RemovingPayment -> "Removing payment..."
   Clearing -> "Clearing cart..."
   Finalizing -> "Finalizing transaction..."
+  StartingSale -> "Starting a new sale..."
 
 -- category Nothing means every category.
 type Filters =

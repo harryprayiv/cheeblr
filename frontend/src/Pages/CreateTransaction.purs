@@ -9,8 +9,9 @@ import Deku.DOM.Attributes as DA
 import Deku.Hooks ((<#~>))
 import FRP.Poll (Poll)
 import Services.AuthService (AuthState, UserId)
-import Types.Inventory (Inventory(..))
+import Types.Inventory (Inventory)
 import Types.Register (Register)
+import Types.RemoteData (RemoteData(..))
 import Types.Transaction.Sale as Sale
 import UI.Inventory.ItemForm (renderError)
 import UI.Transaction.CreateTransaction as TransactionUI
@@ -35,16 +36,12 @@ page _authPoll userId statusPoll =
 
     TxPageReady inventory register transaction ->
       TransactionUI.createTransaction userId
-        (pure inventory)
-        (pure transaction)
+        (Success inventory)
+        transaction
         register
 
     TxPageDegraded inventoryErr register transaction ->
-      D.div_
-        [ D.div [ DA.klass_ "warning-banner" ]
-            [ text_ $ "Inventory unavailable: " <> inventoryErr ]
-        , TransactionUI.createTransaction userId
-            (pure (Inventory []))
-            (pure transaction)
-            register
-        ]
+      TransactionUI.createTransaction userId
+        (Failure ("Inventory unavailable: " <> inventoryErr))
+        transaction
+        register

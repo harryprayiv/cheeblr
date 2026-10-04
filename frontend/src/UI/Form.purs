@@ -14,6 +14,7 @@ module UI.Form
   , textArea
   , readOnly
   , select
+  , choice
   , section
   , visibleWhen
   , dependent
@@ -276,6 +277,35 @@ select spec = Form \style cont -> Deku.do
     { view: [ row style style.line spec.label control parsed ]
     , result: toV spec.label <$> parsed
     , reset: setRaw initialKey
+    }
+
+-- A row of buttons where exactly one is selected, for values that are not a
+-- BoundedEnum. It always has a value, so it never contributes an error. The
+-- selected button gets " active" appended to its class. The classes come
+-- from the spec because a button group has no label, input or hint.
+choice
+  :: forall a
+   . Eq a
+  => { options :: Array { value :: a, label :: String }
+     , initial :: a
+     , groupClass :: String
+     , optionClass :: String
+     }
+  -> Form a
+choice spec = Form \_ cont -> Deku.do
+  setValue /\ value <- useHot spec.initial
+  let
+    option o =
+      D.div
+        [ DA.klass $ value <#> \current ->
+            spec.optionClass <> if current == o.value then " active" else ""
+        , DL.click_ \_ -> setValue o.value
+        ]
+        [ text_ o.label ]
+  cont
+    { view: [ D.div [ DA.klass_ spec.groupClass ] (map option spec.options) ]
+    , result: pure <$> value
+    , reset: setValue spec.initial
     }
 
 -- Groups the fields of a sub-form under a heading. Purely a layout wrapper.
