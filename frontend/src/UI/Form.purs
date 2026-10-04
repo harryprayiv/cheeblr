@@ -2,9 +2,14 @@ module UI.Form
   ( Form
   , Built
   , TextSpec
+  , Style
+  , defaultStyle
   , runForm
+  , runFormWith
+  , withStyle
   , isValid
   , text
+  , textAutofocus
   , password
   , textArea
   , readOnly
@@ -51,18 +56,50 @@ type Built a =
   , reset :: Effect Unit
   }
 
--- A form is a Deku hook in continuation form. Each field allocates one cell
--- holding its raw text. Validity is never stored; it is the field's parser
--- mapped over that cell. Composition is applicative only, so the set of
--- fields is static and errors from all fields accumulate.
-newtype Form a = Form ((Built a -> Nut) -> Nut)
+-- The CSS classes a form renders with. A page picks one Style when it runs
+-- the form, so field definitions carry no presentation.
+--   field:     wrapper around one label, control and hint
+--   line:      the row inside that wrapper, for single-line controls
+--   lineTop:   the same row for a textarea, aligned to the top
+--   hint:      the parser message shown beside an invalid field
+--   section:   wrapper around a titled group of fields
+--   heading:   the title of that group
+type Style =
+  { field :: String
+  , line :: String
+  , lineTop :: String
+  , label :: String
+  , input :: String
+  , hint :: String
+  , section :: String
+  , heading :: String
+  }
+
+defaultStyle :: Style
+defaultStyle =
+  { field: "mb-3"
+  , line: "flex gap-2 items-center"
+  , lineTop: "flex gap-2 items-start"
+  , label: "w-36 text-sm font-medium"
+  , input:
+      "rounded-md border-gray-300 shadow-sm border-2 mr-2 border-solid focus:border-indigo-500 focus:ring-indigo-500"
+  , hint: "text-red-500 text-xs"
+  , section: "mb-6"
+  , heading: "text-lg font-semibold mb-3 border-b pb-1"
+  }
+
+-- A form is a Deku hook in continuation form that also reads a Style. Each
+-- field allocates one cell holding its raw text. Validity is never stored; it
+-- is the field's parser mapped over that cell. Composition is applicative
+-- only, so the set of fields is static and errors from all fields accumulate.
+newtype Form a = Form (Style -> (Built a -> Nut) -> Nut)
 
 instance Functor Form where
-  map f (Form k) = Form \cont -> k \b ->
+  map f (Form k) = Form \style cont -> k style \b ->
     cont { view: b.view, result: map (map f) b.result, reset: b.reset }
 
 instance Apply Form where
-  apply (Form kf) (Form ka) = Form \cont -> kf \bf -> ka \ba ->
+  apply (Form kf) (Form ka) = Form \style cont -> kf style \bf -> ka style \ba ->
     cont
       { view: bf.view <> ba.view
       , result: (<*>) <$> bf.result <*> ba.result
@@ -70,11 +107,18 @@ instance Apply Form where
       }
 
 instance Applicative Form where
-  pure a = Form \cont ->
+  pure a = Form \_ cont ->
     cont { view: [], result: pure (pure a), reset: pure unit }
 
 runForm :: forall a. Form a -> (Built a -> Nut) -> Nut
-runForm (Form k) = k
+runForm = runFormWith defaultStyle
+
+runFormWith :: forall a. Style -> Form a -> (Built a -> Nut) -> Nut
+runFormWith style (Form k) = k style
+
+-- Overrides the Style for one sub-form, whatever the page passed in.
+withStyle :: forall a. Style -> Form a -> Form a
+withStyle style (Form k) = Form \_ cont -> k style cont
 
 isValid :: forall a. Built a -> Poll Boolean
 isValid b = V.isValid <$> b.result
@@ -85,54 +129,63 @@ type TextSpec =
   , initial :: String
   }
 
-inputKls :: String
-inputKls =
-  "rounded-md border-gray-300 shadow-sm border-2 mr-2 border-solid focus:border-indigo-500 focus:ring-indigo-500"
-
 toV :: forall a. String -> Either String a -> V.V (Array String) a
 toV label = either (\e -> V.invalid [ label <> ": " <> e ]) pure
 
-row :: forall a. String -> String -> Nut -> Poll (Either String a) -> Nut
-row align label control parsed =
-  D.div [ DA.klass_ "mb-3" ]
-    [ D.div [ DA.klass_ ("flex gap-2 " <> align) ]
-        [ D.label [ DA.klass_ "w-36 text-sm font-medium" ] [ text_ label ]
+row
+  :: forall a
+   . Style
+  -> String
+  -> String
+  -> Nut
+  -> Poll (Either String a)
+  -> Nut
+row style lineClass label control parsed =
+  D.div [ DA.klass_ style.field ]
+    [ D.div [ DA.klass_ lineClass ]
+        [ D.label [ DA.klass_ style.label ] [ text_ label ]
         , control
-        , D.span [ DA.klass_ "text-red-500 text-xs" ]
+        , D.span [ DA.klass_ style.hint ]
             [ DC.text (parsed <#> either identity (const "")) ]
         ]
     ]
 
-inputField :: forall a. String -> TextSpec -> Parser a -> Form a
-inputField inputType spec parse = Form \cont -> Deku.do
+inputField :: forall a. Boolean -> String -> TextSpec -> Parser a -> Form a
+inputField autofocus inputType spec parse = Form \style cont -> Deku.do
   setRaw /\ raw <- useHot spec.initial
   let
     parsed = parse <$> raw
     control =
       D.input
-        [ DA.xtype_ inputType
-        , DA.placeholder_ spec.placeholder
-        , DA.value raw
-        , DA.klass_ inputKls
-        , DL.input_ \evt ->
-            for_ (target evt >>= Input.fromEventTarget) \el ->
-              Input.value el >>= setRaw
-        ]
+        ( [ DA.xtype_ inputType
+          , DA.placeholder_ spec.placeholder
+          , DA.value raw
+          , DA.klass_ style.input
+          , DL.input_ \evt ->
+              for_ (target evt >>= Input.fromEventTarget) \el ->
+                Input.value el >>= setRaw
+          ]
+            <> if autofocus then [ DA.autofocus_ "true" ] else []
+        )
         []
   cont
-    { view: [ row "items-center" spec.label control parsed ]
+    { view: [ row style style.line spec.label control parsed ]
     , result: toV spec.label <$> parsed
     , reset: setRaw spec.initial
     }
 
 text :: forall a. TextSpec -> Parser a -> Form a
-text = inputField "text"
+text = inputField false "text"
+
+-- A text field that takes keyboard focus when the page loads.
+textAutofocus :: forall a. TextSpec -> Parser a -> Form a
+textAutofocus = inputField true "text"
 
 password :: forall a. TextSpec -> Parser a -> Form a
-password = inputField "password"
+password = inputField false "password"
 
 textArea :: forall a. TextSpec -> Parser a -> Form a
-textArea spec parse = Form \cont -> Deku.do
+textArea spec parse = Form \style cont -> Deku.do
   setRaw /\ raw <- useHot spec.initial
   let
     parsed = parse <$> raw
@@ -142,14 +195,14 @@ textArea spec parse = Form \cont -> Deku.do
         , DA.cols_ "40"
         , DA.rows_ "4"
         , attributeAtYourOwnRisk "value" <$> raw
-        , DA.klass_ (inputKls <> " resize-y")
+        , DA.klass_ (style.input <> " resize-y")
         , DL.input_ \evt ->
             for_ (target evt >>= TextArea.fromEventTarget) \el ->
               TextArea.value el >>= setRaw
         ]
         []
   cont
-    { view: [ row "items-start" spec.label control parsed ]
+    { view: [ row style style.lineTop spec.label control parsed ]
     , result: toV spec.label <$> parsed
     , reset: setRaw spec.initial
     }
@@ -157,19 +210,19 @@ textArea spec parse = Form \cont -> Deku.do
 -- A value the user can see but not change, such as a generated SKU. It still
 -- goes through a parser so the form result carries the typed value.
 readOnly :: forall a. { label :: String, value :: String } -> Parser a -> Form a
-readOnly spec parse = Form \cont ->
+readOnly spec parse = Form \style cont ->
   let
     parsed = parse spec.value
     control =
       D.input
-        [ DA.klass_ (inputKls <> " bg-gray-100")
+        [ DA.klass_ (style.input <> " bg-gray-100")
         , DA.value_ spec.value
         , DA.disabled_ "true"
         ]
         []
   in
     cont
-      { view: [ row "items-center" spec.label control (pure parsed) ]
+      { view: [ row style style.line spec.label control (pure parsed) ]
       , result: pure (toV spec.label parsed)
       , reset: pure unit
       }
@@ -186,7 +239,7 @@ select
      , display :: a -> String
      }
   -> Form a
-select spec = Form \cont -> Deku.do
+select spec = Form \style cont -> Deku.do
   let
     key :: a -> String
     key = show <<< fromEnum
@@ -211,7 +264,7 @@ select spec = Form \cont -> Deku.do
         [ text_ label ]
     control =
       D.select
-        [ DA.klass_ inputKls
+        [ DA.klass_ style.input
         , DL.change_ \evt ->
             for_ (target evt >>= Select.fromEventTarget) \el ->
               Select.value el >>= setRaw
@@ -220,20 +273,18 @@ select spec = Form \cont -> Deku.do
             <> map (\a -> option (key a) (spec.display a)) choices
         )
   cont
-    { view: [ row "items-center" spec.label control parsed ]
+    { view: [ row style style.line spec.label control parsed ]
     , result: toV spec.label <$> parsed
     , reset: setRaw initialKey
     }
 
 -- Groups the fields of a sub-form under a heading. Purely a layout wrapper.
 section :: forall a. String -> Form a -> Form a
-section title (Form k) = Form \cont -> k \b ->
+section title (Form k) = Form \style cont -> k style \b ->
   cont
     { view:
-        [ D.div [ DA.klass_ "mb-6" ]
-            ( [ D.h3 [ DA.klass_ "text-lg font-semibold mb-3 border-b pb-1" ]
-                  [ text_ title ]
-              ]
+        [ D.div [ DA.klass_ style.section ]
+            ( [ D.h3 [ DA.klass_ style.heading ] [ text_ title ] ]
                 <> b.view
             )
         ]
@@ -245,7 +296,7 @@ section title (Form k) = Form \cont -> k \b ->
 -- being hidden. While hidden it yields Nothing and its errors do not count
 -- against the form.
 visibleWhen :: forall a. Poll Boolean -> Form a -> Form (Maybe a)
-visibleWhen visible (Form k) = Form \cont -> k \b ->
+visibleWhen visible (Form k) = Form \style cont -> k style \b ->
   cont
     { view:
         [ D.div
@@ -269,11 +320,11 @@ dependent
    . Form k
   -> (Poll (Maybe k) -> Form a)
   -> Form (Tuple k a)
-dependent (Form kk) f = Form \cont -> kk \bk ->
+dependent (Form kk) f = Form \style cont -> kk style \bk ->
   let
     Form ka = f (hush <<< toEither <$> bk.result)
   in
-    ka \ba ->
+    ka style \ba ->
       cont
         { view: bk.view <> ba.view
         , result: (\rk ra -> Tuple <$> rk <*> ra) <$> bk.result <*> ba.result

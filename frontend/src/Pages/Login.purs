@@ -7,6 +7,7 @@ import Config.Auth (defaultDevUser, findDevUserByRole)
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple.Nested ((/\))
+import Data.Validation.Semigroup (toEither)
 import Deku.Control (text, text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
@@ -19,21 +20,74 @@ import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
 import Services.AuthService (AuthState(..))
-import Web.Event.Event (target)
+import UI.Form (Form, Style, defaultStyle, isValid, password, runFormWith, textAutofocus)
+import UI.Form.Parser (Parser, required)
 import Web.HTML (window)
-import Web.HTML.HTMLInputElement (fromEventTarget, value) as Input
 import Web.HTML.Location (setHref)
 import Web.HTML.Window (location)
+
+type Credentials =
+  { username :: String
+  , password :: String
+  }
+
+-- The login card has its own stylesheet classes. The hint is hidden because
+-- the disabled Sign In button already tells the user both fields are needed.
+loginStyle :: Style
+loginStyle = defaultStyle
+  { field = "form-group"
+  , line = ""
+  , label = "form-label"
+  , input = "form-input-field"
+  , hint = "hidden"
+  }
+
+-- Passwords are not trimmed. Leading and trailing spaces can be part of one.
+anyPassword :: Parser String
+anyPassword raw = if raw == "" then Left "Required" else Right raw
+
+credentialsForm :: Form Credentials
+credentialsForm = ado
+  username <- textAutofocus
+    { label: "Username", placeholder: "Enter username", initial: "" }
+    required
+  password' <- password
+    { label: "Password", placeholder: "Enter password", initial: "" }
+    anyPassword
+  in { username, password: password' }
 
 page
   :: (AuthState -> Effect Unit)
   -> Effect Unit
   -> Nut
-page pushAuth _ = Deku.do
-  setUsername     /\ usernameValue     <- useState ""
-  setPassword     /\ passwordValue     <- useState ""
+page pushAuth _ = runFormWith loginStyle credentialsForm \form -> Deku.do
   setErrorMessage /\ errorMessageValue <- useState ""
   setSubmitting   /\ submittingValue   <- useState false
+
+  let
+    valid = isValid form
+
+    submit credentials = do
+      setSubmitting true
+      setErrorMessage ""
+      launchAff_ do
+        result <- login credentials.username credentials.password Nothing
+        liftEffect $ case result of
+          Left err -> do
+            setErrorMessage $ "Login failed: " <> err
+            setSubmitting false
+          Right resp -> do
+            -- An unrecognised role falls back to defaultDevUser. This is the
+            -- open issue AdminFallbackOnUnknownRole and is unchanged here.
+            let devUser = case findDevUserByRole resp.loginUser.sessionRole of
+                  Just u  -> u
+                  Nothing -> defaultDevUser
+            pushAuth (SignedIn devUser (show devUser.userId))
+            Console.log $ "Logged in as: " <> resp.loginUser.sessionUserName
+            setSubmitting false
+            w <- window
+            loc <- location w
+            setHref "/#/" loc
 
   D.div
     [ DA.klass_ "login-container" ]
@@ -45,75 +99,39 @@ page pushAuth _ = Deku.do
 
         , D.div
             [ DA.klass_ "login-form" ]
-            [ D.div
-                [ DA.klass_ "form-group" ]
-                [ D.label [ DA.klass_ "form-label" ] [ text_ "Username" ]
-                , D.input
-                    [ DA.klass_       "form-input-field"
-                    , DA.xtype_       "text"
-                    , DA.placeholder_ "Enter username"
-                    , DA.autofocus_   "true"
-                    , DL.input_ \evt ->
-                        case target evt >>= Input.fromEventTarget of
-                          Nothing -> pure unit
-                          Just el -> Input.value el >>= setUsername
+            ( form.view <>
+                [ D.div
+                    [ DA.klass_ "error-message" ]
+                    [ text errorMessageValue ]
+
+                , D.button
+                    [ DA.klass $
+                        ( \submitting v ->
+                            "login-button" <>
+                              if submitting || not v then " disabled" else ""
+                        )
+                          <$> submittingValue
+                          <*> valid
+                    , DA.disabled $
+                        ( \submitting v ->
+                            if submitting || not v then "true" else ""
+                        )
+                          <$> submittingValue
+                          <*> valid
+                    , DL.runOn DL.click $
+                        ( \result submitting ->
+                            case toEither result of
+                              Right credentials | not submitting ->
+                                submit credentials
+                              _ -> pure unit
+                        )
+                          <$> form.result
+                          <*> submittingValue
                     ]
-                    []
-                ]
-
-            , D.div
-                [ DA.klass_ "form-group" ]
-                [ D.label [ DA.klass_ "form-label" ] [ text_ "Password" ]
-                , D.input
-                    [ DA.klass_       "form-input-field"
-                    , DA.xtype_       "password"
-                    , DA.placeholder_ "Enter password"
-                    , DL.input_ \evt ->
-                        case target evt >>= Input.fromEventTarget of
-                          Nothing -> pure unit
-                          Just el -> Input.value el >>= setPassword
+                    [ text $ submittingValue <#> \s ->
+                        if s then "Signing in..." else "Sign In"
                     ]
-                    []
                 ]
-
-            , D.div
-                [ DA.klass_ "error-message" ]
-                [ text errorMessageValue ]
-
-            , D.button
-                [ DA.klass $ submittingValue <#> \submitting ->
-                    "login-button" <> if submitting then " disabled" else ""
-                , DA.disabled $ submittingValue <#> \s -> if s then "true" else ""
-                , DL.runOn DL.click $
-                    ( \username password submitting ->
-                        when (not submitting) do
-                          setSubmitting true
-                          setErrorMessage ""
-                          launchAff_ do
-                            result <- login username password Nothing
-                            liftEffect $ case result of
-                              Left err -> do
-                                setErrorMessage $ "Login failed: " <> err
-                                setSubmitting false
-                              Right resp -> do
-                                -- The session cookie is set by the server (HttpOnly).
-                                -- We store the user UUID as the ActorId in SignedIn.
-                                let devUser = case findDevUserByRole resp.loginUser.sessionRole of
-                                      Just u  -> u
-                                      Nothing -> defaultDevUser
-                                pushAuth (SignedIn devUser (show devUser.userId))
-                                Console.log $ "Logged in as: " <> resp.loginUser.sessionUserName
-                                setSubmitting false
-                                w <- window
-                                loc <- location w
-                                setHref "/#/" loc
-                    ) <$> usernameValue
-                      <*> passwordValue
-                      <*> submittingValue
-                ]
-                [ text $ submittingValue <#> \s ->
-                    if s then "Signing in..." else "Sign In"
-                ]
-            ]
+            )
         ]
     ]

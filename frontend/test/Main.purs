@@ -9,6 +9,7 @@ import Test.AuthCookie as AuthCookie
 import Test.Cart as Cart
 import Test.EnumInstances as EnumInstances
 import Test.FeedTypes as FeedTypes
+import Test.FormParser as FormParser
 import Test.Formatting as Formatting
 import Test.GraphQL as GraphQL
 import Test.Inventory as Inventory
@@ -35,6 +36,7 @@ main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" d
   Formatting.spec
   Money.spec
   UUID.spec
+  FormParser.spec
 
   -- Auth and session
   Auth.spec
