@@ -15,7 +15,7 @@
 - [UI Components](#ui-components)
 - [Services](#services)
 - [Configuration](#configuration)
-- [Validation](#validation)
+- [Forms and Parsing](#forms-and-parsing)
 - [Utilities](#utilities)
 - [Development Notes](#development-notes)
 
@@ -31,14 +31,14 @@ Cheeblr is a cannabis dispensary point-of-sale system. The frontend is a PureScr
 
 | Concern | Library / Approach |
 |---|---|
-| UI rendering | **Deku** — declarative, hooks-based UI with `Nut` as the renderable type |
-| Reactivity / state | **FRP.Poll** — `Poll a` streams plus `create`/`push` for mutable cells |
-| Routing | **Routing.Duplex** + **Routing.Hash** — hash-based (`/#/…`) client-side routing |
+| UI rendering | **Deku** -- declarative, hooks-based UI with `Nut` as the renderable type |
+| Reactivity / state | **FRP.Poll** -- `Poll a` streams plus `create`/`push` for mutable cells |
+| Routing | **Routing.Duplex** + **Routing.Hash** -- hash-based (`/#/…`) client-side routing |
 | HTTP | **Fetch** (purescript-fetch) with **Yoga.JSON** for (de)serialization |
-| Money | **Data.Finance.Money** — `Discrete USD` (cents), `Dense USD`, formatting via `Data.Finance.Money.Format` |
-| Validation | Custom `ValidationRule` newtype + **Data.Validation.Semigroup** for accumulating errors |
+| Money | **Data.Finance.Money** -- `Discrete USD` (cents), `Dense USD`, formatting via `Data.Finance.Money.Format` |
+| Forms and validation | `UI.Form` (applicative form builder) + `UI.Form.Parser` (`String -> Either String a` field parsers); errors accumulate with **Data.Validation.Semigroup** |
 | Async effects | **Effect.Aff** for all API calls; `run` helper to push results into polls, `parSequence_` for parallel loading, `killFiber` for cancellation on route change |
-| Parallelism | **Control.Parallel** — `parallel`/`sequential` for concurrent data fetching within a single route |
+| Parallelism | **Control.Parallel** -- `parallel`/`sequential` for concurrent data fetching within a single route |
 | Storage | **Web.Storage.Storage** (localStorage) for persisting the register ID across sessions |
 
 ---
@@ -48,60 +48,67 @@ Cheeblr is a cannabis dispensary point-of-sale system. The frontend is a PureScr
 ```
 Main.purs                        -- entry point, routing, async loading orchestration
 │
-├── Pages/                       -- pure renderers: Poll Status → Nut
+├── Pages/                       -- route-level renderers
 │   ├── LiveView                 -- inventory grid (read-only)
-│   ├── CreateItem               -- new MenuItem form
-│   ├── EditItem                 -- edit existing MenuItem
-│   ├── DeleteItem               -- delete confirmation
-│   ├── CreateTransaction        -- POS checkout page
+│   ├── CreateItem / EditItem / DeleteItem
+│   ├── CreateTransaction        -- POS checkout page (hands off to UI.Transaction)
+│   ├── Login                    -- sign-in form
+│   ├── Admin/                   -- Dashboard, State (tabs), Tabs/ (Overview, LogViewer, FeedMonitor)
+│   ├── Manager/                 -- Dashboard, State (tabs), Panels/ (ActivityFeed, Alerts, Stats, Reports)
+│   ├── Stock/                   -- stockroom pull queue
+│   ├── Feed/Monitor
 │   └── TransactionHistory       -- placeholder
 │
 ├── UI/                          -- presentational components
+│   ├── Form                     -- applicative form builder
+│   ├── Form/Parser              -- field parsers
+│   ├── Remote                   -- useRemote hook, onMount, viewRemote
+│   ├── Tabs                     -- shared tab bar
 │   ├── Components/
-│   │   ├── Form                 -- reusable form field builders
 │   │   ├── AuthGuard            -- capability-gated rendering
 │   │   └── UserSelector         -- dev-mode user switcher
 │   ├── Inventory/
 │   │   ├── MenuLiveView         -- inventory grid renderer
-│   │   ├── ItemForm             -- shared create/edit form
+│   │   ├── ItemForm             -- shared create/edit form (on UI.Form)
 │   │   └── DeleteItem           -- delete confirmation UI
 │   └── Transaction/
-│       └── CreateTransaction    -- full POS interface
+│       ├── Model                -- pure functions over the sale (tested)
+│       ├── InventoryPicker      -- category tabs, search, quantity, inventory table
+│       ├── CartView             -- cart lines and totals
+│       ├── PaymentPanel         -- payment form and payment list
+│       ├── ActionBar            -- clear, remaining balance, process payment, new sale
+│       └── CreateTransaction    -- composes the five modules above
 │
-├── Services/                    -- business logic (effectful)
-│   ├── AuthService              -- dev auth state, role checks
+├── Services/                    -- effectful logic
+│   ├── AuthService              -- auth state, role checks
 │   ├── RegisterService          -- register lifecycle (create/open/close)
-│   ├── TransactionService       -- transaction CRUD, totals, payments
-│   └── Cart                     -- cart add/remove with inventory checks
+│   ├── SaleActions              -- the sale commands the transaction screen sends
+│   ├── TransactionService       -- startSale, getSale, void, refund, legacy pure helpers
+│   └── Cart                     -- legacy pure availability helpers (tests only)
 │
 ├── API/                         -- HTTP request layer
 │   ├── Request                  -- generic auth'd request helpers
-│   ├── Inventory                -- inventory endpoints
-│   └── Transaction              -- transaction/register/payment endpoints
+│   ├── Auth, Inventory, Register, Reservation, Refund, Manager, Admin, Stock
+│   ├── Sale                     -- read sales, void, refund
+│   └── SaleCommand              -- /pos/sale commands; every call returns the whole sale
+│
+├── GraphQL/                     -- inventory GraphQL queries
 │
 ├── Types/                       -- domain models + serialization instances
-│   ├── Auth                     -- UserRole, UserCapabilities, AuthenticatedUser
-│   ├── Inventory                -- MenuItem, Inventory, StrainLineage, Species, ItemCategory
-│   ├── Transaction              -- Transaction, TransactionItem, PaymentTransaction, enums
-│   ├── Register                 -- Register, CartTotals, open/close request types
-│   ├── Formatting               -- FieldConfig, ValidationRule, FormValue class
-│   └── UUID                     -- UUID newtype, generation, parsing
+│   ├── Auth, Session, Inventory, Register, Location, Stock, Feed, Admin, Manager
+│   ├── RemoteData               -- NotAsked | Loading | Failure | Success
+│   ├── Transaction              -- enums (status, payment method, tax category, ...)
+│   ├── Transaction/Sale         -- Item, Tax, Discount, Payment, SaleTransaction
+│   ├── Transaction/Refund
+│   ├── Primitives/Money, Primitives/Quantity
+│   └── UUID
 │
 ├── Config/                      -- compile-time constants
-│   ├── Network                  -- API base URL, app origin
-│   ├── LiveView                 -- sort config, query mode, refresh rate
-│   ├── Auth                     -- dev user fixtures
-│   ├── Entity                   -- dummy entity UUIDs for dev
-│   └── InventoryFields          -- per-field FieldConfig/DropdownConfig builders
+│   ├── Network, LiveView, Auth, Entity
 │
-└── Utils/                       -- pure helpers
-    ├── Formatting               -- cents→dollars, comma lists, enum values
-    ├── Validation               -- ValidationRule combinators
-    ├── Money                    -- formatPrice, fromDollars, toDollars, parseMoneyString
-    └── Storage                  -- localStorage wrappers
+└── Utils/                       -- helpers
+    ├── Formatting, Money, Storage, SSE, WebSocket, Audio
 ```
-
----
 
 ## Module Map
 
@@ -113,7 +120,10 @@ Main.purs                        -- entry point, routing, async loading orchestr
 | `Config.LiveView` | `LiveViewConfig` record, `QueryMode` (JsonMode / HttpMode), `SortField` / `SortOrder`, default configs |
 | `Config.Auth` | `DevUser` fixtures for Customer / Cashier / Manager / Admin with hard-coded UUIDs |
 | `Config.Entity` | Hard-coded dummy UUIDs for account, payment, transaction, employee, register, location |
-| `Config.InventoryFields` | Builder functions returning `FieldConfig` or `DropdownConfig` for every inventory form field |
+| `UI.Form` / `UI.Form.Parser` | Applicative form builder and the field parsers every form uses |
+| `UI.Remote` | `useRemote` hook for one backend request, `onMount`, and `viewRemote` for drawing a `RemoteData` |
+| `UI.Transaction.*` | The POS screen: a pure `Model`, four view modules, and `CreateTransaction` composing them |
+| `Services.SaleActions` / `API.SaleCommand` | The sale commands; each returns the whole sale from the backend |
 
 ---
 
@@ -179,20 +189,16 @@ cell.poll :: Poll a
 
 Pages and UI components use Deku hooks:
 
-- `useState` — creates a `(a -> Effect Unit) /\ Poll a` pair
-- `useHot` — like `useState` but the Poll replays the most recent value to new subscribers (used heavily in forms)
+- `useState` creates a `(a -> Effect Unit) /\ Poll a` pair
+- `useHot` is like `useState` but the Poll replays the most recent value to new subscribers
 
-Derived/computed state is built with `<$>`, `<*>`, and `ado` notation over polls:
+Derived state is built with `<$>`, `<*>` and `ado` over polls. Three shared abstractions sit on top of the hooks so pages do not hand-roll cells:
 
-```purescript
-let isFormValid = ado
-      vN <- validNameV
-      vB <- validBrandV
-      -- ...
-      in all (fromMaybe false) [vN, vB, ...]
-```
+- **Forms**: `UI.Form` allocates one cell per field internally. A page never declares per-field setters or validity cells. See [Forms and Parsing](#forms-and-parsing).
+- **Backend requests**: `UI.Remote.useRemote initial request` owns one request and exposes `{ value :: Poll (RemoteData a), reload, refresh }`. `reload` shows the loading state; `refresh` refetches while the current value stays on screen.
+- **Mount effects**: `UI.Remote.onMount effect` runs an effect when an element is created. Do not use `DL.load_` on a `div` or `span` for this: browsers do not raise `load` on those elements, so the handler never runs.
 
----
+The transaction screen keeps four cells: the sale exactly as the backend last returned it, the inventory (`useRemote`), an `Activity` value saying which request is running, and a status message. It never edits the sale locally.
 
 ## Async Loading Pattern
 
@@ -244,14 +250,24 @@ data EditItemStatus = EditLoading | EditReady MenuItem | EditNotFound String | E
 data DeleteItemStatus = DeleteLoading | DeleteReady String String | DeleteNotFound String | DeleteError String
 
 -- Pages.CreateTransaction
-data TxPageStatus = TxPageLoading | TxPageReady Inventory Register Transaction | TxPageError String
+data TxPageStatus
+  = TxPageLoading
+  | TxPageReady Inventory Register Sale.SaleTransaction
+  | TxPageDegraded String Register Sale.SaleTransaction  -- inventory failed; sale still usable
+  | TxPageError String
 ```
 
 Pages receive `pure Loading <|> poll` so they always render a loading state initially, then the loaded data once it arrives.
 
+Data that a page fetches for itself (dashboards, reports, the transaction screen's inventory) uses the shared `Types.RemoteData` type with `UI.Remote.useRemote` instead of a per-page ADT:
+
+```purescript
+data RemoteData a = NotAsked | Loading | Failure String | Success a
+```
+
 ### Parallel loading for CreateTransaction
 
-The `CreateTransaction` route is the most complex — it needs inventory, a register, and a new transaction. These are loaded in parallel using `sequential`/`parallel`:
+The `CreateTransaction` route is the most complex -- it needs inventory, a register, and a new transaction. These are loaded in parallel using `sequential`/`parallel`:
 
 ```purescript
 loadTxPageData userId = do
@@ -327,7 +343,7 @@ withFallback :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut ->
 
 ## API Layer
 
-### `API.Request` — Generic helpers
+### `API.Request` -- Generic helpers
 
 All requests go through helpers that attach standard headers (`Content-Type`, `Accept`, `Origin`, `X-User-Id`) and wrap the result in `Either String a`:
 
@@ -353,29 +369,40 @@ All requests go through helpers that attach standard headers (`Content-Type`, `A
 | `writeInventory userId menuItem` | `POST /inventory` | `authPost` |
 | `updateInventory userId menuItem` | `PUT /inventory` | `authPut` |
 | `deleteInventory userId itemId` | `DELETE /inventory/:id` | `authDelete` |
-| `fetchInventory userId config mode` | dispatches to JSON or HTTP | — |
+| `fetchInventory userId config mode` | dispatches to JSON or HTTP | -- |
 | `fetchInventoryFromJson config` | fetches `config.jsonPath` directly | raw `fetch` |
 | `fetchInventoryFromHttp userId config` | `GET config.apiEndpoint` | `authGetFullUrl` |
 
-### `API.Transaction`
+### `API.Sale`
+
+Read access to sales, plus the two manager operations.
 
 | Function | Endpoint | Method |
 |---|---|---|
-| `getRegister userId registerId` | `GET /register/:id` | `authGet` |
-| `createRegister userId register` | `POST /register` | `authPost` |
-| `openRegister userId request registerId` | `POST /register/open/:id` | `authPost` |
-| `closeRegister userId request registerId` | `POST /register/close/:id` | `authPost` |
-| `createTransaction userId transaction` | `POST /transaction` | `authPostChecked` |
-| `getTransaction userId transactionId` | `GET /transaction/:id` | `authGet` |
-| `finalizeTransaction userId transactionId` | `POST /transaction/finalize/:id` | `authPostEmpty` |
-| `voidTransaction userId transactionId reason` | `POST /transaction/void/:id` | `authPost` |
-| `addTransactionItem userId item` | `POST /transaction/item` | `authPostChecked` |
-| `removeTransactionItem userId itemId` | `DELETE /transaction/item/:id` | `authDeleteUnit` |
-| `clearTransaction userId transactionId` | `POST /transaction/clear/:id` | `authPostUnit` |
-| `addPaymentTransaction userId payment` | `POST /transaction/payment` | `authPost` |
-| `removePaymentTransaction userId paymentId` | `DELETE /transaction/payment/:id` | `authDeleteUnit` |
+| `getAllSales userId` | `GET /sale` | `authGet` |
+| `getSale userId saleId` | `GET /sale/:id` | `authGet` |
+| `voidSale userId saleId reason` | `POST /sale/void/:id` | `authPost` |
+| `refundSale userId saleId reason` | `POST /sale/refund/:id` | `authPost` |
 
----
+### `API.SaleCommand`
+
+The register's sale commands. Every function returns `Aff (Either String Sale.SaleTransaction)`: the whole sale as the backend holds it after the command. Requests carry no price, tax, total, change or id. The record field names match the backend's `Types.Transaction.Request` exactly.
+
+| Function | Endpoint | Body |
+|---|---|---|
+| `startSale userId request` | `POST /pos/sale` | `{ startSaleEmployeeId, startSaleRegisterId, startSaleLocationId }` |
+| `addItem userId request` | `POST /pos/sale/item` | `{ addItemSaleId, addItemSku, addItemQuantity }` |
+| `removeItem userId itemId` | `DELETE /pos/sale/item/:id` | none |
+| `addPayment userId request` | `POST /pos/sale/payment` | `{ addPaymentSaleId, addPaymentMethod, addPaymentAmount, addPaymentTendered, addPaymentReference }` |
+| `removePayment userId paymentId` | `DELETE /pos/sale/payment/:id` | none |
+| `clear userId saleId` | `POST /pos/sale/clear/:id` | none |
+| `finalize userId saleId` | `POST /pos/sale/finalize/:id` | none |
+
+Amounts are integer cents. `addPaymentTendered` is optional; without it the payment is exact.
+
+### Other API modules
+
+`API.Auth` (login, logout, session validation), `API.Register`, `API.Reservation`, `API.Refund`, `API.Manager`, `API.Admin` and `API.Stock` follow the same pattern as `API.Inventory`: thin functions over `API.Request` helpers.
 
 ## Domain Types
 
@@ -448,99 +475,48 @@ The `ReadForeign InventoryResponse` instance handles two shapes: a raw JSON arra
 
 `compareMenuItems :: LiveViewConfig -> MenuItem -> MenuItem -> Ordering` applies the config's `sortFields` array in priority order. Each `Tuple SortField SortOrder` is tried; `EQ` falls through to the next field.
 
-#### Validation
-
-`validateMenuItem :: MenuItemFormInput -> Either String MenuItem` validates all fields using `Data.Validation.Semigroup`, accumulating errors, then constructs a `MenuItem`. Delegates strain fields to `validateStrainLineage`.
-
 ### `Types.Transaction`
 
-#### `Transaction`
+`Types.Transaction` holds the enums shared by sales and refunds: `TransactionStatus` (`Created`, `InProgress`, `Completed`, `Voided`, `Refunded`), `PaymentMethod` (`Cash`, `Debit`, `Credit`, `ACH`, `GiftCard`, `StoredValue`, `Mixed`, `Other String`), `TaxCategory`, `DiscountType` and the transaction type. It also still defines ledger and compliance record types that no frontend module consumes.
+
+### `Types.Transaction.Sale`
+
+The sale as it crosses the wire. Field names match the backend records exactly.
 
 ```purescript
-newtype Transaction = Transaction
-  { transactionId :: UUID
-  , transactionStatus :: TransactionStatus
-  , transactionCreated :: DateTime
-  , transactionCompleted :: Maybe DateTime
-  , transactionCustomerId :: Maybe UUID
-  , transactionEmployeeId :: UUID
-  , transactionRegisterId :: UUID
-  , transactionLocationId :: UUID
-  , transactionItems :: Array TransactionItem
-  , transactionPayments :: Array PaymentTransaction
-  , transactionSubtotal :: DiscreteMoney USD
-  , transactionDiscountTotal :: DiscreteMoney USD
-  , transactionTaxTotal :: DiscreteMoney USD
-  , transactionTotal :: DiscreteMoney USD
-  , transactionType :: TransactionType
-  , transactionIsVoided :: Boolean
-  , transactionVoidReason :: Maybe String
-  , transactionIsRefunded :: Boolean
-  , transactionRefundReason :: Maybe String
-  , transactionReferenceTransactionId :: Maybe UUID
-  , transactionNotes :: Maybe String
+type Item =
+  { itemId            :: UUID
+  , itemTransactionId :: UUID
+  , itemMenuItemSku   :: UUID
+  , itemQuantity      :: SaleQuantity
+  , itemPricePerUnit  :: SaleMoney
+  , itemDiscounts     :: Array Discount
+  , itemTaxes         :: Array Tax
+  , itemSubtotal      :: SaleMoney
+  , itemTotal         :: SaleMoney
   }
+
+type Tax =
+  { taxCategory :: TaxCategory, taxRate :: Number, taxAmount :: SaleMoney, taxDescription :: String }
+
+type Payment =
+  { paymentId :: UUID, paymentTransactionId :: UUID, paymentMethod :: PaymentMethod
+  , paymentAmount :: SaleMoney, paymentTendered :: SaleMoney, paymentChange :: SaleMoney
+  , paymentReference :: Maybe String, paymentApproved :: Boolean
+  , paymentAuthorizationCode :: Maybe String }
 ```
 
-`Maybe` fields are serialized as `Nullable` via `toNullable` for JSON compatibility with the Haskell backend.
+`SaleTransaction` carries `saleId`, `saleStatus`, timestamps, the employee, register and location ids, `saleItems`, `salePayments`, the four totals (`saleSubtotal`, `saleDiscountTotal`, `saleTaxTotal`, `saleTotal`), `saleKind`, and the void and refund flags with their reasons.
 
-#### `TransactionItem`
+Every amount, tax line and total in a sale is computed by the backend. The frontend displays them and never recomputes them. `Types.Transaction.Refund` mirrors this shape with negated money for refunds.
 
-```purescript
-newtype TransactionItem = TransactionItem
-  { transactionItemId :: UUID
-  , transactionItemTransactionId :: UUID
-  , transactionItemMenuItemSku :: UUID
-  , transactionItemQuantity :: Int
-  , transactionItemPricePerUnit :: DiscreteMoney USD
-  , transactionItemDiscounts :: Array DiscountRecord
-  , transactionItemTaxes :: Array TaxRecord
-  , transactionItemSubtotal :: DiscreteMoney USD
-  , transactionItemTotal :: DiscreteMoney USD
-  }
-```
+### `Types.Primitives.Money` and `Types.Primitives.Quantity`
 
-#### `PaymentTransaction`
+`SaleMoney` (non-negative cents) and `SaleQuantity` newtypes with accessors such as `saleMoneyCents`, `saleMoneyDiscrete` and `saleQuantityCount`.
 
-```purescript
-newtype PaymentTransaction = PaymentTransaction
-  { paymentId :: UUID
-  , paymentTransactionId :: UUID
-  , paymentMethod :: PaymentMethod
-  , paymentAmount :: DiscreteMoney USD
-  , paymentTendered :: DiscreteMoney USD
-  , paymentChange :: DiscreteMoney USD
-  , paymentReference :: Maybe String
-  , paymentApproved :: Boolean
-  , paymentAuthorizationCode :: Maybe String
-  }
-```
+### `Types.RemoteData`
 
-#### Enums
-
-| Type | Values | Serialization |
-|---|---|---|
-| `TransactionStatus` | `Created \| InProgress \| Completed \| Voided \| Refunded` | Accepts both PascalCase and SCREAMING_SNAKE |
-| `TransactionType` | `Sale \| Return \| Exchange \| InventoryAdjustment \| ManagerComp \| Administrative` | Same |
-| `PaymentMethod` | `Cash \| Debit \| Credit \| ACH \| GiftCard \| StoredValue \| Mixed \| Other String` | Writes PascalCase; reads both forms; `Other` prefixed with `"OTHER:"` |
-| `TaxCategory` | `RegularSalesTax \| ExciseTax \| CannabisTax \| LocalTax \| MedicalTax \| NoTax` | Same |
-| `DiscountType` | `PercentOff Number \| AmountOff (Discrete USD) \| BuyOneGetOne \| Custom String (Discrete USD)` | Object with `discountType` discriminator |
-
-#### Supporting records
-
-```purescript
-type TaxRecord =
-  { taxCategory :: TaxCategory, taxRate :: Number
-  , taxAmount :: DiscreteMoney USD, taxDescription :: String }
-
-type DiscountRecord =
-  { discountType :: DiscountType, discountAmount :: DiscreteMoney USD
-  , discountReason :: String, discountApprovedBy :: Maybe UUID }
-```
-
-#### Ledger types (defined but backend-only)
-
-`Account`, `LedgerEntry`, `LedgerEntryType`, `AccountType`, and `LedgerError` are defined in `Types.Transaction` with full `Show`/`ReadForeign`/`WriteForeign` instances but are not currently used by any frontend service or UI.
+`RemoteData a = NotAsked | Loading | Failure String | Success a`, with a `Functor` instance and `fromEither`. Used with `UI.Remote`.
 
 ### `Types.Register`
 
@@ -571,23 +547,10 @@ type CartTotals =
 newtype UUID = UUID String
 ```
 
-- `genUUID :: Effect UUID` — generates a v4 UUID client-side using `Effect.Random`
-- `parseUUID :: String -> Maybe UUID` — validates against the standard regex
-- `emptyUUID :: UUID` — all zeros
+- `genUUID :: Effect UUID` -- generates a v4 UUID client-side using `Effect.Random`
+- `parseUUID :: String -> Maybe UUID` -- validates against the standard regex
+- `emptyUUID :: UUID` -- all zeros
 - Has `ReadForeign`/`WriteForeign` (string round-trip), `Eq`, `Ord`, `Show` (unwraps)
-
-### `Types.Formatting`
-
-Defines the form system's core types:
-
-- `ValidationRule` — newtype wrapping `String -> Boolean`
-- `FieldConfig` — `{ label, placeholder, defaultValue, validation, errorMessage, formatInput }`
-- `DropdownConfig` — `{ label, options, defaultValue, emptyOption }`
-- `TextAreaConfig` — `{ label, placeholder, defaultValue, rows, cols, errorMessage }`
-- `FormValue` class — `fromFormValue :: String -> ValidationResult a` for `String`, `Number`, `Int`, `UUID`
-- `FieldValidator` class — `validateField :: String -> Either String a` with error messages
-
----
 
 ## Pages
 
@@ -612,7 +575,7 @@ Data is loaded by `Main.loadInventoryStatus` which calls `fetchInventory` with t
 page :: Poll AuthState -> UserId -> String -> Nut
 ```
 
-Takes a pre-generated UUID string (created in `Main`'s matcher via `genUUID`) and passes it to `UI.Inventory.ItemForm.itemForm userId (CreateMode uuid)`. No async loading needed — this is a pure form.
+Takes a pre-generated UUID string (created in `Main`'s matcher via `genUUID`) and passes it to `UI.Inventory.ItemForm.itemForm userId (CreateMode uuid)`. No async loading needed -- this is a pure form.
 
 ### `Pages.EditItem`
 
@@ -648,12 +611,22 @@ Data is loaded by `Main.loadDeleteItem` which fetches inventory and extracts the
 page :: Poll AuthState -> UserId -> Poll TxPageStatus -> Nut
 ```
 
-The most complex page. Receives a `Poll TxPageStatus` with all data loaded in parallel by `Main.loadTxPageData`:
-- `TxPageLoading` → loading indicator
-- `TxPageReady inventory register transaction` → renders `UI.Transaction.CreateTransaction.createTransaction` with `pure inventory` and `pure transaction` as polls, plus the register record
-- `TxPageError err` → error via `renderError`
+Receives a `Poll TxPageStatus` with the data loaded in parallel by `Main.loadTxPageData`:
 
-The loading function runs inventory fetch and register-init-then-start-transaction concurrently using `parallel`/`sequential`. The register initialization callback is wrapped into `Aff` via `makeAff`.
+- `TxPageLoading` shows a loading indicator
+- `TxPageReady inventory register sale` renders `UI.Transaction.CreateTransaction.createTransaction` with `Success inventory`, the sale and the register as plain values
+- `TxPageDegraded err register sale` renders the same screen with `Failure "Inventory unavailable: ..."`; the picker shows the error and its Refresh button retries
+- `TxPageError err` shows the error via `renderError`
+
+The loading function runs the inventory fetch and register-init-then-start-sale concurrently using `parallel`/`sequential`. The first sale is opened by `Services.TransactionService.startSale`, which sends a start command to the backend.
+
+### `Pages.Login`
+
+Built on `UI.Form` with its own `Style` (hints hidden). Sign In is disabled until both fields are non-blank. On success it maps the backend role to a user, pushes `SignedIn`, and navigates to `/#/`.
+
+### `Pages.Admin.Dashboard` and `Pages.Manager.Dashboard`
+
+Each holds a tab cell and one `useRemote` request (the admin snapshot, the manager activity summary) loaded by `onMount` and by a Refresh button. Tabs are drawn with `UI.Tabs.tabBar`. Panels receive `Poll (RemoteData a)` and draw it with `UI.Remote.viewRemote`. The manager Reports panel owns its own request, starting `NotAsked` and fetched on a button press.
 
 ### `Pages.TransactionHistory`
 
@@ -669,21 +642,20 @@ Placeholder: renders `"Transaction History - Coming Soon"`. No async loading, re
 
 ### `UI.Inventory.ItemForm`
 
-Shared form for create and edit, parameterized by `FormMode`:
-
 ```purescript
 data FormMode = CreateMode String | EditMode MenuItem
 
-itemForm :: UserId -> FormMode -> Nut
+menuItemForm :: FormMode -> Form MenuItem
+itemForm     :: UserId -> FormMode -> Nut
+renderError  :: String -> Nut
 ```
 
-- ~20 `useHot` hooks for field values + validation state
-- `initValues :: FormMode -> FormInit` pre-populates from the `MenuItem` in edit mode (converting cents to decimal for price, joining arrays to comma strings, etc.)
-- Validation state for edit mode starts as `Just true`; for create mode starts as `Just false`
-- `isFormValid` is a derived `Poll Boolean` using `ado` across all validation polls
-- On submit: collects all field values, runs `validateMenuItem`, then calls `writeInventory` (create) or `updateInventory` (edit)
-- Uses helper functions: `vTextField`, `readOnlyField`, `textAreaField`, `selectField`, `plainTextField`, `sectionHeading`
-- Also exports `renderError :: String -> Nut` used by multiple pages for consistent error display
+`menuItemForm` is one applicative `Form MenuItem` made of four `section` sub-forms (Basic Info, Strain & Lineage, Compliance, Media & Links). Adding a field means adding one line to its section and one name to that section's result record. `itemForm` runs the form and owns only the status message and the submitting flag.
+
+- Initial text comes from the item in `EditMode` and is blank in `CreateMode`. Edit mode parses the stored values, so an item whose stored data fails a rule shows a hint and cannot be saved until fixed.
+- Price uses `Parser.cents`. Category and species use the enum `select`. The SKU is a `readOnly` field.
+- The submit button is styled disabled while the form is invalid, and the click handler ignores an invalid result. Create calls `form.reset` on success; edit does not.
+- Known issue: after a successful create the form keeps the same pre-generated SKU.
 
 ### `UI.Inventory.MenuLiveView`
 
@@ -694,7 +666,7 @@ renderInventory :: LiveViewConfig -> Inventory -> Nut
 
 `renderInventory` is the pure rendering function used by the refactored `Pages.LiveView`. It takes a `LiveViewConfig` and an `Inventory`, applies `compareMenuItems` sorting and optional out-of-stock filtering, and renders a grid of `renderItem` cards. Each card shows brand, name, image, category, species, strain, price, description (truncated), quantity, and edit/delete action links.
 
-`createMenuLiveView` is the older poll-based wrapper that manages loading and error state internally — still available but no longer used by the page.
+`createMenuLiveView` is the older poll-based wrapper that manages loading and error state internally -- still available but no longer used by the page.
 
 ### `UI.Inventory.DeleteItem`
 
@@ -704,51 +676,53 @@ renderDeleteConfirmation :: UserId -> String -> String -> Nut
 
 Warning panel with confirm/cancel buttons. Calls `deleteInventory` on confirm, shows success with link back to inventory.
 
-### `UI.Transaction.CreateTransaction`
+### `UI.Transaction`
+
+The POS screen is six modules under `UI/Transaction/`.
+
+**`Model`** (pure, covered by `test/TransactionModel.purs`)
+
+- `Activity`: `Idle | AddingItem | RemovingItem | AddingPayment | RemovingPayment | Clearing | Finalizing | StartingSale`. Every button is disabled while it is not `Idle`.
+- `visibleItems`, `categoriesIn`: inventory filtering by category (`Maybe ItemCategory`) and search text.
+- `quantityInCart`, `availableToAdd`, `addBlocker`: client-side hints. The backend reports quantities net of all reservations, so nothing is subtracted on the client, and the backend makes the real decision.
+- `totals`, `paidCents`, `remainingCents`: read from the sale.
+- `finalizeBlockers`: the reasons the sale cannot be completed. Must agree with the backend's `Domain.SaleRules.finalizeProblems`.
+
+**`CreateTransaction`**
 
 ```purescript
-createTransaction :: UserId -> Poll Inventory -> Poll Transaction -> Register -> Nut
+createTransaction :: UserId -> RemoteData Inventory -> Sale.SaleTransaction -> Register -> Nut
 ```
 
-Full POS interface with three panels:
+`createTransaction` holds which sale is on screen and rebuilds `saleScreen` when a new sale starts, so filters, the payment form and the message start clean. `saleScreen` owns the four cells described under State Management. Every action goes through one function, `perform`, which sets the `Activity`, runs the command, replaces the sale with the backend's answer, sets the message, and refreshes the inventory.
 
-**Left panel — Item selection:**
-- Category tab filter (dynamically built from inventory)
-- Text search filter
-- Quantity input
-- Inventory table with Add buttons
-- Shows current cart quantity per item
-- Disables items when out of stock or during processing
+A status panel lists what blocks the next step: the payment form's errors and `finalizeBlockers`.
 
-**Right panel — Cart:**
-- Line items with name, qty, unit price, line total, remove button
-- Subtotal / tax / total summary
-- Payment section: method selector (Cash, Credit, Debit, ACH, GiftCard, StoredValue, Mixed, Other), amount/tendered/auth-code inputs
-- Add Payment button that calls `TransactionService.addPayment`
-- List of applied payments with remove buttons
+**`InventoryPicker`**: category tabs, search, quantity, and the inventory table. The table is rebuilt only when the inventory or a filter changes; per-row cart counts and button states follow Polls.
 
-**Bottom bar:**
-- Clear Items button (calls `TransactionService.clearTransaction`)
-- Remaining balance display
-- Process Payment button (calls `TransactionService.finalizeTransaction`)
-- Status message display
-- Register info and transaction status indicator
+**`CartView`**: cart lines and the subtotal, tax and total from the sale.
 
-### `UI.Components.Form`
+**`PaymentPanel`**: the payment form (`UI.Form`): a `choice` button group for the method, amount, Tendered (visible only for Cash) and Auth Code (visible only for Credit). Lists existing payments with remove buttons.
 
-Reusable form field builders:
+**`ActionBar`**: Clear Items, remaining balance, Process Payment. Once the sale is closed, Process Payment is replaced by New Sale.
 
-| Function | Description |
-|---|---|
-| `makeTextField` | Text input with validation, error display, optional password mode |
-| `makePasswordField` | Password-specific variant |
-| `makeTextArea` | Multi-line textarea with validation |
-| `makeNormalField` | `makeTextField` with `isPw = false` |
-| `makeDescriptionField` | Pre-configured textarea for descriptions |
-| `makeDropdown` | Select dropdown with optional empty option, validation |
-| `makeEnumDropdown` | Builds a `DropdownConfig` from any `BoundedEnum` |
+### `UI.Form`, `UI.Remote`, `UI.Tabs`
 
-All fields follow the pattern: config → setValue callback → setValid callback → validPoll → Nut.
+See [Forms and Parsing](#forms-and-parsing) for `UI.Form` and `UI.Form.Parser`.
+
+**`UI.Remote`**
+
+```purescript
+useRemote :: forall a. RemoteData a -> Aff (Either String a) -> (Remote a -> Nut) -> Nut
+onMount   :: forall r. Effect Unit -> Poll (Attribute r)
+viewRemote :: forall a. RemoteView -> (a -> Nut) -> Poll (RemoteData a) -> Nut
+```
+
+`standardView loadingText` and `quietView` are ready-made `RemoteView` values.
+
+**`UI.Tabs`**
+
+`tabBar style tabs selected select` renders one button per tab, labelled with `show`, with `" active"` appended to the selected tab's class.
 
 ### `UI.Components.AuthGuard`
 
@@ -801,49 +775,29 @@ All functions take callbacks `(Register -> Effect Unit)` and `(String -> Effect 
 
 ### `Services.TransactionService`
 
-Core transaction operations:
+- `startSale userId { employeeId, registerId, locationId }` sends a start command (`API.SaleCommand.startSale`). The backend generates the sale id.
+- `getSale`, `voidSale`, `refundSale` wrap `API.Sale`.
+- `calculateCartTotals`, `calculateTotalPayments`, `paymentsCoversTotal`, `getRemainingBalance`, `emptyCartTotals` are pure helpers that the app no longer uses. Only `test/Cart.purs` imports them.
 
-| Function | Description |
+There is no client-side pricing. The functions that built items and payments in the browser were removed.
+
+### `Services.SaleActions`
+
+What the transaction screen calls. Each function sends one command through `API.SaleCommand` and returns the sale the backend answers with.
+
+| Function | Sends |
 |---|---|
-| `startTransaction` | Creates a new `Transaction` with zero totals, `Created` status, sends to API |
-| `getTransaction` | Fetches transaction by UUID |
-| `createTransactionItem` | Builds a `TransactionItem` with computed tax (8% sales tax), sends to API |
-| `addTransactionItem` | Sends a pre-built `TransactionItem` to API |
-| `removeTransactionItem` | Removes item by UUID |
-| `clearTransaction` | Clears all items from a transaction |
-| `voidTransaction` | Voids a transaction with reason |
-| `addPayment` | Creates a `PaymentTransaction` with change calculation, sends to API |
-| `removePaymentTransaction` | Removes a payment |
-| `finalizeTransaction` | Completes the transaction |
-
-Pure calculation helpers:
-
-| Function | Description |
-|---|---|
-| `emptyCartTotals` | Zero-valued `CartTotals` |
-| `calculateCartTotals` | Folds over `Array TransactionItem` to sum subtotal, tax, total |
-| `calculateTotalPayments` | Sums payment amounts |
-| `paymentsCoversTotal` | Checks if total payments ≥ transaction total |
-| `getRemainingBalance` | `max 0 (total - payments)` |
+| `addItem userId saleId menuItem quantity` | sale id, SKU, quantity |
+| `removeItem userId saleId itemId` | item id |
+| `addPayment userId saleId input` | method, amount, optional tendered, optional reference |
+| `removePayment userId saleId paymentId` | payment id |
+| `clear userId saleId` | sale id |
+| `finalize userId saleId` | sale id |
+| `startNext userId previousSale` | the employee, register and location ids of the finished sale |
 
 ### `Services.Cart`
 
-Higher-level cart operations used by the transaction UI:
-
-| Function | Description |
-|---|---|
-| `addItemToCart` | Validates quantity, calls `TransactionService.createTransactionItem`, updates cart items + totals via callbacks |
-| `removeItemFromCart` | Calls `TransactionService.removeTransactionItem`, updates state |
-| `addItemToTransaction` | Client-side only version (no API call) — computes tax at 15%, handles quantity merging |
-| `removeItemFromTransaction` | Client-side filter |
-| `isItemAvailable` | Checks if requested qty + cart qty ≤ stock |
-| `getAvailableQuantity` | Stock minus current cart quantity |
-| `findUnavailableItems` | Returns items in cart that exceed inventory stock |
-| `getCartQuantityForSku` | Looks up current cart quantity for a SKU |
-
-**Note:** `addItemToCart` uses 8% tax (via `TransactionService.createTransactionItem`), while `addItemToTransaction` uses 15% tax. This is a known inconsistency — the server-side flow (`addItemToCart`) should be preferred.
-
----
+Five pure availability helpers (`getCartQuantityForSku`, `isItemAvailable`, `getAvailableQuantity`, `findUnavailableItems`, `findExistingItem`). The app no longer uses them; only `test/Cart.purs` does. `isItemAvailable` and `getAvailableQuantity` subtract the cart quantity from an inventory quantity the backend has already netted of reservations, so they undercount. The transaction screen uses `UI.Transaction.Model` instead.
 
 ## Configuration
 
@@ -887,54 +841,78 @@ Four `DevUser` fixtures with hard-coded UUIDs, used for development auth:
 
 Dummy UUIDs for dev: `dummyAccountId`, `dummyPaymentId`, `dummyTransactionId`, `dummyEmployeeId`, `dummyRegisterId`, `dummyLocationId`.
 
-### `Config.InventoryFields`
+## Forms and Parsing
 
-Builder functions like `nameConfig :: String -> FieldConfig`, `priceConfig :: String -> FieldConfig`, etc. Each encodes the label, placeholder, validation rule, error message, and input formatter for a specific inventory field. The `priceConfig` notably calls `formatCentsToDisplayDollars` on its default value.
+### `UI.Form.Parser`
 
----
-
-## Validation
-
-### `ValidationRule`
+A field parser turns the raw text of an input into a typed value or the message shown beside the field:
 
 ```purescript
-newtype ValidationRule = ValidationRule (String -> Boolean)
+type Parser a = String -> Either String a
 ```
 
-### Built-in rules (`Utils.Validation`)
+There is no separate Boolean validity rule and no second parse at submit. String-returning parsers chain with `>=>`, for example `required >=> alphanumeric >=> maxLen 50`.
 
-| Rule | Description |
+| Parser | Result | Notes |
+|---|---|---|
+| `anyText`, `trimmed` | `String` | never fail |
+| `required` | `String` | trims; fails when blank |
+| `optional p` | `Maybe a` | blank is `Nothing` |
+| `alphanumeric`, `extendedAlphanumeric` | `String` | character-set rules |
+| `maxLen n` | `String` | |
+| `nonNegativeInt`, `positiveInt` | `Int` | |
+| `cents` | `Int` | dollars to integer cents by digit arithmetic; `"19.99"` is `1999` |
+| `percentage` | `String` | requires the trailing `%`; value between 0 and 100 |
+| `measurementUnit` | `String` | fixed list of units |
+| `url` | `String` | `http://` or `https://` |
+| `uuid` | `UUID` | |
+| `commaList` | `Array String` | never fails; trims entries, drops blanks |
+
+### `UI.Form`
+
+```purescript
+newtype Form a   -- Functor, Apply, Applicative. No Monad instance.
+
+type Built a =
+  { view   :: Array Nut
+  , result :: Poll (V (Array String) a)
+  , reset  :: Effect Unit
+  }
+
+runForm     :: forall a. Form a -> (Built a -> Nut) -> Nut
+runFormWith :: forall a. Style -> Form a -> (Built a -> Nut) -> Nut
+isValid     :: forall a. Built a -> Poll Boolean
+```
+
+A form is written as one `ado` block. Each field owns one cell holding its raw text. Validity is the field's parser mapped over that cell and is never stored, so it cannot go stale. Errors from all fields accumulate in `result`.
+
+```purescript
+credentialsForm :: Form Credentials
+credentialsForm = ado
+  username <- textAutofocus { label: "Username", placeholder: "Enter username", initial: "" } required
+  password' <- password { label: "Password", placeholder: "Enter password", initial: "" } anyPassword
+  in { username, password: password' }
+```
+
+| Field | Use |
 |---|---|
-| `nonEmpty` | Trimmed string is not `""` |
-| `alphanumeric` | Matches `^[A-Za-z0-9-\s]+$` |
-| `extendedAlphanumeric` | Allows `-_&+',.()`  |
-| `percentage` | Matches `^\d{1,3}(\.\d{1,2})?%$` |
-| `dollarAmount` | Parses as non-negative `Number` |
-| `validMeasurementUnit` | One of: g, mg, kg, oz, lb, ml, l, ea, unit(s), pack(s), eighth, quarter, half, 1/8, 1/4, 1/2 |
-| `validUrl` | HTTP(S) URL regex |
-| `positiveInteger` | Parses as `Int > 0` |
-| `nonNegativeInteger` | Parses as `Int >= 0` |
-| `fraction` | Matches `^\d+/\d+$` |
-| `commaList` | Matches `^[^,]*(,[^,]*)*$` |
-| `validUUID` | Delegates to `parseUUID` |
-| `maxLength n` | String length ≤ n |
+| `text`, `textAutofocus`, `password`, `textArea` | text inputs with a parser |
+| `readOnly` | a visible, disabled value that still goes through a parser |
+| `select` | dropdown over a `BoundedEnum`; option values are enum indices |
+| `choice` | button group over an explicit list, for types that are not `BoundedEnum` |
+| `section title form` | groups a sub-form under a heading |
+| `visibleWhen poll form` | shows or hides a sub-form; hidden it yields `Nothing` and its errors do not count |
+| `dependent form f` | passes the first form's parsed value as a `Poll` to a second form built once |
 
-### Combinators
+All CSS classes come from a `Style` record passed at the run site (`defaultStyle`, or a page's own). Setting `hint = "hidden"` hides the per-field hints for forms that report problems elsewhere.
 
-```purescript
-allOf :: Array ValidationRule -> ValidationRule  -- all must pass
-anyOf :: Array ValidationRule -> ValidationRule  -- at least one must pass
-```
+The applicative restriction is deliberate. The set of fields is static, which is what makes `reset` and error accumulation derivable. `dependent` and `visibleWhen` cover fields that depend on another field's value without creating or destroying fields.
 
-### Semigroup validation (`Data.Validation.Semigroup`)
+### Where each form lives
 
-Used in `validateMenuItem` and `validateStrainLineage` — chains field validations with `andThen`, accumulates errors as `Array String`, and converts via `toEither` / `joinWith`.
-
-### Preset bundles
-
-`requiredText`, `requiredTextWithLimit`, `percentageField`, `moneyField`, `urlField`, `quantityField`, `commaListField`, `multilineText` — pre-built `{ validation, errorMessage, formatInput }` records.
-
----
+- `UI.Inventory.ItemForm.menuItemForm`: the item create and edit form
+- `Pages.Login.credentialsForm`: sign-in
+- `UI.Transaction.PaymentPanel.paymentForm`: payment method, amount, tendered, auth code
 
 ## Utilities
 
@@ -983,14 +961,14 @@ clearStorage :: Effect Unit
 ## Development Notes
 
 ### Project structure convention
-- `API/` — HTTP communication only, no business logic
-- `Services/` — effectful business logic, orchestrates API calls
-- `Types/` — pure domain models with serialization instances
-- `Config/` — compile-time constants, no effects
-- `UI/` — presentational components organized by domain
-- `Pages/` — pure renderers that receive `Poll`s of status ADTs (no async loading)
-- `Utils/` — pure helper functions
-- `Main.purs` — owns all async loading, route matching, and fiber lifecycle
+- `API/` -- HTTP communication only, no business logic
+- `Services/` -- effectful business logic, orchestrates API calls
+- `Types/` -- pure domain models with serialization instances
+- `Config/` -- compile-time constants, no effects
+- `UI/` -- presentational components organized by domain
+- `Pages/` -- pure renderers that receive `Poll`s of status ADTs (no async loading)
+- `Utils/` -- pure helper functions
+- `Main.purs` -- owns all async loading, route matching, and fiber lifecycle
 
 ### Async loading architecture
 - All data fetching is centralized in `Main.purs` using the `run` helper pattern
@@ -1002,7 +980,10 @@ clearStorage :: Effect Unit
 - Pages receive `pure Loading <|> poll` to always start with a loading state
 
 ### Known issues / tech debt
-- **Tax rate inconsistency:** `Services.Cart.addItemToTransaction` uses 15% hardcoded tax; `Services.TransactionService.createTransactionItem` uses 8%. The API-backed flow should be canonical.
+- **Dead pure helpers:** `Services.Cart` and the totals helpers in `Services.TransactionService` are used only by `test/Cart.purs`.
+- **`DL.load_` on non-loading elements:** `Pages.Stock.Interface` and `UI.Inventory.MenuLiveView` still attach `DL.load_` to elements that never raise `load`. Move them to `UI.Remote.onMount`.
+- **Item form:** the SKU is reused after a successful create; the strict `alphanumeric` rule blocks editing stored names that contain punctuation.
+- **Transaction screen inventory is refetched, not pushed:** it refreshes after every action and on Refresh; the backend availability stream is not wired to it.
 - **No real auth:** The system uses hard-coded dev users. The `X-User-Id` header is the only auth mechanism.
 - **Ledger types unused:** `Account`, `LedgerEntry`, `LedgerEntryType`, `AccountType`, `LedgerError` are defined but not consumed by any frontend module.
 - **`TransactionHistory` is a stub.**

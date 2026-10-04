@@ -30,7 +30,7 @@ The system uses a layered architecture with Servant for type-safe API definition
 
 2. **Server Layer** (`Server.hs`, `Server/Transaction.hs`, `Server/Auth.hs`): Request handlers. `Server` handles inventory endpoints with capability checks, running effectful stacks via `runInvEff`. `Server.Transaction` implements all POS subsystem handlers. `Server.Auth` implements the login, logout, me, and user management handlers including rate limit enforcement.
 
-3. **Service Layer** (`Service/`): Business logic combining state machine validation with effectful database operations. `Service.Transaction` and `Service.Register` load domain state via the `TransactionDb` and `RegisterDb` effects, run the relevant state machine transition to validate the command, and only proceed to the database effect if the transition is legal. No `DBPool` references appear here.
+3. **Service Layer** (`Service/`): `Service.Sale` is the entry point for building a sale and owns pricing, tax, change and id generation on the server. Business logic combining state machine validation with effectful database operations. `Service.Transaction` and `Service.Register` load domain state via the `TransactionDb` and `RegisterDb` effects, run the relevant state machine transition to validate the command, and only proceed to the database effect if the transition is legal. No `DBPool` references appear here.
 
 4. **Effect Layer** (`Effect/`): Algebraic effect definitions and their interpreters. Each effect (`InventoryDb`, `TransactionDb`, `RegisterDb`, `GenUUID`, `Clock`) has an IO interpreter that delegates to the corresponding `DB.*` module, and a pure in-memory interpreter backed by `runState` for unit testing. This layer is the boundary between service logic and IO.
 
@@ -43,6 +43,16 @@ The system uses a layered architecture with Servant for type-safe API definition
 8. **Types Layer** (`Types/`): Domain models -- `Types.Inventory`, `Types.Transaction`, `Types.Auth`. These types carry only Aeson instances.
 
 9. **Application Core** (`App.hs`): Server bootstrap, CORS configuration, security headers middleware, TLS configuration, Warp startup.
+
+### Domain Layer (`Domain/`)
+
+`Domain/` holds pure business rules with no effects, no database types and no Servant types. Everything in it is unit tested and property tested without a database.
+
+- `Domain.Pricing` prices one sale line. Money is integer cents. Tax rates are integer parts per million (6.25% is 62500). Each `TaxRule` names its own `RoundingMode` (`RoundHalfUp`, `RoundHalfEven`, `RoundDown`). `priceLine` returns the subtotal, one rounded tax amount per applicable rule, and the total.
+- `Domain.TaxRule` describes a stored tax rule (optional location, effective-from inclusive, effective-to exclusive) and selects the rules in force with `activeRules`. Text codes decode strictly: an unknown code is an error.
+- `Domain.SaleRules` holds `changeDue` (payment amount against tendered) and `finalizeProblems` (the reasons a sale cannot be completed).
+
+The service layer is the only caller. `Service.Sale` reads the menu price and the active tax rules through effects, then hands plain values to these functions.
 
 ### Key Technologies
 
@@ -135,13 +145,23 @@ app = securityHeadersMiddleware
 ### Combined Server (`Server.hs`)
 
 ```haskell
-combinedServer :: DBPool -> LogEnv -> Server CheeblrAPI
-combinedServer pool logEnv =
-  inventoryServer pool logEnv
-    :<|> posServerImpl pool logEnv
-    :<|> authServerImpl pool logEnv
-    :<|> pure cheeblrOpenApi
+type FullAPI = CheeblrAPI :<|> SaleCommandAPI
+
+fullServer :: AppEnv -> Server FullAPI
+fullServer env =
+  ( inventoryServer env
+      :<|> posServerImpl env
+      :<|> authServerImpl (envDbPool env) (envLogEnv env)
+      :<|> adminServerImpl env
+      :<|> managerServerImpl env
+      :<|> stockServerImpl env
+      :<|> feedServerImpl env
+      :<|> pure cheeblrOpenApi
+  )
+    :<|> saleCommandServer env
 ```
+
+`CheeblrAPI` (defined in `API.OpenApi`) is the type the OpenAPI document is generated from. `SaleCommandAPI` (defined in `API.SaleCommand`) holds the register's sale commands and is served beside it. The sale command routes are not yet in the OpenAPI document.
 
 All inventory handlers resolve the session unconditionally:
 
@@ -175,14 +195,18 @@ perIpLimit         = 20  -- failures per IP across all usernames in 10 minutes
 
 Both return `429 Too Many Requests` with `Retry-After: 600`.
 
-### Effect Stacks (`Server/Transaction.hs`)
+### Effect Stacks (`Server/Transaction.hs`, `Server/SaleCommand.hs`)
 
 ```haskell
-type TxEffs  = '[GenUUID, Clock, TransactionDb, Error ServerError, IOE]
-type RegEffs = '[GenUUID, Clock, RegisterDb,    Error ServerError, IOE]
+-- Server.Transaction
+type TxEffs  = '[GenUUID, Clock, TransactionDb, StockDb, InventoryDb, EventEmitter, Error ServerError, IOE]
+type RegEffs = '[GenUUID, Clock, RegisterDb, EventEmitter, Error ServerError, IOE]
+
+-- Server.SaleCommand
+type SaleEffs = '[TaxRules, GenUUID, Clock, TransactionDb, StockDb, InventoryDb, EventEmitter, Error ServerError, IOE]
 ```
 
-These are the only points where `DBPool` enters the effect stack. Everything above -- service functions, state machine code -- is pool-free.
+`runTxEff`, `runRegEff` and `runSaleEff` are the only points where `DBPool` enters the effect stack. Everything above them (service functions, domain rules, state machine code) is pool-free.
 
 ### Database Layer (`DB/Schema.hs`, `DB/Database.hs`, `DB/Transaction.hs`, `DB/Auth.hs`)
 
@@ -258,23 +282,37 @@ data TxStore = TxStore
 
 Requires `GenUUID :> es` and `Clock :> es` because the pure refund implementation needs fresh UUIDs and timestamps.
 
+The two interpreters differ in one known way: the PostgreSQL interpreter keeps the sale's stored totals current when an item is added or removed, and the pure interpreter does not. Specs that need totals set them on the fixture by hand.
+
+### `Effect.TaxRules`
+
+`getActiveTaxRules :: TaxRules :> es => LocationId -> UTCTime -> Eff es (Either Text [TaxRule])`. `Left` means a stored rule could not be decoded, and the caller must refuse to price the sale. Interpreters: `runTaxRulesIO pool` (reads the `tax_rule` table through `DB.TaxRule`), `runTaxRulesPure storedRules`. Both apply the same pure filter, `Domain.TaxRule.activeRules`.
+
 ### Testing with Pure Interpreters
 
 ```haskell
-type TestEffs = '[TransactionDb, Clock, GenUUID, Error ServerError, IOE]
+-- Test.Service.SaleSpec
+type TestEffs =
+  '[TaxRules, TransactionDb, StockDb, InventoryDb, Clock, GenUUID, EventEmitter, Error ServerError, IOE]
 
 runTest :: TxStore -> Eff TestEffs a -> IO (Either ServerError a)
 runTest store action =
-  fmap (fmap (fst . fst)) $
-  runEff
-  . runErrorNoCallStack @ServerError
-  . runGenUUIDPure uuidSupply
-  . runClockPure testTime
-  . runTransactionDbPure store
-  $ action
+  fmap (fmap (fst . fst . fst . fst))
+    $ runEff
+      . runErrorNoCallStack @ServerError
+      . runEventEmitterNoop
+      . runGenUUIDPure uuidSupply
+      . runClockPure testTime
+      . runInventoryDbPure testMenu
+      . runStockDbPure emptyStockStore
+      . runTransactionDbPure store
+      . runTaxRulesPure testRules
+    $ action
 ```
 
-State machine invariants, HTTP error codes, and inventory accounting are all verified without a running database. `Test.Integration` provides serialization boundary and real database coverage.
+State machine invariants, HTTP error codes, server-side pricing and inventory accounting are verified without a running database. `Test.Service.TransactionSpec` covers the state-machine service and `Test.Service.SaleSpec` covers the sale commands. `Test.Domain.*` covers the pure rules with property tests. `Test.Integration` provides serialization boundary and real database coverage.
+
+A behaviour that exists only in the PostgreSQL interpreter is invisible to these specs. Two production bugs were hidden that way until October 2026 (a sale auto-completing on payment, and totals not updating on item add), so keep the interpreters equivalent when changing either one.
 
 ## State Machine Layer
 
@@ -426,26 +464,50 @@ The `bootstrap-admin` devshell command connects to the DB, checks whether any us
 | POST | `/graphql/inventory` | Any role | GraphQL endpoint for inventory queries and mutations |
 | GET | `/openapi.json` | None | OpenAPI3 schema for the full API |
 
-### Transaction Endpoints
+### Sale Endpoints
 
-All transaction endpoints require a valid `Authorization: Bearer <token>` header.
+All endpoints require a valid `Authorization: Bearer <token>` header.
+
+**Reading sales and manager operations (`API.Transaction`, `SaleAPI`)**
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/transaction` | List all transactions |
-| GET | `/transaction/:id` | Get transaction with items and payments |
-| POST | `/transaction` | Create a new transaction |
-| PUT | `/transaction/:id` | Update a transaction |
-| POST | `/transaction/void/:id` | Void a transaction with reason |
-| POST | `/transaction/refund/:id` | Create a refund (inverse transaction) |
-| POST | `/transaction/item` | Add item to transaction (with inventory reservation) |
-| DELETE | `/transaction/item/:id` | Remove item (releases reservation) |
-| POST | `/transaction/payment` | Add payment to transaction |
-| DELETE | `/transaction/payment/:id` | Remove payment |
-| POST | `/transaction/finalize/:id` | Finalize transaction (commits reservations, decrements stock) |
-| POST | `/transaction/clear/:id` | Clear all items/payments, release reservations, reset totals |
+| GET | `/sale` | List all sales |
+| GET | `/sale/:id` | Get a sale with items and payments |
+| POST | `/sale/void/:id` | Void a sale; body is the reason as a JSON string |
+| POST | `/sale/refund/:id` | Create a refund (inverse transaction); body is the reason |
+| GET | `/refund` | List refunds |
+| GET | `/refund/:id` | Get a refund |
 
-State machine validation applies to all item, payment, finalize, void, and refund operations. Illegal transitions return `409 Conflict`.
+**Sale commands (`API.SaleCommand`, `SaleCommandAPI`)**
+
+Every command returns the whole `SaleTransaction` as it stands after the command. Request bodies carry no unit price, tax, total, change, approval flag or entity id. The backend looks up the price, applies the tax rules in force, computes change and generates ids.
+
+| Method | Endpoint | Body | Description |
+|---|---|---|---|
+| POST | `/pos/sale` | `StartSaleRequest` | Open a new, empty sale |
+| POST | `/pos/sale/item` | `AddItemRequest` | Add a quantity of a SKU; prices the line, reserves stock |
+| DELETE | `/pos/sale/item/:id` | none | Remove an item; releases its reservation |
+| POST | `/pos/sale/payment` | `AddPaymentRequest` | Record a payment; computes change |
+| DELETE | `/pos/sale/payment/:id` | none | Remove a payment |
+| POST | `/pos/sale/clear/:id` | none | Remove all items and payments from an open sale |
+| POST | `/pos/sale/finalize/:id` | none | Complete the sale; commits reservations, decrements stock |
+
+```haskell
+data StartSaleRequest = StartSaleRequest
+  { startSaleEmployeeId :: UUID, startSaleRegisterId :: UUID, startSaleLocationId :: LocationId }
+
+data AddItemRequest = AddItemRequest
+  { addItemSaleId :: UUID, addItemSku :: UUID, addItemQuantity :: Int }
+
+data AddPaymentRequest = AddPaymentRequest
+  { addPaymentSaleId :: UUID, addPaymentMethod :: PaymentMethod
+  , addPaymentAmount :: Int, addPaymentTendered :: Maybe Int, addPaymentReference :: Maybe Text }
+```
+
+Errors: `404` unknown sale, item, payment or SKU. `400` bad quantity, insufficient inventory, non-positive payment amount, or tendered below amount. `409` illegal state transition, clearing a closed sale, or finalizing a sale that has no items or is underpaid (the body lists every reason). `500` when a stored tax rule cannot be decoded.
+
+The endpoints that accepted a client-built sale, item or payment (`POST /sale`, `POST /sale/item`, `POST /sale/payment` and the old remove, finalize and clear routes) were removed.
 
 ### Register Endpoints
 
@@ -627,14 +689,46 @@ CREATE TABLE IF NOT EXISTS inventory_reservation (
 )
 ```
 
+### Tax Rule Table
+
+```sql
+CREATE TABLE IF NOT EXISTS tax_rule (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_id     UUID,                      -- NULL applies at every location
+    item_category   TEXT,                      -- NULL applies to every category
+    tax_category    TEXT         NOT NULL,     -- REGULAR_SALES_TAX, EXCISE_TAX, ...
+    rate_ppm        INTEGER      NOT NULL CHECK (rate_ppm >= 0),
+    rounding        TEXT         NOT NULL,     -- HALF_UP, HALF_EVEN, DOWN
+    description     TEXT         NOT NULL,
+    effective_from  TIMESTAMPTZ  NOT NULL,     -- inclusive
+    effective_to    TIMESTAMPTZ,               -- exclusive; NULL is open-ended
+    CHECK (effective_to IS NULL OR effective_to > effective_from)
+)
+```
+
+Created by `DB.TaxRule.createTaxRuleTables`. When the table is empty it is seeded with one placeholder rule: 8% `REGULAR_SALES_TAX` for every location and category. The placeholder is not a real tax rule and must be replaced before taking real sales. Rules are edited with SQL; there is no endpoint for them yet.
+
 ## Transaction Processing
 
 ### Transaction Lifecycle
 
-1. **Creation**: Transaction inserted with status `CREATED` and zero totals.
-2. **Item Addition**: `Service.Transaction.addItem` loads the transaction, calls `runTxCommand AddItemCmd`. State machine validates (`Created` and `InProgress` accept items). If valid, `AddTransactionItem` effect checks availability, creates reservation, inserts item.
-3. **Payment Addition**: `addPaymentCmd` validates, then `AddPayment` effect inserts. DB layer auto-updates status -- payments >= total -> `COMPLETED`, else `IN_PROGRESS`.
-4. **Finalization**: `finalizeTx` validates via `FinalizeCmd` (only `InProgress`). `FinalizeTransaction` decrements `menu_items.quantity`, marks reservations `Completed`, sets status `COMPLETED`.
+The register drives a sale through `Service.Sale`, which wraps the state-machine service `Service.Transaction`.
+
+1. **Start**: `Service.Sale.startSale` generates the sale id and timestamp and inserts an empty sale with status `CREATED` and zero totals.
+2. **Item addition**: `Service.Sale.addItem` loads the sale, reads the tax rules in force for the sale's location, looks up the SKU on the menu, and calls `Domain.Pricing.priceLine`. It then passes the priced item to `Service.Transaction.addItem`, which runs `AddItemCmd` through the state machine (`Created` and `InProgress` accept items), checks availability, creates the reservation, inserts the item, emits the domain event and creates the stock pull. The DB layer refreshes the sale's stored totals.
+3. **Payment addition**: `Service.Sale.addPayment` computes change with `Domain.SaleRules.changeDue`, marks the payment approved (there is no payment processor yet), and passes it to `Service.Transaction.addPayment`. Adding a payment never changes the sale's status.
+4. **Finalization**: `Service.Sale.finalize` refuses with `409` when `Domain.SaleRules.finalizeProblems` reports no items or a payment shortfall. Otherwise `Service.Transaction.finalizeTx` validates `FinalizeCmd` (only from `InProgress`), and `FinalizeTransaction` decrements `menu_items.quantity`, marks reservations `Completed` and sets status `COMPLETED`.
+
+`Service.Transaction` trusts the item and payment it is given. That is safe only because `Service.Sale` builds them on the server and is its only caller for sale building. Do not add a handler that calls `Service.Transaction.addItem` or `addPayment` directly.
+
+### Pricing and Tax
+
+- All money is integer cents. Rates are integer parts per million. No floating point is used anywhere in pricing.
+- The unit price is the menu price at the moment the item is added.
+- Each applicable tax rule produces one stored tax row on the item. The amount is rounded once, to the cent, by the rule's rounding mode.
+- Line total is subtotal plus the stored tax amounts. Sale totals are sums over stored rows (`DB.Transaction.updateTransactionTotals`); they are never recomputed from a rate.
+- A rule applies to an item when its item category matches or is unset, its location matches or is unset, and the current time is inside its effective range.
+- Not modelled yet: a tax charged on another tax, and discounts reducing the taxable base.
 
 ### Reversal Operations
 
@@ -644,7 +738,7 @@ CREATE TABLE IF NOT EXISTS inventory_reservation (
 
 ### Clear Transaction
 
-Resets to empty state without the state machine (operational escape hatch): releases reservations, deletes items/payments, zeroes totals, sets status to `CREATED`. Can be called on a voided or refunded transaction if needed.
+`Service.Sale.clear` empties an open sale: it releases reservations, deletes items and payments, zeroes totals and sets status to `CREATED`. It returns `409` unless the sale is `Created` or `InProgress`. It does not cancel the sale's stock pull requests.
 
 ## Inventory Reservation System
 
@@ -655,6 +749,10 @@ Resets to empty state without the state machine (operational escape hatch): rele
 5. **Clear**: all reservations for the transaction set to `"Released"`
 
 Inventory exceptions (`ItemNotFound`, `InsufficientInventory`) are returned as `Either` values by the effect operation and converted to `err404`/`err400` in the service layer.
+
+The inventory read endpoints return each item's quantity with every open reservation already subtracted, so clients must not subtract cart quantities again.
+
+`DB.Transaction.addTransactionItem` runs its availability check, item insert, reservation insert and totals update as separate statements without a row lock. Two registers adding the last unit at the same moment can both succeed. Moving this into one SQL transaction with `SELECT ... FOR UPDATE` is open work.
 
 ## Security and Configuration
 
@@ -698,10 +796,11 @@ When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, 
 
 - `API/` -- Servant type definitions. No business logic. `API.OpenApi` owns the combined type.
 - `Auth/Session.hs` -- Session resolution. `resolveSession` is the single auth entry point for all non-auth endpoints.
+- `Domain/` -- Pure business rules (pricing, tax rule selection, payment and finalize rules). No effects, no Rel8, no Servant.
 - `Effect/` -- Effect GADTs, smart constructors, IO and pure interpreters. Add operations here first before touching `Service/`.
 - `State/` -- State machine definitions. Pure functions only.
-- `Service/` -- Business logic over effect rows. No `DBPool`, no SQL, no `Handler`.
-- `Server/` and `Server.hs` -- Request handlers. `DBPool` appears only in `runTxEff`/`runRegEff`/`runInvEff`.
+- `Service/` -- Business logic over effect rows. No `DBPool`, no SQL, no `Handler`. `Service.Sale` is the entry point for building a sale; `Service.Transaction` holds the state-machine operations it wraps.
+- `Server/` and `Server.hs` -- Request handlers. `DBPool` appears only in `runTxEff`/`runRegEff`/`runSaleEff`/`runInvEff`.
 - `DB/Schema.hs` -- Single source of truth for table structure.
 - `DB/Database.hs`, `DB/Transaction.hs`, `DB/Auth.hs` -- Database operations and row conversion functions.
 - `Types/` -- Domain models with Aeson and `ToSchema` instances. No effects. No database instances.
@@ -733,3 +832,10 @@ When `USE_TLS=true` and `TLS_CERT_FILE`/`TLS_KEY_FILE` point to existing files, 
 - **`error` calls in DB layer**: Several post-write "impossible" states use `error` rather than returning an HTTP error.
 - **State machine and DB status can diverge**: `fromTransaction` trusts `transactionStatus` as stored. A partial DB write after a validated transition can cause divergence.
 - **`clear` bypasses the state machine**: Intentional escape hatch, but means `clearTransaction` can be called on `VOIDED` or `REFUNDED` transactions.
+
+- **Add item is not one SQL transaction**: see Inventory Reservation System. Concurrent registers can oversell the last unit.
+- **Pure `TransactionDb` interpreter does not maintain sale totals**: the PostgreSQL interpreter does.
+- **Sale command routes are missing from the OpenAPI document**: `SaleCommandAPI` is served beside `CheeblrAPI`.
+- **Placeholder tax rule**: the `tax_rule` seed is a single 8% rule. Real rules must be supplied, and there is no endpoint for editing them.
+- **Clear does not cancel stock pulls**.
+- **Payments are approved on record**: `paymentApproved` is set by the server with no processor integration.

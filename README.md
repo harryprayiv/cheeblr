@@ -28,20 +28,20 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 
 ### Point-of-Sale System
 
-- **Full Transaction Lifecycle**: Create -> add items (with reservation) -> add payments -> finalize (commits inventory) or clear (releases reservations)
-- **Compile-Time State Machine Enforcement**: Transaction and register state transitions are validated at compile time via [crem](https://github.com/tweag/crem). The permitted topology is a type-level constraint; illegal transitions are rejected at the type checker, not at runtime. Invalid commands at runtime return `409 Conflict`.
-- **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a transaction concurrently using the frontend's `parSequence_` pattern; degrades gracefully to `TxPageDegraded` state on partial load failure
-- **Multiple Payment Methods**: Cash, credit, debit, ACH, gift card, stored value, mixed, and custom payment types with change calculation
-- **Tax Management**: Per-item tax records with category tracking (regular sales, excise, cannabis, local, medical)
-- **Discount Support**: Percentage-based, fixed amount, BOGO, and custom discount types with approval tracking
-- **Automatic Total Recalculation**: Server-side recalculation of subtotals, taxes, discounts, and totals on item/payment changes
+- **Full Sale Lifecycle**: Start -> add items (with reservation) -> add payments -> finalize (commits inventory) or clear (releases reservations). A sale can only be completed through finalize, and finalize is refused until the sale has items and its payments cover the total.
+- **Server-Side Pricing**: The register sends intent only (which SKU, how many, how much was paid). The backend looks up the menu price, applies the tax rules in force, computes change, and generates every id. No client-computed money is accepted.
+- **Tax Rules as Data**: Rules live in a `tax_rule` table keyed by optional location, optional item category, tax category, rate, rounding mode and an effective date range. An item can carry several tax lines (sales, excise, local). All money is integer cents and rates are integer parts per million; each tax is rounded once and the rounded amount is stored.
+- **Compile-Time State Machine Enforcement**: Transaction and register state transitions are validated at compile time via [crem](https://github.com/tweag/crem). The permitted topology is a type-level constraint; illegal transitions are rejected with `409 Conflict`.
+- **Parallel Data Loading**: The POS page loads inventory, initializes the register, and starts a sale concurrently using the frontend's `parSequence_` pattern; degrades gracefully to `TxPageDegraded` state on partial load failure
+- **Multiple Payment Methods**: Cash, credit, debit, ACH, gift card, stored value, mixed, and custom payment types with change calculated on the server
+- **Discount Support**: Percentage-based, fixed amount, BOGO, and custom discount types with approval tracking (types and storage exist; the sale flow does not create discounts yet)
+- **Stored Totals**: Sale subtotal, tax and total are sums over stored line amounts, refreshed whenever an item is added or removed
 
 ### Financial Operations
 
 - **Cash Register Management**: Open registers with starting cash, close with counted cash and automatic variance calculation. Register open/close transitions are enforced by the same state machine layer as transactions.
 - **Register Persistence**: Register IDs stored in localStorage, auto-recovered on page load via get-or-create pattern
 - **Transaction Modifications**: Void (marks existing transaction) and refund (creates inverse transaction with negated amounts) operations with reason tracking
-- **Payment Status Tracking**: Transaction status auto-updates based on payment coverage (payments >= total -> Completed)
 
 ### Security
 
@@ -71,6 +71,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | HTTP | **purescript-fetch** with **Yoga.JSON** for serialization |
 | GraphQL | Hand-rolled HTTP POST to `/graphql/inventory` -- no npm dependencies |
 | Money | **Data.Finance.Money** -- `Discrete USD` (integer cents) with formatting |
+| Forms | `UI.Form` -- applicative form builder; `UI.Form.Parser` -- `String -> Either String a` field parsers |
 | Async | **Effect.Aff** with `run` helper, `parSequence_`, `killFiber` for route-driven loading |
 | Parallelism | **Control.Parallel** -- concurrent data fetching within a single route |
 
@@ -105,7 +106,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 | TLS | **mkcert** for local dev certs; **warp-tls** for HTTPS on the backend; **Vite** HTTPS config |
 | Build (Haskell) | **Cabal** via haskell.nix / CHaP |
 | Build (PureScript) | **Spago** |
-| Testing | Haskell unit + integration tests (pure in-memory interpreters for service-layer unit tests, ephemeral-PostgreSQL for integration); 484 PureScript tests |
+| Testing | Haskell unit + integration tests (pure in-memory interpreters for service-layer unit tests, ephemeral-PostgreSQL for integration); hedgehog property tests for the pure pricing and tax modules; PureScript unit tests |
 
 ## Getting Started
 
@@ -173,22 +174,30 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 | POST | `/graphql/inventory` | GraphQL endpoint -- inventory queries |
 | GET | `/openapi.json` | OpenAPI3 schema for the full API |
 
-#### Transactions
+#### Sales
+
+Reading sales and manager operations:
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/transaction` | List all transactions |
-| GET | `/transaction/:id` | Get transaction with items and payments |
-| POST | `/transaction` | Create transaction |
-| PUT | `/transaction/:id` | Update transaction |
-| POST | `/transaction/void/:id` | Void with reason |
-| POST | `/transaction/refund/:id` | Create inverse refund transaction |
-| POST | `/transaction/item` | Add item (checks availability, creates reservation) |
-| DELETE | `/transaction/item/:id` | Remove item (releases reservation) |
-| POST | `/transaction/payment` | Add payment |
-| DELETE | `/transaction/payment/:id` | Remove payment |
-| POST | `/transaction/finalize/:id` | Finalize (commits inventory, completes reservations) |
-| POST | `/transaction/clear/:id` | Clear all items/payments, release reservations |
+| GET | `/sale` | List all sales |
+| GET | `/sale/:id` | Get a sale with items and payments |
+| POST | `/sale/void/:id` | Void with reason |
+| POST | `/sale/refund/:id` | Create inverse refund transaction |
+| GET | `/refund` | List refunds |
+| GET | `/refund/:id` | Get a refund |
+
+Sale commands. Each returns the whole sale; request bodies carry no prices, totals or ids:
+
+| Method | Endpoint | Description |
+|---|---|---|
+| POST | `/pos/sale` | Open a new sale for an employee, register and location |
+| POST | `/pos/sale/item` | Add a quantity of a SKU (prices the line, checks availability, creates reservation) |
+| DELETE | `/pos/sale/item/:id` | Remove item (releases reservation) |
+| POST | `/pos/sale/payment` | Record a payment (computes change) |
+| DELETE | `/pos/sale/payment/:id` | Remove payment |
+| POST | `/pos/sale/clear/:id` | Clear all items/payments from an open sale, release reservations |
+| POST | `/pos/sale/finalize/:id` | Finalize (refused if empty or underpaid; commits inventory, completes reservations) |
 
 #### Registers
 
@@ -206,12 +215,18 @@ See [Nix Development Environment](./Docs/NixDevEnvironment.md) for the full comm
 
 The frontend follows a centralized async loading pattern:
 
-- **`Main.purs`** owns all async data fetching, route matching, and fiber lifecycle management
-- **Pages** are pure renderers: `Poll Status -> Nut` -- no side effects, no `launchAff_`, no `Poll.create`
+- **`Main.purs`** owns route matching, route-level data fetching, and fiber lifecycle management
+- **Pages** render from a `Poll` of a status ADT supplied by `Main`
 - **Route changes** cancel in-flight loading via `killFiber` on the previous fiber
 - **`parSequence_`** runs multiple loaders in parallel per route
 - **Status ADTs** per page (`Loading | Ready data | Error msg | Degraded partialData`) provide type-safe loading states
-- **Auth flow**: `Main.purs` loads the stored token from `localStorage` on startup, validates it against `GET /auth/me`, and either restores the session or redirects to `/#/login`
+- **Auth flow**: `Main.purs` validates the session against `GET /auth/me` on startup and either restores the session or redirects to `/#/login`
+
+Three shared abstractions keep pages small:
+
+- **`UI.Form`**: an applicative form builder. A form is one `ado` block of fields; each field pairs an input with a parser (`String -> Either String a`). Validity is derived, never stored, and errors accumulate across fields.
+- **`UI.Remote`**: `useRemote` owns one backend request as a `RemoteData` value with `reload` and `refresh`; `onMount` runs an effect when an element is created.
+- **`UI.Transaction`**: the POS screen. A pure, tested `Model` plus four view modules. The screen keeps the sale exactly as the backend returns it and computes no money.
 
 ### Backend Architecture
 
@@ -219,21 +234,27 @@ The frontend follows a centralized async loading pattern:
 App.hs (securityHeadersMiddleware, CORS, TLS, warp)
   |- Server.hs (inventory + session; resolveSession on every handler; runInvEff)
   |- Server/Auth.hs (login/logout/me/users; rate limiting via login_attempts table)
-  |- Server/Transaction.hs (POS: runTxEff / runRegEff)
+  |- Server/Transaction.hs (sale reads, void, refund, registers: runTxEff / runRegEff)
+  |- Server/SaleCommand.hs (/pos/sale commands: runSaleEff)
+  |- Service/Sale.hs (server-side pricing, tax, change, ids, finalize guard; wraps Service/Transaction)
   |- Service/Transaction.hs (load state via TransactionDb, run TxMachine, call effect or 409)
+  |- Domain/Pricing.hs, Domain/TaxRule.hs, Domain/SaleRules.hs (pure rules: integer money, tax selection, change, finalize checks)
   |- Service/Register.hs (load state via RegisterDb, run RegMachine, call effect or 409)
   |- Auth/Session.hs (resolveSession: extract Bearer token, SHA-256 hash, lookup session)
   |- Effect/InventoryDb.hs (IO -> DB.Database; pure -> Map)
   |- Effect/TransactionDb.hs (IO -> DB.Transaction; pure -> TxStore)
   |- Effect/RegisterDb.hs (IO -> DB.Transaction; pure -> RegStore)
+  |- Effect/TaxRules.hs (IO -> DB.TaxRule; pure -> list of stored rules)
   |- Effect/GenUUID.hs (IO -> nextRandom; pure -> supply list)
   |- Effect/Clock.hs (IO -> getCurrentTime; pure -> fixed time)
   |- State/TransactionMachine.hs (TxTopology GADT, compile-time transition enforcement)
   |- State/RegisterMachine.hs (RegTopology GADT, compile-time transition enforcement)
   |- API/OpenApi.hs (CheeblrAPI composition, /openapi.json)
+  |- API/SaleCommand.hs (SaleCommandAPI, served beside CheeblrAPI)
   |- DB/Schema.hs (Rel8able row types and TableSchema for every table including auth)
   |- DB/Database.hs (inventory CRUD via rel8/hasql)
   |- DB/Transaction.hs (transactions, reservations, registers, payments)
+  |- DB/TaxRule.hs (tax_rule table, strict row decoding, placeholder seed)
   |- DB/Auth.hs (users, sessions, login_attempts; Argon2id; CSPRNG tokens)
   '- Types/ (domain models with Aeson instances; no database-layer instances)
 ```
@@ -253,19 +274,20 @@ App.hs (securityHeadersMiddleware, CORS, TLS, warp)
 | `discount` | Discounts on items or transactions -- FK with CASCADE |
 | `payment_transaction` | Payment records -- FK to `transaction` with CASCADE |
 | `inventory_reservation` | Reservation tracking (Reserved -> Completed/Released) |
+| `tax_rule` | Tax rules by location, item category and effective date range |
 | `register` | Cash register state and history |
 
 ## Testing
 
 ```bash
-test-unit             # Haskell unit tests + 484 PureScript tests (no services needed)
+test-unit             # Haskell unit tests + PureScript tests (no services needed)
 test-integration      # ephemeral PostgreSQL + backend on :18080, HTTP integration suite
 test-integration-tls  # same as above with TLS; validates cert SAN and plain-HTTP rejection
 test-suite            # all three phases in sequence
 test-smoke            # hit live backend on :8080, check endpoint and JSON contract health
 ```
 
-Haskell unit tests run the full service layer against pure in-memory interpreters. Integration tests spin up and tear down their own isolated PostgreSQL instance.
+Haskell unit tests run the full service layer against pure in-memory interpreters, and the pure pricing, tax rule and sale rule modules are covered by property tests. Integration tests spin up and tear down their own isolated PostgreSQL instance.
 
 ## Development Status
 
@@ -273,12 +295,16 @@ Haskell unit tests run the full service layer against pure in-memory interpreter
 
 - Full inventory CRUD with strain lineage
 - Inventory reservation system (reserve on cart add, release on remove, commit on finalize)
-- Complete transaction lifecycle (create -> items -> payments -> finalize/void/refund/clear)
+- Complete sale lifecycle (start -> items -> payments -> finalize/void/refund/clear)
+- Server-side pricing: the backend owns unit price, tax, totals, change and ids; finalize is refused for empty or underpaid sales
+- Tax rules as data (per location and item category, effective-dated), integer money, per-rule rounding
+- Applicative form builder (`UI.Form`) with parsing at the input boundary; item, login and payment forms built on it
+- POS screen split into a pure tested model and view modules; sale state comes only from the backend
 - Compile-time state machine enforcement for transactions and registers via crem
 - Algebraic effect layer with IO and pure in-memory interpreters; service layer is pool-free
 - Multiple payment methods with change calculation
 - Cash register open/close with variance tracking and state machine validation
-- Tax and discount record management
+- Tax and discount record storage
 - Role-based capability system (4 roles, 15 capabilities)
 - Session-based authentication: Argon2id passwords, CSPRNG opaque tokens, SHA-256 hash storage, instant revocation, register binding
 - Rate limiting: per-credential (5/10 min) and per-IP across all usernames (20/10 min), DB-backed
@@ -295,10 +321,14 @@ Haskell unit tests run the full service layer against pure in-memory interpreter
 - GraphQL inventory API via morpheus-graphql
 - OpenAPI3 schema at `/openapi.json` via servant-openapi3
 - Database layer on rel8 + hasql + hasql-pool
-- Comprehensive test suite (unit, integration, TLS wire checks, JSON contract tests, 484 PureScript tests)
+- Comprehensive test suite (unit, property, integration, TLS wire checks, JSON contract tests, PureScript tests)
 
 ### In Progress
 
+- Atomic add-item (one SQL transaction with a row lock, so concurrent registers cannot oversell)
+- Golden JSON fixtures shared by the Haskell and PureScript test suites
+- Sale command routes in the OpenAPI document
+- Real tax rules (the `tax_rule` table ships with a placeholder) and a way to edit them
 - Daily financial reporting (endpoints exist, implementation pending)
 - Compliance verification system (types and stubs defined)
 - GraphQL WebSocket subscriptions for live inventory via PostgreSQL `LISTEN/NOTIFY`
@@ -315,7 +345,7 @@ Haskell unit tests run the full service layer against pure in-memory interpreter
 
 ## 📜 License
 
-This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007 — see the LICENSE file for details. 
+This project is licensed under the GNU AFFERO GENERAL PUBLIC LICENSE Version 3, 19 November 2007 -- see the LICENSE file for details. 
 
 ## 🤝 Contributing
 
