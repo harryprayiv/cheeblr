@@ -3,26 +3,20 @@ module Test.Inventory where
 import Prelude
 
 import Config.LiveView (defaultViewConfig)
-import Data.Either (Either(..), isLeft, isRight)
 import Data.Finance.Money (Discrete(..))
 import Data.Maybe (Maybe(..), isJust)
-import Data.Newtype (unwrap)
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
 import Types.Inventory
   ( ItemCategory(..)
   , Species(..)
   , MenuItem(..)
-  , MenuItemFormInput
   , StrainLineage(..)
   , Inventory(..)
   , generateClassName
   , findItemBySku
   , findItemNameBySku
   , getItemName
-  , validateMenuItem
-  , validateCategory
-  , validateSpecies
   , compareMenuItems
   )
 import Types.UUID (UUID(..))
@@ -66,35 +60,6 @@ testMenuItem = MenuItem
   , strain_lineage: testStrainLineage
   }
 
-testFormInput :: MenuItemFormInput
-testFormInput =
-  { sort: "1"
-  , sku: "4e58b3e6-3fd4-425c-b6a3-4f033a76859c"
-  , brand: "TestBrand"
-  , name: "OG Kush"
-  , price: "29.99"
-  , measure_unit: "g"
-  , per_package: "3.5"
-  , quantity: "10"
-  , category: "Flower"
-  , subcategory: "Indoor"
-  , description: "Classic strain"
-  , tags: "indica, classic"
-  , effects: "relaxed, sleepy"
-  , strain_lineage:
-      { thc: "25%"
-      , cbg: "0.5%"
-      , strain: "OG Kush"
-      , creator: "Unknown"
-      , species: "Indica"
-      , dominant_terpene: "Myrcene"
-      , terpenes: "Myrcene, Limonene"
-      , lineage: "Hindu Kush, Chemdawg"
-      , leafly_url: "https://leafly.com/strains/og-kush"
-      , img: "https://example.com/ogkush.jpg"
-      }
-  }
-
 spec :: Spec Unit
 spec = describe "Types.Inventory" do
 
@@ -117,67 +82,6 @@ spec = describe "Types.Inventory" do
     it "has correct ordering" do
       (Indica < Hybrid) `shouldEqual` true
       (Hybrid < Sativa) `shouldEqual` true
-
-  describe "validateCategory" do
-    it "accepts Flower" do
-      validateCategory "cat" "Flower" `shouldSatisfy` \v ->
-        case v of
-          _ -> true
-    it "accepts all valid categories" do
-      let categories = ["Flower", "PreRolls", "Vaporizers", "Edibles", "Drinks",
-                         "Concentrates", "Topicals", "Tinctures", "Accessories"]
-      let _ = map (\c -> validateCategory "cat" c) categories
-      (true) `shouldEqual` true
-
-  describe "validateSpecies" do
-    it "accepts Indica" do
-      let _ = validateSpecies "sp" "Indica"
-      pure unit
-    it "accepts all valid species" do
-      let species = ["Indica", "IndicaDominantHybrid", "Hybrid",
-                      "SativaDominantHybrid", "Sativa"]
-      let _ = map (\s -> validateSpecies "sp" s) species
-      (true) `shouldEqual` true
-
-  describe "validateMenuItem" do
-    it "accepts valid form input" do
-      validateMenuItem testFormInput `shouldSatisfy` isRight
-
-    it "rejects empty name" do
-      validateMenuItem (testFormInput { name = "" }) `shouldSatisfy` isLeft
-
-    it "rejects empty brand" do
-      validateMenuItem (testFormInput { brand = "" }) `shouldSatisfy` isLeft
-
-    it "rejects invalid price" do
-      validateMenuItem (testFormInput { price = "abc" }) `shouldSatisfy` isLeft
-
-    it "rejects negative quantity" do
-      validateMenuItem (testFormInput { quantity = "-1" }) `shouldSatisfy` isLeft
-
-    it "rejects invalid category" do
-      validateMenuItem (testFormInput { category = "InvalidCat" }) `shouldSatisfy` isLeft
-
-    it "rejects invalid species" do
-      let invalidInput = testFormInput { strain_lineage = testFormInput.strain_lineage { species = "InvalidSpecies" } }
-      validateMenuItem invalidInput `shouldSatisfy` isLeft
-
-    it "rejects invalid SKU" do
-      validateMenuItem (testFormInput { sku = "not-a-uuid" }) `shouldSatisfy` isLeft
-
-    it "rejects invalid leafly URL" do
-      let invalidInput = testFormInput { strain_lineage = testFormInput.strain_lineage { leafly_url = "not a url" } }
-      validateMenuItem invalidInput `shouldSatisfy` isLeft
-
-    it "produces correct price in cents" do
-      case validateMenuItem testFormInput of
-        Right (MenuItem item) -> unwrap item.price `shouldEqual` 2999
-        Left _ -> (false) `shouldEqual` true
-
-    it "parses tags from comma list" do
-      case validateMenuItem testFormInput of
-        Right (MenuItem item) -> item.tags `shouldEqual` ["indica", "classic"]
-        Left _ -> (false) `shouldEqual` true
 
   describe "generateClassName" do
     it "generates correct class for Indica Flower" do
@@ -273,7 +177,7 @@ spec = describe "Types.Inventory" do
         Just (MenuItem item) -> item.price `shouldEqual` Discrete 2999
         Nothing -> (false) `shouldEqual` true
 
-  -- Inventory is now serialized as a plain JSON array — no wrapper type.
+
   describe "Inventory JSON" do
     it "serializes as array" do
       let inv = Inventory [testMenuItem]

@@ -25,14 +25,11 @@ import Test.Spec.Runner.Node (runSpecAndExitProcess)
 import Test.Stock as Stock
 import Test.TransactionJson as TransactionJson
 import Test.UUID as UUID
-import Test.Validation as Validation
-import Test.ValidatorsV as ValidatorsV
 import Test.WebUtils as WebUtils
 
 main :: Effect Unit
 main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" do
   -- Core types and utilities
-  Validation.spec
   Formatting.spec
   Money.spec
   UUID.spec
@@ -60,5 +57,4 @@ main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" d
   FeedTypes.spec
   Location.spec
   EnumInstances.spec
-  ValidatorsV.spec
   ShowInstances.spec

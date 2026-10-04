@@ -5,7 +5,6 @@ import Prelude
 import Config.LiveView (LiveViewConfig, SortField(..), SortOrder(..))
 import Data.Array (find)
 import Data.Array as Array
-import Data.Either (Either(..))
 import Data.Enum (class BoundedEnum, class Enum, Cardinality(Cardinality))
 import Data.Finance.Currency (USD)
 import Data.Finance.Money (Discrete(..))
@@ -14,16 +13,14 @@ import Data.Int (floor, toNumber) as Int
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap)
 import Data.Show.Generic (genericShow)
-import Data.String (Pattern(..), joinWith, replace, toLower)
+import Data.String (Pattern(..), replace, toLower)
 import Data.String.Pattern (Replacement(..))
 import Data.Tuple (Tuple)
 import Data.Tuple.Nested ((/\))
-import Data.Validation.Semigroup (V, invalid, toEither, andThen)
 import Foreign (F, ForeignError(..), fail)
 import Foreign.Index (readProp)
-import Types.UUID (UUID, parseUUID, validateUUID)
-import Utils.Formatting (invertOrdering, parseCommaList)
-import Utils.Validation (validateInt, validateNumber, validatePercentage, validateString, validateUrl)
+import Types.UUID (UUID, parseUUID)
+import Utils.Formatting (invertOrdering)
 import Yoga.JSON (class ReadForeign, class WriteForeign, readImpl, writeImpl)
 
 -- | Returned by POST / PUT / DELETE /inventory
@@ -103,36 +100,6 @@ data Species
 
 derive instance eqItemSpecies :: Eq Species
 derive instance ordItemSpecies :: Ord Species
-
-type MenuItemFormInput =
-  { sort :: String
-  , sku :: String
-  , brand :: String
-  , name :: String
-  , price :: String
-  , measure_unit :: String
-  , per_package :: String
-  , quantity :: String
-  , category :: String
-  , subcategory :: String
-  , description :: String
-  , tags :: String
-  , effects :: String
-  , strain_lineage :: StrainLineageFormInput
-  }
-
-type StrainLineageFormInput =
-  { thc :: String
-  , cbg :: String
-  , strain :: String
-  , creator :: String
-  , species :: String
-  , dominant_terpene :: String
-  , terpenes :: String
-  , lineage :: String
-  , leafly_url :: String
-  , img :: String
-  }
 
 instance Enum ItemCategory where
   succ Flower = Just PreRolls
@@ -426,106 +393,6 @@ generateClassName item =
 
 toClassName :: String -> String
 toClassName str = toLower (replace (Pattern " ") (Replacement "-") str)
-
-validateCategory :: String -> String -> V (Array String) ItemCategory
-validateCategory fieldName str = case str of
-  "Flower" -> pure Flower
-  "PreRolls" -> pure PreRolls
-  "Vaporizers" -> pure Vaporizers
-  "Edibles" -> pure Edibles
-  "Drinks" -> pure Drinks
-  "Concentrates" -> pure Concentrates
-  "Topicals" -> pure Topicals
-  "Tinctures" -> pure Tinctures
-  "Accessories" -> pure Accessories
-  _ -> invalid [ fieldName <> " has invalid category value" ]
-
-validateSpecies :: String -> String -> V (Array String) Species
-validateSpecies fieldName str = case str of
-  "Indica" -> pure Indica
-  "IndicaDominantHybrid" -> pure IndicaDominantHybrid
-  "Hybrid" -> pure Hybrid
-  "SativaDominantHybrid" -> pure SativaDominantHybrid
-  "Sativa" -> pure Sativa
-  _ -> invalid [ fieldName <> " has invalid species value" ]
-
-mapValidationErrors :: forall a. V (Array String) a -> Either String a
-mapValidationErrors validation =
-  case toEither validation of
-    Left errors -> Left (joinWith ", " errors)
-    Right value -> Right value
-
-validateMenuItem :: MenuItemFormInput -> Either String MenuItem
-validateMenuItem input =
-  case toEither validationResult of
-    Left errors -> Left (joinWith ", " errors)
-    Right result -> Right result
-  where
-  validationResult =
-    validateUUID "SKU" input.sku `andThen` \sku ->
-      validateString "Name" input.name `andThen` \name ->
-        validateString "Brand" input.brand `andThen` \brand ->
-          validateNumber "Price" input.price `andThen` \priceValue ->
-            validateInt "Quantity" input.quantity `andThen` \quantity ->
-              validateString "Measure Unit" input.measure_unit `andThen`
-                \measure_unit ->
-                  validateString "Per Package" input.per_package `andThen`
-                    \per_package ->
-                      validateCategory "Category" input.category `andThen`
-                        \category ->
-                          validateString "Subcategory" input.subcategory
-                            `andThen` \subcategory ->
-                              validateStrainLineage input.strain_lineage
-                                `andThen` \strain_lineage ->
-                                  validateInt "Sort" input.sort `andThen`
-                                    \sort ->
-                                      let
-                                        priceCents = Int.floor
-                                          (priceValue * 100.0)
-                                      in
-                                        pure $ MenuItem
-                                          { sort
-                                          , sku
-                                          , brand
-                                          , name
-                                          , price: Discrete priceCents
-                                          , measure_unit
-                                          , per_package
-                                          , quantity
-                                          , category
-                                          , subcategory
-                                          , description: input.description
-                                          , tags: parseCommaList input.tags
-                                          , effects: parseCommaList
-                                              input.effects
-                                          , strain_lineage
-                                          }
-
-validateStrainLineage
-  :: StrainLineageFormInput -> V (Array String) StrainLineage
-validateStrainLineage input =
-  validatePercentage "THC" input.thc `andThen` \thc ->
-    validatePercentage "CBG" input.cbg `andThen` \cbg ->
-      validateString "Strain" input.strain `andThen` \strain ->
-        validateString "Creator" input.creator `andThen` \creator ->
-          validateSpecies "Species" input.species `andThen` \species ->
-            validateString "Dominant Terpene" input.dominant_terpene `andThen`
-              \dominant_terpene ->
-                validateUrl "Leafly URL" input.leafly_url `andThen`
-                  \leafly_url ->
-                    validateUrl "Image URL" input.img `andThen` \img ->
-                      pure $ StrainLineage
-                        { thc
-                        , cbg
-                        , strain
-                        , creator
-                        , species
-                        , dominant_terpene
-                        , terpenes: parseCommaList input.terpenes
-                        , lineage: parseCommaList input.lineage
-                        , leafly_url
-                        , img
-                        }
 
 compareMenuItems :: LiveViewConfig -> MenuItem -> MenuItem -> Ordering
 compareMenuItems config (MenuItem item1) (MenuItem item2) =
