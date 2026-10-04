@@ -2,8 +2,6 @@ module Pages.Admin.State where
 
 import Prelude
 
-import Types.Admin (AdminSnapshot)
-
 data AdminTab
   = TabOverview
   | TabLogViewer
@@ -40,8 +38,3 @@ allTabs =
   , TabDomainEvents
   , TabActions
   ]
-
-data SnapshotStatus
-  = SnapshotLoading
-  | SnapshotLoaded AdminSnapshot
-  | SnapshotError String

@@ -24,6 +24,7 @@ import Test.Spec.Reporter.Console (consoleReporter)
 import Test.Spec.Runner.Node (runSpecAndExitProcess)
 import Test.Stock as Stock
 import Test.TransactionJson as TransactionJson
+import Test.TransactionModel as TransactionModel
 import Test.UUID as UUID
 import Test.WebUtils as WebUtils
 
@@ -43,6 +44,7 @@ main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" d
   -- Business logic
   Cart.spec
   Inventory.spec
+  TransactionModel.spec
 
   -- JSON contracts (backend ↔ frontend)
   JsonContract.spec

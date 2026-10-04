@@ -1,6 +1,6 @@
-module Pages.Admin.Dashboard where
+module Pages.Manager.Dashboard where
 
-import API.Admin (getSnapshot)
+import API.Manager (getActivity)
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text_)
 import Deku.Core (Nut)
@@ -10,10 +10,11 @@ import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot, (<#~>))
 import FRP.Poll (Poll)
-import Pages.Admin.State (AdminTab(..), allTabs)
-import Pages.Admin.Tabs.FeedMonitor (feedMonitor)
-import Pages.Admin.Tabs.LogViewer (logViewer)
-import Pages.Admin.Tabs.Overview (overview)
+import Pages.Manager.Panels.ActivityFeed (activityFeed)
+import Pages.Manager.Panels.AlertsPanel (alertsPanel)
+import Pages.Manager.Panels.ReportsPanel (reportsPanel)
+import Pages.Manager.Panels.StatsPanel (statsPanel)
+import Pages.Manager.State (ManagerTab(..), allManagerTabs)
 import Services.AuthService (AuthState, UserId)
 import Types.RemoteData (RemoteData(..))
 import UI.Remote (onMount, useRemote)
@@ -21,32 +22,29 @@ import UI.Tabs (tabBar)
 
 page :: Poll AuthState -> UserId -> Nut
 page _authPoll userId = Deku.do
-  setTab /\ tabValue <- useHot TabOverview
-  snapshot <- useRemote Loading (getSnapshot userId)
+  setTab /\ tabValue <- useHot TabActivity
+  activity <- useRemote Loading (getActivity userId)
 
   D.div
-    [ DA.klass_ "admin-dashboard"
-    , onMount snapshot.reload
+    [ DA.klass_ "manager-dashboard"
+    , onMount activity.reload
     ]
-    [ D.div [ DA.klass_ "admin-header" ]
-        [ D.h1 [ DA.klass_ "admin-title" ] [ text_ "Admin Dashboard" ]
+    [ D.div [ DA.klass_ "manager-header" ]
+        [ D.h1 [ DA.klass_ "manager-title" ] [ text_ "Manager Dashboard" ]
         , D.button
             [ DA.klass_ "btn btn-sm"
-            , DL.click_ \_ -> snapshot.reload
+            , DL.click_ \_ -> activity.reload
             ]
             [ text_ "Refresh" ]
         ]
-
-    , tabBar { bar: "admin-tabs", tab: "admin-tab" } allTabs tabValue setTab
-
+    , tabBar { bar: "manager-tabs", tab: "manager-tab" }
+        allManagerTabs
+        tabValue
+        setTab
     , tabValue <#~> case _ of
-        TabOverview     -> overview snapshot.value
-        TabLogViewer    -> logViewer userId
-        TabFeedMonitor  -> feedMonitor userId
-        TabEventStream  -> D.div_ [ text_ "Event stream — coming soon" ]
-        TabTransactions -> D.div_ [ text_ "Transactions — coming soon" ]
-        TabSessions     -> D.div_ [ text_ "Sessions — coming soon" ]
-        TabRegisters    -> D.div_ [ text_ "Registers — coming soon" ]
-        TabDomainEvents -> D.div_ [ text_ "Domain Events — coming soon" ]
-        TabActions      -> D.div_ [ text_ "Actions — coming soon" ]
+        TabActivity -> activityFeed activity.value
+        TabAlerts   -> alertsPanel  activity.value
+        TabStats    -> statsPanel   activity.value
+        TabReports  -> reportsPanel userId
+        TabOverride -> D.div_ [ text_ "Override panel — coming in Phase 8" ]
     ]
