@@ -115,22 +115,24 @@ spec = describe "UI.Transaction.Model" do
         `shouldEqual` 5
 
   describe "availableToAdd" do
-    it "is stock minus what the cart holds" $
-      availableToAdd ogKush [ line skuA 4 ] `shouldEqual` 6
+    it "is the quantity the backend reports" $
+      availableToAdd ogKush `shouldEqual` 10
     it "never goes below zero" $
-      availableToAdd blueDream [ line skuC 9 ] `shouldEqual` 0
+      availableToAdd (mkItem skuC "Oversold" Flower (-2)) `shouldEqual` 0
 
   describe "addBlocker" do
     it "allows an add within stock" $
-      addBlocker 2 ogKush [ line skuA 4 ] `shouldEqual` Nothing
+      addBlocker 2 ogKush `shouldEqual` Nothing
+    it "allows taking everything that is left" $
+      addBlocker 3 blueDream `shouldEqual` Nothing
     it "rejects a zero quantity" $
-      addBlocker 0 ogKush [ line skuA 4 ]
+      addBlocker 0 ogKush
         `shouldEqual` Just "Quantity must be greater than 0"
     it "rejects an item with no stock" $
-      addBlocker 1 gummies [ line skuA 4 ] `shouldEqual` Just "Out of stock"
+      addBlocker 1 gummies `shouldEqual` Just "Out of stock"
     it "rejects more than is left" $
-      addBlocker 3 blueDream [ line skuC 1 ]
-        `shouldEqual` Just "Only 2 available"
+      addBlocker 4 blueDream
+        `shouldEqual` Just "Only 3 available"
 
   describe "totals" do
     it "reads the backend totals in cents" $

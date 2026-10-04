@@ -111,27 +111,19 @@ quantityInCart sku items =
         # map (\i -> saleQuantityCount i.itemQuantity)
     )
 
--- How many more units this cart could take, going by the inventory the
--- screen last fetched. The backend makes the real decision when the item is
--- added, because other registers hold reservations this screen cannot see.
-availableToAdd
-  :: forall r
-   . MenuItem
-  -> Array { itemMenuItemSku :: UUID, itemQuantity :: SaleQuantity | r }
-  -> Int
-availableToAdd (MenuItem i) items =
-  max 0 (i.quantity - quantityInCart i.sku items)
+-- How many more units can be added, going by the inventory the screen last
+-- fetched. The backend reports each item's quantity with every open
+-- reservation already subtracted, this cart's included, so nothing is
+-- subtracted again here. The backend makes the real decision when the item
+-- is added.
+availableToAdd :: MenuItem -> Int
+availableToAdd (MenuItem i) = max 0 i.quantity
 
 -- Why an add would be refused before asking the backend, or Nothing.
-addBlocker
-  :: forall r
-   . Int
-  -> MenuItem
-  -> Array { itemMenuItemSku :: UUID, itemQuantity :: SaleQuantity | r }
-  -> Maybe String
-addBlocker requested item items =
+addBlocker :: Int -> MenuItem -> Maybe String
+addBlocker requested item =
   let
-    available = availableToAdd item items
+    available = availableToAdd item
   in
     if requested <= 0 then Just "Quantity must be greater than 0"
     else if available <= 0 then Just "Out of stock"

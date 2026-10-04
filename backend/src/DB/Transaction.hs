@@ -484,6 +484,7 @@ addTransactionItem pool item = do
                     , onConflict = Abort
                     , returning  = NoReturning
                     }
+          updateTransactionTotals pool (transactionItemTransactionId item)
           pure newItem
 
 deleteTransactionItem :: DBPool -> UUID -> IO ()
@@ -523,17 +524,10 @@ deleteTransactionItem pool itemId = do
     _      -> pure ()
 
 addPaymentTransaction :: DBPool -> PaymentTransaction -> IO PaymentTransaction
-addPaymentTransaction pool payment = do
-  p <- insertPaymentTransaction pool payment
-  updateTransactionPaymentStatus pool (paymentTransactionId payment)
-  pure p
+addPaymentTransaction = insertPaymentTransaction
 
 deletePaymentTransaction :: DBPool -> UUID -> IO ()
-deletePaymentTransaction pool paymentId = do
-  rows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    p <- each paymentSchema
-    where_ $ pymtId p ==. lit paymentId
-    pure p
+deletePaymentTransaction pool paymentId =
   runSession pool $
     Session.statement () $
       run_ $
@@ -544,9 +538,6 @@ deletePaymentTransaction pool paymentId = do
             , deleteWhere = \() row -> pymtId row ==. lit paymentId
             , returning   = NoReturning
             }
-  case rows of
-    [p] -> updateTransactionPaymentStatus pool (pymtTransactionId p)
-    _   -> pure ()
 
 updateTransactionTotals :: DBPool -> UUID -> IO ()
 updateTransactionTotals pool txId = do
@@ -604,36 +595,6 @@ updateTransactionTotals pool txId = do
             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
             , returning   = NoReturning
             }
-
-updateTransactionPaymentStatus :: DBPool -> UUID -> IO ()
-updateTransactionPaymentStatus pool txId = do
-  totals   <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    tx <- each transactionSchema
-    where_ $ DB.Schema.txId tx ==. lit txId
-    pure (txTotal tx)
-  pymtSums <- runSession pool $
-    Session.statement () $
-      run $
-        Rel8.select $
-          aggregate (sumOn pymtAmount) $ do
-            p <- each paymentSchema
-            where_ $ pymtTransactionId p ==. lit txId
-            pure p
-  case (totals, pymtSums) of
-    (total : _, paid : _) -> do
-      let status = if paid >= total then "COMPLETED" else "IN_PROGRESS" :: Text
-      runSession pool $
-        Session.statement () $
-          run_ $
-            Rel8.update $
-              Update
-                { target      = transactionSchema
-                , from        = pure ()
-                , set         = \() row -> row {txStatus = lit status}
-                , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-                , returning   = NoReturning
-                }
-    _ -> pure ()
 
 getTransactionIdByItemId :: DBPool -> UUID -> IO (Maybe UUID)
 getTransactionIdByItemId pool itemId = do

@@ -101,14 +101,13 @@ inventoryPicker props = Deku.do
                       , DA.disabled $ disabled <#> \d ->
                           if d then "true" else ""
                       , DL.runOn DL.click $
-                          ( \quantity sale activity ->
+                          ( \quantity activity ->
                               if isBusy activity then pure unit
-                              else case addBlocker quantity menuItem sale.saleItems of
+                              else case addBlocker quantity menuItem of
                                 Just reason -> props.report reason
                                 Nothing -> props.addItem menuItem quantity
                           )
                             <$> quantityV
-                            <*> props.sale
                             <*> props.activity
                       ]
                       [ text $ props.activity <#> \activity ->

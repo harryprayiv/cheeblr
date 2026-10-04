@@ -65,6 +65,7 @@ import DB.Auth (
 import DB.Database (DBConfig (..), DBPool, createTables, initializeDB)
 import DB.Events (createEventsTables)
 import DB.Stock (createStockTables)
+import DB.TaxRule (createTaxRuleTables)
 import DB.Transaction (createTransactionTables)
 import Infrastructure.AvailabilityRelay (runAvailabilityRelay)
 import Infrastructure.AvailabilityState (AvailabilityState (..))
@@ -144,6 +145,7 @@ runWithEnv env = do
   createAuthTables pool
   createEventsTables pool
   createStockTables pool
+  createTaxRuleTables pool
 
   broadcastScribe <- mkBroadcastScribe (envLogBroadcaster env) (Katip.permitItem Katip.InfoS)
   logEnv <-

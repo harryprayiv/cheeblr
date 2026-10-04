@@ -34,8 +34,6 @@ import Server.Env (AppEnv (..))
 import qualified Service.Register as SvcReg
 import qualified Service.Transaction as SvcTx
 import Types.Auth (AuthenticatedUser (..), auRole, auUserId)
-import Types.Primitives.Money (saleMoneyCents)
-import Types.Primitives.Quantity (saleQuantityCount)
 import qualified Types.Transaction.Refund as Refund
 import qualified Types.Transaction.Sale as Sale
 import Types.Transaction
@@ -126,15 +124,8 @@ saleServer :: AppEnv -> Server SaleAPI
 saleServer env =
   getAllSalesHandler
     :<|> getSaleHandler
-    :<|> createSaleHandler
     :<|> voidSaleHandler
     :<|> refundSaleHandler
-    :<|> addSaleItemHandler
-    :<|> removeSaleItemHandler
-    :<|> addSalePaymentHandler
-    :<|> removeSalePaymentHandler
-    :<|> finalizeSaleHandler
-    :<|> clearSaleHandler
   where
     logEnv = envLogEnv env
 
@@ -160,35 +151,6 @@ saleServer env =
           Servant.throwError err500
             { errBody = txtErr $ "Transaction failed typed conversion: " <> e }
 
-    createSaleHandler :: Maybe Text -> Sale.SaleTransaction -> Handler Sale.SaleTransaction
-    createSaleHandler mHeader sale = do
-      ctx <- requireAuth env mHeader
-      let
-        empId = Sale.saleEmployeeId sale
-        lctx  = empLogCtx logEnv empId
-      liftIO $ logHttpRequest logEnv "POST" "/sale"
-        (showT (auUserId (scUser ctx)))
-      withComplianceLog (logTransactionCreate lctx (Sale.saleId sale)) $
-        runTxEff env (SvcTx.createSaleSvc sale)
-
-    -- PUT /sale/:id remains a whole-row update that bypasses the state
-    -- machine. It is the next dead-code candidate; consumers should be
-    -- audited before relying on it. Status changes go through specific
-    -- endpoints (void, finalize, etc.) which use 'UpdateSaleStatus' and
-    -- the state machine.
-    -- updateSaleHandler :: Maybe Text -> UUID -> Sale.SaleTransaction -> Handler Sale.SaleTransaction
-    -- updateSaleHandler mHeader _txId sale = do
-    --   ctx <- requireAuth env mHeader
-    --   liftIO $ logHttpRequest logEnv "PUT" ("/sale/" <> showT (Sale.saleId sale))
-    --     (showT (auUserId (scUser ctx)))
-    --   -- No service-layer wrapper exists for whole-row replace, and the
-    --   -- old `updateTransaction` effect op was removed in 2H-3b. This
-    --   -- handler is currently a placeholder that 501s. Replace with a
-    --   -- state-machine-aware update if a real use case appears, or
-    --   -- delete the endpoint outright.
-    --   Servant.throwError err501
-    --     { errBody = "PUT /sale/:id: not implemented in the typed service layer" }
-
     voidSaleHandler :: Maybe Text -> UUID -> Text -> Handler Sale.SaleTransaction
     voidSaleHandler mHeader txId reason = do
       ctx <- requireAuth env mHeader
@@ -212,102 +174,6 @@ saleServer env =
       withComplianceLog
         (\outcome -> logTransactionRefund lctx txId reason outcome)
         $ runTxEff env (SvcTx.refundTx txId reason)
-
-    addSaleItemHandler :: Maybe Text -> Sale.Item -> Handler Sale.Item
-    addSaleItemHandler mHeader item = do
-      ctx <- requireAuth env mHeader
-      let
-        txId  = Sale.itemTransactionId item
-        skuId = Sale.itemMenuItemSku item
-        qty   = saleQuantityCount (Sale.itemQuantity item)
-      liftIO $ logHttpRequest logEnv "POST" "/sale/item"
-        (showT (auUserId (scUser ctx)))
-      -- Compliance log wants the employee id of the parent sale; pull
-      -- it via the typed read.
-      mEmpId <- runTxEff env $ do
-        r <- getSaleById txId
-        pure $ case r of
-          Right sale -> Just (showT (Sale.saleEmployeeId sale))
-          _          -> Nothing
-      let lctx = case mEmpId of
-            Just eid -> LogCtx logEnv eid "employee"
-            Nothing  -> makeLogCtx logEnv
-                          (Just (showT (auUserId (scUser ctx))))
-                          (auRole (scUser ctx))
-      withComplianceLog
-        (\outcome -> logTransactionAddItem lctx txId skuId qty outcome)
-        $ runTxEff env (SvcTx.addItem item)
-
-    removeSaleItemHandler :: Maybe Text -> UUID -> Handler NoContent
-    removeSaleItemHandler mHeader itemId = do
-      ctx <- requireAuth env mHeader
-      liftIO $ logHttpRequest logEnv "DELETE" ("/sale/item/" <> showT itemId)
-        (showT (auUserId (scUser ctx)))
-      runTxEff env (SvcTx.removeItem itemId) >> pure NoContent
-
-    addSalePaymentHandler :: Maybe Text -> Sale.Payment -> Handler Sale.Payment
-    addSalePaymentHandler mHeader payment = do
-      ctx <- requireAuth env mHeader
-      let
-        txId   = Sale.paymentTransactionId payment
-        amt    = saleMoneyCents (Sale.paymentAmount payment)
-        method = T.pack (show (Sale.paymentMethod payment))
-      liftIO $ logHttpRequest logEnv "POST" "/sale/payment"
-        (showT (auUserId (scUser ctx)))
-      mEmpId <- runTxEff env $ do
-        r <- getSaleById txId
-        pure $ case r of
-          Right sale -> Just (showT (Sale.saleEmployeeId sale))
-          _          -> Nothing
-      let lctx = case mEmpId of
-            Just eid -> LogCtx logEnv eid "employee"
-            Nothing  -> makeLogCtx logEnv
-                          (Just (showT (auUserId (scUser ctx))))
-                          (auRole (scUser ctx))
-      withComplianceLog
-        (\outcome -> logTransactionAddPayment lctx txId amt method outcome)
-        $ runTxEff env (SvcTx.addPayment payment)
-
-    removeSalePaymentHandler :: Maybe Text -> UUID -> Handler NoContent
-    removeSalePaymentHandler mHeader pymtId = do
-      ctx <- requireAuth env mHeader
-      liftIO $ logHttpRequest logEnv "DELETE" ("/sale/payment/" <> showT pymtId)
-        (showT (auUserId (scUser ctx)))
-      runTxEff env (SvcTx.removePayment pymtId) >> pure NoContent
-
-    finalizeSaleHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
-    finalizeSaleHandler mHeader txId = do
-      ctx <- requireAuth env mHeader
-      liftIO $ logHttpRequest logEnv "POST" ("/sale/finalize/" <> showT txId)
-        (showT (auUserId (scUser ctx)))
-      withComplianceLog
-        (\outcome ->
-            logTransactionFinalize
-              (makeLogCtx logEnv
-                (Just (showT (auUserId (scUser ctx))))
-                (auRole (scUser ctx)))
-              txId 0 0 outcome)
-        $ do
-            sale <- runTxEff env (SvcTx.finalizeTx txId)
-            liftIO $
-              logTransactionFinalize
-                (empLogCtx logEnv (Sale.saleEmployeeId sale))
-                txId
-                (saleMoneyCents (Sale.saleTotal sale))
-                (length (Sale.saleItems sale))
-                LogSuccess
-            pure sale
-
-    clearSaleHandler :: Maybe Text -> UUID -> Handler NoContent
-    clearSaleHandler mHeader txId = do
-      ctx <- requireAuth env mHeader
-      liftIO $ logHttpRequest logEnv "POST" ("/sale/clear/" <> showT txId)
-        (showT (auUserId (scUser ctx)))
-      let lctx = makeLogCtx logEnv
-                   (Just (showT (auUserId (scUser ctx))))
-                   (auRole (scUser ctx))
-      withComplianceLog (logTransactionClear lctx txId) $
-        runTxEff env (clearSale txId) >> pure NoContent
 
 -- ---------------------------------------------------------------------------
 -- Refund server

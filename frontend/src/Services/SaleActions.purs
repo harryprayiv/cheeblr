@@ -9,22 +9,19 @@ module Services.SaleActions
   , startNext
   ) where
 
-import Prelude
-
-import Data.Either (Either(..))
-import Data.Maybe (Maybe, fromMaybe)
-import Data.Newtype (unwrap)
+import API.SaleCommand as API
+import Data.Either (Either)
+import Data.Maybe (Maybe)
 import Effect.Aff (Aff)
 import Services.AuthService (UserId)
-import Services.TransactionService as TransactionService
 import Types.Inventory (MenuItem(..))
 import Types.Transaction (PaymentMethod)
 import Types.Transaction.Sale as Sale
 import Types.UUID (UUID)
 
--- Every action the transaction screen can take on a sale. Each one returns
--- the sale as the backend holds it after the action, so the screen never
--- edits its own copy.
+-- Every action the transaction screen can take on a sale. Each one sends a
+-- command to the backend and returns the sale the backend answers with, so
+-- the screen never edits its own copy and never computes money.
 
 -- What the payment form produces. Amounts are in cents.
 type PaymentInput =
@@ -34,20 +31,7 @@ type PaymentInput =
   , authCode :: Maybe String
   }
 
--- Runs a change, then fetches the sale. A failed change is returned as is
--- and the fetch is skipped.
-thenRefetch
-  :: forall a
-   . UserId
-  -> UUID
-  -> Aff (Either String a)
-  -> Aff (Either String Sale.SaleTransaction)
-thenRefetch userId saleId change = do
-  result <- change
-  case result of
-    Left err -> pure (Left err)
-    Right _ -> TransactionService.getSale userId saleId
-
+-- Only the SKU and quantity are sent. The backend prices the line.
 addItem
   :: UserId
   -> UUID
@@ -55,53 +39,51 @@ addItem
   -> Int
   -> Aff (Either String Sale.SaleTransaction)
 addItem userId saleId (MenuItem item) quantity =
-  thenRefetch userId saleId $
-    TransactionService.createSaleItem userId saleId item.sku quantity
-      (unwrap item.price)
+  API.addItem userId
+    { addItemSaleId: saleId
+    , addItemSku: item.sku
+    , addItemQuantity: quantity
+    }
 
 removeItem
   :: UserId -> UUID -> UUID -> Aff (Either String Sale.SaleTransaction)
-removeItem userId saleId itemId =
-  thenRefetch userId saleId $
-    TransactionService.removeSaleItem userId itemId
+removeItem userId _saleId itemId =
+  API.removeItem userId itemId
 
--- With no tendered amount the payment is treated as exact.
 addPayment
   :: UserId
   -> UUID
   -> PaymentInput
   -> Aff (Either String Sale.SaleTransaction)
 addPayment userId saleId input =
-  thenRefetch userId saleId $
-    TransactionService.addPayment userId saleId input.method input.amount
-      (fromMaybe input.amount input.tendered)
-      input.authCode
+  API.addPayment userId
+    { addPaymentSaleId: saleId
+    , addPaymentMethod: input.method
+    , addPaymentAmount: input.amount
+    , addPaymentTendered: input.tendered
+    , addPaymentReference: input.authCode
+    }
 
 removePayment
   :: UserId -> UUID -> UUID -> Aff (Either String Sale.SaleTransaction)
-removePayment userId saleId paymentId =
-  thenRefetch userId saleId $
-    TransactionService.removeSalePayment userId paymentId
+removePayment userId _saleId paymentId =
+  API.removePayment userId paymentId
 
 clear :: UserId -> UUID -> Aff (Either String Sale.SaleTransaction)
-clear userId saleId =
-  thenRefetch userId saleId $
-    TransactionService.clearSale userId saleId
+clear = API.clear
 
--- The finalize endpoint already returns the completed sale.
 finalize :: UserId -> UUID -> Aff (Either String Sale.SaleTransaction)
-finalize = TransactionService.finalizeSale
+finalize = API.finalize
 
 -- Opens a new sale for the same employee, register and location as the one
--- just finished. Those ids were set by Main when the page opened and every
--- sale carries them.
+-- just finished.
 startNext
   :: UserId
   -> Sale.SaleTransaction
   -> Aff (Either String Sale.SaleTransaction)
 startNext userId previous =
-  TransactionService.startSale userId
-    { employeeId: previous.saleEmployeeId
-    , registerId: previous.saleRegisterId
-    , locationId: previous.saleLocationId
+  API.startSale userId
+    { startSaleEmployeeId: previous.saleEmployeeId
+    , startSaleRegisterId: previous.saleRegisterId
+    , startSaleLocationId: previous.saleLocationId
     }

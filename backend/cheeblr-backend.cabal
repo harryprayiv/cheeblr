@@ -68,6 +68,15 @@ library
     import: shared-properties
     exposed-modules: App
                    , DB.Database
+                   , Domain.Pricing
+                   , Domain.TaxRule
+                   , Domain.SaleRules
+                   , DB.TaxRule
+                   , Effect.TaxRules
+                   , Types.Transaction.Request
+                   , Service.Sale
+                   , API.SaleCommand
+                   , Server.SaleCommand
                    , DB.Transaction
                    , DB.Auth
                    , DB.Schema
@@ -180,6 +189,10 @@ test-suite cheeblr-unit-tests
         Test.API.OpenApiSpec
         Test.API.AdminSpec
         Test.DB.PureFunctionsSpec
+        Test.Domain.PricingSpec
+        Test.Domain.TaxRuleSpec
+        Test.Domain.SaleRulesSpec
+        Test.Service.SaleSpec
         Test.DB.Transaction.SaleSpec
         Test.DB.Transaction.RefundSpec
         Test.GraphQL.SchemaSpec

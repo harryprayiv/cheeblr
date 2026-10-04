@@ -20,28 +20,22 @@ import qualified Types.Transaction.Sale as Sale
 
 type AuthHeader = Header "Authorization" Text
 
--- | Sale lifecycle and operations on sales.
+-- | Reading sales, and the two manager operations on a finished sale.
+--
+-- Everything that builds a sale (start, add or remove an item, add or
+-- remove a payment, clear, finalize) lives in "API.SaleCommand". Those
+-- commands carry no client-computed money. The endpoints that used to
+-- accept a whole client-built sale, item or payment were removed.
 --
 -- The refund-of-a-sale operation lives here (it's an operation against
 -- a sale id) but returns a 'Refund.RefundTransaction', not a sale.
 -- Direct creation of refunds is intentionally not exposed; refunds are
 -- always derivative of an existing sale.
---
--- 'PUT /sale/:id' is a holdover whole-row update and bypasses the
--- state machine. Audit consumers before relying on it; this endpoint
--- is the next dead-code candidate.
 type SaleAPI =
   "sale" :> AuthHeader :> Get '[JSON] [Sale.SaleTransaction]
     :<|> "sale" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Sale.SaleTransaction
-    :<|> "sale" :> AuthHeader :> ReqBody '[JSON] Sale.SaleTransaction :> Post '[JSON] Sale.SaleTransaction
     :<|> "sale" :> "void" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Sale.SaleTransaction
     :<|> "sale" :> "refund" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Refund.RefundTransaction
-    :<|> "sale" :> "item" :> AuthHeader :> ReqBody '[JSON] Sale.Item :> Post '[JSON] Sale.Item
-    :<|> "sale" :> "item" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
-    :<|> "sale" :> "payment" :> AuthHeader :> ReqBody '[JSON] Sale.Payment :> Post '[JSON] Sale.Payment
-    :<|> "sale" :> "payment" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
-    :<|> "sale" :> "finalize" :> AuthHeader :> Capture "id" UUID :> Post '[JSON] Sale.SaleTransaction
-    :<|> "sale" :> "clear" :> AuthHeader :> Capture "id" UUID :> Post '[JSON] NoContent
 
 -- | Refunds are read-only via this API. New refunds come from
 -- @POST /sale/refund/:id@.

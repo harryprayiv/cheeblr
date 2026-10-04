@@ -8,6 +8,9 @@ import qualified Test.API.TransactionSpec
 import qualified Test.App.CspSpec
 import qualified Test.App.MiddlewareSpec
 import qualified Test.DB.PureFunctionsSpec
+import qualified Test.Domain.PricingSpec
+import qualified Test.Domain.SaleRulesSpec
+import qualified Test.Domain.TaxRuleSpec
 import qualified Test.Effect.EventEmitterSpec
 import qualified Test.Effect.InventoryDbSpec
 import qualified Test.Effect.StockDbSpec
@@ -23,6 +26,7 @@ import qualified Test.Props.StateMachineSpec
 import qualified Test.Server.CookieSpec
 import qualified Test.Server.Middleware.TracingSpec
 import qualified Test.Service.RegisterSpec
+import qualified Test.Service.SaleSpec
 import qualified Test.Service.StockSpec
 import qualified Test.Service.TransactionSpec
 import qualified Test.State.RegisterMachineSpec
@@ -53,6 +57,9 @@ main = hspec $ do
     Test.Types.Public.FeedPrivacySpec.spec
     Test.Types.Primitives.MoneySpec.spec
     Test.Types.Primitives.QuantitySpec.spec
+    Test.Domain.PricingSpec.spec
+    Test.Domain.TaxRuleSpec.spec
+    Test.Domain.SaleRulesSpec.spec
     Test.API.TransactionSpec.spec
     Test.API.OpenApiSpec.spec
     Test.API.AdminSpec.spec
@@ -68,6 +75,7 @@ main = hspec $ do
     Test.App.CspSpec.spec
     Test.App.MiddlewareSpec.spec
     Test.Service.TransactionSpec.spec
+    Test.Service.SaleSpec.spec
     Test.Service.RegisterSpec.spec
     Test.Props.JsonRoundtripSpec.spec
     Test.Props.ParseShowSpec.spec
@@ -81,4 +89,4 @@ main = hspec $ do
     Test.Service.StockSpec.spec
     Test.Types.Transaction.ConversionSpec.spec
     Test.DB.Transaction.SaleSpec.spec
-    Test.DB.Transaction.RefundSpec.spec 
+    Test.DB.Transaction.RefundSpec.spec

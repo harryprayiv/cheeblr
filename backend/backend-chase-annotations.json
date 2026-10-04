@@ -1,7 +1,6 @@
 {
   "version": 1,
   "modules": {
-
     "DB.Auth": {
       "decisions": [
         {
@@ -13,7 +12,12 @@
             "Rotation is lazy: cookieAuthMiddleware checks token_rotated_at on every authenticated request and rotates if older than cfgTokenRotationSecs.",
             "Old token is invalidated immediately on rotation; no grace window. Concurrent in-flight requests race; acceptable for POS where retries are immediate."
           ],
-          "affects": ["createSession", "lookupSession", "rotateSessionToken", "getSessionRotatedAt"]
+          "affects": [
+            "createSession",
+            "lookupSession",
+            "rotateSessionToken",
+            "getSessionRotatedAt"
+          ]
         },
         {
           "name": "Argon2idWithFixedParameters",
@@ -23,7 +27,12 @@
             "Parameters tuned for Raspberry Pi 5 + Postgres production target.",
             "Parameters are NOT read from the PHC string at verify time. argonOpts is a global constant; changing it silently invalidates every existing hash."
           ],
-          "affects": ["argonOpts", "hashPassword", "verifyPassword", "buildPHC"]
+          "affects": [
+            "argonOpts",
+            "hashPassword",
+            "verifyPassword",
+            "buildPHC"
+          ]
         },
         {
           "name": "HardcodedSessionTtl",
@@ -33,7 +42,10 @@
             "Setting SESSION_TTL_SECS env var has no effect on actual session lifetime.",
             "Either thread the config through (preferred) or delete the dead config key."
           ],
-          "affects": ["createSession", "rotateSessionToken"]
+          "affects": [
+            "createSession",
+            "rotateSessionToken"
+          ]
         }
       ],
       "invariants": {
@@ -51,15 +63,24 @@
         ],
         "hashPassword": {
           "intent": "Hash plaintext with Argon2id and return PHC-formatted output",
-          "effects": ["Entropy", "IO"],
+          "effects": [
+            "Entropy",
+            "IO"
+          ],
           "notes": [
             "16-byte salt from getEntropy (kernel-backed CSPRNG)",
             "throws via throwCryptoErrorIO on argon2 failure; no Maybe path",
             "synchronous, ~100ms+ on commodity hardware (do not call on hot paths)"
           ],
           "spec": [
-            { "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"hunter2\"", "expected": "True" },
-            { "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"wrong\"",  "expected": "False" }
+            {
+              "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"hunter2\"",
+              "expected": "True"
+            },
+            {
+              "input": "h <- hashPassword \"hunter2\"; verifyPassword h \"wrong\"",
+              "expected": "False"
+            }
           ],
           "consumes": [
             "DB.Auth.createUser (initial credential)",
@@ -81,7 +102,10 @@
         },
         "createAuthTables": {
           "intent": "Idempotent DDL for users, sessions, login_attempts",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS",
             "ALTER TABLE for token_rotated_at runs on every startup including fresh DBs (no-op then)",
@@ -94,7 +118,11 @@
         },
         "createUser": {
           "intent": "Insert a new user with a hashed password",
-          "effects": ["DBPool", "Entropy", "IO"],
+          "effects": [
+            "DBPool",
+            "Entropy",
+            "IO"
+          ],
           "notes": [
             "calls hashPassword (synchronous Argon2; ~100ms+)",
             "Abort on conflict: throws if username already exists",
@@ -117,7 +145,11 @@
         },
         "createSession": {
           "intent": "Create a new session row with an 8h expiry, return raw token",
-          "effects": ["DBPool", "Entropy", "IO"],
+          "effects": [
+            "DBPool",
+            "Entropy",
+            "IO"
+          ],
           "notes": [
             "32 random bytes via Types.Primitives.Token.generateSessionToken (getEntropy underneath)",
             "expires_at = now + 8h, HARDCODED; cfgSessionTtlSeconds is NOT consulted here",
@@ -125,7 +157,10 @@
             "tokenRotatedAt initialized to now"
           ],
           "spec": [
-            { "input": "createSession pool uid Nothing \"agent\" \"1.2.3.4\"", "expected": "(token, now + 8h)" }
+            {
+              "input": "createSession pool uid Nothing \"agent\" \"1.2.3.4\"",
+              "expected": "(token, now + 8h)"
+            }
           ],
           "consumes": [
             "Server.Auth.loginHandler (called on successful credential verification, response carries Set-Cookie cheeblr_session)"
@@ -133,7 +168,10 @@
         },
         "lookupSession": {
           "intent": "Resolve a raw SessionToken to (SessionRow, UserRow) and bump last_seen_at",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "hashes the supplied SessionToken via Types.Primitives.Token.hashSessionToken before lookup",
             "SIDE EFFECT: updates last_seen_at on every successful lookup (write-on-read)",
@@ -142,10 +180,22 @@
             "called on every authenticated request via cookieAuthMiddleware; budget the write accordingly"
           ],
           "spec": [
-            { "input": "lookupSession pool validToken",     "expected": "Just (sessRow, userRow)" },
-            { "input": "lookupSession pool revokedToken",   "expected": "Nothing" },
-            { "input": "lookupSession pool expiredToken",   "expected": "Nothing" },
-            { "input": "lookupSession pool malformedToken", "expected": "Nothing" }
+            {
+              "input": "lookupSession pool validToken",
+              "expected": "Just (sessRow, userRow)"
+            },
+            {
+              "input": "lookupSession pool revokedToken",
+              "expected": "Nothing"
+            },
+            {
+              "input": "lookupSession pool expiredToken",
+              "expected": "Nothing"
+            },
+            {
+              "input": "lookupSession pool malformedToken",
+              "expected": "Nothing"
+            }
           ],
           "consumes": [
             "App.cookieAuthMiddleware (every authenticated request — hot path)",
@@ -167,7 +217,11 @@
         },
         "rotateSessionToken": {
           "intent": "Mint a new opaque token for an existing session, invalidate the old one immediately",
-          "effects": ["DBPool", "Entropy", "IO"],
+          "effects": [
+            "DBPool",
+            "Entropy",
+            "IO"
+          ],
           "notes": [
             "issues new 8h expiry, HARDCODED; cfgSessionTtlSeconds ignored here too",
             "old token hash overwritten; old token invalid immediately",
@@ -199,8 +253,8 @@
         },
         "revokeAllUserSessions": {
           "notes": [
-            "bulk soft-delete; intended for password change or compromise",
-            "filters out already-revoked rows to avoid touching audit timestamps"
+            "one Rel8 update on sessionSchema setting sessRevoked = True and sessRevokedAt = getCurrentTime",
+            "updateWhere skips rows whose sessRevoked is already True, so earlier sessRevokedAt timestamps are preserved"
           ],
           "consumes": [
             "no current handler calls this; intended for future password-change/admin-disable flows"
@@ -208,8 +262,8 @@
         },
         "recordLoginAttempt": {
           "notes": [
-            "always inserts; no deduplication",
-            "table grows unbounded; no automated cleanup"
+            "inserts one loginAttemptSchema row per call, with attemptId from nextRandom and attemptedAt from getCurrentTime; onConflict = Abort",
+            "nothing deletes these rows, so the table grows with every login attempt"
           ],
           "consumes": [
             "Server.Auth.loginHandler (success AND failure paths)",
@@ -238,7 +292,6 @@
         ]
       }
     },
-
     "App": {
       "decisions": [
         {
@@ -250,7 +303,11 @@
             "cookieAuthMiddleware translates the cookie into Authorization: Bearer so existing Servant Maybe Text bearer extraction works unchanged.",
             "Middleware blindly overwrites any client-supplied Authorization header. Intentional but reconsider if a non-browser client ever needs to send its own bearer."
           ],
-          "affects": ["cookieAuthMiddleware", "extractCookieToken", "checkAndRotate"]
+          "affects": [
+            "cookieAuthMiddleware",
+            "extractCookieToken",
+            "checkAndRotate"
+          ]
         },
         {
           "name": "MiddlewareStackOrderMatters",
@@ -261,7 +318,13 @@
             "cookieAuth is innermost so it sees a clean request and can prepend Set-Cookie that survives outer layers.",
             "In production, ALLOWED_ORIGIN must be set; the reflect path is for development only."
           ],
-          "affects": ["runWithEnv", "cookieAuthMiddleware", "handleOptionsMiddleware", "reflectOriginMiddleware", "securityHeadersMiddleware"]
+          "affects": [
+            "runWithEnv",
+            "cookieAuthMiddleware",
+            "handleOptionsMiddleware",
+            "reflectOriginMiddleware",
+            "securityHeadersMiddleware"
+          ]
         },
         {
           "name": "BackgroundWorkersForkedAtStartup",
@@ -271,13 +334,18 @@
             "Acceptable for a single-tenant POS where the operator restarts on visible failure.",
             "Replace with a supervisor tree if multi-tenant."
           ],
-          "affects": ["runWithEnv", "sessionCleanupWorker"]
+          "affects": [
+            "runWithEnv",
+            "sessionCleanupWorker"
+          ]
         }
       ],
       "invariants": {
         "buildEnv": {
           "intent": "Allocate runtime resources (broadcasters, metrics, log env, DB pool, availability state)",
-          "effects": ["IO"],
+          "effects": [
+            "IO"
+          ],
           "notes": [
             "creates 4 broadcasters, 1 metrics record, 1 availability TVar",
             "initializes Katip BEFORE the DB pool; smoke-test failures predate broadcast scribe registration",
@@ -289,7 +357,9 @@
         },
         "runWithEnv": {
           "intent": "Wire the WAI middleware stack and run Warp with optional TLS",
-          "effects": ["IO"],
+          "effects": [
+            "IO"
+          ],
           "notes": [
             "creates ALL DB tables on every startup (idempotent)",
             "registers broadcast scribe AFTER initLogging; first startup messages do not reach the broadcaster",
@@ -300,7 +370,10 @@
         },
         "cookieAuthMiddleware": {
           "intent": "Lift cheeblr_session cookie to Authorization: Bearer header, lazily rotate stale tokens",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "synthesizes Authorization: Bearer <token> BEFORE calling the inner app",
             "if the token rotates mid-request, prepends Set-Cookie to the response",
@@ -309,9 +382,18 @@
             "blindly overwrites any client-supplied Authorization header"
           ],
           "spec": [
-            { "input": "request without cookie",       "expected": "passes through unchanged" },
-            { "input": "request with fresh cookie",    "expected": "Authorization: Bearer <token> injected, no Set-Cookie" },
-            { "input": "request with stale cookie",    "expected": "Authorization: Bearer <newToken> injected, Set-Cookie: cheeblr_session=<newToken>" }
+            {
+              "input": "request without cookie",
+              "expected": "passes through unchanged"
+            },
+            {
+              "input": "request with fresh cookie",
+              "expected": "Authorization: Bearer <token> injected, no Set-Cookie"
+            },
+            {
+              "input": "request with stale cookie",
+              "expected": "Authorization: Bearer <newToken> injected, Set-Cookie: cheeblr_session=<newToken>"
+            }
           ],
           "consumes": [
             "ALL Servant routes that use the existing Maybe Text bearer extraction",
@@ -352,8 +434,14 @@
             "frame-ancestors 'none' (cannot be embedded as iframe)"
           ],
           "spec": [
-            { "input": "buildCsp \"https://api.example.com\" Nothing",                       "expected": "...connect-src 'self' https://api.example.com wss://api.example.com..." },
-            { "input": "buildCsp \"http://localhost:8080\" (Just \"https://cdn.example.com\")", "expected": "...img-src 'self' data: https://cdn.example.com..." }
+            {
+              "input": "buildCsp \"https://api.example.com\" Nothing",
+              "expected": "...connect-src 'self' https://api.example.com wss://api.example.com..."
+            },
+            {
+              "input": "buildCsp \"http://localhost:8080\" (Just \"https://cdn.example.com\")",
+              "expected": "...img-src 'self' data: https://cdn.example.com..."
+            }
           ],
           "consumes": [
             "App.securityHeadersMiddleware"
@@ -377,7 +465,6 @@
         ]
       }
     },
-
     "Server.Auth": {
       "decisions": [
         {
@@ -389,7 +476,12 @@
             "Windows are HARDCODED in this module, NOT taken from cfgRateLimitWindow / cfgRateLimitMax. Config values are dead code; either wire them up or delete them.",
             "Cheap at POS scale; would need Redis-backed counters at internet scale."
           ],
-          "affects": ["perCredentialLimit", "perIpLimit", "rateLimitWindow", "checkLoginRateLimit"]
+          "affects": [
+            "perCredentialLimit",
+            "perIpLimit",
+            "rateLimitWindow",
+            "checkLoginRateLimit"
+          ]
         },
         {
           "name": "FailFirstFastReturn",
@@ -399,7 +491,10 @@
             "recordLoginAttempt always means even successful logins show in the audit table.",
             "Missing-user case still records a failed attempt (closes one enumeration channel)."
           ],
-          "affects": ["loginHandler", "checkLoginRateLimit"]
+          "affects": [
+            "loginHandler",
+            "checkLoginRateLimit"
+          ]
         }
       ],
       "invariants": {
@@ -417,14 +512,23 @@
         ],
         "checkLoginRateLimit": {
           "intent": "Pre-flight rate limit before a login attempt; throws err429 with Retry-After: 600",
-          "effects": ["DBPool", "Error ServerError"],
+          "effects": [
+            "DBPool",
+            "Error ServerError"
+          ],
           "notes": [
             "checks per-credential FIRST, then per-ip; first to trip wins",
             "does NOT consume budget; recordLoginAttempt is the only writer"
           ],
           "spec": [
-            { "input": "after 5 failures for (alice, 1.2.3.4)", "expected": "err429 Too many failed login attempts" },
-            { "input": "after 4 failures",                       "expected": "()" }
+            {
+              "input": "after 5 failures for (alice, 1.2.3.4)",
+              "expected": "err429 Too many failed login attempts"
+            },
+            {
+              "input": "after 4 failures",
+              "expected": "()"
+            }
           ],
           "consumes": [
             "Server.Auth.loginHandler (only caller; runs BEFORE password verification)"
@@ -432,7 +536,12 @@
         },
         "loginHandler": {
           "intent": "Validate credentials, mint a session, set the cheeblr_session cookie, record the attempt",
-          "effects": ["DBPool", "Katip.LogEnv", "Error ServerError", "IO"],
+          "effects": [
+            "DBPool",
+            "Katip.LogEnv",
+            "Error ServerError",
+            "IO"
+          ],
           "notes": [
             "rate-limit check runs BEFORE password verification (avoids Argon2 timing oracle)",
             "missing-user case still records a failed attempt (closes one enumeration channel)",
@@ -441,10 +550,22 @@
             "401 body is GENERIC for both bad-username and bad-password (no enumeration leak)"
           ],
           "spec": [
-            { "input": "valid credentials",                "expected": "Headers (Set-Cookie cheeblr_session=...) LoginResponse" },
-            { "input": "wrong password",                   "expected": "err401 Invalid username or password" },
-            { "input": "unknown username",                 "expected": "err401 Invalid username or password" },
-            { "input": "after 5 (username, ip) failures",  "expected": "err429 with Retry-After: 600" }
+            {
+              "input": "valid credentials",
+              "expected": "Headers (Set-Cookie cheeblr_session=...) LoginResponse"
+            },
+            {
+              "input": "wrong password",
+              "expected": "err401 Invalid username or password"
+            },
+            {
+              "input": "unknown username",
+              "expected": "err401 Invalid username or password"
+            },
+            {
+              "input": "after 5 (username, ip) failures",
+              "expected": "err429 with Retry-After: 600"
+            }
           ],
           "consumes": [
             "Servant route /auth/login (POST)"
@@ -484,7 +605,6 @@
         ]
       }
     },
-
     "DB.Transaction": {
       "decisions": [
         {
@@ -495,7 +615,13 @@
             "Rel8 row types live in DB.Schema; conversions (txRowToDomain, hydrateTx, insertTransactionItem) live in DB.Transaction.",
             "Pure parsers for status/type/payment-method strings also live here, since they exist solely to round-trip with text columns."
           ],
-          "affects": ["txRowToDomain", "hydrateTx", "parseTransactionStatus", "parsePaymentMethod", "parseTaxCategory"]
+          "affects": [
+            "txRowToDomain",
+            "hydrateTx",
+            "parseTransactionStatus",
+            "parsePaymentMethod",
+            "parseTaxCategory"
+          ]
         }
       ],
       "invariants": {
@@ -506,7 +632,10 @@
         ],
         "hydrateTx": {
           "intent": "Load a Transaction by querying transaction_item, transaction_tax, discount, and payment_transaction child tables, then assembling via txRowToDomain",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "N+1 by design: one items query, then per-item tax and discount queries",
             "acceptable for POS-scale (single-digit items per transaction)"
@@ -520,7 +649,7 @@
         "createTransaction": [
           "inserts the transaction row, then inserts items and payments via insertTransactionItem and insertPaymentTransaction",
           "NOT a single transaction at the SQL level; partial failures leave orphan items/payments",
-          "totals on the row are taken AS GIVEN by the caller; no recomputation here"
+          "totals on the row are taken AS GIVEN by the caller; no recomputation here. The only production caller is Service.Sale.startSale via createSaleSvc, which always passes an empty sale with zero totals."
         ],
         "voidTransaction": {
           "notes": [
@@ -543,7 +672,10 @@
         },
         "finalizeTransaction": {
           "intent": "Decrement menu_items.quantity for each reserved item and complete the reservations",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "ORDER: query all 'Reserved' reservations for tx; for each, decrement menu_quantity AND mark reservation 'Completed'",
             "two UPDATEs per item; not transactionally bundled",
@@ -556,13 +688,18 @@
           ]
         },
         "addTransactionItem": {
-          "intent": "Reserve inventory for an item being added to a transaction",
-          "effects": ["DBPool", "IO"],
+          "intent": "Reserve inventory for an item being added to a transaction, insert it, and refresh the sale's stored totals",
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "checks (menu_quantity - SUM(active reservations)) BEFORE inserting",
             "throws ItemNotFound if the menu sku doesn't exist",
             "throws InsufficientInventory carrying (sku, requested, available) if not enough",
-            "creates a 'Reserved' row in inventory_reservation; release happens via deleteTransactionItem or clearTransaction"
+            "creates a 'Reserved' row in inventory_reservation; release happens via deleteTransactionItem or clearTransaction",
+            "calls updateTransactionTotals after the reservation insert. Before 2026-10-04 it did not, so stored sale totals stayed at zero while items were added.",
+            "the availability check, the item insert, the reservation insert and the totals update are separate statements, not one SQL transaction"
           ],
           "consumes": [
             "Service.Transaction.addItem"
@@ -605,10 +742,35 @@
         "showDiscountType": [
           "loses information: PercentOff/AmountOff/Custom all collapse to their tag without the payload",
           "discRowAmount and discRowPercent in the row carry the payload; showDiscountType + getDiscountPercent jointly preserve it"
+        ],
+        "addPaymentTransaction": [
+          "only inserts the payment row; it does not touch the sale status",
+          "Before 2026-10-04 it also set status COMPLETED once payments reached the total, which made finalize unreachable for a fully paid sale. Completion now happens only in finalizeTransaction."
+        ],
+        "deletePaymentTransaction": [
+          "one Rel8 delete on paymentSchema where pymtId matches; an unknown id deletes zero rows and raises nothing",
+          "leaves txStatus alone; the removed updateTransactionPaymentStatus used to rewrite it from here"
         ]
-      }
+      },
+      "openIssues": [
+        {
+          "name": "AddItemIsNotOneSqlTransaction",
+          "what": "addTransactionItem runs its stock check, item insert, reservation insert and totals update as separate statements with no row lock",
+          "why": [
+            "Two registers adding the last unit of a SKU at the same moment can both pass the availability check and both insert.",
+            "A failure between statements leaves an item without a reservation or stale totals.",
+            "Planned fix (step F of the pricing plan): one SQL transaction with SELECT ... FOR UPDATE on the menu item row."
+          ],
+          "blocking": [
+            "correct stock under concurrent registers"
+          ],
+          "affects": [
+            "addTransactionItem",
+            "finalizeTransaction"
+          ]
+        }
+      ]
     },
-
     "DB.Events": {
       "decisions": [
         {
@@ -619,7 +781,10 @@
             "Application-level append-only is bypassable; PostgreSQL RULE-based UPDATE/DELETE blockers are not.",
             "JSONB payload preserves the full event for replay; structured columns support efficient querying for the admin UI."
           ],
-          "affects": ["createEventsTables", "insertDomainEvent"]
+          "affects": [
+            "createEventsTables",
+            "insertDomainEvent"
+          ]
         }
       ],
       "invariants": {
@@ -631,7 +796,10 @@
         ],
         "insertDomainEvent": {
           "intent": "Append-only insert of one DomainEvent",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "encodes the DomainEvent as JSON via Aeson, casts $7 from text to jsonb in SQL",
             "id, type, aggregate_id derived via eventMeta dispatching on the event variant",
@@ -658,12 +826,12 @@
         ]
       }
     },
-
     "Effect.EventEmitter": {
       "invariants": {
         "runEventEmitterNoop": {
           "notes": [
-            "discards events; useful for tests that want pure logic without event side effects"
+            "interprets Emit as pure (): no DB.Events insert and no Broadcaster publish, unlike runEventEmitterProd",
+            "Test.Service.TransactionSpec.runTest and Test.Service.SaleSpec.runTest use it; runEventEmitterCollect is the variant that records events in an IORef"
           ],
           "consumes": [
             "test-only"
@@ -680,7 +848,10 @@
         },
         "runEventEmitterProd": {
           "intent": "Production interpreter: persist to domain_events AND publish to broadcaster",
-          "effects": ["DBPool", "IO"],
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "ORDER: insertDomainEvent first, then publish",
             "the two writes are sequential and NOT transactional",
@@ -696,7 +867,6 @@
         }
       }
     },
-
     "Effect.TransactionDb": {
       "decisions": [
         {
@@ -708,7 +878,10 @@
             "runClockPureSequence and runGenUUIDPure both accept a supply list and crash on exhaustion — explicit failure beats silent test nondeterminism.",
             "Cost: every DB action exists twice. Drift between IO and pure is a real risk; if it bites, fold the pure interpreter into a property test that compares the two."
           ],
-          "affects": ["runTransactionDbIO", "runTransactionDbPure"]
+          "affects": [
+            "runTransactionDbIO",
+            "runTransactionDbPure"
+          ]
         }
       ],
       "invariants": {
@@ -737,9 +910,25 @@
           "sums reservation.qty over entries with matching sku AND status == 'Reserved'",
           "filtering by status text (not by an enum) matches the DB row schema"
         ]
-      }
+      },
+      "openIssues": [
+        {
+          "name": "PureInterpreterDoesNotMaintainSaleTotals",
+          "what": "runTransactionDbPure does not update transactionSubtotal/TaxTotal/Total when AddSaleItem or DeleteSaleItem runs; the Postgres interpreter does (via DB.Transaction.updateTransactionTotals)",
+          "why": [
+            "Test.Service.SaleSpec avoids asserting sale totals after addItem for this reason, and its finalize tests use stores with totals set by hand.",
+            "The two interpreters also differed on payment status until DB.Transaction stopped auto-completing sales; that difference hid a production bug from the specs."
+          ],
+          "blocking": [
+            "asserting totals in service specs",
+            "trusting the pure interpreter as a model of production"
+          ],
+          "affects": [
+            "runTransactionDbPure"
+          ]
+        }
+      ]
     },
-
     "Service.Transaction": {
       "decisions": [
         {
@@ -750,7 +939,16 @@
             "If the emit fails after DB success, downstream consumers miss the event but DB state is correct.",
             "Asymmetric and acceptable for a POS that prioritizes books-and-records integrity over event-stream completeness."
           ],
-          "affects": ["addItem", "removeItem", "addPayment", "removePayment", "finalizeTx", "voidTx", "refundTx", "createSaleSvc"]
+          "affects": [
+            "addItem",
+            "removeItem",
+            "addPayment",
+            "removePayment",
+            "finalizeTx",
+            "voidTx",
+            "refundTx",
+            "createSaleSvc"
+          ]
         },
         {
           "name": "StockPullsAreBestEffort",
@@ -760,7 +958,10 @@
             "Failing the transaction-item add to prevent that loss would be worse for the cashier under load.",
             "Recovery is manual."
           ],
-          "affects": ["addItem", "createStockPull"]
+          "affects": [
+            "addItem",
+            "createStockPull"
+          ]
         },
         {
           "name": "RefundIsANewTransaction",
@@ -770,7 +971,25 @@
             "Avoids needing a 'reverse a transaction' state on the original row.",
             "refundId is generated at the SERVICE layer (not the DB) so the domain event and the DB row share the same UUID."
           ],
-          "affects": ["refundTx"]
+          "affects": [
+            "refundTx"
+          ]
+        },
+        {
+          "name": "ServiceSaleIsTheOnlyEntryForSaleBuilding",
+          "what": "The state-machine operations here are no longer called by HTTP handlers directly; Service.Sale wraps every one that builds a sale",
+          "why": [
+            "This module trusts the Sale.Item and Sale.Payment it is given. Service.Sale constructs those values on the server, so no client-computed money reaches this layer.",
+            "voidTx and refundTx are still called directly from Server.Transaction."
+          ],
+          "affects": [
+            "addItem",
+            "removeItem",
+            "addPayment",
+            "removePayment",
+            "finalizeTx",
+            "createSaleSvc"
+          ]
         }
       ],
       "invariants": {
@@ -807,12 +1026,20 @@
             "no state machine guard; new sales are always valid"
           ],
           "consumes": [
-            "Server.Transaction POST /sale"
+            "Service.Sale.startSale (only production caller; builds the empty sale server-side)"
           ]
         },
         "addItem": {
           "intent": "Add an item to a sale with state-machine enforcement and inventory reservation",
-          "effects": ["TransactionDb", "StockDb", "InventoryDb", "EventEmitter", "Clock", "GenUUID", "Error ServerError"],
+          "effects": [
+            "TransactionDb",
+            "StockDb",
+            "InventoryDb",
+            "EventEmitter",
+            "Clock",
+            "GenUUID",
+            "Error ServerError"
+          ],
           "notes": [
             "ORDER: loadSale, state-guard, persistStatusChange, addSaleItem, emit TransactionItemAdded, createStockPull",
             "if addSaleItem fails (inventory), the sale status was ALREADY persisted as InProgress",
@@ -820,27 +1047,54 @@
             "ItemNotFound -> err404; InsufficientInventory -> err400 with both numbers in body"
           ],
           "spec": [
-            { "input": "addItem on Created sale",        "expected": "Right item, status -> InProgress, ItemAdded + PullRequestCreated emitted" },
-            { "input": "addItem on Completed sale",      "expected": "err409 InvalidTxCommand" },
-            { "input": "addItem with unknown sku",       "expected": "err404 Item not found" },
-            { "input": "addItem with qty > available",   "expected": "err400 Insufficient inventory" }
+            {
+              "input": "addItem on Created sale",
+              "expected": "Right item, status -> InProgress, ItemAdded + PullRequestCreated emitted"
+            },
+            {
+              "input": "addItem on Completed sale",
+              "expected": "err409 InvalidTxCommand"
+            },
+            {
+              "input": "addItem with unknown sku",
+              "expected": "err404 Item not found"
+            },
+            {
+              "input": "addItem with qty > available",
+              "expected": "err400 Insufficient inventory"
+            }
           ],
           "consumes": [
-            "Server.Transaction POST /sale/item"
+            "Service.Sale.addItem (only production caller; passes an item priced on the server by Domain.Pricing)"
           ]
         },
-        "removeItem": [
-          "looks up the item BEFORE deletion to capture sku and qty for the event",
-          "cancels pulls for this (txId, sku) AFTER the DB delete",
-          "emits PullRequestCancelled per pull that was actually cancelled (filtered by current vertex, excluding PullFulfilled and PullCancelled)"
-        ],
-        "addPayment": [
-          "state-machine guard runs against the stored status, not a recomputed one",
-          "does NOT finalize even if amount equals total; finalize is a separate explicit command"
-        ],
-        "removePayment": [
-          "looks up txId via getTxIdByPaymentId BEFORE deletion (post-delete the link is gone)"
-        ],
+        "removeItem": {
+          "notes": [
+            "looks up the item BEFORE deletion to capture sku and qty for the event",
+            "cancels pulls for this (txId, sku) AFTER the DB delete",
+            "emits PullRequestCancelled per pull that was actually cancelled (filtered by current vertex, excluding PullFulfilled and PullCancelled)"
+          ],
+          "consumes": [
+            "Service.Sale.removeItem"
+          ]
+        },
+        "addPayment": {
+          "notes": [
+            "state-machine guard runs against the stored status, not a recomputed one",
+            "does NOT finalize even if amount equals total; finalize is a separate explicit command"
+          ],
+          "consumes": [
+            "Service.Sale.addPayment (only production caller; change and approval are set on the server)"
+          ]
+        },
+        "removePayment": {
+          "notes": [
+            "looks up txId via getTxIdByPaymentId BEFORE deletion (post-delete the link is gone)"
+          ],
+          "consumes": [
+            "Service.Sale.removePayment"
+          ]
+        },
         "finalizeTx": {
           "intent": "Transition InProgress -> Completed; decrement inventory; mark reservations Completed",
           "notes": [
@@ -848,11 +1102,17 @@
             "no rollback if emit fails (broadcaster publish is fire-and-forget)"
           ],
           "spec": [
-            { "input": "finalizeTx on InProgress sale", "expected": "Right sale{status=Completed}, inventory decremented, TransactionFinalized emitted" },
-            { "input": "finalizeTx on Created sale",    "expected": "err409 Cannot Finalize from Created" }
+            {
+              "input": "finalizeTx on InProgress sale",
+              "expected": "Right sale{status=Completed}, inventory decremented, TransactionFinalized emitted"
+            },
+            {
+              "input": "finalizeTx on Created sale",
+              "expected": "err409 Cannot Finalize from Created"
+            }
           ],
           "consumes": [
-            "Server.Transaction POST /sale/finalize/:id"
+            "Service.Sale.finalize (only production caller; it refuses first when the sale has no items or is underpaid)"
           ]
         },
         "voidTx": {
@@ -862,8 +1122,14 @@
             "ORDER: state guard, getPullsByTransaction, voidSale (DB), emit TransactionVoided, cancelPullsForTransaction, emit PullRequestCancelled per non-terminal pull"
           ],
           "spec": [
-            { "input": "voidTx on Created sale", "expected": "Right sale{status=Voided}, TransactionVoided + PullRequestCancelled emitted" },
-            { "input": "voidTx on Voided sale",  "expected": "err409 Transaction is voided" }
+            {
+              "input": "voidTx on Created sale",
+              "expected": "Right sale{status=Voided}, TransactionVoided + PullRequestCancelled emitted"
+            },
+            {
+              "input": "voidTx on Voided sale",
+              "expected": "err409 Transaction is voided"
+            }
           ],
           "consumes": [
             "Server.Transaction POST /sale/void/:id"
@@ -882,7 +1148,6 @@
         }
       }
     },
-
     "Service.Register": {
       "invariants": {
         "loadReg": [
@@ -895,8 +1160,14 @@
         "openRegister": {
           "intent": "Open a register via the RegisterMachine (valid only from RegClosed)",
           "spec": [
-            { "input": "openRegister closedRegId req",  "expected": "Right reg{isOpen=True}, RegisterOpened emitted" },
-            { "input": "openRegister openRegId req",    "expected": "err409 Register is already open" }
+            {
+              "input": "openRegister closedRegId req",
+              "expected": "Right reg{isOpen=True}, RegisterOpened emitted"
+            },
+            {
+              "input": "openRegister openRegId req",
+              "expected": "err409 Register is already open"
+            }
           ],
           "consumes": [
             "Server.Register POST /registers/:id/open"
@@ -913,7 +1184,6 @@
         }
       }
     },
-
     "Service.Stock": {
       "invariants": {
         "loadPull": [
@@ -936,9 +1206,18 @@
         "fulfillPull": {
           "intent": "Mark a pull as Fulfilled (valid only from PullPulling)",
           "spec": [
-            { "input": "fulfillPull pullingId actor",   "expected": "Right pr{status=PullFulfilled}, PullStatusChanged emitted" },
-            { "input": "fulfillPull acceptedId actor",  "expected": "err409 Invalid command in Accepted state" },
-            { "input": "fulfillPull fulfilledId actor", "expected": "err409 Pull request is fulfilled" }
+            {
+              "input": "fulfillPull pullingId actor",
+              "expected": "Right pr{status=PullFulfilled}, PullStatusChanged emitted"
+            },
+            {
+              "input": "fulfillPull acceptedId actor",
+              "expected": "err409 Invalid command in Accepted state"
+            },
+            {
+              "input": "fulfillPull fulfilledId actor",
+              "expected": "err409 Pull request is fulfilled"
+            }
           ],
           "consumes": [
             "Server.Stock POST /pulls/:id/fulfill (stockroom dashboard)"
@@ -960,7 +1239,6 @@
         ]
       }
     },
-
     "State.StockPullMachine": {
       "decisions": [
         {
@@ -971,7 +1249,12 @@
             "Service.Stock.transition relies on this: it persists the new vertex without re-validating, trusting the machine output.",
             "Illegal commands produce a PullEvent with constructor InvalidPullCmd, NOT a Haskell exception, so the service layer can map it to err409."
           ],
-          "affects": ["pullAction", "runPullCommand", "fromVertex", "toPullVertex"]
+          "affects": [
+            "pullAction",
+            "runPullCommand",
+            "fromVertex",
+            "toPullVertex"
+          ]
         }
       ],
       "invariants": {
@@ -980,8 +1263,8 @@
           "lossless: every PullVertex maps to exactly one PullState constructor"
         ],
         "toPullVertex": [
-          "extracts the runtime tag from a SomePullState",
-          "used to persist the new state after a transition"
+          "pattern-matches the singleton inside SomePullState (SPullPending, SPullAccepted, ...) to its PullVertex; inverse of fromVertex",
+          "Service.Stock.transition persists this value after runPullCommand"
         ],
         "pullAction": [
           "Pending  -> {Accepted via AcceptCmd, Cancelled via CancelCmd}; everything else is InvalidPullCmd",
@@ -1002,7 +1285,6 @@
         }
       }
     },
-
     "State.RegisterMachine": {
       "invariants": {
         "fromRegister": [
@@ -1016,7 +1298,6 @@
         ]
       }
     },
-
     "State.TransactionMachine": {
       "decisions": [
         {
@@ -1027,7 +1308,13 @@
             "crem encodes the topology in types via singletons + GADTs; any transition not declared in the Topology fails to compile.",
             "All three machines pair (SomeXxxState, fromXxx, toSomeXxxState) so callers handle existential states without leaking type-level vertices."
           ],
-          "affects": ["txAction", "runTxCommand", "fromTransaction", "toSomeTxState", "someTxStatus"]
+          "affects": [
+            "txAction",
+            "runTxCommand",
+            "fromTransaction",
+            "toSomeTxState",
+            "someTxStatus"
+          ]
         }
       ],
       "invariants": {
@@ -1064,7 +1351,6 @@
         ]
       }
     },
-
     "Infrastructure.Broadcast": {
       "decisions": [
         {
@@ -1076,7 +1362,11 @@
             "Anything older than the bound is unreachable from this broadcaster; clients fall back to /admin/domain-events with a cursor for deeper history.",
             "Bound is per-broadcaster from cfgLogBroadcastSize / cfgDomainBroadcastSize / cfgStockBroadcastSize / cfgAvailabilityBroadcastSize."
           ],
-          "affects": ["newBroadcaster", "publish", "historyFrom"]
+          "affects": [
+            "newBroadcaster",
+            "publish",
+            "historyFrom"
+          ]
         }
       ],
       "invariants": {
@@ -1087,14 +1377,23 @@
         ],
         "publish": {
           "intent": "Atomically bump seq, write to channel, append to bounded history",
-          "effects": ["STM", "IO"],
+          "effects": [
+            "STM",
+            "IO"
+          ],
           "notes": [
             "ORDER inside the STM transaction: read seq, write seq+1, write to chan, trim history",
             "history is dropped FIFO when length exceeds bMaxHistory (Seq.drop 1)"
           ],
           "spec": [
-            { "input": "pre <- currentSeq bc; publish bc evt; post <- currentSeq bc",     "expected": "post == pre + 1" },
-            { "input": "replicateM_ (bMaxHistory + n) (publish bc evt); historyDepth bc", "expected": "bMaxHistory bc" }
+            {
+              "input": "pre <- currentSeq bc; publish bc evt; post <- currentSeq bc",
+              "expected": "post == pre + 1"
+            },
+            {
+              "input": "replicateM_ (bMaxHistory + n) (publish bc evt); historyDepth bc",
+              "expected": "bMaxHistory bc"
+            }
           ],
           "consumes": [
             "Effect.EventEmitter.runEventEmitterProd (every domain event)",
@@ -1130,7 +1429,6 @@
         ]
       }
     },
-
     "Infrastructure.AvailabilityRelay": {
       "decisions": [
         {
@@ -1141,13 +1439,22 @@
             "Cost is a startup race window where events between populateFromDb and subscribe are missed; acceptable because the relay only runs at app startup.",
             "If the relay dies and is restarted, populateFromDb re-syncs from authoritative DB state."
           ],
-          "affects": ["runAvailabilityRelay", "populateFromDb", "updateAvailability"]
+          "affects": [
+            "runAvailabilityRelay",
+            "populateFromDb",
+            "updateAvailability"
+          ]
         }
       ],
       "invariants": {
         "runAvailabilityRelay": {
           "intent": "Long-running thread translating DomainEvents into AvailabilityUpdates",
-          "effects": ["DBPool", "STM", "IO", "forever"],
+          "effects": [
+            "DBPool",
+            "STM",
+            "IO",
+            "forever"
+          ],
           "notes": [
             "ORDER on startup: populateFromDb FIRST, then subscribe, then loop",
             "events that arrive between populateFromDb and subscribe are lost (small race window)",
@@ -1156,8 +1463,14 @@
             "only InventoryEvt and TransactionItemAdded/Removed produce updates; other events are ignored"
           ],
           "spec": [
-            { "input": "publish (TransactionItemAdded sku 3)", "expected": "AvailabilityUpdate with availableQty - 3 published" },
-            { "input": "publish (ItemDeleted sku)",            "expected": "no AvailabilityUpdate published, sku removed from state" }
+            {
+              "input": "publish (TransactionItemAdded sku 3)",
+              "expected": "AvailabilityUpdate with availableQty - 3 published"
+            },
+            {
+              "input": "publish (ItemDeleted sku)",
+              "expected": "no AvailabilityUpdate published, sku removed from state"
+            }
           ],
           "consumes": [
             "App.runWithEnv (forks this thread once at startup)",
@@ -1179,7 +1492,6 @@
         ]
       }
     },
-
     "Server.Feed": {
       "decisions": [
         {
@@ -1190,7 +1502,11 @@
             "The subscribe protocol is intentionally familiar to ATProto implementers.",
             "Lexicons are served at /lexicons/app.cheeblr.* so consumers can introspect the schema."
           ],
-          "affects": ["wsHandler", "feedSubscribeApp", "lexiconsApp"]
+          "affects": [
+            "wsHandler",
+            "feedSubscribeApp",
+            "lexiconsApp"
+          ]
         },
         {
           "name": "SyntheticSnapshotFramesShareSeq",
@@ -1200,7 +1516,9 @@
             "Clients must tolerate non-strictly-monotonic seq across the snapshot block, then strictly monotonic from the first live event.",
             "Documented in the lexicon, but easy to miss."
           ],
-          "affects": ["wsHandler"]
+          "affects": [
+            "wsHandler"
+          ]
         }
       ],
       "invariants": {
@@ -1210,7 +1528,12 @@
         ],
         "wsHandler": {
           "intent": "WebSocket handler for app.cheeblr.feed.subscribe",
-          "effects": ["WebSockets", "STM", "DBPool", "IO"],
+          "effects": [
+            "WebSockets",
+            "STM",
+            "DBPool",
+            "IO"
+          ],
           "notes": [
             "ORDER: acceptRequest, replay-or-snapshot, subscribe, withPingThread, loop",
             "with cursor: replays Seq.filter (seq > cursor) from history, then live",
@@ -1220,8 +1543,14 @@
             "loop catches ConnectionException only; other exceptions kill the connection thread but not the server"
           ],
           "spec": [
-            { "input": "connect with cursor=Just 100",  "expected": "frames where seq > 100, then live updates" },
-            { "input": "connect with cursor=Nothing",   "expected": "snapshot of all current items at currentSeq, then live updates" }
+            {
+              "input": "connect with cursor=Just 100",
+              "expected": "frames where seq > 100, then live updates"
+            },
+            {
+              "input": "connect with cursor=Nothing",
+              "expected": "snapshot of all current items at currentSeq, then live updates"
+            }
           ],
           "consumes": [
             "Servant route /xrpc/app.cheeblr.feed.subscribe (WebSocket)"
@@ -1233,8 +1562,8 @@
           "inStockCount filters allAvailableItems by aiInStock"
         ],
         "feedSnapshotHandler": [
-          "no pagination; full snapshot in one response",
-          "intended for clients that prefer one-shot polling over WS"
+          "reads envAvailabilityState with readTVarIO and returns allAvailableItems st now in a single response; it never queries Postgres",
+          "the result is only as fresh as what Infrastructure.AvailabilityRelay last wrote into that TVar"
         ],
         "lexiconsApp": {
           "notes": [
@@ -1248,7 +1577,6 @@
         }
       }
     },
-
     "Server.Middleware.Tracing": {
       "decisions": [
         {
@@ -1260,7 +1588,11 @@
             "The same TraceId can be stamped on the outbound response and on every domain event written during the request, giving end-to-end traceability without changing handler signatures.",
             "traceIdKey is created via unsafePerformIO with a NOINLINE pragma. This is the documented WAI pattern but it's a global mutable resource — only ever create one per process."
           ],
-          "affects": ["traceIdKey", "tracingMiddleware", "getTraceId"]
+          "affects": [
+            "traceIdKey",
+            "tracingMiddleware",
+            "getTraceId"
+          ]
         }
       ],
       "invariants": {
@@ -1284,9 +1616,18 @@
             "response header X-Trace-Id is APPENDED, not replaced; if a downstream layer set it, both will appear"
           ],
           "spec": [
-            { "input": "request without X-Trace-Id",             "expected": "fresh TraceId in vault, X-Trace-Id present on response" },
-            { "input": "request with valid X-Trace-Id",          "expected": "same TraceId in vault and response" },
-            { "input": "request with malformed X-Trace-Id",      "expected": "fresh TraceId in vault, malformed value DISCARDED" }
+            {
+              "input": "request without X-Trace-Id",
+              "expected": "fresh TraceId in vault, X-Trace-Id present on response"
+            },
+            {
+              "input": "request with valid X-Trace-Id",
+              "expected": "same TraceId in vault and response"
+            },
+            {
+              "input": "request with malformed X-Trace-Id",
+              "expected": "fresh TraceId in vault, malformed value DISCARDED"
+            }
           ],
           "consumes": [
             "App.runWithEnv (outermost middleware, runs on every request)"
@@ -1304,7 +1645,389 @@
           ]
         }
       }
+    },
+    "Domain.Pricing": {
+      "decisions": [
+        {
+          "name": "IntegerMoneyAndPartsPerMillionRates",
+          "what": "All money is integer cents; tax rates are integer parts per million (6.25% = 62500); no floating point anywhere in pricing",
+          "why": [
+            "The browser used to compute tax as floor(subtotal * 0.08) in floating point.",
+            "Basis points cannot express rates such as 8.875%, so the unit is ppm.",
+            "Each tax is rounded once to the cent and the rounded amount is stored; totals are sums of stored amounts and are never recomputed from a rate."
+          ],
+          "affects": [
+            "mkTaxRate",
+            "taxOn",
+            "roundDiv",
+            "priceLine"
+          ]
+        },
+        {
+          "name": "RoundingModeIsPartOfTheRule",
+          "what": "Every TaxRule names its own RoundingMode (RoundHalfUp, RoundHalfEven, RoundDown); RoundHalfUp is what the seed and tests use",
+          "why": [
+            "Jurisdictions differ on rounding, so the mode is data and not a constant.",
+            "The owner has not yet supplied real tax rules; nothing here asserts legal compliance."
+          ],
+          "affects": [
+            "taxOn",
+            "roundDiv"
+          ]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "NoTaxOnTaxAndNoDiscountBase",
+          "what": "priceLine charges every applicable rule on the line subtotal: a tax is never charged on another tax, and discounts do not reduce the taxable base",
+          "why": [
+            "Sale.Item carries discounts but nothing in the sale flow creates one yet.",
+            "If a real rule puts one tax inside another's base, TaxRule needs a field for that."
+          ],
+          "blocking": [
+            "compound taxes",
+            "discounts"
+          ],
+          "affects": [
+            "priceLine"
+          ]
+        }
+      ],
+      "invariants": {
+        "priceLine": {
+          "intent": "Turn a unit price, quantity, item category and the active tax rules into the stored amounts for one sale line",
+          "notes": [
+            "pure; Left NonPositiveQuantity for quantity <= 0, Left NegativeUnitPrice for price < 0",
+            "one LineTax per applicable rule, in rule order",
+            "lineTotal = lineSubtotal + sum of the rounded tax amounts"
+          ],
+          "spec": [
+            {
+              "input": "priceLine [6.25% all, 10.75% Flower] Flower 1999 2",
+              "expected": "subtotal 3998, taxes [250, 430], total 4678"
+            }
+          ],
+          "consumes": [
+            "Service.Sale.addItem"
+          ]
+        },
+        "roundDiv": [
+          "uses quotRem, then compares 2 * remainder with the denominator: RoundHalfUp goes up at >=, RoundHalfEven goes up at > or at == when the quotient is odd, RoundDown keeps the quotient",
+          "a negative numerator or a zero denominator is outside its contract; taxOn always passes ratePerMillion as the denominator"
+        ],
+        "rulesFor": [
+          "a rule with ruleItemCategory = Nothing applies to every category; order of the input list is preserved"
+        ],
+        "mkTaxRate": [
+          "Nothing for a negative rate; there is no upper bound"
+        ]
+      }
+    },
+    "Domain.TaxRule": {
+      "decisions": [
+        {
+          "name": "StrictRuleDecoding",
+          "what": "Text codes for rounding mode, tax category and item category decode with Either; an unknown code is an error, never a default",
+          "why": [
+            "Skipping or defaulting an unreadable rule would silently charge less tax.",
+            "DB.Transaction.parseTaxCategory is lenient (unknown -> NoTax) and is deliberately not reused here."
+          ],
+          "affects": [
+            "parseRoundingCode",
+            "parseTaxCategoryCode",
+            "parseItemCategoryCode"
+          ]
+        }
+      ],
+      "invariants": {
+        "inForce": [
+          "effective_from is inclusive and effective_to is exclusive; a rule with no location applies at every location"
+        ],
+        "activeRules": {
+          "notes": [
+            "map storedRule . filter (inForce location now); keeps stored order, which becomes the order of Sale.Tax lines on an item",
+            "an empty result is valid: Domain.Pricing.priceLine then prices the line with zero tax"
+          ],
+          "consumes": [
+            "Effect.TaxRules (both interpreters)"
+          ]
+        },
+        "itemCategoryCode": [
+          "the constructor name via show, the same text menu_items.category uses"
+        ]
+      }
+    },
+    "Domain.SaleRules": {
+      "invariants": {
+        "changeDue": {
+          "notes": [
+            "Left for amount <= 0 or tendered < amount; otherwise tendered - amount",
+            "amounts are cents"
+          ],
+          "consumes": [
+            "Service.Sale.addPayment"
+          ]
+        },
+        "finalizeProblems": {
+          "notes": [
+            "returns every reason a sale cannot be completed; empty list means it can",
+            "the shortfall message is only produced when the sale has items",
+            "the frontend has a parallel function UI.Transaction.Model.finalizeBlockers that must agree with this one"
+          ],
+          "consumes": [
+            "Service.Sale.finalize"
+          ]
+        },
+        "formatCents": [
+          "for messages only: 1999 -> \"$19.99\""
+        ]
+      }
+    },
+    "DB.TaxRule": {
+      "decisions": [
+        {
+          "name": "TaxRulesAreData",
+          "what": "Tax rules live in the tax_rule table keyed by optional location, optional item category, tax category, rate_ppm, rounding and an effective date range",
+          "why": [
+            "Rates and rules change without a deploy.",
+            "Selection by location and time is done in Haskell (Domain.TaxRule.activeRules), not SQL, so it is pure and tested; the table is tiny."
+          ],
+          "affects": [
+            "getStoredTaxRules",
+            "createTaxRuleTables"
+          ]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "PlaceholderTaxRuleSeed",
+          "what": "createTaxRuleTables inserts one placeholder rule (8% REGULAR_SALES_TAX, all locations and categories, HALF_UP) when the table is empty",
+          "why": [
+            "8% is the rate the browser used to hardcode. It is not a real tax rule.",
+            "There is no admin UI or endpoint for editing rules; they are changed with SQL."
+          ],
+          "blocking": [
+            "real sales",
+            "a tax rule admin screen"
+          ],
+          "affects": [
+            "createTaxRuleTables"
+          ]
+        }
+      ],
+      "invariants": {
+        "getStoredTaxRules": {
+          "effects": [
+            "DBPool",
+            "IO"
+          ],
+          "notes": [
+            "reads every row and sorts by (tax_category, id) for a stable order",
+            "one undecodable row makes the whole read Left, with the row id in the message"
+          ],
+          "consumes": [
+            "Effect.TaxRules.runTaxRulesIO"
+          ]
+        },
+        "createTaxRuleTables": [
+          "idempotent; called from App.runWithEnv after the other create*Tables calls"
+        ]
+      }
+    },
+    "Effect.TaxRules": {
+      "invariants": {
+        "getActiveTaxRules": {
+          "notes": [
+            "Left means a stored rule could not be decoded; callers must refuse to price the sale"
+          ],
+          "consumes": [
+            "Service.Sale.addItem"
+          ]
+        },
+        "runTaxRulesPure": [
+          "never returns Left; takes StoredTaxRule values so tests exercise the same activeRules filter as production"
+        ]
+      }
+    },
+    "Types.Transaction.Request": {
+      "decisions": [
+        {
+          "name": "IntentShapedRequests",
+          "what": "StartSaleRequest, AddItemRequest and AddPaymentRequest carry ids, a quantity, a payment method and payment amounts only; no unit price, tax, total, change, approval flag or entity id",
+          "why": [
+            "The old endpoints accepted whole client-built Sale.Item / Sale.Payment / SaleTransaction values, so the browser set the price.",
+            "JSON field names are the Haskell record field names; the PureScript mirror is API.SaleCommand."
+          ],
+          "affects": []
+        }
+      ]
+    },
+    "Service.Sale": {
+      "decisions": [
+        {
+          "name": "ServerOwnsMoneyAndIds",
+          "what": "Every sale-building operation prices, taxes, computes change and generates ids on the server, then returns the whole SaleTransaction",
+          "why": [
+            "Unit price comes from the menu (InventoryDb) at the moment of the add; taxes come from the rules in force at the sale's location at that moment.",
+            "Returning the whole sale removes the client's need to refetch or merge.",
+            "State guards, reservation, events and stock pulls are delegated to Service.Transaction."
+          ],
+          "affects": [
+            "startSale",
+            "addItem",
+            "addPayment",
+            "removeItem",
+            "removePayment",
+            "clear",
+            "finalize"
+          ]
+        },
+        {
+          "name": "PaymentsAreApprovedOnRecord",
+          "what": "addPayment sets paymentApproved = True and paymentAuthorizationCode = Nothing itself",
+          "why": [
+            "There is no payment processor integration; a recorded payment is treated as taken.",
+            "The request's reference text is stored in paymentReference."
+          ],
+          "affects": [
+            "addPayment"
+          ]
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "ClearDoesNotCancelStockPulls",
+          "what": "clear releases reservations and deletes items and payments but does not cancel the sale's stock pull requests",
+          "why": [
+            "Same behaviour as the endpoint it replaced. removeItem does cancel pulls for its SKU."
+          ],
+          "blocking": [
+            "stockroom queue accuracy after a cleared sale"
+          ],
+          "affects": [
+            "clear"
+          ]
+        }
+      ],
+      "invariants": {
+        "addItem": {
+          "intent": "Price a line on the server and add it to the sale",
+          "effects": [
+            "TransactionDb",
+            "StockDb",
+            "InventoryDb",
+            "TaxRules",
+            "EventEmitter",
+            "Clock",
+            "GenUUID",
+            "Error ServerError"
+          ],
+          "notes": [
+            "ORDER: loadSale, read tax rules, look up menu item, priceLine, nextUUID, Service.Transaction.addItem, loadSale",
+            "404 unknown sale or SKU; 400 bad quantity or insufficient stock; 409 closed sale; 500 undecodable tax rule",
+            "the first nextUUID call is the new item id (Test.Service.SaleSpec relies on this)"
+          ],
+          "consumes": [
+            "Server.SaleCommand POST /pos/sale/item"
+          ]
+        },
+        "addPayment": {
+          "notes": [
+            "tendered defaults to the amount when absent",
+            "400 for amount <= 0 or tendered < amount; 409 when the sale is still Created (no items yet)",
+            "does not complete the sale even when paid in full"
+          ],
+          "consumes": [
+            "Server.SaleCommand POST /pos/sale/payment"
+          ]
+        },
+        "finalize": {
+          "notes": [
+            "409 with every reason joined by \"; \" when the sale has no items or payments are short; otherwise Service.Transaction.finalizeTx",
+            "reads paid and total from the stored sale, so it depends on DB.Transaction keeping totals current"
+          ],
+          "consumes": [
+            "Server.SaleCommand POST /pos/sale/finalize/:id"
+          ]
+        },
+        "clear": [
+          "409 unless the sale is Created or InProgress; returns the emptied sale"
+        ],
+        "removeItem": [
+          "resolves the sale id from the item id before deleting so it can return the sale; 404 if the item is unknown"
+        ],
+        "removePayment": [
+          "resolves the sale id from the payment id before deleting; 404 if unknown"
+        ],
+        "startSale": {
+          "notes": [
+            "sale id and created timestamp are generated here; totals start at zero; saleKind is StandardSale"
+          ],
+          "consumes": [
+            "Server.SaleCommand POST /pos/sale"
+          ]
+        }
+      }
+    },
+    "API.SaleCommand": {
+      "decisions": [
+        {
+          "name": "SaleCommandRoutesLiveBesideCheeblrAPI",
+          "what": "SaleCommandAPI (7 routes under /pos/sale) is served as FullAPI = CheeblrAPI :<|> SaleCommandAPI in Server",
+          "why": [
+            "Every route returns Sale.SaleTransaction.",
+            "Consumed by the PureScript module API.SaleCommand."
+          ],
+          "affects": []
+        }
+      ],
+      "openIssues": [
+        {
+          "name": "SaleCommandRoutesMissingFromOpenApi",
+          "what": "SaleCommandAPI is not part of CheeblrAPI, so the generated OpenAPI document does not list the /pos/sale routes",
+          "why": [
+            "It was added beside CheeblrAPI to avoid editing API.OpenApi during the pricing change."
+          ],
+          "blocking": [
+            "complete API documentation"
+          ],
+          "affects": []
+        }
+      ]
+    },
+    "Server.SaleCommand": {
+      "invariants": {
+        "runSaleEff": [
+          "same interpreter stack as Server.Transaction.runTxEff plus runTaxRulesIO"
+        ],
+        "saleCommandServer": {
+          "notes": [
+            "every handler authenticates with requireAuth and writes an HTTP log line",
+            "compliance log calls match the removed /sale handlers: create, add item, add payment, clear, finalize",
+            "no capability check beyond authentication, same as the handlers it replaced"
+          ],
+          "consumes": [
+            "frontend API.SaleCommand"
+          ]
+        }
+      }
+    },
+    "Server.Transaction": {
+      "decisions": [
+        {
+          "name": "SaleMutationHandlersRemoved",
+          "what": "saleServer serves only list, get, void and refund; the create / add item / remove item / add payment / remove payment / finalize / clear handlers were deleted",
+          "why": [
+            "They accepted client-built money and the old finalize had no payment check.",
+            "withComplianceLog, requireAuth and showT are imported by Server.SaleCommand."
+          ],
+          "affects": [
+            "saleServer",
+            "withComplianceLog",
+            "requireAuth"
+          ]
+        }
+      ]
     }
-
   }
 }
