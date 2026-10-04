@@ -1,9 +1,6 @@
-module Pages.Manager.Dashboard where
+module Pages.Admin.Dashboard where
 
-import Prelude
-
-import API.Manager (getActivity)
-import Data.Either (Either(..))
+import API.Admin (getSnapshot)
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text_)
 import Deku.Core (Nut)
@@ -12,59 +9,44 @@ import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot, (<#~>))
-import Effect.Aff (launchAff_)
-import Effect.Class (liftEffect)
 import FRP.Poll (Poll)
-import Pages.Manager.Panels.ActivityFeed (activityFeed)
-import Pages.Manager.Panels.AlertsPanel (alertsPanel)
-import Pages.Manager.Panels.ReportsPanel (reportsPanel)
-import Pages.Manager.Panels.StatsPanel (statsPanel)
-import Pages.Manager.State
-  ( ActivityStatus(..)
-  , ManagerTab(..)
-  , allManagerTabs
-  )
+import Pages.Admin.State (AdminTab(..), allTabs)
+import Pages.Admin.Tabs.FeedMonitor (feedMonitor)
+import Pages.Admin.Tabs.LogViewer (logViewer)
+import Pages.Admin.Tabs.Overview (overview)
 import Services.AuthService (AuthState, UserId)
+import Types.RemoteData (RemoteData(..))
+import UI.Remote (onMount, useRemote)
+import UI.Tabs (tabBar)
 
 page :: Poll AuthState -> UserId -> Nut
 page _authPoll userId = Deku.do
-  setTab      /\ tabValue      <- useHot TabActivity
-  setActivity /\ activityValue <- useHot ActivityLoading
-
-  let loadActivity = launchAff_ do
-        result <- getActivity userId
-        liftEffect $ case result of
-          Left err  -> setActivity (ActivityError err)
-          Right act -> setActivity (ActivityLoaded act)
+  setTab /\ tabValue <- useHot TabOverview
+  snapshot <- useRemote Loading (getSnapshot userId)
 
   D.div
-    [ DA.klass_ "manager-dashboard"
-    , DL.load_ \_ -> loadActivity
+    [ DA.klass_ "admin-dashboard"
+    , onMount snapshot.reload
     ]
-    [ D.div [ DA.klass_ "manager-header" ]
-        [ D.h1 [ DA.klass_ "manager-title" ] [ text_ "Manager Dashboard" ]
+    [ D.div [ DA.klass_ "admin-header" ]
+        [ D.h1 [ DA.klass_ "admin-title" ] [ text_ "Admin Dashboard" ]
         , D.button
             [ DA.klass_ "btn btn-sm"
-            , DL.click_ \_ -> do
-                setActivity ActivityLoading
-                loadActivity
+            , DL.click_ \_ -> snapshot.reload
             ]
             [ text_ "Refresh" ]
         ]
-    , D.div [ DA.klass_ "manager-tabs" ]
-        ( map (\t ->
-            D.button
-              [ DA.klass $ tabValue <#> \active ->
-                  "manager-tab" <> if active == t then " active" else ""
-              , DL.click_ \_ -> setTab t
-              ]
-              [ text_ (show t) ]
-          ) allManagerTabs
-        )
+
+    , tabBar { bar: "admin-tabs", tab: "admin-tab" } allTabs tabValue setTab
+
     , tabValue <#~> case _ of
-        TabActivity -> activityFeed activityValue
-        TabAlerts   -> alertsPanel  activityValue
-        TabStats    -> statsPanel   activityValue
-        TabReports  -> reportsPanel userId
-        TabOverride -> D.div_ [ text_ "Override panel — coming in Phase 8" ]
+        TabOverview     -> overview snapshot.value
+        TabLogViewer    -> logViewer userId
+        TabFeedMonitor  -> feedMonitor userId
+        TabEventStream  -> D.div_ [ text_ "Event stream — coming soon" ]
+        TabTransactions -> D.div_ [ text_ "Transactions — coming soon" ]
+        TabSessions     -> D.div_ [ text_ "Sessions — coming soon" ]
+        TabRegisters    -> D.div_ [ text_ "Registers — coming soon" ]
+        TabDomainEvents -> D.div_ [ text_ "Domain Events — coming soon" ]
+        TabActions      -> D.div_ [ text_ "Actions — coming soon" ]
     ]

@@ -1,29 +1,40 @@
-module Pages.Manager.State where
+module Pages.Admin.State where
 
 import Prelude
 
-import Types.Manager (ActivitySummary)
+data AdminTab
+  = TabOverview
+  | TabLogViewer
+  | TabFeedMonitor
+  | TabEventStream
+  | TabTransactions
+  | TabSessions
+  | TabRegisters
+  | TabDomainEvents
+  | TabActions
 
-data ManagerTab
-  = TabActivity
-  | TabAlerts
-  | TabStats
-  | TabReports
-  | TabOverride
+derive instance eqAdminTab :: Eq AdminTab
 
-derive instance eqManagerTab :: Eq ManagerTab
+instance showAdminTab :: Show AdminTab where
+  show TabOverview     = "Overview"
+  show TabLogViewer    = "Logs"
+  show TabFeedMonitor  = "Feed Monitor"
+  show TabEventStream  = "Event Stream"
+  show TabTransactions = "Transactions"
+  show TabSessions     = "Sessions"
+  show TabRegisters    = "Registers"
+  show TabDomainEvents = "Domain Events"
+  show TabActions      = "Actions"
 
-instance showManagerTab :: Show ManagerTab where
-  show TabActivity = "Activity"
-  show TabAlerts   = "Alerts"
-  show TabStats    = "Stats"
-  show TabReports  = "Reports"
-  show TabOverride = "Overrides"
-
-allManagerTabs :: Array ManagerTab
-allManagerTabs = [ TabActivity, TabAlerts, TabStats, TabReports, TabOverride ]
-
-data ActivityStatus
-  = ActivityLoading
-  | ActivityLoaded ActivitySummary
-  | ActivityError String
+allTabs :: Array AdminTab
+allTabs =
+  [ TabOverview
+  , TabLogViewer
+  , TabFeedMonitor
+  , TabEventStream
+  , TabTransactions
+  , TabSessions
+  , TabRegisters
+  , TabDomainEvents
+  , TabActions
+  ]

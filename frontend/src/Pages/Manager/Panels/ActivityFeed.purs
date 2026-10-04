@@ -7,28 +7,24 @@ import Deku.Control (text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
-import Deku.Hooks ((<#~>))
 import FRP.Poll (Poll)
-import Pages.Manager.State (ActivityStatus(..))
+import Types.Manager (ActivitySummary)
+import Types.RemoteData (RemoteData)
 import Types.Transaction (TransactionStatus)
+import UI.Remote (standardView, viewRemote)
 
-activityFeed :: Poll ActivityStatus -> Nut
-activityFeed statusPoll =
-  statusPoll <#~> case _ of
-    ActivityLoading ->
-      D.div [ DA.klass_ "loading-indicator" ] [ text_ "Loading activity..." ]
-    ActivityError err ->
-      D.div [ DA.klass_ "error-message" ] [ text_ err ]
-    ActivityLoaded snap ->
-      D.div [ DA.klass_ "activity-feed" ]
-        [ D.h3_ [ text_ "Live Transactions" ]
-        , D.div [ DA.klass_ "open-registers" ]
-            [ text_ $ "Open Registers: " <> show (length snap.asOpenRegisters) ]
-        , if null snap.asLiveTransactions
-            then D.div [ DA.klass_ "empty-feed" ] [ text_ "No active transactions" ]
-            else D.div [ DA.klass_ "tx-list" ]
-                   (map renderTxSummary snap.asLiveTransactions)
-        ]
+activityFeed :: Poll (RemoteData ActivitySummary) -> Nut
+activityFeed =
+  viewRemote (standardView "Loading activity...") \snap ->
+    D.div [ DA.klass_ "activity-feed" ]
+      [ D.h3_ [ text_ "Live Transactions" ]
+      , D.div [ DA.klass_ "open-registers" ]
+          [ text_ $ "Open Registers: " <> show (length snap.asOpenRegisters) ]
+      , if null snap.asLiveTransactions
+          then D.div [ DA.klass_ "empty-feed" ] [ text_ "No active transactions" ]
+          else D.div [ DA.klass_ "tx-list" ]
+                 (map renderTxSummary snap.asLiveTransactions)
+      ]
 
 renderTxSummary :: { tsId :: _, tsStatus :: TransactionStatus, tsElapsedSecs :: Int, tsItemCount :: Int, tsTotal :: Int, tsIsStale :: Boolean | _ } -> Nut
 renderTxSummary tx =

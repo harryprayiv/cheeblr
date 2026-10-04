@@ -8,26 +8,22 @@ import Deku.Control (text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
-import Deku.Hooks ((<#~>))
 import FRP.Poll (Poll)
-import Pages.Manager.State (ActivityStatus(..))
+import Types.Manager (ActivitySummary)
+import Types.RemoteData (RemoteData)
+import UI.Remote (quietView, viewRemote)
 
-alertsPanel :: Poll ActivityStatus -> Nut
-alertsPanel statusPoll =
-  statusPoll <#~> case _ of
-    ActivityLoading ->
-      D.div [ DA.klass_ "loading-indicator" ] []
-    ActivityError _ ->
-      D.div [ DA.klass_ "error-message" ] []
-    ActivityLoaded snap ->
-      let alerts = snap.asAlerts
-      in if null alerts
-         then D.div [ DA.klass_ "no-alerts" ] [ text_ "No active alerts" ]
-         else D.div [ DA.klass_ "alerts-panel" ]
-                [ D.h3_ [ text_ "Active Alerts" ]
-                , D.div [ DA.klass_ "alerts-list" ]
-                    (map renderAlert alerts)
-                ]
+alertsPanel :: Poll (RemoteData ActivitySummary) -> Nut
+alertsPanel =
+  viewRemote quietView \snap ->
+    let alerts = snap.asAlerts
+    in if null alerts
+       then D.div [ DA.klass_ "no-alerts" ] [ text_ "No active alerts" ]
+       else D.div [ DA.klass_ "alerts-panel" ]
+              [ D.h3_ [ text_ "Active Alerts" ]
+              , D.div [ DA.klass_ "alerts-list" ]
+                  (map renderAlert alerts)
+              ]
 
 renderAlert :: { tag :: String, name :: Maybe String, quantity :: Maybe Int, elapsed :: Maybe Int, variance :: Maybe Int | _ } -> Nut
 renderAlert alert =
