@@ -43,7 +43,7 @@ import State.SaleTransactionMachine
   , someTxStatus
   )
 import State.StockPullMachine (PullVertex (..))
--- import Types.Primitives.Money (saleMoneyCents)
+
 import Types.Primitives.Quantity (saleQuantityCount)
 import qualified Types.Transaction.Refund as Refund
 import qualified Types.Transaction.Sale as Sale
@@ -58,9 +58,7 @@ import Types.Events
 import Types.Inventory (Inventory (..))
 import qualified Types.Inventory as TI
 import Types.Stock (PullRequest (..))
--- import Types.Transaction
 
--- | Load only the typed Sale view of a transaction.
 loadSale ::
   (TransactionDb :> es, Error ServerError :> es) =>
   UUID ->
@@ -108,8 +106,6 @@ persistStatusChange sale nextState = do
   when (Sale.saleStatus sale /= nextStatus) $
     updateSaleStatus (Sale.saleId sale) nextStatus
 
--- | Best-effort creation of a stock pull for an item just added to a
--- sale.
 createStockPull ::
   ( StockDb.StockDb :> es
   , EffInv.InventoryDb :> es
@@ -118,9 +114,10 @@ createStockPull ::
   ) =>
   Sale.SaleTransaction ->
   Sale.Item ->
+  Int ->
   UTCTime ->
   Eff es ()
-createStockPull sale item now = do
+createStockPull sale item quantityNeeded now = do
   pullId <- nextUUID
   Inventory invVec <- EffInv.getAllMenuItems
   let
@@ -134,7 +131,7 @@ createStockPull sale item now = do
         , prTransactionId  = Sale.itemTransactionId item
         , prItemSku        = itemSku
         , prItemName       = itemName
-        , prQuantityNeeded = saleQuantityCount (Sale.itemQuantity item)
+        , prQuantityNeeded = quantityNeeded
         , prStatus         = PullPending
         , prCashierId      = Just (Sale.saleEmployeeId sale)
         , prRegisterId     = Just (Sale.saleRegisterId sale)
@@ -181,12 +178,29 @@ addItem item = do
   sale <- loadSale (Sale.itemTransactionId item)
   let someState        = fromSaleTransaction sale
       (evt, nextState) = runTxCommand someState (AddItemCmd item)
+      replacedLines    =
+        filter
+          (\i -> Sale.itemMenuItemSku i == Sale.itemMenuItemSku item)
+          (Sale.saleItems sale)
+      previousQty      =
+        sum (map (saleQuantityCount . Sale.itemQuantity) replacedLines)
+      addedQty         = saleQuantityCount (Sale.itemQuantity item) - previousQty
   guardSaleTxEvent evt
   persistStatusChange sale nextState
   result <- addSaleItem item
   case result of
     Right addedItem -> do
       now <- currentTime
+      forM_ replacedLines $ \old ->
+        emit $
+          TransactionEvt $
+            TransactionItemRemoved
+              { teTxId      = Sale.itemTransactionId old
+              , teItemId    = Sale.itemId old
+              , teItemSku   = Sale.itemMenuItemSku old
+              , teQty       = saleQuantityCount (Sale.itemQuantity old)
+              , teTimestamp = now
+              }
       emit $
         TransactionEvt $
           TransactionItemAdded
@@ -194,7 +208,8 @@ addItem item = do
             , teItem      = saleItemToLegacy addedItem
             , teTimestamp = now
             }
-      createStockPull sale addedItem now
+      when (addedQty > 0) $
+        createStockPull sale addedItem addedQty now
       pure addedItem
     Left (ItemNotFound sku) ->
       throwError

@@ -6,6 +6,7 @@
 module DB.Database where
 
 import Control.Exception (SomeException, throwIO, try)
+import Control.Monad.Error.Class (catchError, throwError)
 import Data.ByteString (ByteString)
 import Data.Functor.Contravariant (contramap)
 import Data.Int (Int32)
@@ -15,6 +16,7 @@ import Data.Text (pack, unpack)
 import qualified Data.Text.Encoding as TE
 import Data.UUID (UUID)
 import qualified Data.Vector as V
+import Data.Void (Void, absurd)
 import qualified Hasql.Connection.Setting as ConnSetting
 import qualified Hasql.Connection.Setting.Connection as ConnSetting.Conn
 import qualified Hasql.Connection.Setting.Connection.Param as ConnSetting.Param
@@ -75,6 +77,36 @@ runSession pool session = do
   case result of
     Left err  -> throwIO $ userError $ show err
     Right val -> pure val
+
+-- | Run a session inside one SQL transaction on one pooled connection.
+--
+-- The body returns 'Right' to commit and 'Left' to roll back, so a business
+-- rule failure (for example insufficient stock) undoes every statement the
+-- body ran. A failing statement also rolls back, then the original error is
+-- rethrown through 'runSession'. The explicit ROLLBACK matters because the
+-- pool hands the same connection to the next caller.
+--
+-- READ COMMITTED is enough for the callers in "DB.Transaction": they take
+-- row locks with SELECT ... FOR UPDATE first, and each later statement sees
+-- rows committed by whoever held the lock before.
+runTransaction :: DBPool -> Session.Session (Either e a) -> IO (Either e a)
+runTransaction pool body = runSession pool $ do
+  Session.sql "BEGIN ISOLATION LEVEL READ COMMITTED"
+  outcome <-
+    body `catchError` \err -> do
+      Session.sql "ROLLBACK" `catchError` \_ -> pure ()
+      throwError err
+  case outcome of
+    Left e  -> Session.sql "ROLLBACK" >> pure (Left e)
+    Right a -> Session.sql "COMMIT" >> pure (Right a)
+
+-- | 'runTransaction' for a body with no business failure case.
+runTransaction_ :: DBPool -> Session.Session a -> IO a
+runTransaction_ pool body = do
+  outcome <- runTransaction pool (fmap Right body)
+  case outcome of
+    Left (v :: Void) -> absurd v
+    Right a          -> pure a
 
 ddl :: ByteString -> Statement.Statement () ()
 ddl sql = Statement.Statement sql Encoders.noParams Decoders.noResult False

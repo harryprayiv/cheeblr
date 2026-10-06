@@ -52,7 +52,7 @@ import qualified Service.Transaction as Svc
 import Types.Inventory (Inventory (..))
 import qualified Types.Inventory as TI
 import Types.Primitives.Money (saleMoneyCents, unsafeMkSaleMoney, zeroSale)
-import Types.Primitives.Quantity (unsafeMkSaleQuantity)
+import Types.Primitives.Quantity (saleQuantityCount, unsafeMkSaleQuantity)
 import Types.Transaction (TransactionStatus (..))
 import Types.Transaction.Request
 import qualified Types.Transaction.Sale as Sale
@@ -145,6 +145,10 @@ startSale req = do
 
 -- | Add an item. The unit price is the menu price at this moment and the
 -- taxes are the rules in force at the sale's location at this moment.
+--
+-- A sale holds one line per sku. When the sale already has a line for the
+-- sku, the requested quantity is added to it: the line is priced again at
+-- the combined quantity and replaces the old line, keeping its id.
 addItem ::
   ( TransactionDb :> es
   , StockDb.StockDb :> es
@@ -161,6 +165,12 @@ addItem req = do
   let saleId = addItemSaleId req
       sku    = addItemSku req
   sale        <- loadSale saleId
+  if addItemQuantity req <= 0
+    then failWith err400 (pricingErrorText (NonPositiveQuantity (addItemQuantity req)))
+    else pure ()
+  let existing    = filter (\i -> Sale.itemMenuItemSku i == sku) (Sale.saleItems sale)
+      existingQty = sum (map (saleQuantityCount . Sale.itemQuantity) existing)
+      wantedQty   = existingQty + addItemQuantity req
   now         <- currentTime
   rulesResult <- getActiveTaxRules (Sale.saleLocationId sale) now
   rules       <- case rulesResult of
@@ -171,11 +181,13 @@ addItem req = do
     Just m  -> pure m
     Nothing -> failWith err404 ("Item not found: " <> T.pack (show sku))
   pricing <-
-    case priceLine rules (TI.category menuItem) (TI.price menuItem) (addItemQuantity req) of
+    case priceLine rules (TI.category menuItem) (TI.price menuItem) wantedQty of
       Right p  -> pure p
       Left err -> failWith err400 (pricingErrorText err)
-  newItemId <- nextUUID
-  _ <- Svc.addItem (toSaleItem newItemId saleId sku pricing)
+  lineItemId <- case existing of
+    (line : _) -> pure (Sale.itemId line)
+    []         -> nextUUID
+  _ <- Svc.addItem (toSaleItem lineItemId saleId sku pricing)
   loadSale saleId
 
 removeItem ::

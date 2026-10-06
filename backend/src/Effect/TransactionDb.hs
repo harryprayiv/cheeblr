@@ -12,7 +12,6 @@
 module Effect.TransactionDb (
   TransactionDb (..),
 
-  -- Reads (typed)
   TypedLoadError (..),
   getSaleById,
   getRefundById,
@@ -21,7 +20,6 @@ module Effect.TransactionDb (
   getSalesByLocation,
   getRefundsByLocation,
 
-  -- Writes (typed)
   createSale,
   updateSaleStatus,
   voidSale,
@@ -33,24 +31,20 @@ module Effect.TransactionDb (
   addSalePayment,
   deleteSalePayment,
 
-  -- By-id lookups
   getTxIdByItemId,
   getTxIdByPaymentId,
 
-  -- Inventory / reservations
   getInventoryAvailability,
   createReservation,
   releaseReservation,
   getAllActiveReservations,
 
-  -- Interpreters
   runTransactionDbIO,
   ReservationEntry (..),
   TxStore (..),
   emptyTxStore,
   runTransactionDbPure,
 ) where
-
 
 import Control.Exception (try)
 import Control.Monad (when)
@@ -96,7 +90,6 @@ data TypedLoadError
 
 data TransactionDb :: Effect where
 
-  -- Reads
   GetSaleById              :: UUID -> TransactionDb m (Either TypedLoadError Sale.SaleTransaction)
   GetRefundById            :: UUID -> TransactionDb m (Either TypedLoadError Refund.RefundTransaction)
   GetAllSales              :: TransactionDb m [Sale.SaleTransaction]
@@ -104,7 +97,6 @@ data TransactionDb :: Effect where
   GetSalesByLocation       :: LocationId -> TransactionDb m [Sale.SaleTransaction]
   GetRefundsByLocation     :: LocationId -> TransactionDb m [Refund.RefundTransaction]
 
-  -- Writes
   CreateSale               :: Sale.SaleTransaction -> TransactionDb m Sale.SaleTransaction
   UpdateSaleStatus         :: UUID -> TransactionStatus -> TransactionDb m ()
   VoidSale                 :: UUID -> Text -> TransactionDb m Sale.SaleTransaction
@@ -116,19 +108,15 @@ data TransactionDb :: Effect where
   AddSalePayment           :: Sale.Payment -> TransactionDb m Sale.Payment
   DeleteSalePayment        :: UUID -> TransactionDb m ()
 
-  -- By-id lookups (kind-agnostic, used for resolving entity → parent tx)
   GetTxIdByItemId          :: UUID -> TransactionDb m (Maybe UUID)
   GetTxIdByPaymentId       :: UUID -> TransactionDb m (Maybe UUID)
 
-  -- Inventory / reservations
   GetInventoryAvailability :: UUID -> TransactionDb m (Maybe (Int, Int))
   CreateReservation        :: UUID -> UUID -> UUID -> Int -> UTCTime -> TransactionDb m ()
   ReleaseReservation       :: UUID -> TransactionDb m Bool
   GetAllActiveReservations :: TransactionDb m [InventoryReservation]
 
 type instance DispatchOf TransactionDb = Dynamic
-
--- send wrappers
 
 getSaleById   :: (TransactionDb :> es) => UUID -> Eff es (Either TypedLoadError Sale.SaleTransaction)
 getSaleById   = send . GetSaleById
@@ -201,23 +189,6 @@ releaseReservation = send . ReleaseReservation
 getAllActiveReservations :: (TransactionDb :> es) => Eff es [InventoryReservation]
 getAllActiveReservations = send GetAllActiveReservations
 
--- ---------------------------------------------------------------------------
--- Internal: conversion at the SQL boundary
--- ---------------------------------------------------------------------------
---
--- The legacy DB functions take and return legacy 'Transaction' /
--- 'TransactionItem' / 'PaymentTransaction'. The interpreters convert
--- typed -> legacy on input and legacy -> typed on output.
---
--- For write operations, the output side cannot legitimately fail: we
--- just stored a sale, the returned row must convert back to a sale.
--- A failure here means DB corruption or a serialization bug, not a
--- user error. We panic with a descriptive message.
---
--- For read operations, failure modes are normal: the id might not
--- exist, the stored row might be the wrong kind, or the row might be
--- malformed. Those propagate as 'TypedLoadError'.
-
 expectSaleTx :: Transaction -> Sale.SaleTransaction
 expectSaleTx tx = case fromLegacyTransaction tx of
   Right (Left s)  -> s
@@ -274,10 +245,6 @@ narrowToRefund (Just (Left e))              = Left (TypedDecodeFailed e)
 narrowToRefund (Just (Right (Left _)))      = Left TypedWrongKind
 narrowToRefund (Just (Right (Right r)))     = Right r
 
--- ---------------------------------------------------------------------------
--- IO interpreter
--- ---------------------------------------------------------------------------
-
 runTransactionDbIO :: (IOE :> es) => DBPool -> Eff (TransactionDb : es) a -> Eff es a
 runTransactionDbIO pool = interpret $ \_ -> \case
 
@@ -291,7 +258,7 @@ runTransactionDbIO pool = interpret $ \_ -> \case
 
   GetAllSales -> liftIO $ do
     results <- DBTTyped.getAllTransactionsTyped pool
-    -- Decode failures are silently dropped. See critical notes.
+
     pure [s | Right (Left s) <- results]
 
   GetAllRefunds -> liftIO $ do
@@ -354,10 +321,6 @@ runTransactionDbIO pool = interpret $ \_ -> \case
   ReleaseReservation u -> liftIO $ DBRes.releaseInventoryReservation pool u
   GetAllActiveReservations -> liftIO $ DBRes.getAllActiveReservations pool
 
--- ---------------------------------------------------------------------------
--- Pure interpreter
--- ---------------------------------------------------------------------------
-
 data ReservationEntry = ReservationEntry
   { reSku    :: UUID
   , reTxId   :: UUID
@@ -366,9 +329,6 @@ data ReservationEntry = ReservationEntry
   }
   deriving (Show, Eq)
 
--- | The store still holds legacy 'Transaction' rows. Typed effect ops
--- convert at each touch. Pure-interpreter consumers (tests) never see
--- the legacy representation directly.
 data TxStore = TxStore
   { tsTxs          :: Map UUID Transaction
   , tsItemToTx     :: Map UUID UUID
@@ -384,6 +344,46 @@ emptyTxStore = TxStore Map.empty Map.empty Map.empty Map.empty Map.empty
 activeReservedQty :: UUID -> Map UUID ReservationEntry -> Int
 activeReservedQty sku rs =
   sum [reQty r | r <- Map.elems rs, reSku r == sku, reStatus r == "Reserved"]
+
+-- The three helpers below mirror "DB.Transaction" so the in-memory
+-- interpreter behaves like Postgres: 'recomputeTotals' is
+-- 'updateTotalsS', 'releaseReservedForTx' is 'releaseReservedForTxS', and
+-- 'releaseOneReservation' is the reservation match in
+-- 'deleteTransactionItem'.
+
+recomputeTotals :: Transaction -> Transaction
+recomputeTotals tx =
+  let items         = transactionItems tx
+      subtotal      = sum (map transactionItemSubtotal items)
+      discountTotal = sum [discountAmount d | i <- items, d <- transactionItemDiscounts i]
+      taxTotal      = sum [taxAmount t | i <- items, t <- transactionItemTaxes i]
+   in tx
+        { transactionSubtotal      = subtotal
+        , transactionDiscountTotal = discountTotal
+        , transactionTaxTotal      = taxTotal
+        , transactionTotal         = subtotal - discountTotal + taxTotal
+        }
+
+releaseReservedForTx :: UUID -> Map UUID ReservationEntry -> Map UUID ReservationEntry
+releaseReservedForTx txId =
+  Map.map
+    ( \r ->
+        if reTxId r == txId && reStatus r == "Reserved"
+          then r {reStatus = "Released"}
+          else r
+    )
+
+releaseOneReservation :: UUID -> UUID -> Int -> Map UUID ReservationEntry -> Map UUID ReservationEntry
+releaseOneReservation txId sku qty rs =
+  case [ k
+       | (k, r) <- Map.toList rs
+       , reTxId r == txId
+       , reSku r == sku
+       , reQty r == qty
+       , reStatus r == "Reserved"
+       ] of
+    (k : _) -> Map.adjust (\r -> r {reStatus = "Released"}) k rs
+    []      -> rs
 
 runTransactionDbPure ::
   (GenUUID :> es, Clock :> es) =>
@@ -463,7 +463,11 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                 , transactionIsVoided   = True
                 , transactionVoidReason = Just reason
                 }
-        put @TxStore st {tsTxs = Map.insert txId voided (tsTxs st)}
+        put @TxStore
+          st
+            { tsTxs          = Map.insert txId voided (tsTxs st)
+            , tsReservations = releaseReservedForTx txId (tsReservations st)
+            }
         pure (expectSaleTx voided)
 
   WriteRefund refund -> do
@@ -578,28 +582,58 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
 
   AddSaleItem item -> do
     let legacyItem = saleItemToLegacy item
-        sku = Sale.itemMenuItemSku item
-        qty = saleQuantityCount (Sale.itemQuantity item)
+        sku  = Sale.itemMenuItemSku item
+        qty  = saleQuantityCount (Sale.itemQuantity item)
+        txId = Sale.itemTransactionId item
     st <- get @TxStore
     if not (Map.member sku (tsInventory st))
       then pure $ Left (ItemNotFound sku)
       else do
-        let total     = fromMaybe 0 (Map.lookup sku (tsInventory st))
-            reserved  = activeReservedQty sku (tsReservations st)
-            available = total - reserved
+        let total       = fromMaybe 0 (Map.lookup sku (tsInventory st))
+            reserved    = activeReservedQty sku (tsReservations st)
+            ownReserved =
+              sum
+                [ reQty r
+                | r <- Map.elems (tsReservations st)
+                , reSku r == sku
+                , reTxId r == txId
+                , reStatus r == "Reserved"
+                ]
+            available   = total - (reserved - ownReserved)
         if available < qty
           then pure $ Left (InsufficientInventory sku qty available)
           else do
             resId <- nextUUID
-            let txId   = Sale.itemTransactionId item
-                newRes = ReservationEntry sku txId qty "Reserved"
+            let newRes     = ReservationEntry sku txId qty "Reserved"
+                replacedIds =
+                  [ transactionItemId i
+                  | tx <- maybe [] pure (Map.lookup txId (tsTxs st))
+                  , i  <- transactionItems tx
+                  , transactionItemMenuItemSku i == sku
+                  ]
+                releaseOwn r =
+                  if reSku r == sku && reTxId r == txId && reStatus r == "Reserved"
+                    then r {reStatus = "Released"}
+                    else r
             modify @TxStore $ \s ->
               s
-                { tsItemToTx     = Map.insert (Sale.itemId item) txId (tsItemToTx s)
-                , tsReservations = Map.insert resId newRes (tsReservations s)
+                { tsItemToTx     =
+                    Map.insert (Sale.itemId item) txId $
+                      foldr Map.delete (tsItemToTx s) replacedIds
+                , tsReservations =
+                    Map.insert resId newRes (Map.map releaseOwn (tsReservations s))
                 , tsTxs          =
                     Map.adjust
-                      (\tx -> tx {transactionItems = legacyItem : transactionItems tx})
+                      ( \tx ->
+                          recomputeTotals
+                            tx
+                              { transactionItems =
+                                  legacyItem
+                                    : filter
+                                        (\i -> transactionItemMenuItemSku i /= sku)
+                                        (transactionItems tx)
+                              }
+                      )
                       txId
                       (tsTxs s)
                 }
@@ -618,24 +652,19 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
           Nothing   -> pure ()
           Just item -> do
             let sku = transactionItemMenuItemSku item
+                qty = transactionItemQuantity item
             modify @TxStore $ \s ->
               s
                 { tsItemToTx     = Map.delete itemId (tsItemToTx s)
-                , tsReservations =
-                    Map.map
-                      ( \r ->
-                          if reSku r == sku && reTxId r == txId && reStatus r == "Reserved"
-                            then r {reStatus = "Released"}
-                            else r
-                      )
-                      (tsReservations s)
+                , tsReservations = releaseOneReservation txId sku qty (tsReservations s)
                 , tsTxs          =
                     Map.adjust
                       ( \tx ->
-                          tx
-                            { transactionItems =
-                                filter (\i -> transactionItemId i /= itemId) (transactionItems tx)
-                            }
+                          recomputeTotals
+                            tx
+                              { transactionItems =
+                                  filter (\i -> transactionItemId i /= itemId) (transactionItems tx)
+                              }
                       )
                       txId
                       (tsTxs s)

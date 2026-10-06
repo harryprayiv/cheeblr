@@ -8,7 +8,9 @@ module DB.Transaction where
 
 import Control.Exception (Exception, throwIO)
 import Control.Monad (forM_)
+import Control.Monad.IO.Class (liftIO)
 import Data.Int (Int32)
+import Data.List (sortOn)
 import Data.Scientific (fromFloatDigits)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -16,10 +18,13 @@ import Data.Time (getCurrentTime)
 import Data.Typeable (Typeable)
 import Data.UUID (UUID)
 import Data.UUID.V4 (nextRandom)
+import qualified Hasql.Decoders as Decoders
+import qualified Hasql.Encoders as Encoders
 import qualified Hasql.Session as Session
+import qualified Hasql.Statement as Statement
 import Rel8
 
-import DB.Database (DBPool, ddl, runSession)
+import DB.Database (DBPool, ddl, runSession, runTransaction, runTransaction_)
 import DB.Schema
 import Types.Location (LocationId (..), locationIdToUUID)
 import Types.Transaction
@@ -186,9 +191,170 @@ getTransactionById pool txId = do
     [row] -> Just <$> hydrateTx pool row
     _     -> pure Nothing
 
+-- Row locks.
+--
+-- Rel8 has no locking clause, so these two statements are plain Hasql. Every
+-- write path below that touches stock takes the locks in the same order:
+-- the sale row first, then menu item rows in ascending sku order. A single
+-- order means two registers cannot deadlock each other.
+
+lockTransactionRow :: Statement.Statement UUID (Maybe UUID)
+lockTransactionRow =
+  Statement.Statement
+    "SELECT id FROM transaction WHERE id = $1 FOR UPDATE"
+    (Encoders.param (Encoders.nonNullable Encoders.uuid))
+    (Decoders.rowMaybe (Decoders.column (Decoders.nonNullable Decoders.uuid)))
+    False
+
+lockMenuItemQuantity :: Statement.Statement UUID (Maybe Int32)
+lockMenuItemQuantity =
+  Statement.Statement
+    "SELECT quantity FROM menu_items WHERE sku = $1 FOR UPDATE"
+    (Encoders.param (Encoders.nonNullable Encoders.uuid))
+    (Decoders.rowMaybe (Decoders.column (Decoders.nonNullable Decoders.int4)))
+    False
+
+-- Session-level building blocks. They run on whatever connection the
+-- enclosing session holds, so they can be combined inside 'runTransaction'.
+
+reservedQuantityS :: UUID -> Session.Session Int
+reservedQuantityS sku = do
+  reservedSums <-
+    Session.statement () $
+      run $
+        Rel8.select $
+          aggregate (sumOn resQuantity) $ do
+            r <- each reservationSchema
+            where_ $
+              resItemSku r ==. lit sku
+                &&. resStatus r ==. lit "Reserved"
+            pure r
+  pure $ case reservedSums of
+    (r : _) -> fromIntegral (r :: Int32)
+    _       -> 0
+
+insertItemS :: TransactionItem -> Session.Session ()
+insertItemS item = do
+  Session.statement () $
+    run_ $
+      Rel8.insert $
+        Insert
+          { into        = transactionItemSchema
+          , rows        = values [tiDomainToRow item]
+          , onConflict  = Abort
+          , returning   = NoReturning
+          }
+  forM_ (transactionItemDiscounts item) $ \discount -> do
+    discId <- liftIO nextRandom
+    Session.statement () $
+      run_ $
+        Rel8.insert $
+          Insert
+            { into        = discountSchema
+            , rows        = values [discountDomainToRow discId (transactionItemId item) Nothing discount]
+            , onConflict  = Abort
+            , returning   = NoReturning
+            }
+  forM_ (transactionItemTaxes item) $ \tax -> do
+    taxId <- liftIO nextRandom
+    Session.statement () $
+      run_ $
+        Rel8.insert $
+          Insert
+            { into        = taxSchema
+            , rows        = values [taxDomainToRow taxId (transactionItemId item) tax]
+            , onConflict  = Abort
+            , returning   = NoReturning
+            }
+
+insertPaymentS :: PaymentTransaction -> Session.Session ()
+insertPaymentS payment =
+  Session.statement () $
+    run_ $
+      Rel8.insert $
+        Insert
+          { into        = paymentSchema
+          , rows        = values [paymentDomainToRow payment]
+          , onConflict  = Abort
+          , returning   = NoReturning
+          }
+
+releaseReservedForTxS :: UUID -> Session.Session ()
+releaseReservedForTxS txId =
+  Session.statement () $
+    run_ $
+      Rel8.update $
+        Update
+          { target      = reservationSchema
+          , from        = pure ()
+          , set         = \() row -> row {resStatus = lit "Released"}
+          , updateWhere = \() row ->
+              resTransactionId row ==. lit txId
+                &&. resStatus row ==. lit "Reserved"
+          , returning   = NoReturning
+          }
+
+updateTotalsS :: UUID -> Session.Session ()
+updateTotalsS txId = do
+  subtotals <-
+    Session.statement () $
+      run $
+        Rel8.select $
+          aggregate (sumOn tiSubtotal) $ do
+            ti <- each transactionItemSchema
+            where_ $ tiTransactionId ti ==. lit txId
+            pure ti
+  let subtotal :: Int32 = case subtotals of (s : _) -> s; _ -> 0
+
+  discountTotals <-
+    Session.statement () $
+      run $
+        Rel8.select $
+          aggregate (sumOn discRowAmount) $ do
+            d  <- each discountSchema
+            ti <- each transactionItemSchema
+            where_ $
+              discRowTransactionItemId d ==. nullify (tiId ti)
+                &&. tiTransactionId ti ==. lit txId
+            pure d
+  let discountTotal :: Int32 = case discountTotals of (d : _) -> d; _ -> 0
+
+  taxTotals <-
+    Session.statement () $
+      run $
+        Rel8.select $
+          aggregate (sumOn taxRowAmount) $ do
+            t  <- each taxSchema
+            ti <- each transactionItemSchema
+            where_ $
+              taxRowTransactionItemId t ==. tiId ti
+                &&. tiTransactionId ti ==. lit txId
+            pure t
+  let taxTotal :: Int32 = case taxTotals of (t : _) -> t; _ -> 0
+
+  let total = subtotal - discountTotal + taxTotal
+  Session.statement () $
+    run_ $
+      Rel8.update $
+        Update
+          { target      = transactionSchema
+          , from        = pure ()
+          , set         = \() row ->
+              row
+                { txSubtotal      = lit subtotal
+                , txDiscountTotal = lit discountTotal
+                , txTaxTotal      = lit taxTotal
+                , txTotal         = lit total
+                }
+          , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+          , returning   = NoReturning
+          }
+
+-- IO entry points.
+
 createTransaction :: DBPool -> Transaction -> IO Transaction
 createTransaction pool tx = do
-  runSession pool $
+  runTransaction_ pool $ do
     Session.statement () $
       run_ $
         Rel8.insert $
@@ -198,97 +364,29 @@ createTransaction pool tx = do
             , onConflict  = Abort
             , returning   = NoReturning
             }
-  items    <- mapM (insertTransactionItem pool) (transactionItems tx)
-  payments <- mapM (insertPaymentTransaction pool) (transactionPayments tx)
-  pure tx {transactionItems = items, transactionPayments = payments}
+    mapM_ insertItemS (transactionItems tx)
+    mapM_ insertPaymentS (transactionPayments tx)
+  pure tx
 
 insertTransactionItem :: DBPool -> TransactionItem -> IO TransactionItem
 insertTransactionItem pool item = do
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.insert $
-          Insert
-            { into        = transactionItemSchema
-            , rows        = values [tiDomainToRow item]
-            , onConflict  = Abort
-            , returning   = NoReturning
-            }
-  discounts <-
-    mapM
-      (insertDiscount pool (transactionItemId item) Nothing)
-      (transactionItemDiscounts item)
-  taxes <-
-    mapM
-      (insertTax pool (transactionItemId item))
-      (transactionItemTaxes item)
-  pure item {transactionItemDiscounts = discounts, transactionItemTaxes = taxes}
-
-insertDiscount :: DBPool -> UUID -> Maybe UUID -> DiscountRecord -> IO DiscountRecord
-insertDiscount pool itemId mTxId discount = do
-  discId <- nextRandom
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.insert $
-          Insert
-            { into        = discountSchema
-            , rows        = values [discountDomainToRow discId itemId mTxId discount]
-            , onConflict  = Abort
-            , returning   = NoReturning
-            }
-  pure discount
-
-insertTax :: DBPool -> UUID -> TaxRecord -> IO TaxRecord
-insertTax pool itemId tax = do
-  taxId <- nextRandom
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.insert $
-          Insert
-            { into        = taxSchema
-            , rows        = values [taxDomainToRow taxId itemId tax]
-            , onConflict  = Abort
-            , returning   = NoReturning
-            }
-  pure tax
+  runTransaction_ pool (insertItemS item)
+  pure item
 
 insertPaymentTransaction :: DBPool -> PaymentTransaction -> IO PaymentTransaction
 insertPaymentTransaction pool payment = do
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.insert $
-          Insert
-            { into        = paymentSchema
-            , rows        = values [paymentDomainToRow payment]
-            , onConflict  = Abort
-            , returning   = NoReturning
-            }
+  runSession pool (insertPaymentS payment)
   pure payment
 
--- updateTransaction :: DBPool -> UUID -> Transaction -> IO Transaction
--- updateTransaction pool txId tx = do
---   runSession pool $
---     Session.statement () $
---       run_ $
---         Rel8.update $
---           Update
---             { target      = transactionSchema
---             , from        = pure ()
---             , set         = \() _ -> txDomainToRow tx
---             , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
---             , returning   = NoReturning
---             }
---   mTx <- getTransactionById pool txId
---   case mTx of
---     Just updated -> pure updated
---     Nothing      -> throwIO $ userError $ "Transaction not found after update: " <> show txId
-
+-- | Marks the sale voided and releases every reservation it still holds, in
+-- one SQL transaction. Reservations of a completed sale are already
+-- "Completed" and are left alone, so voiding a completed sale does not put
+-- stock back.
 voidTransaction :: DBPool -> UUID -> Text -> IO Transaction
 voidTransaction pool txId reason = do
-  runSession pool $
+  runTransaction_ pool $ do
+    _ <- Session.statement txId lockTransactionRow
+    releaseReservedForTxS txId
     Session.statement () $
       run_ $
         Rel8.update $
@@ -324,20 +422,10 @@ updateTransactionStatus pool txId status =
             }
 
 clearTransaction :: DBPool -> UUID -> IO ()
-clearTransaction pool txId = do
-  runSession pool $ do
-    Session.statement () $
-      run_ $
-        Rel8.update $
-          Update
-            { target      = reservationSchema
-            , from        = pure ()
-            , set         = \() row -> row {resStatus = lit "Released"}
-            , updateWhere = \() row ->
-                resTransactionId row ==. lit txId
-                  &&. resStatus row ==. lit "Reserved"
-            , returning   = NoReturning
-            }
+clearTransaction pool txId =
+  runTransaction_ pool $ do
+    _ <- Session.statement txId lockTransactionRow
+    releaseReservedForTxS txId
     Session.statement () $
       run_ $
         Rel8.delete $
@@ -374,27 +462,30 @@ clearTransaction pool txId = do
             , returning   = NoReturning
             }
 
+-- | Decrements stock for every reservation the sale still holds, marks those
+-- reservations completed and marks the sale completed, in one SQL
+-- transaction. The sale row is locked first, so a second finalize of the
+-- same sale waits, then finds no "Reserved" rows and decrements nothing.
 finalizeTransaction :: DBPool -> UUID -> IO Transaction
 finalizeTransaction pool txId = do
-  reservations <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    res <- each reservationSchema
-    where_ $
-      resTransactionId res ==. lit txId
-        &&. resStatus res ==. lit "Reserved"
-    pure res
-  forM_ reservations $ \res -> do
-    let
-      sku = resItemSku res
-      qty = resQuantity res
-    runSession pool $ do
+  now <- getCurrentTime
+  runTransaction_ pool $ do
+    _ <- Session.statement txId lockTransactionRow
+    reservations <- Session.statement () $ run $ Rel8.select $ do
+      res <- each reservationSchema
+      where_ $
+        resTransactionId res ==. lit txId
+          &&. resStatus res ==. lit "Reserved"
+      pure res
+    forM_ (sortOn resItemSku reservations) $ \res -> do
       Session.statement () $
         run_ $
           Rel8.update $
             Update
               { target      = menuItemSchema
               , from        = pure ()
-              , set         = \() row -> row {menuQuantity = menuQuantity row - lit qty}
-              , updateWhere = \() row -> menuSku row ==. lit sku
+              , set         = \() row -> row {menuQuantity = menuQuantity row - lit (resQuantity res)}
+              , updateWhere = \() row -> menuSku row ==. lit (resItemSku res)
               , returning   = NoReturning
               }
       Session.statement () $
@@ -404,13 +495,9 @@ finalizeTransaction pool txId = do
               { target      = reservationSchema
               , from        = pure ()
               , set         = \() row -> row {resStatus = lit "Completed"}
-              , updateWhere = \() row ->
-                  resTransactionId row ==. lit txId
-                    &&. resItemSku row ==. lit sku
+              , updateWhere = \() row -> resId row ==. lit (resId res)
               , returning   = NoReturning
               }
-  now <- getCurrentTime
-  runSession pool $
     Session.statement () $
       run_ $
         Rel8.update $
@@ -430,41 +517,71 @@ finalizeTransaction pool txId = do
     Just tx -> pure tx
     Nothing -> throwIO $ userError $ "Transaction not found after finalization: " <> show txId
 
+-- | Sets the sale's line for this item's sku, in one SQL transaction.
+--
+-- A sale holds at most one line per sku. The caller passes the line as it
+-- should stand afterwards, so its quantity is the whole quantity wanted for
+-- that sku, not an increment. Any line the sale already has for the sku is
+-- deleted and its reservation released, then the new line and one
+-- reservation for the whole quantity are inserted and the sale totals are
+-- updated.
+--
+-- The menu item row is locked before the stock check, so a second register
+-- adding the same sku waits for this commit and then counts this
+-- reservation. The check counts stock this sale already holds for the sku
+-- as available to it. Throws 'InventoryException' after rolling back.
 addTransactionItem :: DBPool -> TransactionItem -> IO TransactionItem
 addTransactionItem pool item = do
   let
-    sku = transactionItemMenuItemSku item
-    qty = transactionItemQuantity item
-
-  totals <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    mi <- each menuItemSchema
-    where_ $ menuSku mi ==. lit sku
-    pure (menuQuantity mi)
-
-  reservedSums <- runSession pool $
-    Session.statement () $
-      run $
-        Rel8.select $
-          aggregate (sumOn resQuantity) $ do
-            r <- each reservationSchema
-            where_ $
-              resItemSku r ==. lit sku
-                &&. resStatus r ==. lit "Reserved"
-            pure r
-
-  case totals of
-    []          -> throwIO $ ItemNotFound sku
-    (total : _) -> do
-      let
-        reserved  = case reservedSums of (r : _) -> r; _ -> 0
-        available = fromIntegral total - fromIntegral reserved :: Int
-      if available < qty
-        then throwIO $ InsufficientInventory sku qty available
-        else do
-          newItem <- insertTransactionItem pool item
-          resId   <- nextRandom
-          now     <- getCurrentTime
-          runSession pool $
+    sku  = transactionItemMenuItemSku item
+    qty  = transactionItemQuantity item
+    txId = transactionItemTransactionId item
+  newResId <- nextRandom
+  now      <- getCurrentTime
+  outcome <- runTransaction pool $ do
+    _      <- Session.statement txId lockTransactionRow
+    mTotal <- Session.statement sku lockMenuItemQuantity
+    case mTotal of
+      Nothing    -> pure (Left (ItemNotFound sku))
+      Just total -> do
+        reserved <- reservedQuantityS sku
+        ownQuantities <- Session.statement () $ run $ Rel8.select $ do
+          r <- each reservationSchema
+          where_ $
+            resTransactionId r ==. lit txId
+              &&. resItemSku r ==. lit sku
+              &&. resStatus r ==. lit "Reserved"
+          pure (resQuantity r)
+        let ownReserved = Prelude.sum (map fromIntegral (ownQuantities :: [Int32])) :: Int
+            available   = fromIntegral total - (reserved - ownReserved) :: Int
+        if available < qty
+          then pure (Left (InsufficientInventory sku qty available))
+          else do
+            Session.statement () $
+              run_ $
+                Rel8.update $
+                  Update
+                    { target      = reservationSchema
+                    , from        = pure ()
+                    , set         = \() row -> row {resStatus = lit "Released"}
+                    , updateWhere = \() row ->
+                        resTransactionId row ==. lit txId
+                          &&. resItemSku row ==. lit sku
+                          &&. resStatus row ==. lit "Reserved"
+                    , returning   = NoReturning
+                    }
+            Session.statement () $
+              run_ $
+                Rel8.delete $
+                  Delete
+                    { from        = transactionItemSchema
+                    , using       = pure ()
+                    , deleteWhere = \() row ->
+                        tiTransactionId row ==. lit txId
+                          &&. tiMenuItemSku row ==. lit sku
+                    , returning   = NoReturning
+                    }
+            insertItemS item
             Session.statement () $
               run_ $
                 Rel8.insert $
@@ -473,9 +590,9 @@ addTransactionItem pool item = do
                     , rows =
                         values
                           [ ReservationRow
-                              { resId            = lit resId
+                              { resId            = lit newResId
                               , resItemSku       = lit sku
-                              , resTransactionId = lit (transactionItemTransactionId item)
+                              , resTransactionId = lit txId
                               , resQuantity      = lit (fromIntegral qty)
                               , resStatus        = lit "Reserved"
                               , resCreatedAt     = lit now
@@ -484,44 +601,62 @@ addTransactionItem pool item = do
                     , onConflict = Abort
                     , returning  = NoReturning
                     }
-          updateTransactionTotals pool (transactionItemTransactionId item)
-          pure newItem
+            updateTotalsS txId
+            pure (Right ())
+  case outcome of
+    Left e   -> throwIO e
+    Right () -> pure item
 
+-- | Releases the one reservation that belongs to this line, deletes the line
+-- and updates the sale totals, in one SQL transaction.
+--
+-- A reservation row does not record which line created it. The match is on
+-- sale, sku, "Reserved" status and quantity, and exactly one matching row is
+-- released. 'addTransactionItem' keeps a sale to one line per sku, so the
+-- match is normally unique.
 deleteTransactionItem :: DBPool -> UUID -> IO ()
-deleteTransactionItem pool itemId = do
-  itemRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    ti <- each transactionItemSchema
-    where_ $ tiId ti ==. lit itemId
-    pure ti
-  case itemRows of
-    [item] ->
-      runSession pool $
+deleteTransactionItem pool itemId =
+  runTransaction_ pool $ do
+    itemRows <- Session.statement () $ run $ Rel8.select $ do
+      ti <- each transactionItemSchema
+      where_ $ tiId ti ==. lit itemId
+      pure ti
+    case itemRows of
+      [item] -> do
+        let ownerTxId = tiTransactionId item
+        _ <- Session.statement ownerTxId lockTransactionRow
+        candidates <- Session.statement () $ run $ Rel8.select $ do
+          r <- each reservationSchema
+          where_ $
+            resTransactionId r ==. lit ownerTxId
+              &&. resItemSku r ==. lit (tiMenuItemSku item)
+              &&. resStatus r ==. lit "Reserved"
+              &&. resQuantity r ==. lit (tiQuantity item)
+          pure (resId r)
+        case candidates of
+          (reservationId : _) ->
+            Session.statement () $
+              run_ $
+                Rel8.update $
+                  Update
+                    { target      = reservationSchema
+                    , from        = pure ()
+                    , set         = \() row -> row {resStatus = lit "Released"}
+                    , updateWhere = \() row -> resId row ==. lit reservationId
+                    , returning   = NoReturning
+                    }
+          [] -> pure ()
         Session.statement () $
           run_ $
-            Rel8.update $
-              Update
-                { target      = reservationSchema
-                , from        = pure ()
-                , set         = \() row -> row {resStatus = lit "Released"}
-                , updateWhere = \() row ->
-                    resItemSku row ==. lit (tiMenuItemSku item)
-                      &&. resTransactionId row ==. lit (tiTransactionId item)
+            Rel8.delete $
+              Delete
+                { from        = transactionItemSchema
+                , using       = pure ()
+                , deleteWhere = \() row -> tiId row ==. lit itemId
                 , returning   = NoReturning
                 }
-    _ -> pure ()
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.delete $
-          Delete
-            { from        = transactionItemSchema
-            , using       = pure ()
-            , deleteWhere = \() row -> tiId row ==. lit itemId
-            , returning   = NoReturning
-            }
-  case itemRows of
-    [item] -> updateTransactionTotals pool (tiTransactionId item)
-    _      -> pure ()
+        updateTotalsS ownerTxId
+      _ -> pure ()
 
 addPaymentTransaction :: DBPool -> PaymentTransaction -> IO PaymentTransaction
 addPaymentTransaction = insertPaymentTransaction
@@ -540,61 +675,7 @@ deletePaymentTransaction pool paymentId =
             }
 
 updateTransactionTotals :: DBPool -> UUID -> IO ()
-updateTransactionTotals pool txId = do
-  subtotals <- runSession pool $
-    Session.statement () $
-      run $
-        Rel8.select $
-          aggregate (sumOn tiSubtotal) $ do
-            ti <- each transactionItemSchema
-            where_ $ tiTransactionId ti ==. lit txId
-            pure ti
-  let subtotal :: Int32 = case subtotals of (s : _) -> s; _ -> 0
-
-  discountTotals <- runSession pool $
-    Session.statement () $
-      run $
-        Rel8.select $
-          aggregate (sumOn discRowAmount) $ do
-            d  <- each discountSchema
-            ti <- each transactionItemSchema
-            where_ $
-              discRowTransactionItemId d ==. nullify (tiId ti)
-                &&. tiTransactionId ti ==. lit txId
-            pure d
-  let discountTotal :: Int32 = case discountTotals of (d : _) -> d; _ -> 0
-
-  taxTotals <- runSession pool $
-    Session.statement () $
-      run $
-        Rel8.select $
-          aggregate (sumOn taxRowAmount) $ do
-            t  <- each taxSchema
-            ti <- each transactionItemSchema
-            where_ $
-              taxRowTransactionItemId t ==. tiId ti
-                &&. tiTransactionId ti ==. lit txId
-            pure t
-  let taxTotal :: Int32 = case taxTotals of (t : _) -> t; _ -> 0
-
-  let total = subtotal - discountTotal + taxTotal
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.update $
-          Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
-                row
-                  { txSubtotal      = lit subtotal
-                  , txDiscountTotal = lit discountTotal
-                  , txTaxTotal      = lit taxTotal
-                  , txTotal         = lit total
-                  }
-            , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
-            }
+updateTransactionTotals pool txId = runTransaction_ pool (updateTotalsS txId)
 
 getTransactionIdByItemId :: DBPool -> UUID -> IO (Maybe UUID)
 getTransactionIdByItemId pool itemId = do
@@ -637,10 +718,6 @@ getInventoryAvailability pool sku = do
     (total : _) ->
       let reserved = case reservedSums of (r : _) -> r; _ -> 0
        in pure $ Just (fromIntegral total, fromIntegral reserved)
-
--- ---------------------------------------------------------------------------
--- Row conversions
--- ---------------------------------------------------------------------------
 
 txDomainToRow :: Transaction -> TransactionRow Expr
 txDomainToRow tx =
@@ -755,20 +832,6 @@ getDiscountPercent :: DiscountType -> Maybe Double
 getDiscountPercent (PercentOff pct) = Just (realToFrac pct)
 getDiscountPercent _                = Nothing
 
--- | Decode a discount row into its typed 'DiscountType'.
---
--- The amount column is now passed explicitly so the AMOUNT_OFF and CUSTOM
--- arms can recover the value that was stored. The percent column is passed
--- through as 'Maybe Double' without rounding so PERCENT_OFF round-trips
--- preserve the decimal value.
---
--- Round-trip behavior (with 'discountDomainToRow' on the encode side):
---
--- * @AmountOff 100@ ↔ @(type="AMOUNT_OFF", amount=100, percent=Nothing)@
--- * @PercentOff 0.20@ ↔ @(type="PERCENT_OFF", amount=resolved, percent=Just 0.20)@
--- * @BuyOneGetOne@ ↔ @(type="BUY_ONE_GET_ONE", amount=0, percent=Nothing)@
--- * @Custom typ amt@ encodes as type=\"CUSTOM\" (the inner text is currently
---   lost; see 'showDiscountType'); decoding therefore yields @Custom "CUSTOM" amt@.
 discountRowToDomain :: DiscountRow Result -> DiscountRecord
 discountRowToDomain row =
   DiscountRecord
@@ -832,10 +895,6 @@ negatePaymentTransaction p =
     , paymentChange   = negate (paymentChange p)
     }
 
--- ---------------------------------------------------------------------------
--- Show / parse helpers
--- ---------------------------------------------------------------------------
-
 showStatus :: TransactionStatus -> Text
 showStatus Created    = "CREATED"
 showStatus InProgress = "IN_PROGRESS"
@@ -875,16 +934,6 @@ showDiscountType (AmountOff _)  = "AMOUNT_OFF"
 showDiscountType BuyOneGetOne   = "BUY_ONE_GET_ONE"
 showDiscountType (Custom _ _)   = "CUSTOM"
 
--- | Parse a discount row's type column, percent column, and amount column
--- into a typed 'DiscountType'.
---
--- The amount parameter is consulted for @AMOUNT_OFF@ and unknown (custom)
--- discount types — these are the cases where the meaningful numeric value
--- lives in the amount column and the percent column is null.
---
--- The percent parameter is consulted only for @PERCENT_OFF@. It is passed
--- through 'realToFrac' to 'Scientific' without rounding so values like
--- @0.20@ survive the round trip.
 parseDiscountType :: Text -> Maybe Double -> Int -> DiscountType
 parseDiscountType "PERCENT_OFF"     mPct _   = PercentOff (maybe 0 realToFrac mPct)
 parseDiscountType "AMOUNT_OFF"      _    amt = AmountOff amt
