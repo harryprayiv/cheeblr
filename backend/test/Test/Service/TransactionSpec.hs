@@ -26,17 +26,13 @@ import qualified Service.Transaction as Svc
 import Types.Events.Domain
 import Types.Events
 import Types.Location (LocationId (..))
-import Types.Primitives.Money (refundMoneyCents, unsafeMkSaleMoney)
+import Types.Primitives.Money (refundMoneyCents, saleMoneyCents, unsafeMkSaleMoney)
 import Types.Primitives.Quantity (unsafeMkSaleQuantity)
 import Types.Transaction
 import Types.Transaction.Conversion (saleItemToLegacy, salePaymentToLegacy)
 import qualified Types.Transaction.Refund as Refund
 import qualified Types.Transaction.Sale as Sale
 import Types.Transaction.Sale (itemId, itemMenuItemSku)
-
--- ---------------------------------------------------------------------------
--- Fixed UUIDs
--- ---------------------------------------------------------------------------
 
 txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
 txUUID   = read "11111111-1111-1111-1111-111111111111"
@@ -70,10 +66,6 @@ uuidSupply =
 testTime :: UTCTime
 testTime = read "2024-06-15 10:00:00 UTC"
 
--- ---------------------------------------------------------------------------
--- Test fixtures
--- ---------------------------------------------------------------------------
-
 mkTx :: TransactionStatus -> Transaction
 mkTx status =
   Transaction
@@ -100,7 +92,6 @@ mkTx status =
     , transactionNotes = Nothing
     }
 
--- | Typed item fixture used in service-call arguments.
 testSaleItem :: Sale.Item
 testSaleItem =
   Sale.Item
@@ -115,12 +106,9 @@ testSaleItem =
     , itemTotal         = unsafeMkSaleMoney 1000
     }
 
--- | Legacy item used inside store fixtures. Derived from the typed one
--- so the two stay in sync.
 testItem :: TransactionItem
 testItem = saleItemToLegacy testSaleItem
 
--- | Typed payment fixture used in service-call arguments.
 testSalePayment :: Sale.Payment
 testSalePayment =
   Sale.Payment
@@ -135,7 +123,6 @@ testSalePayment =
     , paymentAuthorizationCode = Nothing
     }
 
--- | Legacy payment used inside store fixtures.
 testPayment :: PaymentTransaction
 testPayment = salePaymentToLegacy testSalePayment
 
@@ -179,10 +166,6 @@ storeWithItemAndPaymentCompleted =
         , tsPaymentToTx  = Map.singleton pymtUUID txUUID
         , tsInventory    = Map.singleton skuUUID 10
         }
-
--- ---------------------------------------------------------------------------
--- Effect stack
--- ---------------------------------------------------------------------------
 
 type TestEffs =
   '[ TransactionDb
@@ -228,10 +211,6 @@ runTestWithEvents store action = do
   evts <- reverse <$> readIORef ref
   pure (result, evts)
 
--- ---------------------------------------------------------------------------
--- Helpers
--- ---------------------------------------------------------------------------
-
 shouldSucceed :: IO (Either ServerError a) -> IO a
 shouldSucceed io = do
   result <- io
@@ -247,10 +226,6 @@ shouldFailWith code io = do
   case result of
     Left err -> errHTTPCode err `shouldBe` code
     Right _  -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
-
--- ---------------------------------------------------------------------------
--- Specs
--- ---------------------------------------------------------------------------
 
 spec :: Spec
 spec = describe "Service.Transaction (pure interpreter)" $ do
@@ -380,9 +355,7 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         runTest emptyTxStore (Svc.voidTx txUUID "reason")
 
   describe "refundTx — state machine guards" $ do
-    -- The result type is now 'Refund.RefundTransaction'; the
-    -- "is this a refund?" question is settled by the type system, so
-    -- we assert on the refund-specific fields instead.
+
     it "succeeds from Completed" $ do
       refund <- shouldSucceed $ runTest (storeWith Completed) (Svc.refundTx txUUID "defective")
       Refund.refundReason                 refund `shouldBe` "defective"
@@ -462,18 +435,31 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         Just (_, reserved) -> reserved `shouldBe` 1
         Nothing            -> expectationFailure "Expected availability"
 
-    it "two addItem calls consume two units" $ do
+    it "a second addItem for the same sku replaces the line and its reservation" $ do
       let
-        item2  = testSaleItem {itemId = freshUUID}
+        item2 =
+          testSaleItem
+            { Sale.itemId       = freshUUID
+            , Sale.itemQuantity = unsafeMkSaleQuantity 2
+            , Sale.itemSubtotal = unsafeMkSaleMoney 2000
+            , Sale.itemTotal    = unsafeMkSaleMoney 2000
+            }
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
           _ <- Svc.addItem testSaleItem
           _ <- Svc.addItem item2
-          getInventoryAvailability skuUUID
-      result <- shouldSucceed $ runTest store action
-      case result of
+          availability <- getInventoryAvailability skuUUID
+          loaded       <- getSaleById txUUID
+          pure (availability, loaded)
+      (availability, loaded) <- shouldSucceed $ runTest store action
+      case availability of
         Just (_, reserved) -> reserved `shouldBe` 2
         Nothing            -> expectationFailure "Expected availability"
+      case loaded of
+        Right sale -> do
+          map Sale.itemId (Sale.saleItems sale) `shouldBe` [freshUUID]
+          saleMoneyCents (Sale.saleTotal sale) `shouldBe` 2000
+        Left err -> expectationFailure ("Expected the sale, got " <> show err)
 
     it "addItem followed by removeItem restores reserved count" $ do
       let
