@@ -45,7 +45,7 @@ let
   testSuiteModule = import ./test-suite.nix           { inherit pkgs name; };
   sopsModule      = import ./sops-dev.nix             { inherit pkgs lib name; };
   bootstrapModule = import ./bootstrap-admin-tool.nix { inherit pkgs lib name; };
-  ideModule       = import ./ide.nix                  { inherit pkgs lib name; };
+  saleCheckModule = import ./sale-check.nix           { inherit pkgs lib name; };
 
   manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
@@ -94,8 +94,6 @@ let
       echo "    boot.binfmt.emulatedSystems = [ \"aarch64-linux\" ];"
   '' else "";
 
-  # The full command wall lives here, on demand. It does not fire on every
-  # `cd` into the project via direnv.
   helpScript = pkgs.writeShellScriptBin "${name}-help" ''
     echo "Copyright (C) ${licenseConfig.years} ${licenseConfig.holder}. Licensed under the ${licenseConfig.name}."
     echo "This is free software with ABSOLUTELY NO WARRANTY; see LICENSE for terms."
@@ -125,6 +123,7 @@ let
     echo ""
     echo "  Frontend:  vite  spago-watch  codegen  dev"
     echo "  Testing:   test-unit  test-integration  test-integration-tls  test-suite  test-smoke"
+    echo "             test-sale   - sale path against a throwaway database and backend"
     echo ""
     echo "  Auth Bootstrap (run once after first pg-start):"
     echo "    bootstrap-admin         - Create admin user, store password in sops"
@@ -143,9 +142,6 @@ let
     echo "    tls-sops-extract       - Extract sops certs to local cert path"
     echo "    tls-info               - Show certificate details"
     echo "    sops secrets/${name}.yaml - Edit secrets directly"
-    echo ""
-    echo "  IDE:"
-    echo "    ${name}-ide-sync       - Rewrite .vscode/ from nix/ide.nix"
   '';
 
   commonBuildInputs = with pkgs; [
@@ -225,7 +221,6 @@ let
 
     toilet rsync tmux
 
-    ideModule.sync
     helpScript
 
     manifestModule.generateScript
@@ -239,12 +234,12 @@ let
     testSuiteModule.test-integration-tls
     testSuiteModule.test-suite
     testSuiteModule.test-smoke
+    saleCheckModule.test-sale
+    nixd nixfmt
 
     coreutils bash gnused gnugrep jq perl findutils
-  ] ++ containerTools ++ ideModule.tools;
+  ] ++ containerTools;
 
-  # No editor. No alacritty (deploy.nix references it by store path).
-  # No direnv (direnv is what *enters* this shell; putting it inside is circular).
   nativeBuildInputs = with pkgs; [
     pkg-config postgresql postgresql.lib zlib openssl.dev libiconv openssl
     lsof tmux
@@ -271,8 +266,6 @@ let
       mkdir -p "$(pwd)/script/concat_archive/output" \
                "$(pwd)/script/concat_archive/archive" \
                "$(pwd)/script/concat_archive/.hashes"
-
-      ${name}-ide-sync
 
       ${sopsModule.loadSecretsHook}
 

@@ -37,10 +37,8 @@ import Effect.TransactionDb
 import State.SaleTransactionMachine
   ( SaleTxCommand (..)
   , SaleTxEvent (..)
-  , SomeSaleTxState
   , fromSaleTransaction
   , runTxCommand
-  , someTxStatus
   )
 import State.StockPullMachine (PullVertex (..))
 
@@ -96,15 +94,30 @@ requireTxId lookupFn notFoundMsg entityId = do
     Nothing   -> throwError err404 {errBody = notFoundMsg}
     Just txId -> pure txId
 
-persistStatusChange ::
-  (TransactionDb :> es) =>
-  Sale.SaleTransaction ->
-  SomeSaleTxState ->
-  Eff es ()
-persistStatusChange sale nextState = do
-  let nextStatus = someTxStatus nextState
-  when (Sale.saleStatus sale /= nextStatus) $
-    updateSaleStatus (Sale.saleId sale) nextStatus
+failText :: (Error ServerError :> es) => ServerError -> Text -> Eff es a
+failText base message =
+  throwError base {errBody = LBS.fromStrict (TE.encodeUtf8 message)}
+
+-- | The HTTP answer for a write the database layer refused. This is the
+-- only place that maps 'InventoryException' to a status code.
+refuseWrite :: (Error ServerError :> es) => InventoryException -> Eff es a
+refuseWrite (ItemNotFound missingSku) =
+  failText err404 ("Item not found: " <> T.pack (show missingSku))
+refuseWrite (InsufficientInventory shortSku requested available) =
+  failText err400 $
+    "Insufficient inventory for "
+      <> T.pack (show shortSku)
+      <> ": "
+      <> T.pack (show available)
+      <> " available, "
+      <> T.pack (show requested)
+      <> " requested"
+refuseWrite (SaleNotOpen _) =
+  failText err409 "The sale is no longer open"
+refuseWrite (LineRejected message) =
+  failText err400 message
+refuseWrite (FinalizeRefused problems) =
+  failText err409 (T.intercalate "; " problems)
 
 createStockPull ::
   ( StockDb.StockDb :> es
@@ -163,6 +176,19 @@ createSaleSvc sale = do
         }
   pure result
 
+-- | Adds a quantity of one sku to a sale and returns the line as stored.
+--
+-- The request carries the quantity to add. 'addSaleItem' works out the
+-- line's whole quantity from the stored sale and prices it, so this
+-- function never computes a quantity from the sale it loaded.
+--
+-- The state machine check here gives the caller a clear 409 for a sale
+-- that is already closed. 'addSaleItem' checks the status again when it
+-- writes, and it writes the move from Created to InProgress together with
+-- the line, so a refused add changes nothing.
+--
+-- The events and the stock pull are built from what 'addSaleItem' reports
+-- it replaced and stored.
 addItem ::
   ( TransactionDb :> es
   , StockDb.StockDb :> es
@@ -172,65 +198,47 @@ addItem ::
   , GenUUID :> es
   , Error ServerError :> es
   ) =>
-  Sale.Item ->
+  SaleLineAdd ->
   Eff es Sale.Item
-addItem item = do
-  sale <- loadSale (Sale.itemTransactionId item)
-  let someState        = fromSaleTransaction sale
-      (evt, nextState) = runTxCommand someState (AddItemCmd item)
-      replacedLines    =
-        filter
-          (\i -> Sale.itemMenuItemSku i == Sale.itemMenuItemSku item)
-          (Sale.saleItems sale)
-      previousQty      =
-        sum (map (saleQuantityCount . Sale.itemQuantity) replacedLines)
-      addedQty         = saleQuantityCount (Sale.itemQuantity item) - previousQty
+addItem change = do
+  let txId   = lineAddSaleId change
+      sku    = lineAddSku change
+      addQty = lineAddQuantity change
+  sale <- loadSale txId
+  when (addQty <= 0) $
+    failText err400 ("Quantity must be greater than zero, got " <> T.pack (show addQty))
+  provisional <-
+    case lineAddPrice change (lineAddNewItemId change) addQty of
+      Right item   -> pure item
+      Left message -> failText err400 message
+  let someState = fromSaleTransaction sale
+      (evt, _)  = runTxCommand someState (AddItemCmd provisional)
   guardSaleTxEvent evt
-  persistStatusChange sale nextState
-  result <- addSaleItem item
+  result <- addSaleItem change
   case result of
-    Right addedItem -> do
+    Left refusal -> refuseWrite refusal
+    Right added  -> do
+      let addedItem = lineAddedItem added
       now <- currentTime
-      forM_ replacedLines $ \old ->
+      forM_ (lineAddedReplaced added) $ \(oldId, oldQty) ->
         emit $
           TransactionEvt $
             TransactionItemRemoved
-              { teTxId      = Sale.itemTransactionId old
-              , teItemId    = Sale.itemId old
-              , teItemSku   = Sale.itemMenuItemSku old
-              , teQty       = saleQuantityCount (Sale.itemQuantity old)
+              { teTxId      = txId
+              , teItemId    = oldId
+              , teItemSku   = sku
+              , teQty       = oldQty
               , teTimestamp = now
               }
       emit $
         TransactionEvt $
           TransactionItemAdded
-            { teTxId      = Sale.itemTransactionId item
+            { teTxId      = txId
             , teItem      = saleItemToLegacy addedItem
             , teTimestamp = now
             }
-      when (addedQty > 0) $
-        createStockPull sale addedItem addedQty now
+      createStockPull sale addedItem addQty now
       pure addedItem
-    Left (ItemNotFound sku) ->
-      throwError
-        err404
-          { errBody =
-              LBS.fromStrict . TE.encodeUtf8 $
-                "Item not found: " <> T.pack (show sku)
-          }
-    Left (InsufficientInventory sku requested available) ->
-      throwError
-        err400
-          { errBody =
-              LBS.fromStrict . TE.encodeUtf8 $
-                "Insufficient inventory for "
-                  <> T.pack (show sku)
-                  <> ": "
-                  <> T.pack (show available)
-                  <> " available, "
-                  <> T.pack (show requested)
-                  <> " requested"
-          }
 
 removeItem ::
   ( TransactionDb :> es
@@ -282,6 +290,9 @@ removeItem itemId = do
               }
     Nothing -> pure ()
 
+-- | Records a payment. The state machine check gives an early 409 for a
+-- sale that cannot take payments. 'addSalePayment' checks the status again
+-- when it writes, so a payment cannot land on a sale that closed in between.
 addPayment ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -295,17 +306,22 @@ addPayment payment = do
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState (AddPaymentCmd payment)
   guardSaleTxEvent evt
-  result <- addSalePayment payment
-  now    <- currentTime
-  emit $
-    TransactionEvt $
-      TransactionPaymentAdded
-        { teTxId      = Sale.paymentTransactionId payment
-        , tePayment   = salePaymentToLegacy result
-        , teTimestamp = now
-        }
-  pure result
+  outcome <- addSalePayment payment
+  case outcome of
+    Left refusal -> refuseWrite refusal
+    Right result -> do
+      now <- currentTime
+      emit $
+        TransactionEvt $
+          TransactionPaymentAdded
+            { teTxId      = Sale.paymentTransactionId payment
+            , tePayment   = salePaymentToLegacy result
+            , teTimestamp = now
+            }
+      pure result
 
+-- | Removes a payment. 'deleteSalePayment' checks the sale's status when it
+-- writes, so a payment cannot be removed from a sale that closed in between.
 removePayment ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -320,16 +336,22 @@ removePayment pymtId = do
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState (RemovePaymentCmd pymtId)
   guardSaleTxEvent evt
-  deleteSalePayment pymtId
-  now <- currentTime
-  emit $
-    TransactionEvt $
-      TransactionPaymentRemoved
-        { teTxId      = txId
-        , tePaymentId = pymtId
-        , teTimestamp = now
-        }
+  outcome <- deleteSalePayment pymtId
+  case outcome of
+    Left refusal -> refuseWrite refusal
+    Right ()     -> do
+      now <- currentTime
+      emit $
+        TransactionEvt $
+          TransactionPaymentRemoved
+            { teTxId      = txId
+            , tePaymentId = pymtId
+            , teTimestamp = now
+            }
 
+-- | Completes a sale. The state machine check gives an early 409 for a sale
+-- in the wrong status. Whether the sale has lines and is paid is decided by
+-- 'finalizeSale' at the moment of the write, and nowhere else.
 finalizeTx ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -343,16 +365,19 @@ finalizeTx txId = do
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState FinalizeCmd
   guardSaleTxEvent evt
-  result <- finalizeSale txId
-  now    <- currentTime
-  emit $
-    TransactionEvt $
-      TransactionFinalized
-        { teTxId      = txId
-        , teTx        = saleToLegacyTransaction result
-        , teTimestamp = now
-        }
-  pure result
+  outcome <- finalizeSale txId
+  case outcome of
+    Left refusal -> refuseWrite refusal
+    Right result -> do
+      now <- currentTime
+      emit $
+        TransactionEvt $
+          TransactionFinalized
+            { teTxId      = txId
+            , teTx        = saleToLegacyTransaction result
+            , teTimestamp = now
+            }
+      pure result
 
 voidTx ::
   ( TransactionDb :> es

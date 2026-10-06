@@ -2,12 +2,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE TypeOperators #-}
 
 module Server (fullAPI, fullServer) where
 
 import API.OpenApi (CheeblrAPI, cheeblrOpenApi)
-import API.SaleCommand (SaleCommandAPI)
 import API.Inventory
 import Auth.Session (SessionContext (..), resolveSession)
 import Control.Monad.IO.Class (liftIO)
@@ -44,26 +42,22 @@ import Types.Auth (
  )
 import Types.Inventory
 
--- CheeblrAPI (defined in API.OpenApi) is the API type used for the OpenAPI
--- document. SaleCommandAPI holds the register's sale commands, which are
--- served alongside it and are not yet in that document.
-type FullAPI = CheeblrAPI :<|> SaleCommandAPI
+type FullAPI = CheeblrAPI
 
 fullAPI :: Proxy FullAPI
 fullAPI = Proxy
 
 fullServer :: AppEnv -> Server FullAPI
 fullServer env =
-  ( inventoryServer env
-      :<|> posServerImpl env
-      :<|> authServerImpl (envDbPool env) (envLogEnv env)
-      :<|> adminServerImpl env
-      :<|> managerServerImpl env
-      :<|> stockServerImpl env
-      :<|> feedServerImpl env
-      :<|> pure cheeblrOpenApi
-  )
+  inventoryServer env
+    :<|> posServerImpl env
     :<|> saleCommandServer env
+    :<|> authServerImpl (envDbPool env) (envLogEnv env)
+    :<|> adminServerImpl env
+    :<|> managerServerImpl env
+    :<|> stockServerImpl env
+    :<|> feedServerImpl env
+    :<|> pure cheeblrOpenApi
 
 runInvEff :: DBPool -> Eff '[InventoryDb, Error ServerError, IOE] a -> Handler a
 runInvEff pool action = do

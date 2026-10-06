@@ -27,7 +27,7 @@ import Types.Events.Domain
 import Types.Events
 import Types.Location (LocationId (..))
 import Types.Primitives.Money (refundMoneyCents, saleMoneyCents, unsafeMkSaleMoney)
-import Types.Primitives.Quantity (unsafeMkSaleQuantity)
+import Types.Primitives.Quantity (saleQuantityCount, unsafeMkSaleQuantity)
 import Types.Transaction
 import Types.Transaction.Conversion (saleItemToLegacy, salePaymentToLegacy)
 import qualified Types.Transaction.Refund as Refund
@@ -106,6 +106,28 @@ testSaleItem =
     , itemTotal         = unsafeMkSaleMoney 1000
     }
 
+-- An add request built from a line. It asks for the line's quantity to be
+-- added, offers the line's id for a new line, and prices any whole quantity
+-- at the line's unit price with no tax.
+lineFor :: Sale.Item -> SaleLineAdd
+lineFor item =
+  SaleLineAdd
+    { lineAddSaleId    = Sale.itemTransactionId item
+    , lineAddSku       = Sale.itemMenuItemSku item
+    , lineAddQuantity  = saleQuantityCount (Sale.itemQuantity item)
+    , lineAddNewItemId = Sale.itemId item
+    , lineAddPrice     = \lineId wholeQty ->
+        Right
+          item
+            { Sale.itemId       = lineId
+            , Sale.itemQuantity = unsafeMkSaleQuantity wholeQty
+            , Sale.itemSubtotal = unsafeMkSaleMoney (wholeQty * unitPrice)
+            , Sale.itemTotal    = unsafeMkSaleMoney (wholeQty * unitPrice)
+            }
+    }
+  where
+    unitPrice = saleMoneyCents (Sale.itemPricePerUnit item)
+
 testItem :: TransactionItem
 testItem = saleItemToLegacy testSaleItem
 
@@ -135,7 +157,12 @@ storeWith status =
 
 storeWithItem :: TransactionStatus -> TxStore
 storeWithItem status =
-  let tx = (mkTx status) {transactionItems = [testItem]}
+  let tx =
+        (mkTx status)
+          { transactionItems    = [testItem]
+          , transactionSubtotal = 1000
+          , transactionTotal    = 1000
+          }
    in emptyTxStore
         { tsTxs = Map.singleton txUUID tx
         , tsItemToTx = Map.singleton itemUUID txUUID
@@ -151,10 +178,11 @@ storeWithPayment status =
         , tsInventory = Map.singleton skuUUID 10
         }
 
-storeWithItemAndPaymentCompleted :: TxStore
-storeWithItemAndPaymentCompleted =
+-- A sale with one $10.00 line and one $10.00 payment, in the given status.
+storeWithItemAndPayment :: TransactionStatus -> TxStore
+storeWithItemAndPayment status =
   let tx =
-        (mkTx Completed)
+        (mkTx status)
           { transactionItems    = [testItem]
           , transactionPayments = [testPayment]
           , transactionSubtotal = 1000
@@ -166,6 +194,13 @@ storeWithItemAndPaymentCompleted =
         , tsPaymentToTx  = Map.singleton pymtUUID txUUID
         , tsInventory    = Map.singleton skuUUID 10
         }
+
+storeWithItemAndPaymentCompleted :: TxStore
+storeWithItemAndPaymentCompleted = storeWithItemAndPayment Completed
+
+-- A paid sale that is ready to be completed.
+storeReadyToFinalize :: TxStore
+storeReadyToFinalize = storeWithItemAndPayment InProgress
 
 type TestEffs =
   '[ TransactionDb
@@ -227,43 +262,160 @@ shouldFailWith code io = do
     Left err -> errHTTPCode err `shouldBe` code
     Right _  -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
 
+-- Checks that an interpreter-level write was refused.
+shouldBeRefused :: Either e a -> Expectation
+shouldBeRefused outcome =
+  case outcome of
+    Left _  -> pure ()
+    Right _ -> expectationFailure "Expected the write to be refused"
+
+-- Checks that the stored sale holds exactly one line with the given id,
+-- quantity and total, and that the sale total matches.
+shouldHoldOneLine ::
+  Either TypedLoadError Sale.SaleTransaction ->
+  UUID ->
+  Int ->
+  Int ->
+  Expectation
+shouldHoldOneLine loaded expectedId expectedQty expectedTotal =
+  case loaded of
+    Right sale -> do
+      map Sale.itemId (Sale.saleItems sale) `shouldBe` [expectedId]
+      map (saleQuantityCount . Sale.itemQuantity) (Sale.saleItems sale) `shouldBe` [expectedQty]
+      saleMoneyCents (Sale.saleTotal sale) `shouldBe` expectedTotal
+    Left err -> expectationFailure ("Expected the sale, got " <> show err)
+
 spec :: Spec
 spec = describe "Service.Transaction (pure interpreter)" $ do
 
   describe "addItem — state machine guards" $ do
     it "succeeds from Created (transitions tx to InProgress)" $ do
-      item <- shouldSucceed $ runTest (storeWith Created) (Svc.addItem testSaleItem)
+      item <- shouldSucceed $ runTest (storeWith Created) (Svc.addItem (lineFor testSaleItem))
       Sale.itemId item `shouldBe` itemUUID
 
     it "succeeds from InProgress" $ do
       let item2 = testSaleItem {itemId = freshUUID, itemMenuItemSku = skuUUID}
-      void $ shouldSucceed $ runTest (storeWith InProgress) (Svc.addItem item2)
+      void $ shouldSucceed $ runTest (storeWith InProgress) (Svc.addItem (lineFor item2))
 
     it "rejects from Completed with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Completed) (Svc.addItem testSaleItem)
+        runTest (storeWith Completed) (Svc.addItem (lineFor testSaleItem))
 
     it "rejects from Voided with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Voided) (Svc.addItem testSaleItem)
+        runTest (storeWith Voided) (Svc.addItem (lineFor testSaleItem))
 
     it "rejects from Refunded with 409" $
       shouldFailWith 409 $
-        runTest (storeWith Refunded) (Svc.addItem testSaleItem)
+        runTest (storeWith Refunded) (Svc.addItem (lineFor testSaleItem))
 
   describe "addItem — DB-level errors" $ do
     it "returns 404 for non-existent transaction" $
       shouldFailWith 404 $
-        runTest emptyTxStore (Svc.addItem testSaleItem)
+        runTest emptyTxStore (Svc.addItem (lineFor testSaleItem))
 
     it "returns 404 when SKU not in inventory" $
       shouldFailWith 404 $
         runTest (storeWith Created) $
-          Svc.addItem testSaleItem {itemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
+          Svc.addItem
+            (lineFor testSaleItem {itemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"})
 
     it "returns 400 when insufficient inventory" $ do
       let store = (storeWith Created) {tsInventory = Map.singleton skuUUID 0}
-      shouldFailWith 400 $ runTest store (Svc.addItem testSaleItem)
+      shouldFailWith 400 $ runTest store (Svc.addItem (lineFor testSaleItem))
+
+    it "returns 400 for a quantity of zero" $
+      shouldFailWith 400 $
+        runTest (storeWith Created) $
+          Svc.addItem (lineFor testSaleItem) {lineAddQuantity = 0}
+
+    it "returns 400 when the pricing function rejects the line" $
+      shouldFailWith 400 $
+        runTest (storeWith Created) $
+          Svc.addItem (lineFor testSaleItem) {lineAddPrice = \_ _ -> Left "no price"}
+
+  describe "writes check the sale at the moment of the write" $ do
+    it "addSaleItem refuses a completed sale without the service guard" $ do
+      outcome <-
+        shouldSucceed $
+          runTest (storeWith Completed) (addSaleItem (lineFor testSaleItem))
+      shouldBeRefused outcome
+
+    it "addSaleItem refuses a sale that does not exist" $ do
+      outcome <- shouldSucceed $ runTest emptyTxStore (addSaleItem (lineFor testSaleItem))
+      shouldBeRefused outcome
+
+    it "addSalePayment refuses a completed sale without the service guard" $ do
+      outcome <-
+        shouldSucceed $
+          runTest (storeWithItem Completed) (addSalePayment testSalePayment)
+      shouldBeRefused outcome
+
+    it "addSalePayment refuses a sale that has not started" $ do
+      outcome <-
+        shouldSucceed $
+          runTest (storeWith Created) (addSalePayment testSalePayment)
+      shouldBeRefused outcome
+
+    it "deleteSalePayment refuses a completed sale and keeps the payment" $ do
+      (outcome, loaded) <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted $ do
+            o <- deleteSalePayment pymtUUID
+            s <- getSaleById txUUID
+            pure (o, s)
+      shouldBeRefused outcome
+      case loaded of
+        Right sale -> map Sale.paymentId (Sale.salePayments sale) `shouldBe` [pymtUUID]
+        Left err   -> expectationFailure ("Expected the sale, got " <> show err)
+
+    it "finalizeSale refuses an unpaid sale and leaves it in progress" $ do
+      (outcome, loaded, stock) <-
+        shouldSucceed $
+          runTest (storeWithItem InProgress) $ do
+            o <- finalizeSale txUUID
+            s <- getSaleById txUUID
+            q <- getInventoryAvailability skuUUID
+            pure (o, s, q)
+      shouldBeRefused outcome
+      fmap Sale.saleStatus loaded `shouldBe` Right InProgress
+      fmap fst stock `shouldBe` Just 10
+
+    it "finalizeSale refuses a sale with no lines" $ do
+      outcome <-
+        shouldSucceed $
+          runTest (storeWithPayment InProgress) (finalizeSale txUUID)
+      shouldBeRefused outcome
+
+    it "finalizeSale refuses a sale that is already completed" $ do
+      outcome <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted (finalizeSale txUUID)
+      shouldBeRefused outcome
+
+    it "removing the payment and then finalizing is refused" $ do
+      (removed, finalized) <-
+        shouldSucceed $
+          runTest storeReadyToFinalize $ do
+            r <- deleteSalePayment pymtUUID
+            f <- finalizeSale txUUID
+            pure (r, f)
+      case removed of
+        Right () -> pure ()
+        Left _   -> expectationFailure "Expected the payment removal to succeed"
+      shouldBeRefused finalized
+
+    it "finalizing and then removing the payment is refused" $ do
+      (finalized, removed) <-
+        shouldSucceed $
+          runTest storeReadyToFinalize $ do
+            f <- finalizeSale txUUID
+            r <- deleteSalePayment pymtUUID
+            pure (f, r)
+      case finalized of
+        Right sale -> Sale.saleStatus sale `shouldBe` Completed
+        Left _     -> expectationFailure "Expected finalize to succeed"
+      shouldBeRefused removed
 
   describe "removeItem — state machine guards" $ do
     it "succeeds from InProgress" $
@@ -310,10 +462,18 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       shouldFailWith 404 $
         runTest (storeWith InProgress) (Svc.removePayment pymtUUID)
 
-  describe "finalizeTx — state machine guards" $ do
-    it "succeeds from InProgress" $ do
-      sale <- shouldSucceed $ runTest (storeWith InProgress) (Svc.finalizeTx txUUID)
+  describe "finalizeTx" $ do
+    it "completes a paid sale that is in progress" $ do
+      sale <- shouldSucceed $ runTest storeReadyToFinalize (Svc.finalizeTx txUUID)
       Sale.saleStatus sale `shouldBe` Completed
+
+    it "rejects an unpaid sale with 409" $
+      shouldFailWith 409 $
+        runTest (storeWithItem InProgress) (Svc.finalizeTx txUUID)
+
+    it "rejects a sale with no lines with 409" $
+      shouldFailWith 409 $
+        runTest (storeWith InProgress) (Svc.finalizeTx txUUID)
 
     it "rejects from Created with 409" $
       shouldFailWith 409 $
@@ -429,25 +589,19 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
     it "addItem reserves inventory" $ do
       let
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
-        action = Svc.addItem testSaleItem >> getInventoryAvailability skuUUID
+        action = Svc.addItem (lineFor testSaleItem) >> getInventoryAvailability skuUUID
       result <- shouldSucceed $ runTest store action
       case result of
         Just (_, reserved) -> reserved `shouldBe` 1
         Nothing            -> expectationFailure "Expected availability"
 
-    it "a second addItem for the same sku replaces the line and its reservation" $ do
+    it "two addItem calls for the same sku reserve both units on one line" $ do
       let
-        item2 =
-          testSaleItem
-            { Sale.itemId       = freshUUID
-            , Sale.itemQuantity = unsafeMkSaleQuantity 2
-            , Sale.itemSubtotal = unsafeMkSaleMoney 2000
-            , Sale.itemTotal    = unsafeMkSaleMoney 2000
-            }
+        item2  = testSaleItem {itemId = freshUUID}
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
-          _ <- Svc.addItem testSaleItem
-          _ <- Svc.addItem item2
+          _ <- Svc.addItem (lineFor testSaleItem)
+          _ <- Svc.addItem (lineFor item2)
           availability <- getInventoryAvailability skuUUID
           loaded       <- getSaleById txUUID
           pure (availability, loaded)
@@ -455,17 +609,29 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       case availability of
         Just (_, reserved) -> reserved `shouldBe` 2
         Nothing            -> expectationFailure "Expected availability"
-      case loaded of
-        Right sale -> do
-          map Sale.itemId (Sale.saleItems sale) `shouldBe` [freshUUID]
-          saleMoneyCents (Sale.saleTotal sale) `shouldBe` 2000
-        Left err -> expectationFailure ("Expected the sale, got " <> show err)
+      shouldHoldOneLine loaded itemUUID 2 2000
+
+    it "two adds prepared before either is applied both count" $ do
+      let
+        prepared = lineFor testSaleItem
+        store    = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
+        action   = do
+          _ <- addSaleItem prepared
+          _ <- addSaleItem prepared
+          availability <- getInventoryAvailability skuUUID
+          loaded       <- getSaleById txUUID
+          pure (availability, loaded)
+      (availability, loaded) <- shouldSucceed $ runTest store action
+      case availability of
+        Just (_, reserved) -> reserved `shouldBe` 2
+        Nothing            -> expectationFailure "Expected availability"
+      shouldHoldOneLine loaded itemUUID 2 2000
 
     it "addItem followed by removeItem restores reserved count" $ do
       let
         store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
         action = do
-          _ <- Svc.addItem testSaleItem
+          _ <- Svc.addItem (lineFor testSaleItem)
           Svc.removeItem itemUUID
           getInventoryAvailability skuUUID
       result <- shouldSucceed $ runTest store action
@@ -473,23 +639,52 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         Just (_, reserved) -> reserved `shouldBe` 0
         Nothing            -> expectationFailure "Expected availability"
 
+    it "a full sale reduces stock by the quantity sold" $ do
+      let
+        store  = (storeWith Created) {tsInventory = Map.singleton skuUUID 5}
+        action = do
+          _ <- Svc.addItem (lineFor testSaleItem)
+          _ <- Svc.addPayment testSalePayment
+          _ <- Svc.finalizeTx txUUID
+          getInventoryAvailability skuUUID
+      result <- shouldSucceed $ runTest store action
+      result `shouldBe` Just (4, 0)
+
   describe "event emission" $ do
     it "addItem emits TransactionItemAdded and PullRequestCreated on success" $ do
-      (result, evts) <- runTestWithEvents (storeWith Created) (Svc.addItem testSaleItem)
+      (result, evts) <-
+        runTestWithEvents (storeWith Created) (Svc.addItem (lineFor testSaleItem))
       result `shouldSatisfy` either (const False) (const True)
       let txAdded     = [() | TransactionEvt (TransactionItemAdded {teTxId}) <- evts, teTxId == txUUID]
           pullCreated = [() | StockEvt (PullRequestCreated {}) <- evts]
       txAdded     `shouldSatisfy` (not . null)
       pullCreated `shouldSatisfy` (not . null)
 
+    it "a second add of the same sku reports the old line removed with its quantity" $ do
+      let action = do
+            _ <- Svc.addItem (lineFor testSaleItem)
+            Svc.addItem (lineFor testSaleItem)
+      (result, evts) <- runTestWithEvents (storeWith Created) action
+      result `shouldSatisfy` either (const False) (const True)
+      [ (teItemId, teQty)
+        | TransactionEvt (TransactionItemRemoved {teItemId, teQty}) <- evts
+        ]
+        `shouldBe` [(itemUUID, 1)]
+      [ transactionItemQuantity teItem
+        | TransactionEvt (TransactionItemAdded {teItem}) <- evts
+        ]
+        `shouldBe` [1, 2]
+
     it "addItem emits no events on state machine rejection (Completed)" $ do
-      (_, evts) <- runTestWithEvents (storeWith Completed) (Svc.addItem testSaleItem)
+      (_, evts) <-
+        runTestWithEvents (storeWith Completed) (Svc.addItem (lineFor testSaleItem))
       evts `shouldBe` []
 
     it "addItem emits no events when SKU not in inventory" $ do
       (_, evts) <-
         runTestWithEvents (storeWith Created) $
-          Svc.addItem testSaleItem {itemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"}
+          Svc.addItem
+            (lineFor testSaleItem {itemMenuItemSku = read "ffffffff-ffff-ffff-ffff-ffffffffffff"})
       evts `shouldBe` []
 
     it "voidTx emits TransactionVoided on success (no open pulls)" $ do
@@ -505,12 +700,16 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
       evts `shouldBe` []
 
     it "finalizeTx emits TransactionFinalized on success" $ do
-      (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.finalizeTx txUUID)
+      (result, evts) <- runTestWithEvents storeReadyToFinalize (Svc.finalizeTx txUUID)
       result `shouldSatisfy` either (const False) (const True)
       case evts of
         [TransactionEvt (TransactionFinalized {teTxId})] ->
           teTxId `shouldBe` txUUID
         _ -> expectationFailure $ "Expected [TransactionFinalized], got " <> show (length evts) <> " events"
+
+    it "finalizeTx emits no events when the sale is unpaid" $ do
+      (_, evts) <- runTestWithEvents (storeWithItem InProgress) (Svc.finalizeTx txUUID)
+      evts `shouldBe` []
 
     it "addPayment emits TransactionPaymentAdded on success" $ do
       (result, evts) <- runTestWithEvents (storeWith InProgress) (Svc.addPayment testSalePayment)

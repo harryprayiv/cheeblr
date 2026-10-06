@@ -41,6 +41,15 @@ spec = describe "API.OpenApi" $ do
     it "has more than 10 paths" $
       length (cheeblrOpenApi ^. paths) `shouldSatisfy` (> 10)
 
+  describe "paths (sale commands)" $ do
+    it "includes /pos/sale" $ hasPath "/pos/sale" `shouldBe` True
+    it "includes /pos/sale/item" $ hasPath "/pos/sale/item" `shouldBe` True
+    it "includes /pos/sale/item/{id}" $ hasPath "/pos/sale/item/{id}" `shouldBe` True
+    it "includes /pos/sale/payment" $ hasPath "/pos/sale/payment" `shouldBe` True
+    it "includes /pos/sale/payment/{id}" $ hasPath "/pos/sale/payment/{id}" `shouldBe` True
+    it "includes /pos/sale/clear/{id}" $ hasPath "/pos/sale/clear/{id}" `shouldBe` True
+    it "includes /pos/sale/finalize/{id}" $ hasPath "/pos/sale/finalize/{id}" `shouldBe` True
+
   describe "component schemas" $ do
     it "includes MenuItem" $ hasSchema "MenuItem" `shouldBe` True
     it "includes StrainLineage" $ hasSchema "StrainLineage" `shouldBe` True
@@ -67,3 +76,8 @@ spec = describe "API.OpenApi" $ do
     it "includes RefundMoney" $ hasSchema "RefundMoney" `shouldBe` True
     it "includes SaleQuantity" $ hasSchema "SaleQuantity" `shouldBe` True
     it "includes RefundQuantity" $ hasSchema "RefundQuantity" `shouldBe` True
+
+  describe "component schemas (sale command requests)" $ do
+    it "includes StartSaleRequest" $ hasSchema "StartSaleRequest" `shouldBe` True
+    it "includes AddItemRequest" $ hasSchema "AddItemRequest" `shouldBe` True
+    it "includes AddPaymentRequest" $ hasSchema "AddPaymentRequest" `shouldBe` True

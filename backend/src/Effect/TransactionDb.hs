@@ -20,6 +20,8 @@ module Effect.TransactionDb (
   getSalesByLocation,
   getRefundsByLocation,
 
+  SaleLineAdd (..),
+  SaleLineAdded (..),
   createSale,
   updateSaleStatus,
   voidSale,
@@ -50,7 +52,6 @@ import Control.Exception (try)
 import Control.Monad (when)
 import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
-import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Data.Text (Text)
 import Data.Time (UTCTime)
@@ -66,10 +67,10 @@ import qualified DB.Transaction as DBT
 import qualified DB.Transaction.Refund as DBTRefund
 import qualified DB.Transaction.Typed as DBTTyped
 import qualified DB.Reservation as DBRes
+import Domain.SaleRules (finalizeProblems)
 import Effect.Clock
 import Effect.GenUUID
 import Types.Location (LocationId)
-import Types.Primitives.Quantity (saleQuantityCount)
 import Types.Transaction
 import Types.Transaction.Conversion
   ( fromLegacyTransaction
@@ -88,6 +89,36 @@ data TypedLoadError
   | TypedWrongKind
   deriving stock (Show, Eq, Generic)
 
+-- | A request to add a quantity of one sku to a sale.
+--
+-- It carries the quantity to add, never the line's whole quantity. The
+-- interpreter reads the sale's current line for the sku, adds
+-- 'lineAddQuantity' to it, and calls 'lineAddPrice' with the line id and
+-- the whole quantity to get the line to store. The Postgres interpreter
+-- does that under a row lock, so two adds of the same sku to the same sale
+-- cannot overwrite each other.
+--
+-- 'lineAddNewItemId' is the id the line takes when the sku is new to the
+-- sale. A line that already exists keeps its id.
+data SaleLineAdd = SaleLineAdd
+  { lineAddSaleId    :: UUID
+  , lineAddSku       :: UUID
+  , lineAddQuantity  :: Int
+  , lineAddNewItemId :: UUID
+  , lineAddPrice     :: UUID -> Int -> Either Text Sale.Item
+  }
+
+-- | The line as stored, and the id and quantity of each line it replaced.
+data SaleLineAdded = SaleLineAdded
+  { lineAddedItem     :: Sale.Item
+  , lineAddedReplaced :: [(UUID, Int)]
+  }
+
+-- Every operation that writes to an open sale returns 'Either
+-- InventoryException'. The interpreter checks the sale's status at the
+-- moment of the write and refuses with 'SaleNotOpen' when the sale has
+-- closed. 'FinalizeSale' also decides, at the moment of the write, whether
+-- the sale has lines and is paid.
 data TransactionDb :: Effect where
 
   GetSaleById              :: UUID -> TransactionDb m (Either TypedLoadError Sale.SaleTransaction)
@@ -102,11 +133,11 @@ data TransactionDb :: Effect where
   VoidSale                 :: UUID -> Text -> TransactionDb m Sale.SaleTransaction
   WriteRefund              :: Refund.RefundTransaction -> TransactionDb m Refund.RefundTransaction
   ClearSale                :: UUID -> TransactionDb m ()
-  FinalizeSale             :: UUID -> TransactionDb m Sale.SaleTransaction
-  AddSaleItem              :: Sale.Item -> TransactionDb m (Either InventoryException Sale.Item)
+  FinalizeSale             :: UUID -> TransactionDb m (Either InventoryException Sale.SaleTransaction)
+  AddSaleItem              :: SaleLineAdd -> TransactionDb m (Either InventoryException SaleLineAdded)
   DeleteSaleItem           :: UUID -> TransactionDb m ()
-  AddSalePayment           :: Sale.Payment -> TransactionDb m Sale.Payment
-  DeleteSalePayment        :: UUID -> TransactionDb m ()
+  AddSalePayment           :: Sale.Payment -> TransactionDb m (Either InventoryException Sale.Payment)
+  DeleteSalePayment        :: UUID -> TransactionDb m (Either InventoryException ())
 
   GetTxIdByItemId          :: UUID -> TransactionDb m (Maybe UUID)
   GetTxIdByPaymentId       :: UUID -> TransactionDb m (Maybe UUID)
@@ -151,22 +182,31 @@ writeRefund = send . WriteRefund
 clearSale :: (TransactionDb :> es) => UUID -> Eff es ()
 clearSale = send . ClearSale
 
-finalizeSale :: (TransactionDb :> es) => UUID -> Eff es Sale.SaleTransaction
+finalizeSale ::
+  (TransactionDb :> es) =>
+  UUID ->
+  Eff es (Either InventoryException Sale.SaleTransaction)
 finalizeSale = send . FinalizeSale
 
 addSaleItem ::
   (TransactionDb :> es) =>
-  Sale.Item ->
-  Eff es (Either InventoryException Sale.Item)
+  SaleLineAdd ->
+  Eff es (Either InventoryException SaleLineAdded)
 addSaleItem = send . AddSaleItem
 
 deleteSaleItem :: (TransactionDb :> es) => UUID -> Eff es ()
 deleteSaleItem = send . DeleteSaleItem
 
-addSalePayment :: (TransactionDb :> es) => Sale.Payment -> Eff es Sale.Payment
+addSalePayment ::
+  (TransactionDb :> es) =>
+  Sale.Payment ->
+  Eff es (Either InventoryException Sale.Payment)
 addSalePayment = send . AddSalePayment
 
-deleteSalePayment :: (TransactionDb :> es) => UUID -> Eff es ()
+deleteSalePayment ::
+  (TransactionDb :> es) =>
+  UUID ->
+  Eff es (Either InventoryException ())
 deleteSalePayment = send . DeleteSalePayment
 
 getTxIdByItemId :: (TransactionDb :> es) => UUID -> Eff es (Maybe UUID)
@@ -293,26 +333,38 @@ runTransactionDbIO pool = interpret $ \_ -> \case
     DBT.clearTransaction pool txId
 
   FinalizeSale txId -> liftIO $ do
-    result <- DBT.finalizeTransaction pool txId
-    pure (expectSaleTx result)
+    res <- try @InventoryException $ DBT.finalizeTransaction pool txId
+    pure (fmap expectSaleTx res)
 
-  AddSaleItem item -> liftIO $ do
-    let legacyItem = saleItemToLegacy item
-    res <- try @InventoryException $ DBT.addTransactionItem pool legacyItem
+  AddSaleItem change -> liftIO $ do
+    res <-
+      try @InventoryException $
+        DBT.addTransactionItem
+          pool
+          (lineAddSaleId change)
+          (lineAddSku change)
+          (lineAddQuantity change)
+          (lineAddNewItemId change)
+          (\lineId qty -> saleItemToLegacy <$> lineAddPrice change lineId qty)
     pure $ case res of
-      Left e            -> Left e
-      Right addedLegacy -> Right (expectSaleItem addedLegacy)
+      Left e      -> Left e
+      Right added ->
+        Right
+          SaleLineAdded
+            { lineAddedItem     = expectSaleItem (DBT.addedLineItem added)
+            , lineAddedReplaced = DBT.addedLineReplaced added
+            }
 
   DeleteSaleItem itemId -> liftIO $
     DBT.deleteTransactionItem pool itemId
 
   AddSalePayment payment -> liftIO $ do
     let legacyPayment = salePaymentToLegacy payment
-    result <- DBT.addPaymentTransaction pool legacyPayment
-    pure (expectSalePayment result)
+    res <- try @InventoryException $ DBT.addPaymentTransaction pool legacyPayment
+    pure (fmap expectSalePayment res)
 
   DeleteSalePayment pymtId -> liftIO $
-    DBT.deletePaymentTransaction pool pymtId
+    try @InventoryException $ DBT.deletePaymentTransaction pool pymtId
 
   GetTxIdByItemId u -> liftIO $ DBT.getTransactionIdByItemId pool u
   GetTxIdByPaymentId u -> liftIO $ DBT.getTransactionIdByPaymentId pool u
@@ -345,11 +397,12 @@ activeReservedQty :: UUID -> Map UUID ReservationEntry -> Int
 activeReservedQty sku rs =
   sum [reQty r | r <- Map.elems rs, reSku r == sku, reStatus r == "Reserved"]
 
--- The three helpers below mirror "DB.Transaction" so the in-memory
--- interpreter behaves like Postgres: 'recomputeTotals' is
--- 'updateTotalsS', 'releaseReservedForTx' is 'releaseReservedForTxS', and
+-- The helpers below mirror "DB.Transaction" so the in-memory interpreter
+-- behaves like Postgres: 'recomputeTotals' is 'updateTotalsS',
+-- 'releaseReservedForTx' is 'releaseReservedForTxS',
 -- 'releaseOneReservation' is the reservation match in
--- 'deleteTransactionItem'.
+-- 'deleteTransactionItem', and 'startProgress' is the CREATED to
+-- IN_PROGRESS update in 'addTransactionItem'.
 
 recomputeTotals :: Transaction -> Transaction
 recomputeTotals tx =
@@ -363,6 +416,12 @@ recomputeTotals tx =
         , transactionTaxTotal      = taxTotal
         , transactionTotal         = subtotal - discountTotal + taxTotal
         }
+
+startProgress :: Transaction -> Transaction
+startProgress tx =
+  if transactionStatus tx == Created
+    then tx {transactionStatus = InProgress}
+    else tx
 
 releaseReservedForTx :: UUID -> Map UUID ReservationEntry -> Map UUID ReservationEntry
 releaseReservedForTx txId =
@@ -384,6 +443,15 @@ releaseOneReservation txId sku qty rs =
        ] of
     (k : _) -> Map.adjust (\r -> r {reStatus = "Released"}) k rs
     []      -> rs
+
+-- | The reasons a stored sale cannot be completed, by the same rule
+-- 'DB.Transaction.finalizeTransaction' applies under its lock.
+finalizeProblemsFor :: Transaction -> [Text]
+finalizeProblemsFor tx =
+  finalizeProblems
+    (length (transactionItems tx))
+    (transactionTotal tx)
+    (sum (map paymentAmount (transactionPayments tx)))
 
 runTransactionDbPure ::
   (GenUUID :> es, Clock :> es) =>
@@ -553,91 +621,110 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
     st  <- get @TxStore
     now <- currentTime
     case Map.lookup txId (tsTxs st) of
-      Nothing -> error $ "FinalizeSale: not found: " <> show txId
-      Just tx -> do
-        let active =
-              [ (k, r)
-              | (k, r) <- Map.toList (tsReservations st)
-              , reTxId r == txId
-              , reStatus r == "Reserved"
-              ]
-        let newReservations =
-              foldl
-                (\m (k, r) -> Map.insert k r {reStatus = "Completed"} m)
-                (tsReservations st)
-                active
-        let newInventory =
-              foldl
-                (\m (_, r) -> Map.adjust (subtract (reQty r)) (reSku r) m)
-                (tsInventory st)
-                active
-        let finalized = tx {transactionStatus = Completed, transactionCompleted = Just now}
-        put @TxStore
-          st
-            { tsTxs          = Map.insert txId finalized (tsTxs st)
-            , tsReservations = newReservations
-            , tsInventory    = newInventory
-            }
-        pure (expectSaleTx finalized)
+      Just tx
+        | transactionStatus tx == InProgress ->
+            case finalizeProblemsFor tx of
+              problems@(_ : _) -> pure $ Left (FinalizeRefused problems)
+              []               -> do
+                let active =
+                      [ (k, r)
+                      | (k, r) <- Map.toList (tsReservations st)
+                      , reTxId r == txId
+                      , reStatus r == "Reserved"
+                      ]
+                    newReservations =
+                      foldl
+                        (\m (k, r) -> Map.insert k r {reStatus = "Completed"} m)
+                        (tsReservations st)
+                        active
+                    newInventory =
+                      foldl
+                        (\m (_, r) -> Map.adjust (subtract (reQty r)) (reSku r) m)
+                        (tsInventory st)
+                        active
+                    finalized =
+                      tx {transactionStatus = Completed, transactionCompleted = Just now}
+                put @TxStore
+                  st
+                    { tsTxs          = Map.insert txId finalized (tsTxs st)
+                    , tsReservations = newReservations
+                    , tsInventory    = newInventory
+                    }
+                pure $ Right (expectSaleTx finalized)
+      _ -> pure $ Left (SaleNotOpen txId)
 
-  AddSaleItem item -> do
-    let legacyItem = saleItemToLegacy item
-        sku  = Sale.itemMenuItemSku item
-        qty  = saleQuantityCount (Sale.itemQuantity item)
-        txId = Sale.itemTransactionId item
+  AddSaleItem change -> do
+    let sku    = lineAddSku change
+        addQty = lineAddQuantity change
+        txId   = lineAddSaleId change
     st <- get @TxStore
-    if not (Map.member sku (tsInventory st))
-      then pure $ Left (ItemNotFound sku)
-      else do
-        let total       = fromMaybe 0 (Map.lookup sku (tsInventory st))
-            reserved    = activeReservedQty sku (tsReservations st)
-            ownReserved =
-              sum
-                [ reQty r
-                | r <- Map.elems (tsReservations st)
-                , reSku r == sku
-                , reTxId r == txId
-                , reStatus r == "Reserved"
-                ]
-            available   = total - (reserved - ownReserved)
-        if available < qty
-          then pure $ Left (InsufficientInventory sku qty available)
-          else do
-            resId <- nextUUID
-            let newRes     = ReservationEntry sku txId qty "Reserved"
-                replacedIds =
-                  [ transactionItemId i
-                  | tx <- maybe [] pure (Map.lookup txId (tsTxs st))
-                  , i  <- transactionItems tx
-                  , transactionItemMenuItemSku i == sku
-                  ]
-                releaseOwn r =
-                  if reSku r == sku && reTxId r == txId && reStatus r == "Reserved"
-                    then r {reStatus = "Released"}
-                    else r
-            modify @TxStore $ \s ->
-              s
-                { tsItemToTx     =
-                    Map.insert (Sale.itemId item) txId $
-                      foldr Map.delete (tsItemToTx s) replacedIds
-                , tsReservations =
-                    Map.insert resId newRes (Map.map releaseOwn (tsReservations s))
-                , tsTxs          =
-                    Map.adjust
-                      ( \tx ->
-                          recomputeTotals
-                            tx
-                              { transactionItems =
-                                  legacyItem
-                                    : filter
-                                        (\i -> transactionItemMenuItemSku i /= sku)
-                                        (transactionItems tx)
+    case Map.lookup txId (tsTxs st) of
+      Just tx
+        | transactionStatus tx `elem` [Created, InProgress] ->
+            case Map.lookup sku (tsInventory st) of
+              Nothing    -> pure $ Left (ItemNotFound sku)
+              Just total -> do
+                let existing    =
+                      [i | i <- transactionItems tx, transactionItemMenuItemSku i == sku]
+                    replaced    =
+                      [(transactionItemId i, transactionItemQuantity i) | i <- existing]
+                    previousQty = sum (map snd replaced)
+                    wantedQty   = previousQty + addQty
+                    lineId      = case replaced of
+                      ((existingId, _) : _) -> existingId
+                      []                    -> lineAddNewItemId change
+                case lineAddPrice change lineId wantedQty of
+                  Left message -> pure $ Left (LineRejected message)
+                  Right item   -> do
+                    let reserved    = activeReservedQty sku (tsReservations st)
+                        ownReserved =
+                          sum
+                            [ reQty r
+                            | r <- Map.elems (tsReservations st)
+                            , reSku r == sku
+                            , reTxId r == txId
+                            , reStatus r == "Reserved"
+                            ]
+                        available   = total - (reserved - ownReserved)
+                    if available < wantedQty
+                      then pure $ Left (InsufficientInventory sku wantedQty available)
+                      else do
+                        resId <- nextUUID
+                        let newRes     = ReservationEntry sku txId wantedQty "Reserved"
+                            legacyItem = saleItemToLegacy item
+                            releaseOwn r =
+                              if reSku r == sku && reTxId r == txId && reStatus r == "Reserved"
+                                then r {reStatus = "Released"}
+                                else r
+                        modify @TxStore $ \s ->
+                          s
+                            { tsItemToTx     =
+                                Map.insert lineId txId $
+                                  foldr Map.delete (tsItemToTx s) (map fst replaced)
+                            , tsReservations =
+                                Map.insert resId newRes (Map.map releaseOwn (tsReservations s))
+                            , tsTxs          =
+                                Map.adjust
+                                  ( \t ->
+                                      recomputeTotals
+                                        (startProgress t)
+                                          { transactionItems =
+                                              legacyItem
+                                                : filter
+                                                    (\i -> transactionItemMenuItemSku i /= sku)
+                                                    (transactionItems t)
+                                          }
+                                  )
+                                  txId
+                                  (tsTxs s)
+                            }
+                        pure $
+                          Right
+                            SaleLineAdded
+                              { lineAddedItem     = item
+                              , lineAddedReplaced = replaced
                               }
-                      )
-                      txId
-                      (tsTxs s)
-                }
-            pure $ Right item
+      _ -> pure $ Left (SaleNotOpen txId)
 
   DeleteSaleItem itemId -> do
     st <- get @TxStore
@@ -673,37 +760,45 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
   AddSalePayment payment -> do
     let legacyPayment = salePaymentToLegacy payment
         txId          = Sale.paymentTransactionId payment
-    modify @TxStore $ \st ->
-      st
-        { tsPaymentToTx =
-            Map.insert (Sale.paymentId payment) txId (tsPaymentToTx st)
-        , tsTxs         =
-            Map.adjust
-              (\tx -> tx {transactionPayments = legacyPayment : transactionPayments tx})
-              txId
-              (tsTxs st)
-        }
-    pure payment
+    st <- get @TxStore
+    case Map.lookup txId (tsTxs st) of
+      Just tx
+        | transactionStatus tx == InProgress -> do
+            put @TxStore
+              st
+                { tsPaymentToTx =
+                    Map.insert (Sale.paymentId payment) txId (tsPaymentToTx st)
+                , tsTxs         =
+                    Map.insert
+                      txId
+                      tx {transactionPayments = legacyPayment : transactionPayments tx}
+                      (tsTxs st)
+                }
+            pure $ Right payment
+      _ -> pure $ Left (SaleNotOpen txId)
 
   DeleteSalePayment pymtId -> do
     st <- get @TxStore
     case Map.lookup pymtId (tsPaymentToTx st) of
-      Nothing   -> pure ()
+      Nothing   -> pure $ Right ()
       Just txId ->
-        modify @TxStore $ \s ->
-          s
-            { tsPaymentToTx = Map.delete pymtId (tsPaymentToTx s)
-            , tsTxs         =
-                Map.adjust
-                  ( \tx ->
-                      tx
-                        { transactionPayments =
-                            filter (\p -> paymentId p /= pymtId) (transactionPayments tx)
-                        }
-                  )
-                  txId
-                  (tsTxs s)
-            }
+        case Map.lookup txId (tsTxs st) of
+          Just tx
+            | transactionStatus tx == InProgress -> do
+                put @TxStore
+                  st
+                    { tsPaymentToTx = Map.delete pymtId (tsPaymentToTx st)
+                    , tsTxs         =
+                        Map.insert
+                          txId
+                          tx
+                            { transactionPayments =
+                                filter (\p -> paymentId p /= pymtId) (transactionPayments tx)
+                            }
+                          (tsTxs st)
+                    }
+                pure $ Right ()
+          _ -> pure $ Left (SaleNotOpen txId)
 
   GetTxIdByItemId itemId ->
     gets @TxStore (Map.lookup itemId . tsItemToTx)

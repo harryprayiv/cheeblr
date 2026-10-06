@@ -455,6 +455,20 @@ EOF
     fi
 
     echo ""
+
+    echo "━━━ Phase 4: Sale Path (throwaway database) ━━━"
+    echo ""
+    if test-sale; then
+      echo ""
+      echo "Phase 4 passed ✓"
+    else
+      SALE_EXIT=$?
+      echo ""
+      echo "Phase 4 had failures ✗"
+      TOTAL_FAILURES=$((TOTAL_FAILURES + SALE_EXIT))
+    fi
+
+    echo ""
     echo "╔══════════════════════════════════════════╗"
     if [ $TOTAL_FAILURES -eq 0 ]; then
       echo "║  ✓ ALL TESTS PASSED                      ║"
@@ -485,7 +499,6 @@ EOF
     PASS=0
     FAIL=0
 
-    # $6 is now a session token sent as Cookie: cheeblr_session=<token>
     check() {
       local description="$1"
       local method="$2"
@@ -520,7 +533,6 @@ EOF
       fi
     }
 
-
     echo "── Connectivity ──"
     if ! ${pkgs.curl}/bin/curl -s $CURL_CA_ARGS --connect-timeout 5 --max-time 10 \
         "$BASE_URL/openapi.json" > /dev/null 2>&1; then
@@ -531,13 +543,11 @@ EOF
     echo "✓ Backend is reachable"
     check "GET /openapi.json (no auth)" GET "$BASE_URL/openapi.json" 200
 
-
     echo ""
     echo "── Unauthenticated rejection ──"
     check "GET /inventory (no token)"  GET "$BASE_URL/inventory" 401
     check "GET /session (no token)"    GET "$BASE_URL/session"   401
     check "GET /register (no token)"   GET "$BASE_URL/register"  401
-
 
     echo ""
     echo "── Auth flow ──"
@@ -548,14 +558,13 @@ EOF
       echo "    Run 'bootstrap-admin' if this is a fresh environment"
       FAIL=$((FAIL + 1))
     else
-      # Dump response headers (-D -) and body together; token is in Set-Cookie header
+
       LOGIN_OUTPUT=$(${pkgs.curl}/bin/curl -s -D - $CURL_CA_ARGS \
         -X POST "$BASE_URL/auth/login" \
         -H "Content-Type: application/json" \
         -d "{\"loginUsername\":\"admin\",\"loginPassword\":\"$ADMIN_PASSWORD\",\"loginRegisterId\":null}" \
         2>/dev/null || true)
 
-      # Extract cheeblr_session value from Set-Cookie header
       TOKEN=$(echo "$LOGIN_OUTPUT" \
         | grep -i '^set-cookie:' \
         | grep 'cheeblr_session=' \
@@ -563,7 +572,6 @@ EOF
         | tr -d '\r' \
         | head -1 || true)
 
-      # Also grab the JSON body for diagnostics (everything after the blank header/body separator)
       LOGIN_BODY=$(echo "$LOGIN_OUTPUT" | awk 'BEGIN{p=0} /^[[:space:]]*$/{p=1; next} p{print}' | tail -1)
 
       if [ -z "$TOKEN" ]; then
@@ -574,14 +582,12 @@ EOF
         echo "  ✓ POST /auth/login set cheeblr_session cookie"
         PASS=$((PASS + 1))
 
-
         echo ""
         echo "── Authenticated endpoints ──"
         check "GET /auth/me"            GET  "$BASE_URL/auth/me"   200 "" "$TOKEN"
         check "GET /session"            GET  "$BASE_URL/session"   200 "" "$TOKEN"
         check "GET /inventory"          GET  "$BASE_URL/inventory" 200 "" "$TOKEN"
         check "GET /register"           GET  "$BASE_URL/register"  200 "" "$TOKEN"
-
 
         echo ""
         echo "── Inventory JSON contract ──"
@@ -610,7 +616,6 @@ EOF
           FAIL=$((FAIL + 1))
         fi
 
-
         echo ""
         echo "── Session JSON contract ──"
         SESSION_JSON=$(${pkgs.curl}/bin/curl -s $CURL_CA_ARGS \
@@ -631,14 +636,12 @@ EOF
           FAIL=$((FAIL + 1))
         fi
 
-
         echo ""
         echo "── Logout and revocation ──"
         check "POST /auth/logout"           POST "$BASE_URL/auth/logout" 200 "" "$TOKEN"
         check "GET /inventory after logout" GET  "$BASE_URL/inventory"   401 "" "$TOKEN"
       fi
     fi
-
 
     echo ""
     echo "── Rate limiting ──"

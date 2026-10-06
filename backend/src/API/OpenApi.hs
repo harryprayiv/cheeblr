@@ -18,6 +18,7 @@ import API.Auth (AuthAPI)
 import API.Feed (FeedAPI)
 import API.Inventory (InventoryAPI)
 import API.Manager (ManagerAPI)
+import API.SaleCommand (SaleCommandAPI)
 import API.Stock (StockAPI)
 import API.Transaction (PosAPI)
 
@@ -33,6 +34,7 @@ instance ToSchema OpenApi where
 type CheeblrAPI =
   InventoryAPI
     :<|> PosAPI
+    :<|> SaleCommandAPI
     :<|> AuthAPI
     :<|> AdminAPI
     :<|> ManagerAPI

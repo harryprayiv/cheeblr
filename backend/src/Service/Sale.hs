@@ -9,8 +9,9 @@
 -- State-machine guards, inventory reservation, domain events and stock
 -- pulls stay in "Service.Transaction". This module adds what was missing
 -- in front of it: the price comes from the menu, tax comes from the tax
--- rules in force, change is computed here, ids are generated here, and a
--- sale cannot be completed until it has items and is paid.
+-- rules in force, change is computed here, and ids are generated here.
+-- Whether a sale may be completed is decided by the database layer under
+-- the sale's row lock.
 module Service.Sale (
   startSale,
   addItem,
@@ -40,7 +41,7 @@ import Domain.Pricing
   , priceLine
   , taxRatePpm
   )
-import Domain.SaleRules (changeDue, finalizeProblems, paymentErrorText)
+import Domain.SaleRules (changeDue, paymentErrorText)
 import Effect.Clock
 import Effect.EventEmitter
 import Effect.GenUUID
@@ -51,8 +52,8 @@ import Effect.TransactionDb
 import qualified Service.Transaction as Svc
 import Types.Inventory (Inventory (..))
 import qualified Types.Inventory as TI
-import Types.Primitives.Money (saleMoneyCents, unsafeMkSaleMoney, zeroSale)
-import Types.Primitives.Quantity (saleQuantityCount, unsafeMkSaleQuantity)
+import Types.Primitives.Money (unsafeMkSaleMoney, zeroSale)
+import Types.Primitives.Quantity (unsafeMkSaleQuantity)
 import Types.Transaction (TransactionStatus (..))
 import Types.Transaction.Request
 import qualified Types.Transaction.Sale as Sale
@@ -147,8 +148,14 @@ startSale req = do
 -- taxes are the rules in force at the sale's location at this moment.
 --
 -- A sale holds one line per sku. When the sale already has a line for the
--- sku, the requested quantity is added to it: the line is priced again at
--- the combined quantity and replaces the old line, keeping its id.
+-- sku, the requested quantity is added to it and the line is priced again
+-- at the combined quantity, keeping its id.
+--
+-- This function does not work out the combined quantity. It hands the
+-- requested quantity and a pricing function to "Service.Transaction", and
+-- the database layer reads the current line and prices the whole quantity
+-- while it holds the sale's row lock. Two adds of the same sku to the same
+-- sale therefore both count.
 addItem ::
   ( TransactionDb :> es
   , StockDb.StockDb :> es
@@ -164,13 +171,11 @@ addItem ::
 addItem req = do
   let saleId = addItemSaleId req
       sku    = addItemSku req
-  sale        <- loadSale saleId
-  if addItemQuantity req <= 0
-    then failWith err400 (pricingErrorText (NonPositiveQuantity (addItemQuantity req)))
+      addQty = addItemQuantity req
+  sale <- loadSale saleId
+  if addQty <= 0
+    then failWith err400 (pricingErrorText (NonPositiveQuantity addQty))
     else pure ()
-  let existing    = filter (\i -> Sale.itemMenuItemSku i == sku) (Sale.saleItems sale)
-      existingQty = sum (map (saleQuantityCount . Sale.itemQuantity) existing)
-      wantedQty   = existingQty + addItemQuantity req
   now         <- currentTime
   rulesResult <- getActiveTaxRules (Sale.saleLocationId sale) now
   rules       <- case rulesResult of
@@ -180,14 +185,20 @@ addItem req = do
   menuItem <- case V.find (\m -> TI.sku m == sku) menu of
     Just m  -> pure m
     Nothing -> failWith err404 ("Item not found: " <> T.pack (show sku))
-  pricing <-
-    case priceLine rules (TI.category menuItem) (TI.price menuItem) wantedQty of
-      Right p  -> pure p
-      Left err -> failWith err400 (pricingErrorText err)
-  lineItemId <- case existing of
-    (line : _) -> pure (Sale.itemId line)
-    []         -> nextUUID
-  _ <- Svc.addItem (toSaleItem lineItemId saleId sku pricing)
+  let priceAt lineId wholeQty =
+        case priceLine rules (TI.category menuItem) (TI.price menuItem) wholeQty of
+          Right pricing -> Right (toSaleItem lineId saleId sku pricing)
+          Left err      -> Left (pricingErrorText err)
+  newItemId <- nextUUID
+  _ <-
+    Svc.addItem
+      SaleLineAdd
+        { lineAddSaleId    = saleId
+        , lineAddSku       = sku
+        , lineAddQuantity  = addQty
+        , lineAddNewItemId = newItemId
+        , lineAddPrice     = priceAt
+        }
   loadSale saleId
 
 removeItem ::
@@ -277,6 +288,10 @@ clear saleId = do
 
 -- | Complete a sale. Refused with every reason listed when the sale has no
 -- items or its payments do not cover its total.
+--
+-- This function makes no check of its own. The database layer reads the
+-- lines and the payments under the sale's row lock and decides there, so
+-- the decision and the write cannot be separated by another request.
 finalize ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -285,11 +300,4 @@ finalize ::
   ) =>
   UUID ->
   Eff es Sale.SaleTransaction
-finalize saleId = do
-  sale <- loadSale saleId
-  let paid     = sum (map (saleMoneyCents . Sale.paymentAmount) (Sale.salePayments sale))
-      total    = saleMoneyCents (Sale.saleTotal sale)
-      problems = finalizeProblems (length (Sale.saleItems sale)) total paid
-  case problems of
-    [] -> Svc.finalizeTx saleId
-    _  -> failWith err409 (T.intercalate "; " problems)
+finalize = Svc.finalizeTx

@@ -10,7 +10,7 @@ import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import qualified Data.Vector as V
 import Effectful (Eff, IOE, runEff)
-import Effectful.Error.Static (Error, runErrorNoCallStack)
+import Effectful.Error.Static (Error, runErrorNoCallStack, tryError)
 import Servant (ServerError (..))
 import Test.Hspec
 
@@ -284,6 +284,40 @@ payment amount tendered =
     , addPaymentReference = Nothing
     }
 
+-- | What the store holds after an add: whether the add was refused, the
+-- sale as stored, and the (total, reserved) stock figures for the test sku.
+data AfterAdd = AfterAdd
+  { afterRefused :: Bool
+  , afterSale    :: Either TypedLoadError Sale.SaleTransaction
+  , afterStock   :: Maybe (Int, Int)
+  }
+
+-- | Runs an add, catches its error inside the effect stack so the store
+-- survives, then reads the store back. The pure interpreter does not undo
+-- writes when a later step throws, so any write made before a refusal is
+-- visible here.
+afterAdd :: TxStore -> AddItemRequest -> IO AfterAdd
+afterAdd store req =
+  shouldSucceed $ runTest store $ do
+    outcome <- tryError @ServerError (SaleSvc.addItem req)
+    loaded  <- getSaleById txUUID
+    stock   <- getInventoryAvailability skuUUID
+    pure
+      AfterAdd
+        { afterRefused = either (const True) (const False) outcome
+        , afterSale    = loaded
+        , afterStock   = stock
+        }
+
+-- | The stored sale, or a test failure when it cannot be loaded.
+storedSale :: AfterAdd -> IO Sale.SaleTransaction
+storedSale result =
+  case afterSale result of
+    Right sale -> pure sale
+    Left err   ->
+      expectationFailure ("Expected the stored sale, got " <> show err)
+        >> error "unreachable"
+
 -- ---------------------------------------------------------------------------
 -- Specs
 -- ---------------------------------------------------------------------------
@@ -328,6 +362,13 @@ spec = describe "Service.Sale (pure interpreter)" $ do
           saleMoneyCents (Sale.itemTotal item) `shouldBe` 4678
         other -> expectationFailure ("Expected one item, got " <> show (length other))
 
+    it "updates the sale totals" $ do
+      sale <- shouldSucceed $ runTest (emptySale Created) (SaleSvc.addItem addTwo)
+      saleMoneyCents (Sale.saleSubtotal sale) `shouldBe` 3998
+      saleMoneyCents (Sale.saleDiscountTotal sale) `shouldBe` 0
+      saleMoneyCents (Sale.saleTaxTotal sale) `shouldBe` 680
+      saleMoneyCents (Sale.saleTotal sale) `shouldBe` 4678
+
     it "generates the item id on the backend" $ do
       sale <- shouldSucceed $ runTest (emptySale Created) (SaleSvc.addItem addTwo)
       map Sale.itemId (Sale.saleItems sale) `shouldBe` [firstSuppliedUUID]
@@ -335,6 +376,11 @@ spec = describe "Service.Sale (pure interpreter)" $ do
     it "moves a new sale to InProgress" $ do
       sale <- shouldSucceed $ runTest (emptySale Created) (SaleSvc.addItem addTwo)
       Sale.saleStatus sale `shouldBe` InProgress
+
+    it "reserves the quantity added" $ do
+      result <- afterAdd (emptySale Created) addTwo
+      afterRefused result `shouldBe` False
+      afterStock result `shouldBe` Just (10, 2)
 
     it "rejects an unknown sale with 404" $
       shouldFailWith 404 $
@@ -356,10 +402,93 @@ spec = describe "Service.Sale (pure interpreter)" $ do
       shouldFailWith 409 $
         runTest (emptySale Completed) (SaleSvc.addItem addTwo)
 
+  describe "addItem, same sku already on the sale" $ do
+    it "adds to the existing line and prices it again at the combined quantity" $ do
+      sale <- shouldSucceed $ runTest (saleWithItem InProgress) (SaleSvc.addItem addTwo)
+      case Sale.saleItems sale of
+        [item] -> do
+          Sale.itemId item `shouldBe` itemUUID
+          saleQuantityCount (Sale.itemQuantity item) `shouldBe` 3
+          saleMoneyCents (Sale.itemPricePerUnit item) `shouldBe` 1999
+          saleMoneyCents (Sale.itemSubtotal item) `shouldBe` 5997
+          map (saleMoneyCents . Sale.taxAmount) (Sale.itemTaxes item) `shouldBe` [375, 645]
+          saleMoneyCents (Sale.itemTotal item) `shouldBe` 7017
+        other -> expectationFailure ("Expected one item, got " <> show (length other))
+
+    it "sets the sale totals from the single combined line" $ do
+      sale <- shouldSucceed $ runTest (saleWithItem InProgress) (SaleSvc.addItem addTwo)
+      saleMoneyCents (Sale.saleSubtotal sale) `shouldBe` 5997
+      saleMoneyCents (Sale.saleTaxTotal sale) `shouldBe` 1020
+      saleMoneyCents (Sale.saleTotal sale) `shouldBe` 7017
+
+    it "holds one reservation for the combined quantity after two adds" $ do
+      result <-
+        shouldSucceed $ runTest (emptySale Created) $ do
+          _ <- SaleSvc.addItem addTwo
+          _ <- SaleSvc.addItem addTwo
+          getInventoryAvailability skuUUID
+      result `shouldBe` Just (10, 4)
+
+    it "counts stock the sale already holds as available to it" $ do
+      sale <-
+        shouldSucceed $ runTest (emptySale Created) $ do
+          _ <- SaleSvc.addItem addTwo {addItemQuantity = 6}
+          SaleSvc.addItem addTwo {addItemQuantity = 4}
+      map (saleQuantityCount . Sale.itemQuantity) (Sale.saleItems sale) `shouldBe` [10]
+
+  describe "addItem, refused" $ do
+    it "leaves a new sale in Created with nothing reserved when stock is short" $ do
+      result <- afterAdd (emptySale Created) addTwo {addItemQuantity = 11}
+      afterRefused result `shouldBe` True
+      afterStock result `shouldBe` Just (10, 0)
+      sale <- storedSale result
+      Sale.saleStatus sale `shouldBe` Created
+      Sale.saleItems sale `shouldBe` []
+      saleMoneyCents (Sale.saleTotal sale) `shouldBe` 0
+
+    it "leaves a new sale in Created when the item has no stock record" $ do
+      result <- afterAdd ((emptySale Created) {tsInventory = Map.empty}) addTwo
+      afterRefused result `shouldBe` True
+      afterStock result `shouldBe` Nothing
+      sale <- storedSale result
+      Sale.saleStatus sale `shouldBe` Created
+      Sale.saleItems sale `shouldBe` []
+
+    it "leaves a new sale in Created when the item is not on the menu" $ do
+      result <- afterAdd (emptySale Created) addTwo {addItemSku = unknownUUID}
+      afterRefused result `shouldBe` True
+      afterStock result `shouldBe` Just (10, 0)
+      sale <- storedSale result
+      Sale.saleStatus sale `shouldBe` Created
+      Sale.saleItems sale `shouldBe` []
+
+    it "leaves a new sale in Created when the quantity is zero" $ do
+      result <- afterAdd (emptySale Created) addTwo {addItemQuantity = 0}
+      afterRefused result `shouldBe` True
+      afterStock result `shouldBe` Just (10, 0)
+      sale <- storedSale result
+      Sale.saleStatus sale `shouldBe` Created
+      Sale.saleItems sale `shouldBe` []
+
+    it "keeps the existing line and totals when a further add is refused" $ do
+      result <- afterAdd (saleWithItem InProgress) addTwo {addItemQuantity = 10}
+      afterRefused result `shouldBe` True
+      afterStock result `shouldBe` Just (10, 0)
+      sale <- storedSale result
+      Sale.saleStatus sale `shouldBe` InProgress
+      Sale.saleItems sale `shouldBe` [existingItem]
+      saleMoneyCents (Sale.saleTotal sale) `shouldBe` 1000
+
   describe "removeItem" $ do
     it "returns the sale without the item" $ do
       sale <- shouldSucceed $ runTest (saleWithItem InProgress) (SaleSvc.removeItem itemUUID)
       Sale.saleItems sale `shouldBe` []
+
+    it "returns the sale totals to zero when the last item is removed" $ do
+      sale <- shouldSucceed $ runTest (saleWithItem InProgress) (SaleSvc.removeItem itemUUID)
+      saleMoneyCents (Sale.saleSubtotal sale) `shouldBe` 0
+      saleMoneyCents (Sale.saleTaxTotal sale) `shouldBe` 0
+      saleMoneyCents (Sale.saleTotal sale) `shouldBe` 0
 
     it "rejects an unknown item with 404" $
       shouldFailWith 404 $
