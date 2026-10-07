@@ -25,9 +25,15 @@ import Effect.TaxRules (TaxRules, runTaxRulesIO)
 import Effect.TransactionDb
 import Logging
 import Server.Env (AppEnv (..))
-import Server.Transaction (requireAuth, showT, withComplianceLog)
+import Server.Transaction
+  ( requireAuth
+  , requireCapability
+  , requireSaleWriter
+  , showT
+  , withComplianceLog
+  )
 import qualified Service.Sale as SaleSvc
-import Types.Auth (auRole, auUserId)
+import Types.Auth (UserCapabilities (..), auRole, auUserId)
 import Types.Primitives.Money (saleMoneyCents)
 import Types.Transaction.Request
 import qualified Types.Transaction.Sale as Sale
@@ -65,6 +71,16 @@ runSaleEff env action = do
       $ action
   either Servant.throwError pure result
 
+-- | Every handler here does three things before it runs its command.
+--
+-- 1. It resolves the session. No session is a 401.
+-- 2. It requires the capability to process transactions. A role without it
+--    gets a 403.
+-- 3. For a command on an existing sale, it requires that the signed-in user
+--    opened the sale, or is a manager or an admin. Anyone else gets a 403.
+--
+-- The employee recorded on a new sale is the signed-in user. The employee
+-- id in the request body is ignored.
 saleCommandServer :: AppEnv -> Server SaleCommandAPI
 saleCommandServer env =
   startHandler
@@ -77,37 +93,46 @@ saleCommandServer env =
   where
     logEnv = envLogEnv env
 
-    -- Authenticates, writes the HTTP log line, and returns the log context
+    -- Authenticates, writes the HTTP log line, requires the capability to
+    -- process transactions, and returns the session with the log context
     -- for the signed-in user.
-    begin :: Maybe Text -> Text -> Text -> Handler LogCtx
+    begin :: Maybe Text -> Text -> Text -> Handler (SessionContext, LogCtx)
     begin mHeader method path = do
       ctx <- requireAuth env mHeader
       let userId = showT (auUserId (scUser ctx))
       liftIO $ logHttpRequest logEnv method path userId
-      pure (makeLogCtx logEnv (Just userId) (auRole (scUser ctx)))
+      requireCapability env ctx "capCanProcessTransaction" capCanProcessTransaction
+      pure (ctx, makeLogCtx logEnv (Just userId) (auRole (scUser ctx)))
 
     startHandler :: Maybe Text -> StartSaleRequest -> Handler Sale.SaleTransaction
     startHandler mHeader req = do
-      lctx <- begin mHeader "POST" "/pos/sale"
-      sale <- runSaleEff env (SaleSvc.startSale req)
+      (ctx, lctx) <- begin mHeader "POST" "/pos/sale"
+      let asCaller = req {startSaleEmployeeId = auUserId (scUser ctx)}
+      sale <- runSaleEff env (SaleSvc.startSale asCaller)
       liftIO $ logTransactionCreate lctx (Sale.saleId sale) LogSuccess
       pure sale
 
     addItemHandler :: Maybe Text -> AddItemRequest -> Handler Sale.SaleTransaction
     addItemHandler mHeader req = do
-      lctx <- begin mHeader "POST" "/pos/sale/item"
+      (ctx, lctx) <- begin mHeader "POST" "/pos/sale/item"
+      requireSaleWriter env ctx (addItemSaleId req)
       withComplianceLog
         (logTransactionAddItem lctx (addItemSaleId req) (addItemSku req) (addItemQuantity req))
         $ runSaleEff env (SaleSvc.addItem req)
 
+    -- An item id that belongs to no sale is passed on, and the command
+    -- answers 404.
     removeItemHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     removeItemHandler mHeader itemId = do
-      _ <- begin mHeader "DELETE" ("/pos/sale/item/" <> showT itemId)
+      (ctx, _) <- begin mHeader "DELETE" ("/pos/sale/item/" <> showT itemId)
+      owner <- runSaleEff env (getTxIdByItemId itemId)
+      mapM_ (requireSaleWriter env ctx) owner
       runSaleEff env (SaleSvc.removeItem itemId)
 
     addPaymentHandler :: Maybe Text -> AddPaymentRequest -> Handler Sale.SaleTransaction
     addPaymentHandler mHeader req = do
-      lctx <- begin mHeader "POST" "/pos/sale/payment"
+      (ctx, lctx) <- begin mHeader "POST" "/pos/sale/payment"
+      requireSaleWriter env ctx (addPaymentSaleId req)
       withComplianceLog
         ( logTransactionAddPayment
             lctx
@@ -117,14 +142,19 @@ saleCommandServer env =
         )
         $ runSaleEff env (SaleSvc.addPayment req)
 
+    -- A payment id that belongs to no sale is passed on, and the command
+    -- answers 404.
     removePaymentHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     removePaymentHandler mHeader paymentId = do
-      _ <- begin mHeader "DELETE" ("/pos/sale/payment/" <> showT paymentId)
+      (ctx, _) <- begin mHeader "DELETE" ("/pos/sale/payment/" <> showT paymentId)
+      owner <- runSaleEff env (getTxIdByPaymentId paymentId)
+      mapM_ (requireSaleWriter env ctx) owner
       runSaleEff env (SaleSvc.removePayment paymentId)
 
     clearHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     clearHandler mHeader saleId = do
-      lctx <- begin mHeader "POST" ("/pos/sale/clear/" <> showT saleId)
+      (ctx, lctx) <- begin mHeader "POST" ("/pos/sale/clear/" <> showT saleId)
+      requireSaleWriter env ctx saleId
       withComplianceLog (logTransactionClear lctx saleId) $
         runSaleEff env (SaleSvc.clear saleId)
 
@@ -133,7 +163,8 @@ saleCommandServer env =
     -- count.
     finalizeHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     finalizeHandler mHeader saleId = do
-      lctx <- begin mHeader "POST" ("/pos/sale/finalize/" <> showT saleId)
+      (ctx, lctx) <- begin mHeader "POST" ("/pos/sale/finalize/" <> showT saleId)
+      requireSaleWriter env ctx saleId
       sale <-
         withComplianceLog (logFailureOnly (logTransactionFinalize lctx saleId 0 0)) $
           runSaleEff env (SaleSvc.finalize saleId)

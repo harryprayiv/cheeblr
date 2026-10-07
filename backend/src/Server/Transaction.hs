@@ -8,7 +8,7 @@ module Server.Transaction where
 
 import API.Transaction
 import Auth.Session (SessionContext (..), resolveSession)
-import Control.Monad (void, when)
+import Control.Monad (unless, void)
 import Control.Monad.Error.Class (catchError)
 import Control.Monad.IO.Class (liftIO)
 import qualified Data.ByteString.Lazy as LBS
@@ -33,7 +33,8 @@ import Logging
 import Server.Env (AppEnv (..))
 import qualified Service.Register as SvcReg
 import qualified Service.Transaction as SvcTx
-import Types.Auth (AuthenticatedUser (..), auRole, auUserId)
+import Types.Auth (AuthenticatedUser (..), UserCapabilities (..), capabilitiesForRole)
+import qualified Types.Auth as Auth
 import qualified Types.Transaction.Refund as Refund
 import qualified Types.Transaction.Sale as Sale
 import Types.Transaction
@@ -116,6 +117,52 @@ showT = T.pack . show
 txtErr :: Text -> LBS.ByteString
 txtErr = LBS.fromStrict . TE.encodeUtf8
 
+-- | Refuses with 403 unless the signed-in user's role has the capability.
+-- The refusal is written to the log with the capability's name.
+requireCapability ::
+  AppEnv ->
+  SessionContext ->
+  Text ->
+  (UserCapabilities -> Bool) ->
+  Handler ()
+requireCapability env ctx capName capFn =
+  unless (capFn (capabilitiesForRole (auRole user))) $ do
+    liftIO $ logAuthDenied (envLogEnv env) (showT (auUserId user)) capName
+    Servant.throwError
+      err403 {errBody = txtErr ("Forbidden: " <> capName <> " required")}
+  where
+    user = scUser ctx
+
+-- | Whether a user may change a sale opened by the given employee. The
+-- employee who opened the sale may, and so may a manager or an admin.
+mayWriteSale :: AuthenticatedUser -> UUID -> Bool
+mayWriteSale user saleEmployee =
+  auUserId user == saleEmployee
+    || auRole user `elem` [Auth.Manager, Auth.Admin]
+
+-- | Refuses with 403 when the sale was opened by another employee and the
+-- signed-in user is not a manager or an admin.
+--
+-- The employee on a sale is written once, when the sale is opened, and no
+-- command changes it. Reading it here, before the command takes the sale's
+-- row lock, therefore cannot go stale.
+--
+-- A sale that cannot be read is let through. The command that follows
+-- reports a missing sale or a refund in its own words.
+requireSaleWriter :: AppEnv -> SessionContext -> UUID -> Handler ()
+requireSaleWriter env ctx saleId = do
+  found <- runTxEff env (getSaleById saleId)
+  case found of
+    Right sale ->
+      unless (mayWriteSale user (Sale.saleEmployeeId sale)) $ do
+        liftIO $
+          logAuthDenied (envLogEnv env) (showT (auUserId user)) "sale belongs to another employee"
+        Servant.throwError
+          err403 {errBody = "Forbidden: this sale belongs to another employee"}
+    Left _ -> pure ()
+  where
+    user = scUser ctx
+
 -- ---------------------------------------------------------------------------
 -- Sale server
 -- ---------------------------------------------------------------------------
@@ -159,6 +206,7 @@ saleServer env =
                    (auRole (scUser ctx))
       liftIO $ logHttpRequest logEnv "POST" ("/sale/void/" <> showT txId)
         (showT (auUserId (scUser ctx)))
+      requireCapability env ctx "capCanVoidTransaction" capCanVoidTransaction
       withComplianceLog
         (\outcome -> logTransactionVoid lctx txId reason outcome)
         $ runTxEff env (SvcTx.voidTx txId reason)
@@ -171,6 +219,7 @@ saleServer env =
                    (auRole (scUser ctx))
       liftIO $ logHttpRequest logEnv "POST" ("/sale/refund/" <> showT txId)
         (showT (auUserId (scUser ctx)))
+      requireCapability env ctx "capCanRefundTransaction" capCanRefundTransaction
       withComplianceLog
         (\outcome -> logTransactionRefund lctx txId reason outcome)
         $ runTxEff env (SvcTx.refundTx txId reason)
@@ -237,53 +286,28 @@ reservationServer env =
                 , availableActual   = total - reserved
                 }
 
+    -- Reservations are written only by the sale commands, under the sale's
+    -- row lock, one per line. A reservation made or released here would not
+    -- match a line, so both routes refuse. They stay in the API type until
+    -- the frontend module that names them is removed.
     reserveInventoryHandler :: Maybe Text -> ReservationRequest -> Handler InventoryReservation
-    reserveInventoryHandler mHeader request = do
+    reserveInventoryHandler mHeader _request = do
       ctx <- requireAuth env mHeader
       liftIO $ logHttpRequest logEnv "POST" "/inventory/reserve"
         (showT (auUserId (scUser ctx)))
-      runTxEff env $ do
-        result <- getInventoryAvailability (reserveItemSku request)
-        case result of
-          Nothing            -> throwError err404 {errBody = "Item not found"}
-          Just (total, reserved) -> do
-            let available = total - reserved
-            when (available < reserveQuantity request) $
-              throwError err400
-                { errBody =
-                    txtErr $
-                      "Insufficient inventory. Only "
-                        <> T.pack (show available) <> " available"
-                }
-            reservationId <- nextUUID
-            now           <- currentTime
-            createReservation
-              reservationId
-              (reserveItemSku request)
-              (reserveTransactionId request)
-              (reserveQuantity request)
-              now
-            pure
-              InventoryReservation
-                { reservationItemSku       = reserveItemSku request
-                , reservationTransactionId = reserveTransactionId request
-                , reservationQuantity      = reserveQuantity request
-                , reservationStatus        = "Reserved"
-                }
+      Servant.throwError
+        err410 {errBody = "Reservations are made by adding an item to a sale"}
 
     releaseInventoryHandler :: Maybe Text -> UUID -> Handler NoContent
     releaseInventoryHandler mHeader reservationId = do
       ctx <- requireAuth env mHeader
       liftIO $ logHttpRequest logEnv "DELETE" ("/inventory/release/" <> showT reservationId)
         (showT (auUserId (scUser ctx)))
-      runTxEff env $ do
-        released <- releaseReservation reservationId
-        if released
-          then pure NoContent
-          else throwError err404 {errBody = "Reservation not found or already released"}
+      Servant.throwError
+        err410 {errBody = "Reservations are released by removing the item from its sale"}
 
 -- ---------------------------------------------------------------------------
--- Other servers (unchanged)
+-- Other servers
 -- ---------------------------------------------------------------------------
 
 registerServer :: AppEnv -> Server RegisterAPI
@@ -327,26 +351,34 @@ registerServer env =
         (showT (auUserId (scUser ctx)))
       runRegEff env (updateRegister regId register)
 
+    -- The employee recorded as opening the register is the signed-in user.
+    -- The employee id in the request body is ignored.
     openRegisterHandler mHeader regId request = do
       ctx <- requireAuth env mHeader
-      let empId = openRegisterEmployeeId request
+      let empId     = auUserId (scUser ctx)
+          asCaller  = request {openRegisterEmployeeId = empId}
           startCash = openRegisterStartingCash request
-          lctx = empLogCtx logEnv empId
+          lctx      = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" ("/register/open/" <> showT regId)
-        (showT (auUserId (scUser ctx)))
+        (showT empId)
+      requireCapability env ctx "capCanOpenRegister" capCanOpenRegister
       withComplianceLog (\outcome -> logRegisterOpen lctx regId startCash outcome)
-        $ runRegEff env (SvcReg.openRegister regId request)
+        $ runRegEff env (SvcReg.openRegister regId asCaller)
 
+    -- The employee recorded as closing the register is the signed-in user.
+    -- The employee id in the request body is ignored.
     closeRegisterHandler mHeader regId request = do
       ctx <- requireAuth env mHeader
-      let empId = closeRegisterEmployeeId request
+      let empId       = auUserId (scUser ctx)
+          asCaller    = request {closeRegisterEmployeeId = empId}
           countedCash = closeRegisterCountedCash request
-          lctx = empLogCtx logEnv empId
+          lctx        = empLogCtx logEnv empId
       liftIO $ logHttpRequest logEnv "POST" ("/register/close/" <> showT regId)
-        (showT (auUserId (scUser ctx)))
+        (showT empId)
+      requireCapability env ctx "capCanCloseRegister" capCanCloseRegister
       withComplianceLog (\outcome -> logRegisterClose lctx regId countedCash 0 outcome)
         $ do
-            result <- runRegEff env (SvcReg.closeRegister regId request)
+            result <- runRegEff env (SvcReg.closeRegister regId asCaller)
             liftIO $
               logRegisterClose lctx regId countedCash
                 (closeRegisterResultVariance result) LogSuccess

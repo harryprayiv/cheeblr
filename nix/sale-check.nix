@@ -172,7 +172,7 @@ EOF
       fi
     }
 
-    # POSTs a JSON body as the logged-in admin and prints the HTTP status.
+    # POSTs a JSON body as the logged-in user and prints the HTTP status.
     post() {
       ${curl} -s -o /dev/null -w "%{http_code}" --max-time 30 \
         -H "Cookie: cheeblr_session=$TOKEN" \
@@ -180,7 +180,7 @@ EOF
         -X POST -d "$2" "$BASE_URL$1"
     }
 
-    # Sends a DELETE as the logged-in admin and prints the HTTP status.
+    # Sends a DELETE as the logged-in user and prints the HTTP status.
     del() {
       ${curl} -s -o /dev/null -w "%{http_code}" --max-time 30 \
         -H "Cookie: cheeblr_session=$TOKEN" \
@@ -197,7 +197,8 @@ EOF
         '{addPaymentSaleId: $s, addPaymentMethod: "Cash", addPaymentAmount: $a, addPaymentTendered: null, addPaymentReference: null}'
     }
 
-    # Starts a sale and prints its id.
+    # Starts a sale and prints its id. The body always names the admin as the
+    # employee, whoever is logged in.
     start_sale() {
       local body code
       body=$(${jq} -nc --arg e "$ADMIN_ID" --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
@@ -226,12 +227,18 @@ EOF
     check "a user id in the Authorization header is refused" 401 \
       "$(${curl} -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $ADMIN_ID" "$BASE_URL/session")"
 
-    LOGIN_BODY=$(${jq} -nc --arg p "$ADMIN_PASS" \
-      '{loginUsername: "admin", loginPassword: $p, loginRegisterId: null}')
-    TOKEN=$(${curl} -s -D - -o /dev/null -X POST "$BASE_URL/auth/login" \
-        -H "Content-Type: application/json" -d "$LOGIN_BODY" \
-      | grep -i '^set-cookie:' | grep 'cheeblr_session=' \
-      | sed 's/.*cheeblr_session=\([^;]*\).*/\1/' | tr -d '\r' | head -1 || true)
+    # Logs in and prints the session token, or nothing when login fails.
+    login_token() {
+      local body
+      body=$(${jq} -nc --arg u "$1" --arg p "$2" \
+        '{loginUsername: $u, loginPassword: $p, loginRegisterId: null}')
+      ${curl} -s -D - -o /dev/null -X POST "$BASE_URL/auth/login" \
+          -H "Content-Type: application/json" -d "$body" \
+        | grep -i '^set-cookie:' | grep 'cheeblr_session=' \
+        | sed 's/.*cheeblr_session=\([^;]*\).*/\1/' | tr -d '\r' | head -1 || true
+    }
+
+    TOKEN=$(login_token admin "$ADMIN_PASS")
     if [ -z "$TOKEN" ]; then
       echo "  ✗ login did not return a session cookie"
       exit 1
@@ -371,10 +378,154 @@ EOF
     check "no race ended in a state the rules forbid" 0 "$IMPOSSIBLE"
     check "stock fell by one for each completed sale" "$((98 - FINALIZED))" "$(stock_of "$SKU_MAIN")"
 
-    # ── H. Consistency of every row ─────────────────────────────────────────
+    # ── H. Identity and permissions ─────────────────────────────────────────
 
     echo ""
-    echo "── H. Every row in the database obeys the rules ──"
+    echo "── H. The session decides who is acting and what they may do ──"
+    ADMIN_TOKEN="$TOKEN"
+    CASHIER_PASS="cashier-test-password-1"
+    NEW_USER=$(${jq} -nc --arg p "$CASHIER_PASS" \
+      '{newReqUsername: "cashier1", newReqDisplayName: "Cashier One", newReqEmail: null, newReqRole: "Cashier", newReqLocationId: null, newReqPassword: $p}')
+    check "admin creates a cashier account" 200 "$(post /auth/users "$NEW_USER")"
+    CASHIER_ID=$(sql "select id from users where username = 'cashier1'")
+    CASHIER_TOKEN=$(login_token cashier1 "$CASHIER_PASS")
+
+    SALE_A=$(start_sale) || { echo "  ✗ could not start a sale"; exit 1; }
+    check "admin adds 1 to the admin's sale" 200 "$(post /pos/sale/item "$(add_body "$SALE_A" "$SKU_MAIN" 1)")"
+    LINE_A=$(sql "select id from transaction_item where transaction_id = '$SALE_A'")
+    TOTAL_A=$(sql "select total from transaction where id = '$SALE_A'")
+
+    TOKEN="$CASHIER_TOKEN"
+    check "cashier session is accepted" 200 \
+      "$(${curl} -s -o /dev/null -w "%{http_code}" -H "Cookie: cheeblr_session=$TOKEN" "$BASE_URL/session")"
+    check "cashier cannot add to another employee's sale" 403 "$(post /pos/sale/item "$(add_body "$SALE_A" "$SKU_MAIN" 1)")"
+    check "cashier cannot pay on another employee's sale" 403 "$(post /pos/sale/payment "$(pay_body "$SALE_A" "$TOTAL_A")")"
+    check "cashier cannot finalize another employee's sale" 403 "$(post "/pos/sale/finalize/$SALE_A" "")"
+    check "cashier cannot clear another employee's sale" 403 "$(post "/pos/sale/clear/$SALE_A" "")"
+    check "cashier cannot remove a line from another employee's sale" 403 "$(del "/pos/sale/item/$LINE_A")"
+    check "the other employee's sale still has its line" 1 "$(line_qty "$SALE_A")"
+    check "the other employee's sale has no payment" 0 "$(sql "select count(*) from payment_transaction where transaction_id = '$SALE_A'")"
+
+    # start_sale sends the admin's id as the employee id. Sent by the cashier,
+    # that is a forged id.
+    SALE_C=$(start_sale) || { echo "  ✗ cashier could not start a sale"; exit 1; }
+    check "a forged employee id is replaced by the caller's id" "$CASHIER_ID" \
+      "$(sql "select employee_id from transaction where id = '$SALE_C'")"
+    check "cashier adds 1 to the cashier's own sale" 200 "$(post /pos/sale/item "$(add_body "$SALE_C" "$SKU_MAIN" 1)")"
+    check "cashier cannot void, even the cashier's own sale" 403 "$(post "/sale/void/$SALE_C" '"cashier void"')"
+    check "the cashier's sale is still IN_PROGRESS" IN_PROGRESS "$(status_of "$SALE_C")"
+    check "cashier cannot refund a completed sale" 403 "$(post "/sale/refund/$SALE2" '"cashier refund"')"
+    check "the completed sale is still COMPLETED" COMPLETED "$(status_of "$SALE2")"
+
+    TOKEN="$ADMIN_TOKEN"
+    check "admin can add to the cashier's sale" 200 "$(post /pos/sale/item "$(add_body "$SALE_C" "$SKU_MAIN" 1)")"
+    check "the cashier's sale now holds 2" 2 "$(line_qty "$SALE_C")"
+    check "admin can void the cashier's sale" 200 "$(post "/sale/void/$SALE_C" '"admin void"')"
+    check "the cashier's sale is VOIDED" VOIDED "$(status_of "$SALE_C")"
+
+    # ── I. Registers, reservations and the manager's void ───────────────────
+
+    echo ""
+    echo "── I. Registers, reservation routes and the manager's void ──"
+    TEST_REG="dddddddd-0000-4000-8000-000000000001"
+    REG_BODY=$(${jq} -nc --arg i "$TEST_REG" --arg l "$LOCATION_ID" \
+      '{registerId: $i, registerName: "Test register", registerLocationId: $l, registerIsOpen: false, registerCurrentDrawerAmount: 0, registerExpectedDrawerAmount: 0, registerOpenedAt: null, registerOpenedBy: null, registerLastTransactionTime: null}')
+    check "admin creates a register" 200 "$(post /register "$REG_BODY")"
+
+    CUSTOMER_PASS="customer-test-password-1"
+    NEW_CUSTOMER=$(${jq} -nc --arg p "$CUSTOMER_PASS" \
+      '{newReqUsername: "customer1", newReqDisplayName: "Customer One", newReqEmail: null, newReqRole: "Customer", newReqLocationId: null, newReqPassword: $p}')
+    check "admin creates a customer account" 200 "$(post /auth/users "$NEW_CUSTOMER")"
+    CUSTOMER_TOKEN=$(login_token customer1 "$CUSTOMER_PASS")
+
+    # Both register bodies name the admin as the employee, whoever sends them.
+    OPEN_BODY=$(${jq} -nc --arg e "$ADMIN_ID" '{openRegisterEmployeeId: $e, openRegisterStartingCash: 10000}')
+    CLOSE_BODY=$(${jq} -nc --arg e "$ADMIN_ID" '{closeRegisterEmployeeId: $e, closeRegisterCountedCash: 10000}')
+    START_BODY=$(${jq} -nc --arg e "$ADMIN_ID" --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
+      '{startSaleEmployeeId: $e, startSaleRegisterId: $r, startSaleLocationId: $l}')
+    RESERVE_BODY=$(${jq} -nc --arg s "$SKU_MAIN" --arg t "$SALE_A" \
+      '{reserveItemSku: $s, reserveTransactionId: $t, reserveQuantity: 1}')
+    RES_A=$(sql "select id from inventory_reservation where transaction_id = '$SALE_A' and status = 'Reserved'")
+    RES_BEFORE=$(sql "select count(*) from inventory_reservation")
+
+    TOKEN="$CUSTOMER_TOKEN"
+    check "customer session is accepted" 200 \
+      "$(${curl} -s -o /dev/null -w "%{http_code}" -H "Cookie: cheeblr_session=$TOKEN" "$BASE_URL/session")"
+    check "customer cannot start a sale" 403 "$(post /pos/sale "$START_BODY")"
+    check "customer cannot open a register" 403 "$(post "/register/open/$TEST_REG" "$OPEN_BODY")"
+    check "the register is still closed" f "$(sql "select is_open from register where id = '$TEST_REG'")"
+
+    TOKEN="$CASHIER_TOKEN"
+    check "cashier opens the register" 200 "$(post "/register/open/$TEST_REG" "$OPEN_BODY")"
+    check "a forged employee id on the open is replaced by the caller's id" "$CASHIER_ID" \
+      "$(sql "select opened_by from register where id = '$TEST_REG'")"
+    check "the reserve route refuses" 410 "$(post /inventory/reserve "$RESERVE_BODY")"
+    check "the release route refuses" 410 "$(del "/inventory/release/$RES_A")"
+    check "no reservation was added" "$RES_BEFORE" "$(sql "select count(*) from inventory_reservation")"
+    check "the admin's sale still holds its reservation" 1 "$(live_res "$SALE_A")"
+
+    TOKEN="$CUSTOMER_TOKEN"
+    check "customer cannot close a register" 403 "$(post "/register/close/$TEST_REG" "$CLOSE_BODY")"
+    check "the register is still open" t "$(sql "select is_open from register where id = '$TEST_REG'")"
+    TOKEN="$CASHIER_TOKEN"
+    check "cashier closes the register" 200 "$(post "/register/close/$TEST_REG" "$CLOSE_BODY")"
+
+    OVERRIDE_BODY=$(${jq} -nc --arg a "$ADMIN_ID" '{orActorId: $a, orReason: "manager override"}')
+    open_pulls() { sql "select count(*) from stock_pull_requests where transaction_id = '$1' and status not in ('PullFulfilled', 'PullCancelled')"; }
+    check "cashier cannot use the manager's void" 403 "$(post "/manager/override/void/$SALE_A" "$OVERRIDE_BODY")"
+    TOKEN="$ADMIN_TOKEN"
+    check "the admin's sale has one open stock pull" 1 "$(open_pulls "$SALE_A")"
+    check "the manager's void returns 200" 200 "$(post "/manager/override/void/$SALE_A" "$OVERRIDE_BODY")"
+    check "the sale is VOIDED" VOIDED "$(status_of "$SALE_A")"
+    check "the void released the reservation" 0 "$(live_res "$SALE_A")"
+    check "the void cancelled the stock pull" 0 "$(open_pulls "$SALE_A")"
+    check "a second manager's void returns 409" 409 "$(post "/manager/override/void/$SALE_A" "$OVERRIDE_BODY")"
+
+    # ── J. Constraints in the database ──────────────────────────────────────
+
+    echo ""
+    echo "── J. The database itself refuses rows the rules forbid ──"
+
+    # Runs one statement straight against the database and prints whether the
+    # database refused it.
+    refused() {
+      if ${pg}/bin/psql -X -w -q -h "$PGHOST" -p "$PGPORT" "$PGDATABASE" -c "$1" > /dev/null 2>&1; then
+        echo accepted
+      else
+        echo refused
+      fi
+    }
+
+    SALE_K=$(start_sale) || { echo "  ✗ could not start a sale"; exit 1; }
+    check "add 1 returns 200" 200 "$(post /pos/sale/item "$(add_body "$SALE_K" "$SKU_MAIN" 1)")"
+    check "a second line for the same sku" refused \
+      "$(refused "insert into transaction_item (id, transaction_id, menu_item_sku, quantity, price_per_unit, subtotal, total) values (gen_random_uuid(), '$SALE_K', '$SKU_MAIN', 1, 1, 1, 1)")"
+    check "a second live reservation for the same sku" refused \
+      "$(refused "insert into inventory_reservation (id, item_sku, transaction_id, quantity, status) values (gen_random_uuid(), '$SKU_MAIN', '$SALE_K', 1, 'Reserved')")"
+    check "a reservation for a sale that does not exist" refused \
+      "$(refused "insert into inventory_reservation (id, item_sku, transaction_id, quantity, status) values (gen_random_uuid(), '$SKU_MAIN', gen_random_uuid(), 1, 'Released')")"
+    check "a reservation with quantity zero" refused \
+      "$(refused "update inventory_reservation set quantity = 0 where transaction_id = '$SALE_K'")"
+    check "a reservation with an unknown status" refused \
+      "$(refused "update inventory_reservation set status = 'Bogus' where transaction_id = '$SALE_K'")"
+    check "a line with quantity zero" refused \
+      "$(refused "update transaction_item set quantity = 0 where transaction_id = '$SALE_K'")"
+    check "a sale with an unknown status" refused \
+      "$(refused "update transaction set status = 'BOGUS' where id = '$SALE_K'")"
+    check "negative stock" refused \
+      "$(refused "update menu_items set quantity = -1 where sku = '$SKU_LAST'")"
+
+    check "adding the same sku again still returns 200" 200 "$(post /pos/sale/item "$(add_body "$SALE_K" "$SKU_MAIN" 1)")"
+    check "the line holds 2" 2 "$(line_qty "$SALE_K")"
+    check "still one line" 1 "$(line_count "$SALE_K")"
+    LINE_K=$(sql "select id from transaction_item where transaction_id = '$SALE_K'")
+    check "removing the line returns 200" 200 "$(del "/pos/sale/item/$LINE_K")"
+    check "no live reservation left" 0 "$(live_res "$SALE_K")"
+
+    # ── K. Consistency of every row ─────────────────────────────────────────
+
+    echo ""
+    echo "── K. Every row in the database obeys the rules ──"
     rule() { check "$1" 0 "$(sql "$2")"; }
 
     rule "stored subtotal equals the sum of line subtotals" \

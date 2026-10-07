@@ -9,6 +9,7 @@ module DB.Transaction where
 import Control.Exception (Exception, throwIO)
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
+import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.List (sortOn)
 import Data.Scientific (fromFloatDigits)
@@ -148,6 +149,82 @@ createTransactionTables pool = do
         \  approved           BOOLEAN NOT NULL DEFAULT FALSE,\
         \  authorization_code TEXT\
         \)"
+  createSaleConstraints pool
+
+-- | Adds a constraint to a table unless a constraint of that name already
+-- exists. PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS, so the check is
+-- made against the catalog. The names used here are unique across the
+-- database.
+addConstraintOnce :: ByteString -> ByteString -> ByteString -> Statement.Statement () ()
+addConstraintOnce tableName constraintName definition =
+  ddl $
+    "DO $$ BEGIN \
+    \IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '"
+      <> constraintName
+      <> "') THEN ALTER TABLE "
+      <> tableName
+      <> " ADD CONSTRAINT "
+      <> constraintName
+      <> " "
+      <> definition
+      <> "; END IF; END $$"
+
+-- | The rules the database enforces on its own, whatever the application
+-- does. Each one is a rule the sale commands already keep. A write that
+-- breaks one fails and its SQL transaction rolls back.
+--
+-- This runs at every start and is safe to repeat. It runs after the menu
+-- and sale tables exist. It fails, and the backend does not start, when
+-- rows already in the database break a rule.
+--
+-- A line's quantity may be negative because a refund stores negated
+-- lines, so the rule for lines is that the quantity is not zero.
+--
+-- The order of writes in 'addTransactionItem' matters to the two unique
+-- indexes: it releases the old reservation and deletes the old line before
+-- it inserts the new ones.
+createSaleConstraints :: DBPool -> IO ()
+createSaleConstraints pool =
+  runSession pool $ do
+    Session.statement () $
+      ddl
+        "CREATE UNIQUE INDEX IF NOT EXISTS transaction_item_one_line_per_sku \
+        \ON transaction_item (transaction_id, menu_item_sku)"
+    Session.statement () $
+      ddl
+        "CREATE UNIQUE INDEX IF NOT EXISTS inventory_reservation_one_live_per_sku \
+        \ON inventory_reservation (transaction_id, item_sku) \
+        \WHERE status = 'Reserved'"
+    Session.statement () $
+      addConstraintOnce
+        "menu_items"
+        "menu_items_quantity_not_negative"
+        "CHECK (quantity >= 0)"
+    Session.statement () $
+      addConstraintOnce
+        "transaction_item"
+        "transaction_item_quantity_not_zero"
+        "CHECK (quantity <> 0)"
+    Session.statement () $
+      addConstraintOnce
+        "inventory_reservation"
+        "inventory_reservation_quantity_positive"
+        "CHECK (quantity > 0)"
+    Session.statement () $
+      addConstraintOnce
+        "inventory_reservation"
+        "inventory_reservation_status_known"
+        "CHECK (status IN ('Reserved', 'Released', 'Completed'))"
+    Session.statement () $
+      addConstraintOnce
+        "inventory_reservation"
+        "inventory_reservation_transaction_exists"
+        "FOREIGN KEY (transaction_id) REFERENCES transaction(id) ON DELETE CASCADE"
+    Session.statement () $
+      addConstraintOnce
+        "transaction"
+        "transaction_status_known"
+        "CHECK (status IN ('CREATED', 'IN_PROGRESS', 'COMPLETED', 'VOIDED', 'REFUNDED'))"
 
 itemsForTx :: UUID -> Query (TransactionItemRow Expr)
 itemsForTx txId = do
@@ -729,8 +806,8 @@ addTransactionItem pool txId sku addQty newItemId priceLineAt = do
 --
 -- A reservation row does not record which line created it. The match is on
 -- sale, sku, "Reserved" status and quantity, and exactly one matching row is
--- released. 'addTransactionItem' keeps a sale to one line per sku, so the
--- match is normally unique.
+-- released. The unique indexes in 'createSaleConstraints' hold a sale to one
+-- line and one live reservation per sku, so the match is unique.
 deleteTransactionItem :: DBPool -> UUID -> IO ()
 deleteTransactionItem pool itemId =
   runTransaction_ pool $ do

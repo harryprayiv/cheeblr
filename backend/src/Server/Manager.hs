@@ -42,6 +42,8 @@ import qualified DB.Register as DBR
 import qualified DB.Transaction as DBT
 import Infrastructure.SSE (filteredSseStream)
 import Server.Env (AppEnv (..))
+import Server.Transaction (runTxEff)
+import qualified Service.Transaction as SvcTx
 
 import DB.Database (getAllMenuItems)
 import Types.Admin (
@@ -221,18 +223,19 @@ complianceReportHandler env mHeader _req = do
   requireManager ctx
   pure (ComplianceReportResult "Compliance report generation not yet implemented")
 
+-- | A manager's void goes through the same service as the void on the sale
+-- routes. The sale state machine decides whether the sale can be voided,
+-- the reservations are released, the pending stock pulls are cancelled and
+-- the void event is emitted. A missing sale is a 404 and a sale that cannot
+-- be voided is a 409.
 overrideVoidHandler ::
   AppEnv -> UUID -> Maybe Text -> OverrideRequest -> Handler MutationResponse
 overrideVoidHandler env txId mHeader req = do
   ctx <- authCtx env mHeader
   unless (capCanVoidTransaction (capabilitiesForRole (auRole (scUser ctx)))) $
     throwError err403 {errBody = LBS.pack "Forbidden: void transaction required"}
-  mTx <- liftIO $ DBT.getTransactionById (envDbPool env) txId
-  case mTx of
-    Nothing -> throwError err404 {errBody = LBS.pack "Transaction not found"}
-    Just _  -> do
-      _ <- liftIO $ DBT.voidTransaction (envDbPool env) txId (orReason req)
-      pure $ MutationResponse True ("Transaction voided: " <> orReason req)
+  _ <- runTxEff env (SvcTx.voidTx txId (orReason req))
+  pure $ MutationResponse True ("Transaction voided: " <> orReason req)
 
 overrideDiscountHandler ::
   AppEnv -> UUID -> Maybe Text -> OverrideRequest -> Handler MutationResponse
