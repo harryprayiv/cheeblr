@@ -12,7 +12,7 @@ import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime)
 import Data.UUID (UUID)
 import Effectful (Eff, IOE, runEff)
-import Effectful.Error.Static (Error, runErrorNoCallStack)
+import Effectful.Error.Static (Error, runErrorNoCallStack, tryError)
 import Servant (ServerError (..))
 import Test.Hspec
 
@@ -417,6 +417,83 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
         Left _     -> expectationFailure "Expected finalize to succeed"
       shouldBeRefused removed
 
+    it "clearSale refuses a completed sale and keeps its line and payment" $ do
+      (outcome, loaded) <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted $ do
+            o <- clearSale txUUID
+            s <- getSaleById txUUID
+            pure (o, s)
+      shouldBeRefused outcome
+      case loaded of
+        Right sale -> do
+          Sale.saleStatus sale `shouldBe` Completed
+          map Sale.itemId (Sale.saleItems sale) `shouldBe` [itemUUID]
+          map Sale.paymentId (Sale.salePayments sale) `shouldBe` [pymtUUID]
+        Left err -> expectationFailure ("Expected the sale, got " <> show err)
+
+    it "clearSale refuses a sale that does not exist" $ do
+      outcome <- shouldSucceed $ runTest emptyTxStore (clearSale txUUID)
+      shouldBeRefused outcome
+
+    it "finalizing and then clearing is refused and the sale stays completed" $ do
+      (cleared, loaded) <-
+        shouldSucceed $
+          runTest storeReadyToFinalize $ do
+            _ <- finalizeSale txUUID
+            c <- clearSale txUUID
+            s <- getSaleById txUUID
+            pure (c, s)
+      shouldBeRefused cleared
+      case loaded of
+        Right sale -> do
+          Sale.saleStatus sale `shouldBe` Completed
+          map Sale.itemId (Sale.saleItems sale) `shouldBe` [itemUUID]
+          map Sale.paymentId (Sale.salePayments sale) `shouldBe` [pymtUUID]
+        Left err -> expectationFailure ("Expected the sale, got " <> show err)
+
+    it "clearing and then finalizing is refused and the sale stays empty" $ do
+      (cleared, finalized, loaded) <-
+        shouldSucceed $
+          runTest storeReadyToFinalize $ do
+            c <- clearSale txUUID
+            f <- finalizeSale txUUID
+            s <- getSaleById txUUID
+            pure (c, f, s)
+      case cleared of
+        Right () -> pure ()
+        Left _   -> expectationFailure "Expected the clear to succeed"
+      shouldBeRefused finalized
+      case loaded of
+        Right sale -> do
+          Sale.saleStatus sale `shouldBe` Created
+          Sale.saleItems sale `shouldBe` []
+          Sale.salePayments sale `shouldBe` []
+        Left err -> expectationFailure ("Expected the sale, got " <> show err)
+
+    it "voidSale refuses a voided sale without the service guard" $ do
+      outcome <- shouldSucceed $ runTest (storeWith Voided) (voidSale txUUID "again")
+      shouldBeRefused outcome
+
+    it "voidSale refuses a refunded sale without the service guard" $ do
+      outcome <- shouldSucceed $ runTest (storeWith Refunded) (voidSale txUUID "again")
+      shouldBeRefused outcome
+
+    it "voidSale refuses a sale that does not exist" $ do
+      outcome <- shouldSucceed $ runTest emptyTxStore (voidSale txUUID "reason")
+      shouldBeRefused outcome
+
+    it "a second voidSale is refused and the first reason is kept" $ do
+      (second, loaded) <-
+        shouldSucceed $
+          runTest (storeWith InProgress) $ do
+            _ <- voidSale txUUID "first"
+            v <- voidSale txUUID "second"
+            s <- getSaleById txUUID
+            pure (v, s)
+      shouldBeRefused second
+      fmap Sale.saleVoidReason loaded `shouldBe` Right (Just "first")
+
   describe "removeItem — state machine guards" $ do
     it "succeeds from InProgress" $
       void $
@@ -536,6 +613,30 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
     it "returns 404 for non-existent transaction" $
       shouldFailWith 404 $
         runTest emptyTxStore (Svc.refundTx txUUID "reason")
+
+  describe "refundTx — one refund per sale" $ do
+    it "a second refund is rejected with 409 and writes no second refund" $ do
+      (second, refundCount, loaded) <-
+        shouldSucceed $
+          runTest storeWithItemAndPaymentCompleted $ do
+            _ <- Svc.refundTx txUUID "first"
+            s <- tryError @ServerError (Svc.refundTx txUUID "second")
+            n <- length <$> getAllRefunds
+            l <- getSaleById txUUID
+            pure (fmap (const ()) s, n, l)
+      case second of
+        Left (_, err) -> errHTTPCode err `shouldBe` 409
+        Right ()      -> expectationFailure "Expected the second refund to be rejected"
+      refundCount `shouldBe` 1
+      fmap Sale.saleIsRefunded loaded `shouldBe` Right True
+      fmap Sale.saleRefundReason loaded `shouldBe` Right (Just "first")
+
+    it "a rejected second refund emits no second event" $ do
+      (_, evts) <-
+        runTestWithEvents storeWithItemAndPaymentCompleted $ do
+          _ <- Svc.refundTx txUUID "first"
+          tryError @ServerError (Svc.refundTx txUUID "second")
+      length [() | TransactionEvt (TransactionRefunded {}) <- evts] `shouldBe` 1
 
   describe "refundTx — child id safety" $ do
     it "refund items have ids distinct from the original sale's items" $ do

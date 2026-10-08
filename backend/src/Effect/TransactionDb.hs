@@ -117,8 +117,11 @@ data SaleLineAdded = SaleLineAdded
 -- Every operation that writes to an open sale returns 'Either
 -- InventoryException'. The interpreter checks the sale's status at the
 -- moment of the write and refuses with 'SaleNotOpen' when the sale has
--- closed. 'FinalizeSale' also decides, at the moment of the write, whether
--- the sale has lines and is paid.
+-- closed. 'VoidSale' and 'ClearSale' are refused the same way when the sale
+-- is in a status that cannot be voided or cleared, and 'WriteRefund' when
+-- the original sale is not completed or was already refunded.
+-- 'FinalizeSale' also decides, at the moment of the write, whether the sale
+-- has lines and is paid.
 data TransactionDb :: Effect where
 
   GetSaleById              :: UUID -> TransactionDb m (Either TypedLoadError Sale.SaleTransaction)
@@ -130,9 +133,9 @@ data TransactionDb :: Effect where
 
   CreateSale               :: Sale.SaleTransaction -> TransactionDb m Sale.SaleTransaction
   UpdateSaleStatus         :: UUID -> TransactionStatus -> TransactionDb m ()
-  VoidSale                 :: UUID -> Text -> TransactionDb m Sale.SaleTransaction
-  WriteRefund              :: Refund.RefundTransaction -> TransactionDb m Refund.RefundTransaction
-  ClearSale                :: UUID -> TransactionDb m ()
+  VoidSale                 :: UUID -> Text -> TransactionDb m (Either InventoryException Sale.SaleTransaction)
+  WriteRefund              :: Refund.RefundTransaction -> TransactionDb m (Either InventoryException Refund.RefundTransaction)
+  ClearSale                :: UUID -> TransactionDb m (Either InventoryException ())
   FinalizeSale             :: UUID -> TransactionDb m (Either InventoryException Sale.SaleTransaction)
   AddSaleItem              :: SaleLineAdd -> TransactionDb m (Either InventoryException SaleLineAdded)
   DeleteSaleItem           :: UUID -> TransactionDb m ()
@@ -173,13 +176,20 @@ createSale = send . CreateSale
 updateSaleStatus :: (TransactionDb :> es) => UUID -> TransactionStatus -> Eff es ()
 updateSaleStatus txId s = send (UpdateSaleStatus txId s)
 
-voidSale :: (TransactionDb :> es) => UUID -> Text -> Eff es Sale.SaleTransaction
+voidSale ::
+  (TransactionDb :> es) =>
+  UUID ->
+  Text ->
+  Eff es (Either InventoryException Sale.SaleTransaction)
 voidSale txId reason = send (VoidSale txId reason)
 
-writeRefund :: (TransactionDb :> es) => Refund.RefundTransaction -> Eff es Refund.RefundTransaction
+writeRefund ::
+  (TransactionDb :> es) =>
+  Refund.RefundTransaction ->
+  Eff es (Either InventoryException Refund.RefundTransaction)
 writeRefund = send . WriteRefund
 
-clearSale :: (TransactionDb :> es) => UUID -> Eff es ()
+clearSale :: (TransactionDb :> es) => UUID -> Eff es (Either InventoryException ())
 clearSale = send . ClearSale
 
 finalizeSale ::
@@ -322,15 +332,15 @@ runTransactionDbIO pool = interpret $ \_ -> \case
     DBT.updateTransactionStatus pool txId status
 
   VoidSale txId reason -> liftIO $ do
-    result <- DBT.voidTransaction pool txId reason
-    pure (expectSaleTx result)
+    res <- try @InventoryException $ DBT.voidTransaction pool txId reason
+    pure (fmap expectSaleTx res)
 
   WriteRefund refund -> liftIO $ do
-    result <- DBTRefund.writeTypedRefund pool refund
-    pure (expectRefundTx result)
+    res <- try @InventoryException $ DBTRefund.writeTypedRefund pool refund
+    pure (fmap expectRefundTx res)
 
   ClearSale txId -> liftIO $
-    DBT.clearTransaction pool txId
+    try @InventoryException $ DBT.clearTransaction pool txId
 
   FinalizeSale txId -> liftIO $ do
     res <- try @InventoryException $ DBT.finalizeTransaction pool txId
@@ -520,24 +530,30 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
               (tsTxs st)
         }
 
+  -- Mirrors 'DBT.voidTransaction': a sale that is missing, voided or
+  -- refunded is refused and nothing changes.
   VoidSale txId reason -> do
     st <- get @TxStore
     case Map.lookup txId (tsTxs st) of
-      Nothing -> error $ "VoidSale: not found: " <> show txId
-      Just tx -> do
-        let voided =
-              tx
-                { transactionStatus     = Voided
-                , transactionIsVoided   = True
-                , transactionVoidReason = Just reason
+      Just tx
+        | transactionStatus tx `elem` [Created, InProgress, Completed] -> do
+            let voided =
+                  tx
+                    { transactionStatus     = Voided
+                    , transactionIsVoided   = True
+                    , transactionVoidReason = Just reason
+                    }
+            put @TxStore
+              st
+                { tsTxs          = Map.insert txId voided (tsTxs st)
+                , tsReservations = releaseReservedForTx txId (tsReservations st)
                 }
-        put @TxStore
-          st
-            { tsTxs          = Map.insert txId voided (tsTxs st)
-            , tsReservations = releaseReservedForTx txId (tsReservations st)
-            }
-        pure (expectSaleTx voided)
+            pure $ Right (expectSaleTx voided)
+      _ -> pure $ Left (SaleNotOpen txId)
 
+  -- Mirrors 'DBTRefund.writeTypedRefund': the original sale must be
+  -- Completed and not already refunded, or the refund is refused and
+  -- nothing changes.
   WriteRefund refund -> do
     let refundTxId    = Refund.refundId refund
         origTxId      = Refund.refundReferenceTransactionId refund
@@ -547,54 +563,57 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
         refundLegacy  = refundToLegacyTransaction refund
     st <- get @TxStore
     case Map.lookup origTxId (tsTxs st) of
-      Nothing   -> error $ "WriteRefund: original sale not found: " <> show origTxId
-      Just orig -> do
-        let origItemCount   = length (transactionItems orig)
-            origPymtCount   = length (transactionPayments orig)
-            refundItemCount = length refundItemIds
-            refundPymtCount = length refundPymtIds
-        when (refundItemCount /= origItemCount) $
-          error $
-            "WriteRefund (pure): refund has " <> show refundItemCount
-              <> " items but original sale has " <> show origItemCount
-        when (refundPymtCount /= origPymtCount) $
-          error $
-            "WriteRefund (pure): refund has " <> show refundPymtCount
-              <> " payments but original sale has " <> show origPymtCount
-        when (any (`Map.member` tsItemToTx st) refundItemIds) $
-          error "WriteRefund (pure): refund item id collides with existing"
-        when (any (`Map.member` tsPaymentToTx st) refundPymtIds) $
-          error "WriteRefund (pure): refund payment id collides with existing"
-        let origUpdated =
-              orig
-                { transactionIsRefunded   = True
-                , transactionRefundReason = Just reason
+      Just orig
+        | transactionStatus orig == Completed && not (transactionIsRefunded orig) -> do
+            let origItemCount   = length (transactionItems orig)
+                origPymtCount   = length (transactionPayments orig)
+                refundItemCount = length refundItemIds
+                refundPymtCount = length refundPymtIds
+            when (refundItemCount /= origItemCount) $
+              error $
+                "WriteRefund (pure): refund has " <> show refundItemCount
+                  <> " items but original sale has " <> show origItemCount
+            when (refundPymtCount /= origPymtCount) $
+              error $
+                "WriteRefund (pure): refund has " <> show refundPymtCount
+                  <> " payments but original sale has " <> show origPymtCount
+            when (any (`Map.member` tsItemToTx st) refundItemIds) $
+              error "WriteRefund (pure): refund item id collides with existing"
+            when (any (`Map.member` tsPaymentToTx st) refundPymtIds) $
+              error "WriteRefund (pure): refund payment id collides with existing"
+            let origUpdated =
+                  orig
+                    { transactionIsRefunded   = True
+                    , transactionRefundReason = Just reason
+                    }
+            put @TxStore
+              st
+                { tsTxs =
+                    Map.insert refundTxId refundLegacy
+                      . Map.insert origTxId origUpdated
+                      $ tsTxs st
+                , tsItemToTx =
+                    foldl
+                      (\m iid -> Map.insert iid refundTxId m)
+                      (tsItemToTx st)
+                      refundItemIds
+                , tsPaymentToTx =
+                    foldl
+                      (\m pid -> Map.insert pid refundTxId m)
+                      (tsPaymentToTx st)
+                      refundPymtIds
                 }
-        put @TxStore
-          st
-            { tsTxs =
-                Map.insert refundTxId refundLegacy
-                  . Map.insert origTxId origUpdated
-                  $ tsTxs st
-            , tsItemToTx =
-                foldl
-                  (\m iid -> Map.insert iid refundTxId m)
-                  (tsItemToTx st)
-                  refundItemIds
-            , tsPaymentToTx =
-                foldl
-                  (\m pid -> Map.insert pid refundTxId m)
-                  (tsPaymentToTx st)
-                  refundPymtIds
-            }
-        pure refund
+            pure (Right refund)
+      _ -> pure $ Left (SaleNotOpen origTxId)
 
-  ClearSale txId ->
-    modify @TxStore $ \st ->
-      st
-        { tsTxs =
-            Map.adjust
-              ( \tx ->
+  -- Mirrors 'DBT.clearTransaction': only a sale that is Created or
+  -- InProgress is cleared. Any other sale is refused and nothing changes.
+  ClearSale txId -> do
+    st <- get @TxStore
+    case Map.lookup txId (tsTxs st) of
+      Just tx
+        | transactionStatus tx `elem` [Created, InProgress] -> do
+            let cleared =
                   tx
                     { transactionStatus        = Created
                     , transactionSubtotal      = 0
@@ -604,18 +623,13 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                     , transactionItems         = []
                     , transactionPayments      = []
                     }
-              )
-              txId
-              (tsTxs st)
-        , tsReservations =
-            Map.map
-              ( \r ->
-                  if reTxId r == txId && reStatus r == "Reserved"
-                    then r {reStatus = "Released"}
-                    else r
-              )
-              (tsReservations st)
-        }
+            put @TxStore
+              st
+                { tsTxs          = Map.insert txId cleared (tsTxs st)
+                , tsReservations = releaseReservedForTx txId (tsReservations st)
+                }
+            pure (Right ())
+      _ -> pure $ Left (SaleNotOpen txId)
 
   FinalizeSale txId -> do
     st  <- get @TxStore

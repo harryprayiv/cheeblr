@@ -522,10 +522,119 @@ EOF
     check "removing the line returns 200" 200 "$(del "/pos/sale/item/$LINE_K")"
     check "no live reservation left" 0 "$(live_res "$SALE_K")"
 
-    # ── K. Consistency of every row ─────────────────────────────────────────
+    # ── K. Clear and void under the sale lock ───────────────────────────────
 
     echo ""
-    echo "── K. Every row in the database obeys the rules ──"
+    echo "── K. Clear and void decide under the sale lock ──"
+    check "clearing a completed sale returns 409" 409 "$(post "/pos/sale/clear/$SALE2" "")"
+    check "the completed sale is still COMPLETED" COMPLETED "$(status_of "$SALE2")"
+    check "the completed sale still has its line" 1 "$(line_count "$SALE2")"
+    check "the completed sale still has both payments" 2 "$(sql "select count(*) from payment_transaction where transaction_id = '$SALE2'")"
+
+    STOCK_BEFORE_K=$(stock_of "$SKU_MAIN")
+    CLEAR_FINALIZED=0
+    CLEAR_IMPOSSIBLE=0
+    for _r in $(seq 1 8); do
+      CS=$(start_sale) || { echo "  ✗ could not start a sale"; exit 1; }
+      post /pos/sale/item "$(add_body "$CS" "$SKU_MAIN" 1)" > /dev/null
+      CT=$(sql "select total from transaction where id = '$CS'")
+      post /pos/sale/payment "$(pay_body "$CS" "$CT")" > /dev/null
+      post "/pos/sale/finalize/$CS" "" > "$WORK/fin" &
+      FIN_PID=$!
+      post "/pos/sale/clear/$CS" "" > "$WORK/clr" &
+      CLR_PID=$!
+      wait "$FIN_PID" "$CLR_PID" 2>/dev/null || true
+      FIN_CODE=$(cat "$WORK/fin")
+      CLR_CODE=$(cat "$WORK/clr")
+      CSTATUS=$(status_of "$CS")
+      CLINES=$(line_count "$CS")
+      CPAID=$(sql "select coalesce(sum(amount), 0) from payment_transaction where transaction_id = '$CS'")
+      CRES=$(live_res "$CS")
+      if [ "$CSTATUS" = "COMPLETED" ]; then
+        CLEAR_FINALIZED=$((CLEAR_FINALIZED + 1))
+        if [ "$FIN_CODE" != "200" ] || [ "$CLR_CODE" != "409" ] || [ "$CLINES" != "1" ] || [ "$CPAID" -lt "$CT" ]; then
+          CLEAR_IMPOSSIBLE=$((CLEAR_IMPOSSIBLE + 1))
+          echo "  round $_r: COMPLETED with lines=$CLINES paid=$CPAID total=$CT finalize=$FIN_CODE clear=$CLR_CODE"
+        fi
+      else
+        if [ "$CSTATUS" != "CREATED" ] || [ "$FIN_CODE" = "200" ] || [ "$CLR_CODE" != "200" ] || [ "$CLINES" != "0" ] || [ "$CPAID" != "0" ] || [ "$CRES" != "0" ]; then
+          CLEAR_IMPOSSIBLE=$((CLEAR_IMPOSSIBLE + 1))
+          echo "  round $_r: $CSTATUS with lines=$CLINES paid=$CPAID reservations=$CRES finalize=$FIN_CODE clear=$CLR_CODE"
+        fi
+      fi
+    done
+    echo "  finalize won $CLEAR_FINALIZED of 8 races against clear"
+    check "no clear race ended in a state the rules forbid" 0 "$CLEAR_IMPOSSIBLE"
+    check "stock fell by one for each sale that completed" "$((STOCK_BEFORE_K - CLEAR_FINALIZED))" "$(stock_of "$SKU_MAIN")"
+
+    VOID_BAD=0
+    for _r in $(seq 1 8); do
+      VS=$(start_sale) || { echo "  ✗ could not start a sale"; exit 1; }
+      post /pos/sale/item "$(add_body "$VS" "$SKU_MAIN" 1)" > /dev/null
+      post "/sale/void/$VS" '"first void"' > "$WORK/void1" &
+      VOID1=$!
+      post "/sale/void/$VS" '"second void"' > "$WORK/void2" &
+      VOID2=$!
+      wait "$VOID1" "$VOID2" 2>/dev/null || true
+      VCODES=$(sort "$WORK/void1" "$WORK/void2" | tr -d '\n')
+      if [ "$VCODES" != "200409" ] || [ "$(status_of "$VS")" != "VOIDED" ] || [ "$(live_res "$VS")" != "0" ]; then
+        VOID_BAD=$((VOID_BAD + 1))
+        echo "  round $_r: codes=$VCODES status=$(status_of "$VS") reservations=$(live_res "$VS")"
+      fi
+    done
+    check "two voids at once always give one 200 and one 409" 0 "$VOID_BAD"
+
+    # ── L. Refund under the sale lock ───────────────────────────────────────
+
+    echo ""
+    echo "── L. A sale can be refunded once ──"
+
+    # Starts a sale, adds one unit, pays it in full, completes it and prints
+    # its id.
+    completed_sale() {
+      local sale total
+      sale=$(start_sale) || return 1
+      post /pos/sale/item "$(add_body "$sale" "$SKU_MAIN" 1)" > /dev/null
+      total=$(sql "select total from transaction where id = '$sale'")
+      post /pos/sale/payment "$(pay_body "$sale" "$total")" > /dev/null
+      post "/pos/sale/finalize/$sale" "" > /dev/null
+      echo "$sale"
+    }
+    refunds_of() { sql "select count(*) from transaction where reference_transaction_id = '$1'"; }
+
+    RF=$(completed_sale) || { echo "  ✗ could not prepare a completed sale"; exit 1; }
+    RF_TOTAL=$(sql "select total from transaction where id = '$RF'")
+    check "the sale to refund is COMPLETED" COMPLETED "$(status_of "$RF")"
+    check "refund returns 200" 200 "$(post "/sale/refund/$RF" '"first refund"')"
+    check "one refund transaction references the sale" 1 "$(refunds_of "$RF")"
+    check "the refund total is the sale total negated" "$((0 - RF_TOTAL))" \
+      "$(sql "select total from transaction where reference_transaction_id = '$RF'")"
+    check "the sale is marked refunded" t "$(sql "select is_refunded from transaction where id = '$RF'")"
+    check "a second refund returns 409" 409 "$(post "/sale/refund/$RF" '"second refund"')"
+    check "still one refund transaction" 1 "$(refunds_of "$RF")"
+    check "the first refund reason is kept" "first refund" "$(sql "select refund_reason from transaction where id = '$RF'")"
+
+    REFUND_BAD=0
+    for _r in $(seq 1 8); do
+      RR=$(completed_sale) || { echo "  ✗ could not prepare a completed sale"; exit 1; }
+      post "/sale/refund/$RR" '"refund one"' > "$WORK/ref1" &
+      REF1=$!
+      post "/sale/refund/$RR" '"refund two"' > "$WORK/ref2" &
+      REF2=$!
+      wait "$REF1" "$REF2" 2>/dev/null || true
+      RCODES=$(sort "$WORK/ref1" "$WORK/ref2" | tr -d '\n')
+      RCOUNT=$(refunds_of "$RR")
+      if [ "$RCODES" != "200409" ] || [ "$RCOUNT" != "1" ]; then
+        REFUND_BAD=$((REFUND_BAD + 1))
+        echo "  round $_r: codes=$RCODES refund transactions=$RCOUNT"
+      fi
+    done
+    check "two refunds at once always write exactly one refund" 0 "$REFUND_BAD"
+
+    # ── M. Consistency of every row ─────────────────────────────────────────
+
+    echo ""
+    echo "── M. Every row in the database obeys the rules ──"
     rule() { check "$1" 0 "$(sql "$2")"; }
 
     rule "stored subtotal equals the sum of line subtotals" \

@@ -1,4 +1,3 @@
--- FILE: backend/src/Types/Transaction/Conversion.hs
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -396,6 +395,21 @@ refundQuantityOr fieldName n = case mkRefundQuantity n of
 -- Typed refund → legacy
 -- ---------------------------------------------------------------------------
 
+-- | Convert a typed 'Refund.RefundTransaction' to a legacy
+-- 'Legacy.Transaction'.
+--
+-- The refund's reason is carried in 'transactionRefundReason', because
+-- 'fromLegacyToRefund' reads the reason from that field and refuses a
+-- legacy refund without it. The notes text also mentions the reason, for
+-- people reading the row, and nothing parses it back.
+--
+-- 'transactionIsRefunded' stays 'False': that flag marks a sale that has
+-- been refunded, and this row is the refund itself.
+--
+-- Round-trip property:
+-- @fromLegacyToRefund (refundToLegacyTransaction r)@ is @Right@ a refund
+-- equal to @r@ in every field except 'Refund.refundNotes', which comes
+-- back as the generated notes text.
 refundToLegacyTransaction :: Refund.RefundTransaction -> Legacy.Transaction
 refundToLegacyTransaction r =
   Legacy.Transaction
@@ -417,7 +431,7 @@ refundToLegacyTransaction r =
     , Legacy.transactionIsVoided               = False
     , Legacy.transactionVoidReason             = Nothing
     , Legacy.transactionIsRefunded             = False
-    , Legacy.transactionRefundReason           = Nothing
+    , Legacy.transactionRefundReason           = Just (Refund.refundReason r)
     , Legacy.transactionReferenceTransactionId = Just (Refund.refundReferenceTransactionId r)
     , Legacy.transactionNotes                  =
         Just $

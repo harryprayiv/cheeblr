@@ -85,6 +85,8 @@ library
                    , DB.Transaction.Typed
                    , DB.Transaction.Refund
                    , DB.Transaction.Sale
+                   , DB.Transaction.Rows
+                   , DB.Transaction.Tables
                    , Logging
                    , Server
                    , State.SaleTransactionMachine

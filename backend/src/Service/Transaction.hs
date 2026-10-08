@@ -12,6 +12,7 @@ module Service.Transaction (
   finalizeTx,
   voidTx,
   refundTx,
+  refuseWrite,
 ) where
 
 import Control.Monad (forM_, when)
@@ -379,6 +380,11 @@ finalizeTx txId = do
             }
       pure result
 
+-- | Voids a sale. The state machine check gives an early 409 for a sale that
+-- cannot be voided. 'voidSale' checks the status again when it writes, under
+-- the sale's row lock, so a void cannot land on a sale that was voided or
+-- refunded in between. No event is emitted and no stock pull is cancelled
+-- for a refused void.
 voidTx ::
   ( TransactionDb :> es
   , StockDb.StockDb :> es
@@ -394,29 +400,37 @@ voidTx txId reason = do
   let someState = fromSaleTransaction sale
       (evt, _)  = runTxCommand someState (VoidCmd reason)
   guardSaleTxEvent evt
-  pulls  <- StockDb.getPullsByTransaction txId
-  result <- voidSale txId reason
-  now    <- currentTime
-  emit $
-    TransactionEvt $
-      TransactionVoided
-        { teTxId      = txId
-        , teReason    = reason
-        , teActorId   = Sale.saleEmployeeId sale
-        , teTimestamp = now
-        }
-  StockDb.cancelPullsForTransaction txId reason
-  forM_ pulls $ \pr ->
-    when (prStatus pr `notElem` [PullFulfilled, PullCancelled]) $
+  pulls   <- StockDb.getPullsByTransaction txId
+  outcome <- voidSale txId reason
+  case outcome of
+    Left refusal -> refuseWrite refusal
+    Right result -> do
+      now <- currentTime
       emit $
-        StockEvt $
-          PullRequestCancelled
-            { sePullId    = prId pr
-            , seReason    = reason
-            , seTimestamp = now
+        TransactionEvt $
+          TransactionVoided
+            { teTxId      = txId
+            , teReason    = reason
+            , teActorId   = Sale.saleEmployeeId sale
+            , teTimestamp = now
             }
-  pure result
+      StockDb.cancelPullsForTransaction txId reason
+      forM_ pulls $ \pr ->
+        when (prStatus pr `notElem` [PullFulfilled, PullCancelled]) $
+          emit $
+            StockEvt $
+              PullRequestCancelled
+                { sePullId    = prId pr
+                , seReason    = reason
+                , seTimestamp = now
+                }
+      pure result
 
+-- | Refunds a completed sale. The state machine check gives an early 409
+-- for a sale that is not completed. 'writeRefund' checks again when it
+-- writes, under the original sale's row lock, and also refuses a sale that
+-- was already refunded, so one sale cannot be refunded twice. No event is
+-- emitted for a refused refund.
 refundTx ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -445,14 +459,19 @@ refundTx txId reason = do
                 "Refund conversion failed: " <> convErr
           }
     Right refundTyped -> do
-      result <- writeRefund refundTyped
-      emit $
-        TransactionEvt $
-          TransactionRefunded
-            { teTxId      = txId
-            , teReason    = reason
-            , teActorId   = Sale.saleEmployeeId sale
-            , teRefTxId   = refundId
-            , teTimestamp = now
-            }
-      pure result
+      outcome <- writeRefund refundTyped
+      case outcome of
+        Left (SaleNotOpen _) ->
+          failText err409 "The sale cannot be refunded: it is not completed or was already refunded"
+        Left refusal -> refuseWrite refusal
+        Right result -> do
+          emit $
+            TransactionEvt $
+              TransactionRefunded
+                { teTxId      = txId
+                , teReason    = reason
+                , teActorId   = Sale.saleEmployeeId sale
+                , teRefTxId   = refundId
+                , teTimestamp = now
+                }
+          pure result

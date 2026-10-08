@@ -271,6 +271,10 @@ removePayment paymentId = do
 
 -- | Remove every item and payment from an open sale and return it empty.
 -- A completed, voided or refunded sale cannot be cleared.
+--
+-- The check here gives an early 409. The database layer checks the status
+-- again under the sale's row lock, so a clear cannot land on a sale that
+-- was completed in between.
 clear ::
   ( TransactionDb :> es
   , Error ServerError :> es
@@ -283,8 +287,10 @@ clear saleId = do
     Created    -> pure ()
     InProgress -> pure ()
     _          -> failWith err409 "Only an open sale can be cleared"
-  clearSale saleId
-  loadSale saleId
+  outcome <- clearSale saleId
+  case outcome of
+    Left refusal -> Svc.refuseWrite refusal
+    Right ()     -> loadSale saleId
 
 -- | Complete a sale. Refused with every reason listed when the sale has no
 -- items or its payments do not cover its total.

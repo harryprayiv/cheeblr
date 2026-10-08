@@ -4,17 +4,22 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-name-shadowing #-}
 
-module DB.Transaction where
+-- | Reads and writes of sales. The tables and constraints are in
+-- "DB.Transaction.Tables" and the row conversions are in
+-- "DB.Transaction.Rows". Both are re-exported here, so importers of this
+-- module see the same names as before the split.
+module DB.Transaction (
+  module DB.Transaction,
+  module DB.Transaction.Rows,
+  module DB.Transaction.Tables,
+) where
 
 import Control.Exception (Exception, throwIO)
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (liftIO)
-import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.List (sortOn)
-import Data.Scientific (fromFloatDigits)
 import Data.Text (Text)
-import qualified Data.Text as T
 import Data.Time (getCurrentTime)
 import Data.Typeable (Typeable)
 import Data.UUID (UUID)
@@ -25,10 +30,11 @@ import qualified Hasql.Session as Session
 import qualified Hasql.Statement as Statement
 import Rel8
 
-import DB.Database (DBPool, ddl, runSession, runTransaction, runTransaction_)
+import DB.Database (DBPool, runSession, runTransaction, runTransaction_)
 import DB.Schema
+import DB.Transaction.Rows
+import DB.Transaction.Tables
 import Domain.SaleRules (finalizeProblems)
-import Types.Location (LocationId (..), locationIdToUUID)
 import Types.Transaction
 
 -- | Why a write to a sale was refused.
@@ -53,178 +59,6 @@ data AddedLine = AddedLine
   { addedLineItem     :: TransactionItem
   , addedLineReplaced :: [(UUID, Int)]
   }
-
-createTransactionTables :: DBPool -> IO ()
-createTransactionTables pool = do
-  runSession pool $ do
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS transaction (\
-        \  id                        UUID PRIMARY KEY,\
-        \  status                    TEXT NOT NULL,\
-        \  created                   TIMESTAMP WITH TIME ZONE NOT NULL,\
-        \  completed                 TIMESTAMP WITH TIME ZONE,\
-        \  customer_id               UUID,\
-        \  employee_id               UUID NOT NULL,\
-        \  register_id               UUID NOT NULL,\
-        \  location_id               UUID NOT NULL,\
-        \  subtotal                  INTEGER NOT NULL,\
-        \  discount_total            INTEGER NOT NULL,\
-        \  tax_total                 INTEGER NOT NULL,\
-        \  total                     INTEGER NOT NULL,\
-        \  transaction_type          TEXT NOT NULL,\
-        \  is_voided                 BOOLEAN NOT NULL DEFAULT FALSE,\
-        \  void_reason               TEXT,\
-        \  is_refunded               BOOLEAN NOT NULL DEFAULT FALSE,\
-        \  refund_reason             TEXT,\
-        \  reference_transaction_id  UUID,\
-        \  notes                     TEXT\
-        \)"
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS register (\
-        \  id                      UUID PRIMARY KEY,\
-        \  name                    TEXT NOT NULL,\
-        \  location_id             UUID NOT NULL,\
-        \  is_open                 BOOLEAN NOT NULL DEFAULT FALSE,\
-        \  current_drawer_amount   INTEGER NOT NULL DEFAULT 0,\
-        \  expected_drawer_amount  INTEGER NOT NULL DEFAULT 0,\
-        \  opened_at               TIMESTAMP WITH TIME ZONE,\
-        \  opened_by               UUID,\
-        \  last_transaction_time   TIMESTAMP WITH TIME ZONE\
-        \)"
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS inventory_reservation (\
-        \  id              UUID PRIMARY KEY,\
-        \  item_sku        UUID NOT NULL,\
-        \  transaction_id  UUID NOT NULL,\
-        \  quantity        INTEGER NOT NULL,\
-        \  status          TEXT NOT NULL,\
-        \  created_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()\
-        \)"
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS transaction_item (\
-        \  id              UUID PRIMARY KEY,\
-        \  transaction_id  UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,\
-        \  menu_item_sku   UUID NOT NULL,\
-        \  quantity        INTEGER NOT NULL,\
-        \  price_per_unit  INTEGER NOT NULL,\
-        \  subtotal        INTEGER NOT NULL,\
-        \  total           INTEGER NOT NULL\
-        \)"
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS transaction_tax (\
-        \  id                    UUID PRIMARY KEY,\
-        \  transaction_item_id   UUID NOT NULL REFERENCES transaction_item(id) ON DELETE CASCADE,\
-        \  category              TEXT NOT NULL,\
-        \  rate                  NUMERIC NOT NULL,\
-        \  amount                INTEGER NOT NULL,\
-        \  description           TEXT NOT NULL\
-        \)"
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS discount (\
-        \  id                    UUID PRIMARY KEY,\
-        \  transaction_item_id   UUID REFERENCES transaction_item(id) ON DELETE CASCADE,\
-        \  transaction_id        UUID REFERENCES transaction(id) ON DELETE CASCADE,\
-        \  type                  TEXT NOT NULL,\
-        \  amount                INTEGER NOT NULL,\
-        \  percent               NUMERIC,\
-        \  reason                TEXT NOT NULL,\
-        \  approved_by           UUID\
-        \)"
-    Session.statement () $
-      ddl
-        "CREATE TABLE IF NOT EXISTS payment_transaction (\
-        \  id                 UUID PRIMARY KEY,\
-        \  transaction_id     UUID NOT NULL REFERENCES transaction(id) ON DELETE CASCADE,\
-        \  method             TEXT NOT NULL,\
-        \  amount             INTEGER NOT NULL,\
-        \  tendered           INTEGER NOT NULL,\
-        \  change_amount      INTEGER NOT NULL,\
-        \  reference          TEXT,\
-        \  approved           BOOLEAN NOT NULL DEFAULT FALSE,\
-        \  authorization_code TEXT\
-        \)"
-  createSaleConstraints pool
-
--- | Adds a constraint to a table unless a constraint of that name already
--- exists. PostgreSQL has no ADD CONSTRAINT IF NOT EXISTS, so the check is
--- made against the catalog. The names used here are unique across the
--- database.
-addConstraintOnce :: ByteString -> ByteString -> ByteString -> Statement.Statement () ()
-addConstraintOnce tableName constraintName definition =
-  ddl $
-    "DO $$ BEGIN \
-    \IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = '"
-      <> constraintName
-      <> "') THEN ALTER TABLE "
-      <> tableName
-      <> " ADD CONSTRAINT "
-      <> constraintName
-      <> " "
-      <> definition
-      <> "; END IF; END $$"
-
--- | The rules the database enforces on its own, whatever the application
--- does. Each one is a rule the sale commands already keep. A write that
--- breaks one fails and its SQL transaction rolls back.
---
--- This runs at every start and is safe to repeat. It runs after the menu
--- and sale tables exist. It fails, and the backend does not start, when
--- rows already in the database break a rule.
---
--- A line's quantity may be negative because a refund stores negated
--- lines, so the rule for lines is that the quantity is not zero.
---
--- The order of writes in 'addTransactionItem' matters to the two unique
--- indexes: it releases the old reservation and deletes the old line before
--- it inserts the new ones.
-createSaleConstraints :: DBPool -> IO ()
-createSaleConstraints pool =
-  runSession pool $ do
-    Session.statement () $
-      ddl
-        "CREATE UNIQUE INDEX IF NOT EXISTS transaction_item_one_line_per_sku \
-        \ON transaction_item (transaction_id, menu_item_sku)"
-    Session.statement () $
-      ddl
-        "CREATE UNIQUE INDEX IF NOT EXISTS inventory_reservation_one_live_per_sku \
-        \ON inventory_reservation (transaction_id, item_sku) \
-        \WHERE status = 'Reserved'"
-    Session.statement () $
-      addConstraintOnce
-        "menu_items"
-        "menu_items_quantity_not_negative"
-        "CHECK (quantity >= 0)"
-    Session.statement () $
-      addConstraintOnce
-        "transaction_item"
-        "transaction_item_quantity_not_zero"
-        "CHECK (quantity <> 0)"
-    Session.statement () $
-      addConstraintOnce
-        "inventory_reservation"
-        "inventory_reservation_quantity_positive"
-        "CHECK (quantity > 0)"
-    Session.statement () $
-      addConstraintOnce
-        "inventory_reservation"
-        "inventory_reservation_status_known"
-        "CHECK (status IN ('Reserved', 'Released', 'Completed'))"
-    Session.statement () $
-      addConstraintOnce
-        "inventory_reservation"
-        "inventory_reservation_transaction_exists"
-        "FOREIGN KEY (transaction_id) REFERENCES transaction(id) ON DELETE CASCADE"
-    Session.statement () $
-      addConstraintOnce
-        "transaction"
-        "transaction_status_known"
-        "CHECK (status IN ('CREATED', 'IN_PROGRESS', 'COMPLETED', 'VOIDED', 'REFUNDED'))"
 
 itemsForTx :: UUID -> Query (TransactionItemRow Expr)
 itemsForTx txId = do
@@ -483,34 +317,47 @@ insertPaymentTransaction pool payment = do
   runSession pool (insertPaymentS payment)
   pure payment
 
--- | Marks the sale voided and releases every reservation it still holds, in
--- one SQL transaction. Reservations of a completed sale are already
--- "Completed" and are left alone, so voiding a completed sale does not put
--- stock back.
+-- | Voids a sale, in one SQL transaction.
+--
+-- The sale row is locked and its status is read under the lock. A sale
+-- that is CREATED, IN_PROGRESS or COMPLETED is marked voided and every
+-- reservation it still holds is released. A sale in any other status, or a
+-- sale that does not exist, is refused with 'SaleNotOpen' and nothing
+-- changes. Throws 'InventoryException' after rolling back.
+--
+-- Reservations of a completed sale are already "Completed" and are left
+-- alone, so voiding a completed sale does not put stock back.
 voidTransaction :: DBPool -> UUID -> Text -> IO Transaction
 voidTransaction pool txId reason = do
-  runTransaction_ pool $ do
-    _ <- Session.statement txId lockTransactionRow
-    releaseReservedForTxS txId
-    Session.statement () $
-      run_ $
-        Rel8.update $
-          Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
-                row
-                  { txStatus     = lit "VOIDED"
-                  , txIsVoided   = lit True
-                  , txVoidReason = lit (Just reason)
-                  }
-            , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
-            }
-  mTx <- getTransactionById pool txId
-  case mTx of
-    Just tx -> pure tx
-    Nothing -> throwIO $ userError $ "Transaction not found after void: " <> show txId
+  outcome <- runTransaction pool $ do
+    mStatus <- Session.statement txId lockTransactionStatus
+    if mStatus /= Just "CREATED" && mStatus /= Just "IN_PROGRESS" && mStatus /= Just "COMPLETED"
+      then pure (Left (SaleNotOpen txId))
+      else do
+        releaseReservedForTxS txId
+        Session.statement () $
+          run_ $
+            Rel8.update $
+              Update
+                { target      = transactionSchema
+                , from        = pure ()
+                , set         = \() row ->
+                    row
+                      { txStatus     = lit "VOIDED"
+                      , txIsVoided   = lit True
+                      , txVoidReason = lit (Just reason)
+                      }
+                , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+                , returning   = NoReturning
+                }
+        pure (Right ())
+  case outcome of
+    Left e   -> throwIO e
+    Right () -> do
+      mTx <- getTransactionById pool txId
+      case mTx of
+        Just tx -> pure tx
+        Nothing -> throwIO $ userError $ "Transaction not found after void: " <> show txId
 
 updateTransactionStatus :: DBPool -> UUID -> TransactionStatus -> IO ()
 updateTransactionStatus pool txId status =
@@ -526,46 +373,62 @@ updateTransactionStatus pool txId status =
             , returning   = NoReturning
             }
 
+-- | Empties an open sale, in one SQL transaction.
+--
+-- The sale row is locked and its status is read under the lock. A sale
+-- that is CREATED or IN_PROGRESS has its reservations released, its lines
+-- and payments deleted, its totals set to zero and its status set back to
+-- CREATED. A sale in any other status, or a sale that does not exist, is
+-- refused with 'SaleNotOpen' and nothing changes. Finalize takes the same
+-- lock, so a clear cannot empty a sale that was completed in between.
+-- Throws 'InventoryException' after rolling back.
 clearTransaction :: DBPool -> UUID -> IO ()
-clearTransaction pool txId =
-  runTransaction_ pool $ do
-    _ <- Session.statement txId lockTransactionRow
-    releaseReservedForTxS txId
-    Session.statement () $
-      run_ $
-        Rel8.delete $
-          Delete
-            { from        = paymentSchema
-            , using       = pure ()
-            , deleteWhere = \() row -> pymtTransactionId row ==. lit txId
-            , returning   = NoReturning
-            }
-    Session.statement () $
-      run_ $
-        Rel8.delete $
-          Delete
-            { from        = transactionItemSchema
-            , using       = pure ()
-            , deleteWhere = \() row -> tiTransactionId row ==. lit txId
-            , returning   = NoReturning
-            }
-    Session.statement () $
-      run_ $
-        Rel8.update $
-          Update
-            { target      = transactionSchema
-            , from        = pure ()
-            , set         = \() row ->
-                row
-                  { txSubtotal      = lit 0
-                  , txDiscountTotal = lit 0
-                  , txTaxTotal      = lit 0
-                  , txTotal         = lit 0
-                  , txStatus        = lit "CREATED"
-                  }
-            , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
-            , returning   = NoReturning
-            }
+clearTransaction pool txId = do
+  outcome <- runTransaction pool $ do
+    mStatus <- Session.statement txId lockTransactionStatus
+    if mStatus /= Just "CREATED" && mStatus /= Just "IN_PROGRESS"
+      then pure (Left (SaleNotOpen txId))
+      else do
+        releaseReservedForTxS txId
+        Session.statement () $
+          run_ $
+            Rel8.delete $
+              Delete
+                { from        = paymentSchema
+                , using       = pure ()
+                , deleteWhere = \() row -> pymtTransactionId row ==. lit txId
+                , returning   = NoReturning
+                }
+        Session.statement () $
+          run_ $
+            Rel8.delete $
+              Delete
+                { from        = transactionItemSchema
+                , using       = pure ()
+                , deleteWhere = \() row -> tiTransactionId row ==. lit txId
+                , returning   = NoReturning
+                }
+        Session.statement () $
+          run_ $
+            Rel8.update $
+              Update
+                { target      = transactionSchema
+                , from        = pure ()
+                , set         = \() row ->
+                    row
+                      { txSubtotal      = lit 0
+                      , txDiscountTotal = lit 0
+                      , txTaxTotal      = lit 0
+                      , txTotal         = lit 0
+                      , txStatus        = lit "CREATED"
+                      }
+                , updateWhere = \() row -> DB.Schema.txId row ==. lit txId
+                , returning   = NoReturning
+                }
+        pure (Right ())
+  case outcome of
+    Left e   -> throwIO e
+    Right () -> pure ()
 
 -- | Completes a sale, in one SQL transaction.
 --
@@ -806,7 +669,7 @@ addTransactionItem pool txId sku addQty newItemId priceLineAt = do
 --
 -- A reservation row does not record which line created it. The match is on
 -- sale, sku, "Reserved" status and quantity, and exactly one matching row is
--- released. The unique indexes in 'createSaleConstraints' hold a sale to one
+-- released. The unique indexes in "DB.Transaction.Tables" hold a sale to one
 -- line and one live reservation per sku, so the match is unique.
 deleteTransactionItem :: DBPool -> UUID -> IO ()
 deleteTransactionItem pool itemId =
@@ -946,275 +809,3 @@ getInventoryAvailability pool sku = do
     (total : _) ->
       let reserved = case reservedSums of (r : _) -> r; _ -> 0
        in pure $ Just (fromIntegral total, fromIntegral reserved)
-
-txDomainToRow :: Transaction -> TransactionRow Expr
-txDomainToRow tx =
-  TransactionRow
-    { txId                     = lit (transactionId tx)
-    , txStatus                 = lit $ showStatus (transactionStatus tx)
-    , txCreated                = lit (transactionCreated tx)
-    , txCompleted              = lit (transactionCompleted tx)
-    , txCustomerId             = lit (transactionCustomerId tx)
-    , txEmployeeId             = lit (transactionEmployeeId tx)
-    , txRegisterId             = lit (transactionRegisterId tx)
-    , txLocationId             = lit (locationIdToUUID (transactionLocationId tx))
-    , txSubtotal               = lit $ fromIntegral (transactionSubtotal tx)
-    , txDiscountTotal          = lit $ fromIntegral (transactionDiscountTotal tx)
-    , txTaxTotal               = lit $ fromIntegral (transactionTaxTotal tx)
-    , txTotal                  = lit $ fromIntegral (transactionTotal tx)
-    , txTransactionType        = lit $ showTransactionType (transactionType tx)
-    , txIsVoided               = lit (transactionIsVoided tx)
-    , txVoidReason             = lit (transactionVoidReason tx)
-    , txIsRefunded             = lit (transactionIsRefunded tx)
-    , txRefundReason           = lit (transactionRefundReason tx)
-    , txReferenceTransactionId = lit (transactionReferenceTransactionId tx)
-    , txNotes                  = lit (transactionNotes tx)
-    }
-
-txRowToDomain :: TransactionRow Result -> [TransactionItem] -> [PaymentTransaction] -> Transaction
-txRowToDomain row items payments =
-  Transaction
-    { transactionId                     = DB.Schema.txId row
-    , transactionStatus                 = parseTransactionStatus (T.unpack (txStatus row))
-    , transactionCreated                = txCreated row
-    , transactionCompleted              = txCompleted row
-    , transactionCustomerId             = txCustomerId row
-    , transactionEmployeeId             = txEmployeeId row
-    , transactionRegisterId             = txRegisterId row
-    , transactionLocationId             = LocationId (txLocationId row)
-    , transactionItems                  = items
-    , transactionPayments               = payments
-    , transactionSubtotal               = fromIntegral (txSubtotal row)
-    , transactionDiscountTotal          = fromIntegral (txDiscountTotal row)
-    , transactionTaxTotal               = fromIntegral (txTaxTotal row)
-    , transactionTotal                  = fromIntegral (txTotal row)
-    , transactionType                   = parseTransactionType (T.unpack (txTransactionType row))
-    , transactionIsVoided               = txIsVoided row
-    , transactionVoidReason             = txVoidReason row
-    , transactionIsRefunded             = txIsRefunded row
-    , transactionRefundReason           = txRefundReason row
-    , transactionReferenceTransactionId = txReferenceTransactionId row
-    , transactionNotes                  = txNotes row
-    }
-
-tiDomainToRow :: TransactionItem -> TransactionItemRow Expr
-tiDomainToRow ti =
-  TransactionItemRow
-    { tiId            = lit (transactionItemId ti)
-    , tiTransactionId = lit (transactionItemTransactionId ti)
-    , tiMenuItemSku   = lit (transactionItemMenuItemSku ti)
-    , tiQuantity      = lit $ fromIntegral (transactionItemQuantity ti)
-    , tiPricePerUnit  = lit $ fromIntegral (transactionItemPricePerUnit ti)
-    , tiSubtotal      = lit $ fromIntegral (transactionItemSubtotal ti)
-    , tiTotal         = lit $ fromIntegral (transactionItemTotal ti)
-    }
-
-itemRowToDomain :: TransactionItemRow Result -> [TaxRecord] -> [DiscountRecord] -> TransactionItem
-itemRowToDomain row taxes discounts =
-  TransactionItem
-    { transactionItemId              = tiId row
-    , transactionItemTransactionId   = tiTransactionId row
-    , transactionItemMenuItemSku     = tiMenuItemSku row
-    , transactionItemQuantity        = fromIntegral (tiQuantity row)
-    , transactionItemPricePerUnit    = fromIntegral (tiPricePerUnit row)
-    , transactionItemDiscounts       = discounts
-    , transactionItemTaxes           = taxes
-    , transactionItemSubtotal        = fromIntegral (tiSubtotal row)
-    , transactionItemTotal           = fromIntegral (tiTotal row)
-    }
-
-taxDomainToRow :: UUID -> UUID -> TaxRecord -> TaxRow Expr
-taxDomainToRow taxId itemId tax =
-  TaxRow
-    { taxRowId                = lit taxId
-    , taxRowTransactionItemId = lit itemId
-    , taxRowCategory          = lit $ showTaxCategory (taxCategory tax)
-    , taxRowRate              = lit $ realToFrac (taxRate tax)
-    , taxRowAmount            = lit $ fromIntegral (taxAmount tax)
-    , taxRowDescription       = lit (taxDescription tax)
-    }
-
-taxRowToDomain :: TaxRow Result -> TaxRecord
-taxRowToDomain row =
-  TaxRecord
-    { taxCategory    = parseTaxCategory (T.unpack (taxRowCategory row))
-    , taxRate        = fromFloatDigits (taxRowRate row)
-    , taxAmount      = fromIntegral (taxRowAmount row)
-    , taxDescription = taxRowDescription row
-    }
-
-discountDomainToRow :: UUID -> UUID -> Maybe UUID -> DiscountRecord -> DiscountRow Expr
-discountDomainToRow discId itemId mTxId discount =
-  DiscountRow
-    { discRowId                = lit discId
-    , discRowTransactionItemId = lit (Just itemId)
-    , discRowTransactionId     = lit mTxId
-    , discRowType              = lit $ showDiscountType (discountType discount)
-    , discRowAmount            = lit $ fromIntegral (discountAmount discount)
-    , discRowPercent           = lit $ getDiscountPercent (discountType discount)
-    , discRowReason            = lit (discountReason discount)
-    , discRowApprovedBy        = lit (discountApprovedBy discount)
-    }
-
-getDiscountPercent :: DiscountType -> Maybe Double
-getDiscountPercent (PercentOff pct) = Just (realToFrac pct)
-getDiscountPercent _                = Nothing
-
-discountRowToDomain :: DiscountRow Result -> DiscountRecord
-discountRowToDomain row =
-  DiscountRecord
-    { discountType       = parseDiscountType
-                             (discRowType row)
-                             (discRowPercent row)
-                             (fromIntegral (discRowAmount row))
-    , discountAmount     = fromIntegral (discRowAmount row)
-    , discountReason     = discRowReason row
-    , discountApprovedBy = discRowApprovedBy row
-    }
-
-paymentDomainToRow :: PaymentTransaction -> PaymentRow Expr
-paymentDomainToRow p =
-  PaymentRow
-    { pymtId                = lit (paymentId p)
-    , pymtTransactionId     = lit (paymentTransactionId p)
-    , pymtMethod            = lit $ showPaymentMethod (paymentMethod p)
-    , pymtAmount            = lit $ fromIntegral (paymentAmount p)
-    , pymtTendered          = lit $ fromIntegral (paymentTendered p)
-    , pymtChange            = lit $ fromIntegral (paymentChange p)
-    , pymtReference         = lit (paymentReference p)
-    , pymtApproved          = lit (paymentApproved p)
-    , pymtAuthorizationCode = lit (paymentAuthorizationCode p)
-    }
-
-paymentRowToDomain :: PaymentRow Result -> PaymentTransaction
-paymentRowToDomain row =
-  PaymentTransaction
-    { paymentId               = pymtId row
-    , paymentTransactionId    = pymtTransactionId row
-    , paymentMethod           = parsePaymentMethod (T.unpack (pymtMethod row))
-    , paymentAmount           = fromIntegral (pymtAmount row)
-    , paymentTendered         = fromIntegral (pymtTendered row)
-    , paymentChange           = fromIntegral (pymtChange row)
-    , paymentReference        = pymtReference row
-    , paymentApproved         = pymtApproved row
-    , paymentAuthorizationCode = pymtAuthorizationCode row
-    }
-
-negateTransactionItem :: TransactionItem -> TransactionItem
-negateTransactionItem ti =
-  ti
-    { transactionItemDiscounts = map negateDiscountRecord (transactionItemDiscounts ti)
-    , transactionItemTaxes     = map negateTaxRecord (transactionItemTaxes ti)
-    , transactionItemSubtotal  = negate (transactionItemSubtotal ti)
-    , transactionItemTotal     = negate (transactionItemTotal ti)
-    }
-
-negateDiscountRecord :: DiscountRecord -> DiscountRecord
-negateDiscountRecord d = d {discountAmount = negate (discountAmount d)}
-
-negateTaxRecord :: TaxRecord -> TaxRecord
-negateTaxRecord t = t {taxAmount = negate (taxAmount t)}
-
-negatePaymentTransaction :: PaymentTransaction -> PaymentTransaction
-negatePaymentTransaction p =
-  p
-    { paymentAmount   = negate (paymentAmount p)
-    , paymentTendered = negate (paymentTendered p)
-    , paymentChange   = negate (paymentChange p)
-    }
-
-showStatus :: TransactionStatus -> Text
-showStatus Created    = "CREATED"
-showStatus InProgress = "IN_PROGRESS"
-showStatus Completed  = "COMPLETED"
-showStatus Voided     = "VOIDED"
-showStatus Refunded   = "REFUNDED"
-
-showTransactionType :: TransactionType -> Text
-showTransactionType Sale                = "SALE"
-showTransactionType Return              = "RETURN"
-showTransactionType Exchange            = "EXCHANGE"
-showTransactionType InventoryAdjustment = "INVENTORY_ADJUSTMENT"
-showTransactionType ManagerComp         = "MANAGER_COMP"
-showTransactionType Administrative      = "ADMINISTRATIVE"
-
-showPaymentMethod :: PaymentMethod -> Text
-showPaymentMethod Cash        = "CASH"
-showPaymentMethod Debit       = "DEBIT"
-showPaymentMethod Credit      = "CREDIT"
-showPaymentMethod ACH         = "ACH"
-showPaymentMethod GiftCard    = "GIFT_CARD"
-showPaymentMethod StoredValue = "STORED_VALUE"
-showPaymentMethod Mixed       = "MIXED"
-showPaymentMethod (Other t)   = "OTHER:" <> t
-
-showTaxCategory :: TaxCategory -> Text
-showTaxCategory RegularSalesTax = "REGULAR_SALES_TAX"
-showTaxCategory ExciseTax       = "EXCISE_TAX"
-showTaxCategory CannabisTax     = "CANNABIS_TAX"
-showTaxCategory LocalTax        = "LOCAL_TAX"
-showTaxCategory MedicalTax      = "MEDICAL_TAX"
-showTaxCategory NoTax           = "NO_TAX"
-
-showDiscountType :: DiscountType -> Text
-showDiscountType (PercentOff _) = "PERCENT_OFF"
-showDiscountType (AmountOff _)  = "AMOUNT_OFF"
-showDiscountType BuyOneGetOne   = "BUY_ONE_GET_ONE"
-showDiscountType (Custom _ _)   = "CUSTOM"
-
-parseDiscountType :: Text -> Maybe Double -> Int -> DiscountType
-parseDiscountType "PERCENT_OFF"     mPct _   = PercentOff (maybe 0 realToFrac mPct)
-parseDiscountType "AMOUNT_OFF"      _    amt = AmountOff amt
-parseDiscountType "BUY_ONE_GET_ONE" _    _   = BuyOneGetOne
-parseDiscountType typ               _    amt = Custom typ amt
-
-parseTransactionStatus :: String -> TransactionStatus
-parseTransactionStatus "CREATED"     = Created
-parseTransactionStatus "IN_PROGRESS" = InProgress
-parseTransactionStatus "COMPLETED"   = Completed
-parseTransactionStatus "VOIDED"      = Voided
-parseTransactionStatus "REFUNDED"    = Refunded
-parseTransactionStatus _             = Created
-
-parseTransactionType :: String -> TransactionType
-parseTransactionType "SALE"                 = Sale
-parseTransactionType "RETURN"               = Return
-parseTransactionType "EXCHANGE"             = Exchange
-parseTransactionType "INVENTORY_ADJUSTMENT" = InventoryAdjustment
-parseTransactionType "MANAGER_COMP"         = ManagerComp
-parseTransactionType "ADMINISTRATIVE"       = Administrative
-parseTransactionType _                      = Sale
-
-parsePaymentMethod :: String -> PaymentMethod
-parsePaymentMethod "CASH"         = Cash
-parsePaymentMethod "Cash"         = Cash
-parsePaymentMethod "DEBIT"        = Debit
-parsePaymentMethod "Debit"        = Debit
-parsePaymentMethod "CREDIT"       = Credit
-parsePaymentMethod "Credit"       = Credit
-parsePaymentMethod "ACH"          = ACH
-parsePaymentMethod "GIFT_CARD"    = GiftCard
-parsePaymentMethod "GiftCard"     = GiftCard
-parsePaymentMethod "STORED_VALUE" = StoredValue
-parsePaymentMethod "StoredValue"  = StoredValue
-parsePaymentMethod "MIXED"        = Mixed
-parsePaymentMethod "Mixed"        = Mixed
-parsePaymentMethod s
-  | take 6 s == "OTHER:" = Other (T.pack $ drop 6 s)
-  | take 6 s == "Other:" = Other (T.pack $ drop 6 s)
-  | otherwise            = Other (T.pack s)
-
-parseTaxCategory :: String -> TaxCategory
-parseTaxCategory "REGULAR_SALES_TAX" = RegularSalesTax
-parseTaxCategory "RegularSalesTax"   = RegularSalesTax
-parseTaxCategory "EXCISE_TAX"        = ExciseTax
-parseTaxCategory "ExciseTax"         = ExciseTax
-parseTaxCategory "CANNABIS_TAX"      = CannabisTax
-parseTaxCategory "CannabisTax"       = CannabisTax
-parseTaxCategory "LOCAL_TAX"         = LocalTax
-parseTaxCategory "LocalTax"          = LocalTax
-parseTaxCategory "MEDICAL_TAX"       = MedicalTax
-parseTaxCategory "MedicalTax"        = MedicalTax
-parseTaxCategory "NO_TAX"            = NoTax
-parseTaxCategory "NoTax"             = NoTax
-parseTaxCategory _                   = NoTax
