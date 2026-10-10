@@ -312,6 +312,7 @@ EOF
     ${builtins.readFile ./sale-checks/constraints.sh}
     ${builtins.readFile ./sale-checks/locks.sh}
     ${builtins.readFile ./sale-checks/refund.sh}
+    ${builtins.readFile ./sale-checks/lock-wait.sh}
     ${builtins.readFile ./sale-checks/restock.sh}
     ${builtins.readFile ./sale-checks/rows.sh}
 
