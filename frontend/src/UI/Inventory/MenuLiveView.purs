@@ -2,49 +2,15 @@ module UI.Inventory.MenuLiveView where
 
 import Prelude
 
-import Config.LiveView (LiveViewConfig, defaultViewConfig)
+import Config.LiveView (LiveViewConfig)
 import Data.Array (filter, length, sortBy)
 import Data.Newtype (unwrap)
 import Deku.Control (text, text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
-import Deku.DOM.Listeners (load_) as DL
-import Deku.Hooks ((<#~>))
-import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
-import FRP.Poll (Poll)
 import Types.Inventory (Inventory(..), MenuItem(..), StrainLineage(..), compareMenuItems, generateClassName)
 import Utils.Formatting (formatCentsToDollars, summarizeLongText)
-
-createMenuLiveView :: Poll Inventory -> Poll Boolean -> Poll String -> Nut
-createMenuLiveView inventoryPoll loadingPoll errorPoll =
-  D.div
-    [ DA.klass_ "page-container"
-    , DL.load_ \_ -> do
-        liftEffect $ Console.log "LiveView component mounting..."
-    ]
-    [ D.div
-        [ DA.klass_ "status-container" ]
-        [ loadingPoll <#~> \isLoading ->
-            if isLoading then
-              D.div [ DA.klass_ "loading-indicator" ]
-                [ text_ "Loading data..." ]
-            else
-              D.div_ []
-        , errorPoll <#~> \error ->
-            if error /= "" then
-              D.div [ DA.klass_ "error-message" ]
-                [ text_ error ]
-            else
-              D.div_ []
-        ]
-    , D.div
-        [ DA.klass_ "inventory-container" ]
-        [ inventoryPoll <#~> \inventory ->
-            renderInventory defaultViewConfig inventory
-        ]
-    ]
 
 renderInventory :: LiveViewConfig -> Inventory -> Nut
 renderInventory config (Inventory items) =
@@ -79,7 +45,7 @@ renderItem (MenuItem record) =
       , species: meta.species
       }
 
-    -- Format price using the cents value from unwrapping Discrete USD
+
     formattedPrice = "$" <> formatCentsToDollars (unwrap record.price)
     formattedDescription = summarizeLongText record.description
   in
@@ -130,3 +96,4 @@ renderItem (MenuItem record) =
               ]
           ]
       ]
+

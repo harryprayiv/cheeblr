@@ -5,8 +5,6 @@ import Prelude
 import Effect (Effect)
 import Test.AdminTypes as AdminTypes
 import Test.Auth as Auth
-import Test.AuthCookie as AuthCookie
-import Test.Cart as Cart
 import Test.EnumInstances as EnumInstances
 import Test.FeedTypes as FeedTypes
 import Test.FormParser as FormParser
@@ -27,31 +25,31 @@ import Test.TransactionJson as TransactionJson
 import Test.TransactionModel as TransactionModel
 import Test.UUID as UUID
 import Test.WebUtils as WebUtils
+import Test.Wire as Wire
 
 main :: Effect Unit
 main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" do
-  -- Core types and utilities
+
   Formatting.spec
   Money.spec
   UUID.spec
   FormParser.spec
 
-  -- Auth and session
+
   Auth.spec
-  AuthCookie.spec
   Session.spec
 
-  -- Business logic
-  Cart.spec
+
   Inventory.spec
   TransactionModel.spec
 
-  -- JSON contracts (backend ↔ frontend)
+
   JsonContract.spec
+  Wire.spec
   GraphQL.spec
   TransactionJson.spec
 
-  -- Type-specific coverage
+
   Stock.spec
   WebUtils.spec
   AdminTypes.spec
@@ -60,3 +58,4 @@ main = runSpecAndExitProcess [ consoleReporter ] $ describe "Cheeblr Frontend" d
   Location.spec
   EnumInstances.spec
   ShowInstances.spec
+

@@ -2,65 +2,47 @@ module API.Inventory where
 
 import Prelude
 
+import API.Request (ApiError(..))
 import API.Request as Request
-import Config.LiveView (QueryMode(..), FetchConfig)
+import Config.LiveView (FetchConfig, QueryMode(..))
 import Data.Either (Either(..))
 import Effect.Aff (Aff, attempt)
 import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
+import Effect.Exception (message)
 import Effect.Now (now)
 import Fetch (fetch)
 import Fetch.Yoga.Json (fromJSON)
 import GraphQL.API.Inventory (readInventoryGql)
-import Services.AuthService (UserId)
 import Types.Inventory (Inventory, MenuItem, MutationResponse)
-import Types.Session (SessionResponse)
 
-writeInventory :: UserId -> MenuItem -> Aff (Either String MutationResponse)
-writeInventory userId menuItem =
-  Request.authPost userId "/inventory" menuItem
+writeInventory :: MenuItem -> Aff (Either ApiError MutationResponse)
+writeInventory menuItem = Request.post "/inventory" menuItem
 
-readInventory :: UserId -> Aff (Either String Inventory)
-readInventory userId =
-  Request.authGet userId "/inventory"
+readInventory :: Aff (Either ApiError Inventory)
+readInventory = Request.get "/inventory"
 
-updateInventory :: UserId -> MenuItem -> Aff (Either String MutationResponse)
-updateInventory userId menuItem =
-  Request.authPut userId "/inventory" menuItem
+updateInventory :: MenuItem -> Aff (Either ApiError MutationResponse)
+updateInventory menuItem = Request.put "/inventory" menuItem
 
-deleteInventory :: UserId -> String -> Aff (Either String MutationResponse)
-deleteInventory userId itemId =
-  Request.authDelete userId ("/inventory/" <> itemId)
+deleteInventory :: String -> Aff (Either ApiError MutationResponse)
+deleteInventory itemId = Request.delete ("/inventory/" <> itemId)
 
-fetchSession :: UserId -> Aff (Either String SessionResponse)
-fetchSession userId =
-  Request.authGet userId "/session"
-
-fetchInventoryFromJson :: FetchConfig -> Aff (Either String Inventory)
+-- Reads a static file served beside the app, not the API. No credentials.
+fetchInventoryFromJson :: FetchConfig -> Aff (Either ApiError Inventory)
 fetchInventoryFromJson config = do
   result <- attempt do
     timestamp <- liftEffect $ show <$> now
-    let url = config.jsonPath <> "?t=" <> timestamp
-    liftEffect $ Console.log ("Fetching from JSON: " <> url)
-    response <- fetch url {}
+    response <- fetch (config.jsonPath <> "?t=" <> timestamp) {}
     fromJSON response.json :: Aff Inventory
   pure case result of
-    Left err -> Left $ "JSON fetch error: " <> show err
+    Left err -> Left (Unreachable (message err))
     Right inventory -> Right inventory
 
-fetchInventoryFromHttp :: UserId -> FetchConfig -> Aff (Either String Inventory)
-fetchInventoryFromHttp userId config =
-  Request.authGetFullUrl userId config.apiEndpoint
+fetchInventoryFromHttp :: FetchConfig -> Aff (Either ApiError Inventory)
+fetchInventoryFromHttp config = Request.getAbsolute config.apiEndpoint
 
--- fetchInventory
---   :: UserId -> FetchConfig -> QueryMode -> Aff (Either String Inventory)
--- fetchInventory userId config = case _ of
---   JsonMode -> fetchInventoryFromJson config
---   HttpMode -> fetchInventoryFromHttp userId config
-
-fetchInventory
-  :: UserId -> FetchConfig -> QueryMode -> Aff (Either String Inventory)
-fetchInventory userId config = case _ of
+fetchInventory :: FetchConfig -> QueryMode -> Aff (Either ApiError Inventory)
+fetchInventory config = case _ of
   JsonMode -> fetchInventoryFromJson config
-  HttpMode -> fetchInventoryFromHttp userId config
-  GqlMode  -> readInventoryGql userId
+  HttpMode -> fetchInventoryFromHttp config
+  GqlMode -> readInventoryGql

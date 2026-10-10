@@ -2,18 +2,15 @@ module API.Refund where
 
 import Prelude
 
+import API.Request (ApiError)
 import API.Request as Request
 import Data.Either (Either)
 import Effect.Aff (Aff)
-import Services.AuthService (UserId)
 import Types.Transaction.Refund as Refund
 import Types.UUID (UUID)
 
-getAllRefunds
-  :: UserId -> Aff (Either String (Array Refund.RefundTransaction))
-getAllRefunds userId = Request.authGet userId "/refund"
+getAllRefunds :: Aff (Either ApiError (Array Refund.RefundTransaction))
+getAllRefunds = Request.get "/refund"
 
-getRefund
-  :: UserId -> UUID -> Aff (Either String Refund.RefundTransaction)
-getRefund userId refundId =
-  Request.authGet userId ("/refund/" <> show refundId)
+getRefund :: UUID -> Aff (Either ApiError Refund.RefundTransaction)
+getRefund refundId = Request.get ("/refund/" <> show refundId)

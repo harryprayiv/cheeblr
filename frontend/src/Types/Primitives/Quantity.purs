@@ -1,4 +1,3 @@
--- FILE: ./frontend/src/Types/Primitives/Quantity.purs
 module Types.Primitives.Quantity
   ( SaleQuantity
   , RefundQuantity
@@ -77,6 +76,8 @@ subtractSaleQuantity (SaleQuantity a) (SaleQuantity b) = mkSaleQuantity (a - b)
 sumSaleQuantity :: forall f. Foldable f => f SaleQuantity -> SaleQuantity
 sumSaleQuantity = foldl addSaleQuantity zeroSaleQuantity
 
+-- A refund line carries the number of units returned as a count of zero or
+-- more, the same as the backend. Only refund money is negative.
 newtype RefundQuantity = RefundQuantity Int
 
 derive instance newtypeRefundQuantity :: Newtype RefundQuantity _
@@ -96,12 +97,12 @@ instance readForeignRefundQuantity :: ReadForeign RefundQuantity where
       Just q -> pure q
       Nothing -> fail
         ( ForeignError $
-            "RefundQuantity requires non-positive count, got: " <> show n
+            "RefundQuantity requires non-negative count, got: " <> show n
         )
 
 mkRefundQuantity :: Int -> Maybe RefundQuantity
 mkRefundQuantity n
-  | n <= 0 = Just (RefundQuantity n)
+  | n >= 0 = Just (RefundQuantity n)
   | otherwise = Nothing
 
 unsafeMkRefundQuantity :: Int -> RefundQuantity
@@ -126,7 +127,8 @@ sumRefundQuantity :: forall f. Foldable f => f RefundQuantity -> RefundQuantity
 sumRefundQuantity = foldl addRefundQuantity zeroRefundQuantity
 
 toRefundQuantity :: SaleQuantity -> RefundQuantity
-toRefundQuantity (SaleQuantity n) = RefundQuantity (negate n)
+toRefundQuantity (SaleQuantity n) = RefundQuantity n
 
 toSaleQuantity :: RefundQuantity -> SaleQuantity
-toSaleQuantity (RefundQuantity n) = SaleQuantity (negate n)
+toSaleQuantity (RefundQuantity n) = SaleQuantity n
+

@@ -2,8 +2,8 @@ module Pages.Stock.Interface where
 
 import Prelude
 
+import API.Request as Request
 import API.Stock as API
-import Config.Network (currentConfig)
 import Data.Array (any, filter, length, null)
 import Data.Either (Either(..))
 import Data.Foldable (for_)
@@ -21,28 +21,26 @@ import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
 import Effect.Ref as Ref
 import Effect.Unsafe (unsafePerformEffect)
-import FRP.Poll (Poll)
 import Pages.Admin.Components.SSEStatus (sseStatus)
 import Pages.Stock.Components.AlertBanner (alertBanner, requestNotificationPermission, showPullNotification)
 import Pages.Stock.Components.MessageThread (messageThread)
 import Pages.Stock.Components.PullCard (pullCard)
-import Services.AuthService (AuthState, UserId)
 import Types.Stock (PullAction(..), PullMessage, PullRequest)
 import Types.UUID (UUID)
+import UI.Leave (OnLeave)
+import UI.Remote (onMount)
 import Utils.Audio (AlertSound(..), playSound)
 import Utils.SSE (SSEConnection, openSSE)
 import Config.Entity (dummyLocationId)
 import Types.Location (LocationId(..))
 
--- | Create a Ref once per component instantiation.
--- Safe: IORef creation has no observable global side effects.
 useRef :: forall a. a -> (Ref.Ref a -> Nut) -> Nut
 useRef initial cont = unsafePerformEffect do
   ref <- Ref.new initial
   pure (cont ref)
 
-page :: Poll AuthState -> UserId -> Nut
-page _authPoll userId = Deku.do
+page :: OnLeave -> Nut
+page onLeave = Deku.do
   setQueue    /\ queueValue    <- useHot ([] :: Array PullRequest)
   setStatus   /\ statusValue   <- useHot ""
   setLoading  /\ loadingValue  <- useHot false
@@ -55,18 +53,18 @@ page _authPoll userId = Deku.do
   let
     loadMessages :: UUID -> Aff Unit
     loadMessages pullId = do
-      result <- API.getMessages userId pullId
+      result <- API.getMessages pullId
       liftEffect $ case result of
-        Left err   -> setStatus $ "Message load error: " <> err
+        Left err   -> setStatus $ "Message load error: " <> Request.describe err
         Right msgs -> setMessages msgs
 
     loadQueue :: Effect Unit
     loadQueue = launchAff_ do
       liftEffect $ setLoading true
-      result <- API.getQueue userId (Just (LocationId dummyLocationId))
+      result <- API.getQueue (Just (LocationId dummyLocationId))
       liftEffect $ case result of
         Left err -> do
-          setStatus $ "Error loading queue: " <> err
+          setStatus $ "Error loading queue: " <> Request.describe err
           setLoading false
         Right pulls -> do
           prev <- Ref.read prevQueueRef
@@ -76,7 +74,7 @@ page _authPoll userId = Deku.do
           setQueue pulls
           setStatus $ show (length pulls) <> " item(s) in queue"
           setLoading false
-          -- Skip alerts on initial load (prev is empty).
+
           when (not (null prev) && not (null newPulls)) $
             for_ newPulls \pr -> do
               playSound SoundInfo
@@ -97,14 +95,14 @@ page _authPoll userId = Deku.do
     handleAction :: UUID -> PullAction -> Effect Unit
     handleAction pullId action = launchAff_ do
       result <- case action of
-        ActionAccept      -> API.acceptPull  userId pullId
-        ActionStart       -> API.startPull   userId pullId
-        ActionFulfill     -> API.fulfillPull userId pullId
-        ActionRetry       -> API.retryPull   userId pullId
-        ActionCancel      -> API.cancelPull  userId pullId "Cancelled"
-        ActionReportIssue -> API.reportIssue userId pullId "Issue reported"
+        ActionAccept      -> API.acceptPull pullId
+        ActionStart       -> API.startPull pullId
+        ActionFulfill     -> API.fulfillPull pullId
+        ActionRetry       -> API.retryPull pullId
+        ActionCancel      -> API.cancelPull pullId "Cancelled"
+        ActionReportIssue -> API.reportIssue pullId "Issue reported"
       liftEffect $ case result of
-        Left err -> setStatus $ "Error: " <> err
+        Left err -> setStatus $ "Error: " <> Request.describe err
         Right _  -> do
           setStatus "Action completed"
           loadQueue
@@ -112,15 +110,13 @@ page _authPoll userId = Deku.do
     connectSSE :: Effect Unit
     connectSSE = do
       requestNotificationPermission
-      let url = currentConfig.apiBaseUrl
-             <> "/stock/queue/stream"
-             <> "?authorization=Bearer+" <> userId
-      conn <- openSSE url \_ -> loadQueue
+      conn <- openSSE API.queueStreamUrl \_ -> loadQueue
+      onLeave conn.close
       setSseConn (Just conn)
 
   D.div
     [ DA.klass_ "stock-interface"
-    , DL.load_ \_ -> do
+    , onMount do
         loadQueue
         connectSSE
     ]
@@ -173,10 +169,11 @@ page _authPoll userId = Deku.do
                           [ text_ "✕" ]
                       ]
                   , messageThread messagesValue \msg -> launchAff_ do
-                      result <- API.sendMessage userId pullId msg
+                      result <- API.sendMessage pullId msg
                       case result of
-                        Left err -> liftEffect $ setStatus $ "Send error: " <> err
+                        Left err -> liftEffect $ setStatus $ "Send error: " <> Request.describe err
                         Right _  -> loadMessages pullId
                   ]
         ]
     ]
+

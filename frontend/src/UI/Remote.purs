@@ -10,7 +10,9 @@ module UI.Remote
 
 import Prelude
 
-import Data.Either (Either)
+import API.Request (ApiError)
+import API.Request as Request
+import Data.Either (Either(..))
 import Data.Tuple.Nested ((/\))
 import Deku.Attribute (Attribute)
 import Deku.Control (text_)
@@ -24,26 +26,18 @@ import Effect (Effect)
 import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
 import FRP.Poll (Poll)
-import Types.RemoteData (RemoteData(..), fromEither)
+import Types.RemoteData (RemoteData(..))
 
--- What useRemote hands to a page.
---   value:   the current state of the request
---   reload:  sets the state to Loading and runs the request again
---   refresh: runs the request again and keeps showing the current value
---            until the new one arrives
 type Remote a =
   { value :: Poll (RemoteData a)
   , reload :: Effect Unit
   , refresh :: Effect Unit
   }
 
--- A hook that owns one backend request. The first argument is the state
--- before anything has run: Loading for data fetched when the page opens
--- (pair it with onMount), NotAsked for data fetched on a button press.
 useRemote
   :: forall a
    . RemoteData a
-  -> Aff (Either String a)
+  -> Aff (Either ApiError a)
   -> (Remote a -> Nut)
   -> Nut
 useRemote initial request cont = Deku.do
@@ -51,19 +45,18 @@ useRemote initial request cont = Deku.do
   let
     refresh = launchAff_ do
       result <- request
-      liftEffect $ setValue (fromEither result)
+      liftEffect $ setValue case result of
+        Left err -> Failure (Request.describe err)
+        Right a -> Success a
 
     reload = do
       setValue Loading
       refresh
   cont { value, reload, refresh }
 
--- Runs an effect once when the element it is attached to is created. The
--- DOM load event does not fire on a div, so DL.load_ cannot be used for this.
 onMount :: forall r. Effect Unit -> Poll (Attribute r)
 onMount effect = Self.self_ \_ -> effect
 
--- How to draw the three states that carry no data.
 type RemoteView =
   { notAsked :: Nut
   , loading :: Nut
@@ -83,7 +76,6 @@ viewRemote view success value =
     Failure err -> view.failure err
     Success a -> success a
 
--- A loading line with the given text, and the error message on failure.
 standardView :: String -> RemoteView
 standardView loadingText =
   { notAsked: D.div_ []
@@ -91,11 +83,10 @@ standardView loadingText =
   , failure: \err -> D.div [ DA.klass_ "error-message" ] [ text_ err ]
   }
 
--- Empty placeholders, for panels that sit beside one that already reports
--- the loading state and the error.
 quietView :: RemoteView
 quietView =
   { notAsked: D.div_ []
   , loading: D.div [ DA.klass_ "loading-indicator" ] []
   , failure: \_ -> D.div [ DA.klass_ "error-message" ] []
   }
+

@@ -18,8 +18,8 @@ import Deku.Hooks (useHot, (<#~>))
 import Effect (Effect)
 import Effect.Class.Console as Console
 import Effect.Ref as Ref
-import Services.AuthService (UserId)
 import Types.Feed (FeedFrame)
+import UI.Leave (OnLeave)
 import Utils.WebSocket (WSConnection, closeWebSocket, openWebSocket, toWsUrl)
 import Yoga.JSON (readJSON_)
 
@@ -30,8 +30,8 @@ formatPrice :: Int -> String
 formatPrice cents =
   "$" <> toStringWith (fixed 2) (toNumber cents / 100.0)
 
-feedMonitor :: UserId -> Nut
-feedMonitor _userId = Deku.do
+feedMonitor :: OnLeave -> Nut
+feedMonitor onLeave = Deku.do
   setFrames    /\ framesValue    <- useHot ([] :: Array FeedFrame)
   setStatus    /\ statusValue    <- useHot "Disconnected"
   setConnected /\ connectedValue <- useHot false
@@ -45,7 +45,7 @@ feedMonitor _userId = Deku.do
     connect :: Effect Unit
     connect = do
       connRef  <- Ref.new Nothing
-      -- Accumulator ref so we can prepend without reading the Poll
+
       frameRef <- Ref.new ([] :: Array FeedFrame)
       conn <- openWebSocket wsUrl
         { onMessage: \raw -> case (readJSON_ raw :: Maybe FeedFrame) of
@@ -71,6 +71,7 @@ feedMonitor _userId = Deku.do
             setConnected false
         }
       Ref.write (Just conn) connRef
+      onLeave (closeWebSocket conn)
       setWsConn (Just conn)
       setStatus "Connecting..."
 
@@ -150,3 +151,4 @@ renderFrame frame =
         , D.div_ [ text_ $ "Updated: " <> frame.payload.updatedAt ]
         ]
     ]
+

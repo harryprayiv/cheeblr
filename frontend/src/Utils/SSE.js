@@ -1,8 +1,11 @@
+// The streams are on the API origin and authenticate with the HttpOnly
+// session cookie. A cross-origin EventSource sends cookies only when it is
+// opened with withCredentials.
 export const openSSEImpl = function(url) {
   return function(onMessage) {
     return function(onStatus) {
       return function() {
-        const source = new EventSource(url);
+        const source = new EventSource(url, { withCredentials: true });
 
         source.onopen = function() {
           onStatus("connected")();

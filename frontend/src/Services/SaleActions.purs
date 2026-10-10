@@ -6,24 +6,18 @@ module Services.SaleActions
   , removePayment
   , clear
   , finalize
-  , startNext
   ) where
 
+import API.Request (ApiError)
 import API.SaleCommand as API
 import Data.Either (Either)
 import Data.Maybe (Maybe)
 import Effect.Aff (Aff)
-import Services.AuthService (UserId)
 import Types.Inventory (MenuItem(..))
 import Types.Transaction (PaymentMethod)
 import Types.Transaction.Sale as Sale
 import Types.UUID (UUID)
 
--- Every action the transaction screen can take on a sale. Each one sends a
--- command to the backend and returns the sale the backend answers with, so
--- the screen never edits its own copy and never computes money.
-
--- What the payment form produces. Amounts are in cents.
 type PaymentInput =
   { method :: PaymentMethod
   , amount :: Int
@@ -32,31 +26,28 @@ type PaymentInput =
   }
 
 -- Only the SKU and quantity are sent. The backend prices the line.
+
 addItem
-  :: UserId
-  -> UUID
+  :: UUID
   -> MenuItem
   -> Int
-  -> Aff (Either String Sale.SaleTransaction)
-addItem userId saleId (MenuItem item) quantity =
-  API.addItem userId
+  -> Aff (Either ApiError Sale.SaleTransaction)
+addItem saleId (MenuItem item) quantity =
+  API.addItem
     { addItemSaleId: saleId
     , addItemSku: item.sku
     , addItemQuantity: quantity
     }
 
-removeItem
-  :: UserId -> UUID -> UUID -> Aff (Either String Sale.SaleTransaction)
-removeItem userId _saleId itemId =
-  API.removeItem userId itemId
+removeItem :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
+removeItem = API.removeItem
 
 addPayment
-  :: UserId
-  -> UUID
+  :: UUID
   -> PaymentInput
-  -> Aff (Either String Sale.SaleTransaction)
-addPayment userId saleId input =
-  API.addPayment userId
+  -> Aff (Either ApiError Sale.SaleTransaction)
+addPayment saleId input =
+  API.addPayment
     { addPaymentSaleId: saleId
     , addPaymentMethod: input.method
     , addPaymentAmount: input.amount
@@ -64,26 +55,11 @@ addPayment userId saleId input =
     , addPaymentReference: input.authCode
     }
 
-removePayment
-  :: UserId -> UUID -> UUID -> Aff (Either String Sale.SaleTransaction)
-removePayment userId _saleId paymentId =
-  API.removePayment userId paymentId
+removePayment :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
+removePayment = API.removePayment
 
-clear :: UserId -> UUID -> Aff (Either String Sale.SaleTransaction)
+clear :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
 clear = API.clear
 
-finalize :: UserId -> UUID -> Aff (Either String Sale.SaleTransaction)
+finalize :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
 finalize = API.finalize
-
--- Opens a new sale for the same employee, register and location as the one
--- just finished.
-startNext
-  :: UserId
-  -> Sale.SaleTransaction
-  -> Aff (Either String Sale.SaleTransaction)
-startNext userId previous =
-  API.startSale userId
-    { startSaleEmployeeId: previous.saleEmployeeId
-    , startSaleRegisterId: previous.saleRegisterId
-    , startSaleLocationId: previous.saleLocationId
-    }

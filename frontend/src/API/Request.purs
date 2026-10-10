@@ -1,255 +1,148 @@
-module API.Request where
+module API.Request
+  ( ApiError(..)
+  , URL
+  , status
+  , describe
+  , isRefusal
+  , get
+  , getAbsolute
+  , post
+  , postEmpty
+  , postUnit
+  , put
+  , delete
+  , deleteUnit
+  ) where
 
 import Prelude
 
+import Config.Network (currentConfig)
 import Data.Either (Either(..))
-import Effect.Aff (Aff, attempt, error, throwError)
-import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
+import Data.Maybe (Maybe(..))
+import Effect.Aff (Aff, attempt)
+import Effect.Exception (message)
 import Fetch (Method(..), RequestCredentials(..), fetch)
 import Fetch.Yoga.Json (fromJSON)
-import Config.Network (currentConfig)
-import Services.AuthService (UserId)
-import Yoga.JSON (class ReadForeign, class WriteForeign, writeJSON)
 import Foreign (Foreign)
-
-newtype ForeignRequestBody = ForeignRequestBody Foreign
-
-data ServiceError
-  = APIError String
-  | ServiceValidationError String
-  | NotFoundError String
-  | AuthorizationError String
-  | NetworkError String
-  | UnknownError String
-
-derive instance eqServiceError  :: Eq ServiceError
-derive instance ordServiceError :: Ord ServiceError
-
-instance showServiceError :: Show ServiceError where
-  show (APIError msg)               = "API Error: "           <> msg
-  show (ServiceValidationError msg) = "Validation Error: "    <> msg
-  show (NotFoundError msg)          = "Not Found: "           <> msg
-  show (AuthorizationError msg)     = "Authorization Error: " <> msg
-  show (NetworkError msg)           = "Network Error: "       <> msg
-  show (UnknownError msg)           = "Unknown Error: "       <> msg
+import Yoga.JSON (class ReadForeign, class WriteForeign, writeJSON)
 
 type URL = String
 
-apiBaseUrl :: String
-apiBaseUrl = currentConfig.apiBaseUrl
+-- What can go wrong with one request.
+--   Refused:     the server answered with a status outside 200 to 299. Carries
+--                the status and the response body as text.
+--   Unreachable: fetch itself failed (network, CORS, TLS).
+--   Undecodable: the server answered 2xx and the body did not decode.
+data ApiError
+  = Refused Int String
+  | Unreachable String
+  | Undecodable String
 
-runRequest :: forall a. String -> Aff a -> Aff (Either String a)
-runRequest label action = do
-  result <- attempt action
-  case result of
-    Left err -> do
-      let errorMsg = label <> " error: " <> show err
-      liftEffect $ Console.error errorMsg
-      pure $ Left errorMsg
-    Right value ->
-      pure $ Right value
+derive instance eqApiError :: Eq ApiError
 
--- All requests use credentials: Include so the browser sends the HttpOnly
--- session cookie. The cookieAuthMiddleware on the backend extracts the cookie
--- and injects Authorization: Bearer <real_token> before the handler runs.
--- The Authorization header with the userId UUID is kept as a fallback for
--- dev mode (USE_REAL_AUTH=false) where Auth.Simple.lookupUser accepts UUIDs.
+instance showApiError :: Show ApiError where
+  show (Refused code body) = "Refused " <> show code <> " " <> show body
+  show (Unreachable msg) = "Unreachable " <> show msg
+  show (Undecodable msg) = "Undecodable " <> show msg
 
-authGet
+status :: ApiError -> Maybe Int
+status = case _ of
+  Refused code _ -> Just code
+  _ -> Nothing
+
+-- True when the error is a refusal with exactly this status.
+isRefusal :: Int -> ApiError -> Boolean
+isRefusal code err = status err == Just code
+
+-- Text for showing to a person. A refusal shows the server's own message.
+describe :: ApiError -> String
+describe = case _ of
+  Refused code "" ->
+    "The server refused the request (HTTP " <> show code <> ")"
+  Refused _ body -> body
+  Unreachable msg -> "Could not reach the server: " <> msg
+  Undecodable msg -> "The server's answer could not be read: " <> msg
+
+-- The one place a request is sent. Authentication is the HttpOnly session
+-- cookie, so credentials are always included and no Authorization header is
+-- set. The status is checked before the body is decoded.
+request
   :: forall a
-   . ReadForeign a
-  => UserId
-  -> URL
-  -> Aff (Either String a)
-authGet token url =
-  runRequest ("GET " <> url) do
-    response <- fetch (apiBaseUrl <> url)
-      { method: GET
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    fromJSON response.json
-
-authGetFullUrl
-  :: forall a
-   . ReadForeign a
-  => UserId
+   . Method
   -> String
-  -> Aff (Either String a)
-authGetFullUrl token fullUrl =
-  runRequest ("GET " <> fullUrl) do
-    response <- fetch fullUrl
-      { method: GET
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    fromJSON response.json
+  -> Maybe String
+  -> (Aff Foreign -> Aff a)
+  -> Aff (Either ApiError a)
+request method fullUrl mBody decode = do
+  sent <- attempt case mBody of
+    Nothing ->
+      fetch fullUrl
+        { method
+        , headers: { "Accept": "application/json" }
+        , credentials: Include
+        }
+    Just body ->
+      fetch fullUrl
+        { method
+        , body
+        , headers:
+            { "Content-Type": "application/json"
+            , "Accept": "application/json"
+            }
+        , credentials: Include
+        }
+  case sent of
+    Left err ->
+      pure (Left (Unreachable (message err)))
+    Right response ->
+      if response.status >= 200 && response.status < 300 then do
+        decoded <- attempt (decode response.json)
+        pure case decoded of
+          Left err -> Left (Undecodable (message err))
+          Right value -> Right value
+      else do
+        body <- attempt response.text
+        pure case body of
+          Left _ -> Left (Refused response.status "")
+          Right text -> Left (Refused response.status text)
 
-authPost
+url :: URL -> String
+url path = currentConfig.apiBaseUrl <> path
+
+get :: forall a. ReadForeign a => URL -> Aff (Either ApiError a)
+get path = request GET (url path) Nothing fromJSON
+
+getAbsolute :: forall a. ReadForeign a => String -> Aff (Either ApiError a)
+getAbsolute fullUrl = request GET fullUrl Nothing fromJSON
+
+post
   :: forall req res
    . WriteForeign req
   => ReadForeign res
-  => UserId
-  -> URL
+  => URL
   -> req
-  -> Aff (Either String res)
-authPost token url body =
-  runRequest ("POST " <> url) do
-    response <- fetch (apiBaseUrl <> url)
-      { method: POST
-      , body: writeJSON body
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    fromJSON response.json
+  -> Aff (Either ApiError res)
+post path body = request POST (url path) (Just (writeJSON body)) fromJSON
 
-authPut
+postEmpty :: forall a. ReadForeign a => URL -> Aff (Either ApiError a)
+postEmpty path = request POST (url path) Nothing fromJSON
+
+-- For routes that answer with no body.
+postUnit :: URL -> Aff (Either ApiError Unit)
+postUnit path = request POST (url path) Nothing (\_ -> pure unit)
+
+put
   :: forall req res
    . WriteForeign req
   => ReadForeign res
-  => UserId
-  -> URL
+  => URL
   -> req
-  -> Aff (Either String res)
-authPut token url body =
-  runRequest ("PUT " <> url) do
-    response <- fetch (apiBaseUrl <> url)
-      { method: PUT
-      , body: writeJSON body
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    fromJSON response.json
+  -> Aff (Either ApiError res)
+put path body = request PUT (url path) (Just (writeJSON body)) fromJSON
 
-authDelete
-  :: forall a
-   . ReadForeign a
-  => UserId
-  -> URL
-  -> Aff (Either String a)
-authDelete token url =
-  runRequest ("DELETE " <> url) do
-    response <- fetch (apiBaseUrl <> url)
-      { method: DELETE
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    fromJSON response.json
+delete :: forall a. ReadForeign a => URL -> Aff (Either ApiError a)
+delete path = request DELETE (url path) Nothing fromJSON
 
-authDeleteUnit
-  :: UserId
-  -> URL
-  -> Aff (Either String Unit)
-authDeleteUnit token url =
-  runRequest ("DELETE " <> url) do
-    _ <- fetch (apiBaseUrl <> url)
-      { method: DELETE
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    pure unit
-
-authPostUnit
-  :: UserId
-  -> URL
-  -> Aff (Either String Unit)
-authPostUnit token url =
-  runRequest ("POST " <> url) do
-    _ <- fetch (apiBaseUrl <> url)
-      { method: POST
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    pure unit
-
-authPostEmpty
-  :: forall a
-   . ReadForeign a
-  => UserId
-  -> URL
-  -> Aff (Either String a)
-authPostEmpty token url =
-  runRequest ("POST " <> url) do
-    response <- fetch (apiBaseUrl <> url)
-      { method: POST
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    fromJSON response.json
-
-authPostChecked
-  :: forall req res
-   . WriteForeign req
-  => ReadForeign res
-  => UserId
-  -> URL
-  -> req
-  -> Aff (Either String res)
-authPostChecked token url body = do
-  result <- attempt do
-    response <- fetch (apiBaseUrl <> url)
-      { method: POST
-      , body: writeJSON body
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Origin":        currentConfig.appOrigin
-          , "Authorization": "Bearer " <> token
-          }
-      , credentials: Include
-      }
-    if response.status >= 200 && response.status < 300 then
-      fromJSON response.json
-    else do
-      errorText <- response.text
-      throwError
-        ( error $ "Server returned status " <> show response.status
-            <> ": " <> errorText
-        )
-  case result of
-    Left err -> do
-      liftEffect $ Console.error $ "POST " <> url <> " error: " <> show err
-      pure $ Left $ show err
-    Right value ->
-      pure $ Right value
+-- For routes that answer with no body.
+deleteUnit :: URL -> Aff (Either ApiError Unit)
+deleteUnit path = request DELETE (url path) Nothing (\_ -> pure unit)

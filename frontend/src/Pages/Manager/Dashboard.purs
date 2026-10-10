@@ -9,21 +9,19 @@ import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot, (<#~>))
-import FRP.Poll (Poll)
 import Pages.Manager.Panels.ActivityFeed (activityFeed)
 import Pages.Manager.Panels.AlertsPanel (alertsPanel)
 import Pages.Manager.Panels.ReportsPanel (reportsPanel)
 import Pages.Manager.Panels.StatsPanel (statsPanel)
 import Pages.Manager.State (ManagerTab(..), allManagerTabs)
-import Services.AuthService (AuthState, UserId)
 import Types.RemoteData (RemoteData(..))
 import UI.Remote (onMount, useRemote)
 import UI.Tabs (tabBar)
 
-page :: Poll AuthState -> UserId -> Nut
-page _authPoll userId = Deku.do
+page :: Nut
+page = Deku.do
   setTab /\ tabValue <- useHot TabActivity
-  activity <- useRemote Loading (getActivity userId)
+  activity <- useRemote Loading getActivity
 
   D.div
     [ DA.klass_ "manager-dashboard"
@@ -45,6 +43,6 @@ page _authPoll userId = Deku.do
         TabActivity -> activityFeed activity.value
         TabAlerts   -> alertsPanel  activity.value
         TabStats    -> statsPanel   activity.value
-        TabReports  -> reportsPanel userId
+        TabReports  -> reportsPanel
         TabOverride -> D.div_ [ text_ "Override panel — coming in Phase 8" ]
     ]

@@ -2,62 +2,45 @@ module API.Admin where
 
 import Prelude
 
+import API.Request (ApiError)
 import API.Request as Request
+import Config.Network (currentConfig)
 import Data.Either (Either)
-import Data.Maybe (Maybe)
 import Effect.Aff (Aff)
-import Services.AuthService (UserId)
 import Types.Admin (AdminAction, AdminSnapshot, DomainEventPage, LogPage, Register, SessionInfo, TransactionPage)
 import Types.Inventory (MutationResponse)
 import Types.UUID (UUID)
 
-getSnapshot :: UserId -> Aff (Either String AdminSnapshot)
-getSnapshot userId = Request.authGet userId "/admin/snapshot"
+getSnapshot :: Aff (Either ApiError AdminSnapshot)
+getSnapshot = Request.get "/admin/snapshot"
 
-getSessions :: UserId -> Aff (Either String (Array SessionInfo))
-getSessions userId = Request.authGet userId "/admin/sessions"
+getSessions :: Aff (Either ApiError (Array SessionInfo))
+getSessions = Request.get "/admin/sessions"
 
-revokeSession :: UserId -> UUID -> Aff (Either String Unit)
-revokeSession userId sessionId =
-  Request.authDeleteUnit userId ("/admin/sessions/" <> show sessionId)
+revokeSession :: UUID -> Aff (Either ApiError Unit)
+revokeSession sessionId =
+  Request.deleteUnit ("/admin/sessions/" <> show sessionId)
 
-getLogs
-  :: UserId
-  -> Maybe String  -- severity
-  -> Maybe String  -- component
-  -> Maybe String  -- traceId
-  -> Maybe Int     -- limit
-  -> Aff (Either String LogPage)
-getLogs userId _ _ _ _ =
-  Request.authGet userId "/admin/logs"
+getLogs :: Aff (Either ApiError LogPage)
+getLogs = Request.get "/admin/logs"
 
-getTransactions
-  :: UserId
-  -> Maybe String  -- status filter
-  -> Maybe Int     -- limit
-  -> Aff (Either String TransactionPage)
-getTransactions userId _ _ =
-  Request.authGet userId "/admin/transactions"
+getTransactions :: Aff (Either ApiError TransactionPage)
+getTransactions = Request.get "/admin/transactions"
 
-getRegisters :: UserId -> Aff (Either String (Array Register))
-getRegisters userId = Request.authGet userId "/admin/registers"
+getRegisters :: Aff (Either ApiError (Array Register))
+getRegisters = Request.get "/admin/registers"
 
-getDomainEvents
-  :: UserId
-  -> Maybe UUID    -- aggregateId
-  -> Maybe String  -- traceId
-  -> Aff (Either String DomainEventPage)
-getDomainEvents userId _ _ =
-  Request.authGet userId "/admin/domain-events"
+getDomainEvents :: Aff (Either ApiError DomainEventPage)
+getDomainEvents = Request.get "/admin/domain-events"
 
-performAction :: UserId -> AdminAction -> Aff (Either String MutationResponse)
-performAction userId action =
-  Request.authPost userId "/admin/actions" action
+performAction :: AdminAction -> Aff (Either ApiError MutationResponse)
+performAction action = Request.post "/admin/actions" action
 
-logStreamUrl :: String -> String -> String
-logStreamUrl apiBase token =
-  apiBase <> "/admin/logs/stream?authorization=" <> token
+-- The streams authenticate with the session cookie. Utils.SSE opens them
+-- with credentials, so the URL carries no credential.
 
-eventStreamUrl :: String -> String -> String
-eventStreamUrl apiBase token =
-  apiBase <> "/admin/events/stream?authorization=" <> token
+logStreamUrl :: String
+logStreamUrl = currentConfig.apiBaseUrl <> "/admin/logs/stream"
+
+eventStreamUrl :: String
+eventStreamUrl = currentConfig.apiBaseUrl <> "/admin/events/stream"

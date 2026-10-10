@@ -7,28 +7,25 @@ import Deku.Control (text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
-import Deku.Hooks ((<#~>))
-import FRP.Poll (Poll)
-import Services.AuthService (AuthState)
-import Types.Inventory (Inventory)
+import Deku.Do as Deku
+import GraphQL.API.Inventory (readInventoryGql)
+import Types.RemoteData (RemoteData(..))
 import UI.Inventory.MenuLiveView (renderInventory)
+import UI.Remote (RemoteView, onMount, standardView, useRemote, viewRemote)
 
-data InventoryLoadStatus
-  = InventoryLoading
-  | InventoryLoaded Inventory
-  | InventoryError String
+inventoryView :: RemoteView
+inventoryView = (standardView "Loading inventory...")
+  { failure = \err ->
+      D.div [ DA.klass_ "error-message" ] [ text_ $ "Error: " <> err ]
+  }
 
-page :: Poll AuthState -> Poll InventoryLoadStatus -> Nut
-page _authPoll inventoryStatus =
+-- The page reads the inventory itself when it is mounted.
+page :: Nut
+page = Deku.do
+  inventory <- useRemote Loading readInventoryGql
+
   D.div
-    [ DA.klass_ "page-container" ]
-    [ inventoryStatus <#~> case _ of
-        InventoryLoading ->
-          D.div [ DA.klass_ "loading-indicator" ]
-            [ text_ "Loading inventory..." ]
-        InventoryError err ->
-          D.div [ DA.klass_ "error-message" ]
-            [ text_ $ "Error: " <> err ]
-        InventoryLoaded inv ->
-          renderInventory defaultViewConfig inv
+    [ DA.klass_ "page-container"
+    , onMount inventory.reload
     ]
+    [ viewRemote inventoryView (renderInventory defaultViewConfig) inventory.value ]

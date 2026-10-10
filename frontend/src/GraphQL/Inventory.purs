@@ -7,42 +7,19 @@ module GraphQL.API.Inventory
 
 import Prelude
 
-import Data.Either (Either(..))
-import Effect.Aff (Aff, attempt)
-import Fetch (Method(..), RequestCredentials(..), fetch)
-import Fetch.Yoga.Json (fromJSON)
-import Config.Network (currentConfig)
-import Services.AuthService (UserId)
+import API.Request (ApiError)
+import API.Request as Request
+import Data.Either (Either)
+import Effect.Aff (Aff)
 import Types.Inventory (Inventory, MenuItem, MutationResponse)
 import Yoga.JSON (class ReadForeign, writeJSON)
 
 type GqlResponse a = { data :: a }
-type InventoryData = { inventory :: Inventory }
-type MutationData  = { result :: MutationResponse }
 
-gqlPost
-  :: forall a
-   . ReadForeign a
-  => UserId
-  -> String
-  -> Aff (Either String a)
-gqlPost userId query = do
-  result <- attempt do
-    response <- fetch (currentConfig.apiBaseUrl <> "/graphql/inventory")
-      { method: POST
-      , body: writeJSON { query }
-      , headers:
-          { "Content-Type":  "application/json"
-          , "Accept":        "application/json"
-          , "Authorization": "Bearer " <> userId
-          }
-      , credentials: Include
-      }
-    (r :: GqlResponse a) <- fromJSON response.json
-    pure r.data
-  pure $ case result of
-    Left err -> Left $ show err
-    Right v  -> Right v
+gqlPost :: forall a. ReadForeign a => String -> Aff (Either ApiError a)
+gqlPost query = do
+  result <- Request.post "/graphql/inventory" { query }
+  pure (result <#> \(r :: GqlResponse a) -> r.data)
 
 inventoryQuery :: String
 inventoryQuery = """
@@ -56,33 +33,25 @@ inventoryQuery = """
   } }
 """
 
-readInventoryGql :: UserId -> Aff (Either String Inventory)
-readInventoryGql userId = do
-  result <- gqlPost userId inventoryQuery
-  pure $ case result of
-    Left err             -> Left err
-    Right (d :: InventoryData) -> Right d.inventory
+readInventoryGql :: Aff (Either ApiError Inventory)
+readInventoryGql = do
+  result <- gqlPost inventoryQuery
+  pure (result <#> \(d :: { inventory :: Inventory }) -> d.inventory)
 
-writeInventoryGql :: UserId -> MenuItem -> Aff (Either String MutationResponse)
-writeInventoryGql userId item = do
-  result <- gqlPost userId
+writeInventoryGql :: MenuItem -> Aff (Either ApiError MutationResponse)
+writeInventoryGql item = do
+  result <- gqlPost
     ("mutation { createMenuItem(input: " <> writeJSON item <> ") { success message } }")
-  pure $ case result of
-    Left err -> Left err
-    Right (d :: { createMenuItem :: MutationResponse }) -> Right d.createMenuItem
+  pure (result <#> \(d :: { createMenuItem :: MutationResponse }) -> d.createMenuItem)
 
-updateInventoryGql :: UserId -> MenuItem -> Aff (Either String MutationResponse)
-updateInventoryGql userId item = do
-  result <- gqlPost userId
+updateInventoryGql :: MenuItem -> Aff (Either ApiError MutationResponse)
+updateInventoryGql item = do
+  result <- gqlPost
     ("mutation { updateMenuItem(input: " <> writeJSON item <> ") { success message } }")
-  pure $ case result of
-    Left err -> Left err
-    Right (d :: { updateMenuItem :: MutationResponse }) -> Right d.updateMenuItem
+  pure (result <#> \(d :: { updateMenuItem :: MutationResponse }) -> d.updateMenuItem)
 
-deleteInventoryGql :: UserId -> String -> Aff (Either String MutationResponse)
-deleteInventoryGql userId sku = do
-  result <- gqlPost userId
+deleteInventoryGql :: String -> Aff (Either ApiError MutationResponse)
+deleteInventoryGql sku = do
+  result <- gqlPost
     ("mutation { deleteMenuItem(sku: \"" <> sku <> "\") { success message } }")
-  pure $ case result of
-    Left err -> Left err
-    Right (d :: { deleteMenuItem :: MutationResponse }) -> Right d.deleteMenuItem
+  pure (result <#> \(d :: { deleteMenuItem :: MutationResponse }) -> d.deleteMenuItem)

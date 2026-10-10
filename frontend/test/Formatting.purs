@@ -2,6 +2,11 @@ module Test.Formatting where
 
 import Prelude
 
+import Data.Date (canonicalDate)
+import Data.DateTime (DateTime(..))
+import Data.Enum (toEnum)
+import Data.Maybe (Maybe(..))
+import Data.Time (Time(..))
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
 import Utils.Formatting
@@ -9,6 +14,7 @@ import Utils.Formatting
   , formatCentsToDollars
   , formatCentsToDecimal
   , formatCentsToDisplayDollars
+  , formatDateTime
   , formatDollarAmount
   , ensureNumber
   , ensureInt
@@ -44,6 +50,12 @@ spec = describe "Utils.Formatting" do
       formatCentsToDollars 1 `shouldEqual` "0.01"
     it "formats large amount" do
       formatCentsToDollars 10000 `shouldEqual` "100.00"
+    it "keeps the sign of a negative amount" do
+      formatCentsToDollars (-250) `shouldEqual` "-2.50"
+    it "keeps the sign of a negative amount under a dollar" do
+      formatCentsToDollars (-5) `shouldEqual` "-0.05"
+    it "formats a negative whole dollar" do
+      formatCentsToDollars (-100) `shouldEqual` "-1.00"
 
   describe "formatCentsToDecimal" do
     it "formats zero" do
@@ -101,9 +113,23 @@ spec = describe "Utils.Formatting" do
     it "truncates long text with ellipsis" do
       let longText = "This is a very long description that goes on and on and on and on and on and should be truncated at some point because it exceeds the maximum length"
       let result = summarizeLongText longText
-      -- Should be at most 103 chars (100 + "...")
+
       (result /= longText) `shouldEqual` true
     it "replaces newlines with spaces" do
       summarizeLongText "line1\nline2" `shouldEqual` "line1 line2"
     it "condenses multiple spaces" do
       summarizeLongText "too   many    spaces" `shouldEqual` "too many spaces"
+
+  describe "formatDateTime" do
+    it "writes a UTC time with padded month, day, hour and minute" do
+      let
+        made = do
+          y <- toEnum 2026
+          m <- toEnum 3
+          d <- toEnum 7
+          h <- toEnum 9
+          mi <- toEnum 4
+          sec <- toEnum 0
+          ms <- toEnum 0
+          pure (DateTime (canonicalDate y m d) (Time h mi sec ms))
+      (formatDateTime <$> made) `shouldEqual` Just "2026-03-07 09:04 UTC"

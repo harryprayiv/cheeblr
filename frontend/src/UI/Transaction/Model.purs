@@ -13,6 +13,9 @@ module UI.Transaction.Model
   , paidCents
   , remainingCents
   , isOpen
+  , canResume
+  , voidable
+  , refundable
   , finalizeBlockers
   ) where
 
@@ -29,14 +32,6 @@ import Types.Transaction (TransactionStatus(..))
 import Types.UUID (UUID)
 import Utils.Formatting (formatCentsToDollars)
 
--- The pure half of the transaction screen. Nothing here touches the DOM or
--- the network. The sale itself is never edited locally: after every change
--- the screen refetches it from the backend, and these functions only read it.
--- Sale and item arguments use open record rows so the functions accept the
--- full Sale.SaleTransaction and tests can pass small records.
-
--- Which request, if any, is running. Buttons are disabled while it is not
--- Idle, so two requests cannot overlap.
 data Activity
   = Idle
   | AddingItem
@@ -63,13 +58,11 @@ activityLabel = case _ of
   Finalizing -> "Finalizing transaction..."
   StartingSale -> "Starting a new sale..."
 
--- category Nothing means every category.
 type Filters =
   { search :: String
   , category :: Maybe ItemCategory
   }
 
--- All amounts in cents.
 type Totals =
   { subtotal :: Int
   , discount :: Int
@@ -77,13 +70,10 @@ type Totals =
   , total :: Int
   }
 
--- The categories that have at least one item, in enum order.
 categoriesIn :: Inventory -> Array ItemCategory
 categoriesIn (Inventory items) =
   sort (nub (items <#> \(MenuItem i) -> i.category))
 
--- The inventory rows to show for the current filters. Search matches the
--- item name, ignoring case and surrounding spaces.
 visibleItems :: Filters -> Inventory -> Array MenuItem
 visibleItems filters (Inventory items) =
   filter (\item -> inCategory item && matchesSearch item) items
@@ -97,8 +87,6 @@ visibleItems filters (Inventory items) =
   matchesSearch (MenuItem i) =
     needle == "" || contains (Pattern needle) (toLower i.name)
 
--- Units of one SKU in the cart, summed across lines in case the backend
--- keeps more than one line for the same SKU.
 quantityInCart
   :: forall r
    . UUID
@@ -111,15 +99,9 @@ quantityInCart sku items =
         # map (\i -> saleQuantityCount i.itemQuantity)
     )
 
--- How many more units can be added, going by the inventory the screen last
--- fetched. The backend reports each item's quantity with every open
--- reservation already subtracted, this cart's included, so nothing is
--- subtracted again here. The backend makes the real decision when the item
--- is added.
 availableToAdd :: MenuItem -> Int
 availableToAdd (MenuItem i) = max 0 i.quantity
 
--- Why an add would be refused before asking the backend, or Nothing.
 addBlocker :: Int -> MenuItem -> Maybe String
 addBlocker requested item =
   let
@@ -150,7 +132,6 @@ totals sale =
 paidCents :: forall r. Array { paymentAmount :: SaleMoney | r } -> Int
 paidCents payments = sum (payments <#> \p -> saleMoneyCents p.paymentAmount)
 
--- Still owed, never below zero.
 remainingCents
   :: forall r rp
    . { saleTotal :: SaleMoney
@@ -161,7 +142,6 @@ remainingCents
 remainingCents sale =
   max 0 (saleMoneyCents sale.saleTotal - paidCents sale.salePayments)
 
--- A sale that can still take items and payments.
 isOpen :: TransactionStatus -> Boolean
 isOpen = case _ of
   Created -> true
@@ -170,9 +150,40 @@ isOpen = case _ of
   Voided -> false
   Refunded -> false
 
--- Every reason the sale cannot be finalized right now. An empty array means
--- the Process Payment button is enabled. The screen lists these in its
--- status panel.
+-- Whether the sale page may continue a sale it finds remembered in the
+-- browser: the sale is still open, this user opened it, and it was opened on
+-- the register this browser now sells on. The backend enforces the first
+-- two on every write (409 and 403).
+canResume
+  :: forall r
+   . UUID
+  -> UUID
+  -> { saleStatus :: TransactionStatus
+     , saleEmployeeId :: UUID
+     , saleRegisterId :: UUID
+     | r
+     }
+  -> Boolean
+canResume userId registerId sale =
+  isOpen sale.saleStatus
+    && sale.saleEmployeeId == userId
+    && sale.saleRegisterId == registerId
+
+-- The backend voids a sale that is open or completed. It refuses (409) a
+-- sale that is already voided or was refunded.
+voidable :: TransactionStatus -> Boolean
+voidable = case _ of
+  Created -> true
+  InProgress -> true
+  Completed -> true
+  Voided -> false
+  Refunded -> false
+
+-- The backend refunds a completed sale, once. Every other status is
+-- refused (409).
+refundable :: TransactionStatus -> Boolean
+refundable = (_ == Completed)
+
 finalizeBlockers
   :: forall r ri rp
    . { saleStatus :: TransactionStatus
@@ -201,3 +212,4 @@ finalizeBlockers sale =
     if not (null sale.saleItems) && remaining > 0 then
       [ "Payment is short by $" <> formatCentsToDollars remaining ]
     else []
+

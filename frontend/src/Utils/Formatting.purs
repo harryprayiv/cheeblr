@@ -5,7 +5,9 @@ import Prelude
 import Data.Array (length) as Array
 import Data.Either (Either(..))
 import Data.Enum (class BoundedEnum, fromEnum, toEnum)
-import Data.Int (fromString, toNumber) as Int
+import Data.Ord (abs)
+import Data.DateTime (DateTime, date, day, hour, minute, month, time, year)
+import Data.Int (fromString, quot, rem, toNumber) as Int
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Number (fromString) as Number
 import Data.String (Pattern(..), split, take, trim)
@@ -60,20 +62,22 @@ formatCentsToDisplayDollars centsStr =
         dollars = Int.toNumber cents / 100.0
       in
         show dollars
-    Nothing -> centsStr -- If not a valid number, return as is
+    Nothing -> centsStr
 
+-- Cents as dollars with two decimals. A negative amount keeps its sign:
+-- -250 gives "-2.50" and -5 gives "-0.05".
 formatCentsToDollars :: Int -> String
 formatCentsToDollars cents =
   let
-    dollars = cents / 100
-    centsRemaining = cents `mod` 100
+    dollars = Int.quot cents 100
+    centsRemaining = abs (Int.rem cents 100)
     centsStr =
       if centsRemaining < 10 then "0" <> show centsRemaining
       else show centsRemaining
+    sign = if cents < 0 && dollars == 0 then "-" else ""
   in
-    show dollars <> "." <> centsStr
+    sign <> show dollars <> "." <> centsStr
 
--- Converts Int cents to a dollar amount (for form fields)
 formatCentsToDecimal :: Int -> String
 formatCentsToDecimal cents =
   let
@@ -105,3 +109,22 @@ summarizeLongText desc =
       else condensedSpaces
   in
     truncated
+
+-- A UTC time as "2026-10-10 15:04 UTC". Times from the backend are UTC.
+formatDateTime :: DateTime -> String
+formatDateTime dt =
+  let
+    d = date dt
+    t = time dt
+    two n = if n < 10 then "0" <> show n else show n
+  in
+    show (fromEnum (year d))
+      <> "-"
+      <> two (fromEnum (month d))
+      <> "-"
+      <> two (fromEnum (day d))
+      <> " "
+      <> two (fromEnum (hour t))
+      <> ":"
+      <> two (fromEnum (minute t))
+      <> " UTC"

@@ -3,6 +3,7 @@ module UI.Inventory.DeleteItem where
 import Prelude
 
 import API.Inventory (deleteInventory)
+import API.Request as Request
 import Data.Either (Either(..))
 import Data.Tuple.Nested ((/\))
 import Deku.Control (text, text_)
@@ -15,10 +16,9 @@ import Deku.Hooks (useState, (<#~>))
 import Effect.Aff (launchAff)
 import Effect.Class (liftEffect)
 import Effect.Class.Console as Console
-import Services.AuthService (UserId)
 
-deleteItem :: UserId -> String -> String -> Nut
-deleteItem userId itemId itemName = Deku.do
+deleteItem :: String -> String -> Nut
+deleteItem itemId itemName = Deku.do
   setStatusMessage /\ statusMessageEvent <- useState ""
   setSubmitting /\ submittingEvent <- useState false
   setSuccess /\ successEvent <- useState false
@@ -48,7 +48,7 @@ deleteItem userId itemId itemName = Deku.do
             , DL.click_ \_ -> do
                 setSubmitting true
                 void $ setFiber =<< launchAff do
-                  result <- deleteInventory userId itemId
+                  result <- deleteInventory itemId
                   liftEffect $ case result of
                     Right { success: true, message: msg } -> do
                       Console.log $ "Deletion successful: " <> msg
@@ -60,8 +60,8 @@ deleteItem userId itemId itemName = Deku.do
                       setStatusMessage $ "Error: " <> msg
                       setSubmitting false
                     Left err -> do
-                      Console.error $ "Failed to delete item: " <> err
-                      setStatusMessage $ "Error: " <> err
+                      Console.error $ "Failed to delete item: " <> show err
+                      setStatusMessage $ "Error: " <> Request.describe err
                       setSubmitting false
             ]
             [ text $ map
@@ -103,6 +103,6 @@ deleteItem userId itemId itemName = Deku.do
         ]
     ]
 
-renderDeleteConfirmation :: UserId -> String -> String -> Nut
-renderDeleteConfirmation userId itemId itemName =
-  deleteItem userId itemId itemName
+renderDeleteConfirmation :: String -> String -> Nut
+renderDeleteConfirmation = deleteItem
+

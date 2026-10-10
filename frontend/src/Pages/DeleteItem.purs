@@ -2,30 +2,28 @@ module Pages.DeleteItem where
 
 import Prelude
 
-import Deku.Control (text_)
+import API.Inventory (readInventory)
+import Data.Maybe (Maybe(..))
 import Deku.Core (Nut)
 import Deku.DOM as D
-import Deku.DOM.Attributes as DA
-import Deku.Hooks ((<#~>))
-import FRP.Poll (Poll)
-import Services.AuthService (AuthState, UserId)
+import Deku.Do as Deku
+import Pages.EditItem (findItem, itemView, resolveSku)
+import Types.Inventory (MenuItem(..))
+import Types.RemoteData (RemoteData(..))
 import UI.Inventory.DeleteItem (renderDeleteConfirmation)
 import UI.Inventory.ItemForm (renderError)
+import UI.Remote (onMount, useRemote, viewRemote)
 
-data DeleteItemStatus
-  = DeleteLoading
-  | DeleteReady String String  -- itemId, itemName
-  | DeleteNotFound String
-  | DeleteError String
+-- The page reads the inventory itself when it is mounted and asks for
+-- confirmation before deleting the item whose SKU is in the route.
+page :: String -> Nut
+page rawSku = Deku.do
+  inventory <- useRemote Loading readInventory
+  let sku = resolveSku rawSku
 
-page :: Poll AuthState -> UserId -> Poll DeleteItemStatus -> Nut
-page _authPoll userId deleteStatus =
-  deleteStatus <#~> case _ of
-    DeleteLoading ->
-      D.div [ DA.klass_ "loading-indicator" ] [ text_ "Loading item..." ]
-    DeleteReady itemId itemName ->
-      renderDeleteConfirmation userId itemId itemName
-    DeleteNotFound uuid ->
-      renderError $ "Item with UUID " <> uuid <> " not found"
-    DeleteError msg ->
-      renderError msg
+  D.div [ onMount inventory.reload ]
+    [ inventory.value # viewRemote itemView \found ->
+        case findItem sku found of
+          Just (MenuItem item) -> renderDeleteConfirmation sku item.name
+          Nothing -> renderError $ "Item with UUID " <> sku <> " not found"
+    ]

@@ -3,6 +3,9 @@ module UI.Transaction.CreateTransaction where
 import Prelude
 
 import API.Inventory (fetchInventory)
+import API.Request (ApiError)
+import API.Request as Request
+import API.Sale as SaleApi
 import Config.LiveView (defaultViewConfig)
 import Data.Array (null)
 import Data.Either (Either(..), either)
@@ -17,7 +20,7 @@ import Deku.Hooks (useHot, (<#~>))
 import Effect (Effect)
 import Effect.Aff (Aff, launchAff_)
 import Effect.Class (liftEffect)
-import Services.AuthService (UserId)
+import Services.CurrentSale as CurrentSale
 import Services.SaleActions as SaleActions
 import Types.Inventory (Inventory, MenuItem(..))
 import Types.Register (Register)
@@ -49,39 +52,41 @@ statusClass = case _ of
   Voided     -> "voided"
   Refunded   -> "refunded"
 
--- The transaction page body. It holds which sale is on screen. Starting a
--- new sale swaps that value, which rebuilds saleScreen from scratch, so the
--- filters, the payment form and the status message all start clean for the
--- next customer.
+-- A 409 means the backend decided against the write from the sale's current
+-- state. A 404 means a sale, line or payment on screen is gone. In both
+-- cases the copy of the sale on screen may be out of date.
+saleIsStale :: ApiError -> Boolean
+saleIsStale err = Request.isRefusal 409 err || Request.isRefusal 404 err
+
 createTransaction
-  :: UserId
-  -> RemoteData Inventory
+  :: RemoteData Inventory
   -> Sale.SaleTransaction
   -> Register
   -> Nut
-createTransaction userId initialInventory initialSale register = Deku.do
+createTransaction initialInventory initialSale register = Deku.do
   setCurrent /\ currentV <- useHot initialSale
   currentV <#~> \sale ->
-    saleScreen userId initialInventory sale register setCurrent
+    saleScreen initialInventory sale register setCurrent
 
--- The screen for one sale. It owns four pieces of state: the sale as the
--- backend last returned it, the inventory, which request is running, and the
--- last status message. Every action goes through perform, which runs the
--- request, replaces the sale with the backend's answer and refreshes the
--- inventory. The inventory is also refreshed when the screen is built.
+-- The screen holds the sale as the backend last returned it. It never edits
+-- the sale locally and computes no money.
+--
+-- After a refused write the backend's message is shown. When the refusal
+-- says the sale on screen is stale, the sale is read again. The inventory
+-- is read again after every write, accepted or refused, because a refused
+-- add usually means the stock figure on screen is stale.
 saleScreen
-  :: UserId
-  -> RemoteData Inventory
+  :: RemoteData Inventory
   -> Sale.SaleTransaction
   -> Register
   -> (Sale.SaleTransaction -> Effect Unit)
   -> Nut
-saleScreen userId initialInventory initialSale register replaceSale = Deku.do
+saleScreen initialInventory initialSale register replaceSale = Deku.do
   setSale /\ saleV <- useHot initialSale
   setActivity /\ activityV <- useHot Idle
   setMessage /\ messageV <- useHot ""
   inventory <- useRemote initialInventory $
-    fetchInventory userId defaultViewConfig.fetchConfig defaultViewConfig.mode
+    fetchInventory defaultViewConfig.fetchConfig defaultViewConfig.mode
   form <- runFormWith paymentStyle paymentForm
 
   let
@@ -91,57 +96,63 @@ saleScreen userId initialInventory initialSale register replaceSale = Deku.do
       :: Activity
       -> String
       -> Effect Unit
-      -> Aff (Either String Sale.SaleTransaction)
+      -> Aff (Either ApiError Sale.SaleTransaction)
       -> Effect Unit
     perform activity doneMessage onDone request = do
       setActivity activity
       setMessage ""
       launchAff_ do
         result <- request
-        liftEffect do
-          case result of
-            Right sale -> do
+        case result of
+          Right sale ->
+            liftEffect do
               setSale sale
               setMessage doneMessage
               onDone
-            Left err ->
-              setMessage ("Error: " <> err)
+          Left err -> do
+            liftEffect $ setMessage ("Error: " <> Request.describe err)
+            when (saleIsStale err) do
+              fresh <- SaleApi.getSale saleId
+              liftEffect case fresh of
+                Right sale -> setSale sale
+                Left _ -> pure unit
+        liftEffect do
           setActivity Idle
           inventory.refresh
 
     addItem menuItem@(MenuItem item) quantity =
       perform AddingItem ("Added " <> item.name <> " to cart") (pure unit)
-        (SaleActions.addItem userId saleId menuItem quantity)
+        (SaleActions.addItem saleId menuItem quantity)
 
     removeItem itemId =
       perform RemovingItem "Item removed" (pure unit)
-        (SaleActions.removeItem userId saleId itemId)
+        (SaleActions.removeItem itemId)
 
     addPayment input =
       perform AddingPayment "Payment added to transaction" form.reset
-        (SaleActions.addPayment userId saleId input)
+        (SaleActions.addPayment saleId input)
 
     removePayment paymentId =
       perform RemovingPayment "Payment removed" (pure unit)
-        (SaleActions.removePayment userId saleId paymentId)
+        (SaleActions.removePayment paymentId)
 
     clear =
       perform Clearing "Cart cleared" form.reset
-        (SaleActions.clear userId saleId)
+        (SaleActions.clear saleId)
 
     finalize =
       perform Finalizing "Transaction completed successfully" form.reset
-        (SaleActions.finalize userId saleId)
+        (SaleActions.finalize saleId)
 
     newSale = do
       setActivity StartingSale
       setMessage ""
       launchAff_ do
-        result <- SaleActions.startNext userId initialSale
+        result <- CurrentSale.startNext initialSale
         liftEffect case result of
           Right fresh -> replaceSale fresh
           Left err -> do
-            setMessage ("Error: " <> err)
+            setMessage ("Error: " <> Request.describe err)
             setActivity Idle
 
     issues =
@@ -238,3 +249,4 @@ saleScreen userId initialInventory initialSale register replaceSale = Deku.do
             ]
         ]
     ]
+

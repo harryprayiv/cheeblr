@@ -2,7 +2,7 @@ module Route where
 
 import Prelude hiding ((/))
 
-import API.Auth (logout)
+import Data.Array (filter)
 import Data.Generic.Rep (class Generic)
 import Data.Show.Generic (genericShow)
 import Deku.Control (text_)
@@ -12,13 +12,12 @@ import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Hooks ((<#~>))
 import Effect (Effect)
-import Effect.Aff (launchAff_)
-import Effect.Class (liftEffect)
 import FRP.Poll (Poll)
 import Routing.Duplex (RouteDuplex', root, segment, string)
 import Routing.Duplex.Generic as G
 import Routing.Duplex.Generic.Syntax ((/))
-import Services.AuthService (AuthState(..), clearToken)
+import Services.AuthService (AuthState(..))
+import Types.Auth (UserCapabilities)
 
 data Route
   = Login
@@ -27,6 +26,7 @@ data Route
   | Delete String
   | CreateTransaction
   | TransactionHistory
+  | Registers
   | Edit String
   | Admin
   | Manager
@@ -49,54 +49,103 @@ route = root $ G.sum
   , "Delete":             "delete"      / (string segment)
   , "CreateTransaction":  "transaction" / "create"  / G.noArgs
   , "TransactionHistory": "transaction" / "history" / G.noArgs
+  , "Registers":          "register"    / G.noArgs
   , "Admin":              "admin"       / G.noArgs
   , "Manager":            "manager"     / G.noArgs
   , "Stock":              "stock"       / G.noArgs
   , "Feed":               "feed"        / G.noArgs
   }
 
-nav
-  :: Poll Route
-  -> Poll AuthState
-  -> (AuthState -> Effect Unit)
-  -> Nut
-nav currentRoute authPoll pushAuth =
+type NavLink =
+  { route :: Route
+  , href :: String
+  , label :: String
+  , allowed :: UserCapabilities -> Boolean
+  }
+
+-- Each link is shown only to a user whose capabilities, as the backend sent
+-- them, pass the same check the backend applies to that area. This decides
+-- what is shown. The backend decides every request.
+navLinks :: Array NavLink
+navLinks =
+  [ { route: LiveView
+    , href: "/#/"
+    , label: "LiveView"
+    , allowed: _.capCanViewInventory
+    }
+  , { route: Create
+    , href: "/#/create"
+    , label: "Create Item"
+    , allowed: _.capCanCreateItem
+    }
+  , { route: CreateTransaction
+    , href: "/#/transaction/create"
+    , label: "New Transaction"
+    , allowed: _.capCanProcessTransaction
+    }
+  , { route: TransactionHistory
+    , href: "/#/transaction/history"
+    , label: "Sales"
+    , allowed: _.capCanProcessTransaction
+    }
+  , { route: Registers
+    , href: "/#/register"
+    , label: "Registers"
+    , allowed: \caps -> caps.capCanOpenRegister || caps.capCanManageRegisters
+    }
+  , { route: Admin
+    , href: "/#/admin"
+    , label: "Admin"
+    , allowed: _.capCanViewAdminDashboard
+    }
+  , { route: Manager
+    , href: "/#/manager"
+    , label: "Manager"
+    , allowed: _.capCanViewReports
+    }
+  , { route: Stock
+    , href: "/#/stock"
+    , label: "Stock Room"
+    , allowed: _.capCanFulfillOrders
+    }
+  , { route: Feed
+    , href: "/#/feed"
+    , label: "Feed"
+    , allowed: const true
+    }
+  ]
+
+visibleLinks :: UserCapabilities -> Array NavLink
+visibleLinks caps = filter (\link -> link.allowed caps) navLinks
+
+nav :: Poll Route -> Poll AuthState -> Effect Unit -> Nut
+nav currentRoute authPoll signOut =
   D.nav [ DA.klass_ "navbar" ]
     [ D.div [ DA.klass_ "container" ]
-        [ D.div
-            [ DA.klass_ "nav" ]
-            [ navItem LiveView          "/#/"                   "LiveView"        currentRoute
-            , navItem Create            "/#/create"             "Create Item"     currentRoute
-            , navItem CreateTransaction "/#/transaction/create" "New Transaction" currentRoute
-            , authPoll <#~> authButton
-            , navItem Admin   "/#/admin"   "Admin"      currentRoute
-            , navItem Manager "/#/manager" "Manager"    currentRoute
-            , navItem Stock   "/#/stock"   "Stock Room" currentRoute
-            , navItem Feed    "/#/feed"    "Feed"       currentRoute
-            ]
+        [ authPoll <#~> \auth ->
+            D.div [ DA.klass_ "nav" ] case auth of
+              SignedOut ->
+                [ D.a
+                    [ DA.href_ "/#/login"
+                    , DA.klass_ "nav-link nav-auth-link"
+                    ]
+                    [ text_ "Login" ]
+                ]
+              SignedIn user ->
+                ( visibleLinks user.sessionCapabilities <#> \link ->
+                    navItem link.route link.href link.label currentRoute
+                )
+                  <>
+                    [ D.span [ DA.klass_ "nav-user" ]
+                        [ text_ user.sessionUserName ]
+                    , D.button
+                        [ DA.klass_ "nav-link nav-auth-link nav-logout-btn"
+                        , DL.click_ \_ -> signOut
+                        ]
+                        [ text_ "Logout" ]
+                    ]
         ]
     ]
-  where
-  authButton :: AuthState -> Nut
-  authButton SignedOut =
-    D.a
-      [ DA.href_  "/#/login"
-      , DA.klass_ "nav-link nav-auth-link"
-      ]
-      [ text_ "Login" ]
-  authButton (SignedIn _ _) =
-    D.button
-      [ DA.klass_ "nav-link nav-auth-link nav-logout-btn"
-      , DL.click_ \_ ->
-          launchAff_ do
-            -- The browser sends the HttpOnly cookie automatically.
-            -- No token needs to be read from localStorage.
-            void logout
-            liftEffect do
-              clearToken
-              pushAuth SignedOut
-      ]
-      [ text_ "Logout" ]
 
 navItem :: Route -> String -> String -> Poll Route -> Nut
 navItem thisRoute href label currentRoute =

@@ -11,7 +11,7 @@ import Types.Primitives.Money (SaleMoney, unsafeMkSaleMoney)
 import Types.Primitives.Quantity (SaleQuantity, unsafeMkSaleQuantity)
 import Types.Transaction (TransactionStatus(..))
 import Types.UUID (UUID(..))
-import UI.Transaction.Model (Activity(..), activityLabel, addBlocker, availableToAdd, categoriesIn, finalizeBlockers, isBusy, isOpen, paidCents, quantityInCart, remainingCents, totals, visibleItems)
+import UI.Transaction.Model (Activity(..), activityLabel, addBlocker, availableToAdd, canResume, categoriesIn, finalizeBlockers, isBusy, isOpen, paidCents, quantityInCart, refundable, remainingCents, totals, visibleItems, voidable)
 
 skuA :: UUID
 skuA = UUID "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
@@ -182,3 +182,56 @@ spec = describe "UI.Transaction.Model" do
     it "reports a completed sale and nothing else" $
       finalizeBlockers (sale Completed [ line skuA 2 ] [])
         `shouldEqual` [ "Transaction is already completed" ]
+
+  describe "canResume" do
+    let
+      me = skuA
+      someoneElse = skuB
+      thisRegister = skuC
+      otherRegister = skuB
+      remembered status employee register =
+        { saleStatus: status
+        , saleEmployeeId: employee
+        , saleRegisterId: register
+        }
+    it "continues my open sale on this register" $
+      canResume me thisRegister (remembered InProgress me thisRegister)
+        `shouldEqual` true
+    it "continues my sale that has no lines yet" $
+      canResume me thisRegister (remembered Created me thisRegister)
+        `shouldEqual` true
+    it "does not continue a completed sale" $
+      canResume me thisRegister (remembered Completed me thisRegister)
+        `shouldEqual` false
+    it "does not continue a voided sale" $
+      canResume me thisRegister (remembered Voided me thisRegister)
+        `shouldEqual` false
+    it "does not continue a refunded sale" $
+      canResume me thisRegister (remembered Refunded me thisRegister)
+        `shouldEqual` false
+    it "does not continue another employee's sale" $
+      canResume me thisRegister (remembered InProgress someoneElse thisRegister)
+        `shouldEqual` false
+    it "does not continue a sale opened on another register" $
+      canResume me thisRegister (remembered InProgress me otherRegister)
+        `shouldEqual` false
+
+  describe "voidable" do
+    it "an open sale can be voided" do
+      voidable Created `shouldEqual` true
+      voidable InProgress `shouldEqual` true
+    it "a completed sale can be voided" $
+      voidable Completed `shouldEqual` true
+    it "a voided sale cannot be voided again" $
+      voidable Voided `shouldEqual` false
+    it "a refunded sale cannot be voided" $
+      voidable Refunded `shouldEqual` false
+
+  describe "refundable" do
+    it "only a completed sale can be refunded" do
+      refundable Completed `shouldEqual` true
+      refundable Created `shouldEqual` false
+      refundable InProgress `shouldEqual` false
+      refundable Voided `shouldEqual` false
+    it "a refunded sale cannot be refunded again" $
+      refundable Refunded `shouldEqual` false

@@ -3,15 +3,15 @@ module Pages.Manager.Panels.AlertsPanel where
 import Prelude
 
 import Data.Array (null)
-import Data.Maybe (Maybe, fromMaybe)
 import Deku.Control (text_)
 import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
 import FRP.Poll (Poll)
-import Types.Manager (ActivitySummary)
+import Types.Manager (ActivitySummary, ManagerAlert(..))
 import Types.RemoteData (RemoteData)
 import UI.Remote (quietView, viewRemote)
+import Utils.Formatting (formatCentsToDollars)
 
 alertsPanel :: Poll (RemoteData ActivitySummary) -> Nut
 alertsPanel =
@@ -25,29 +25,33 @@ alertsPanel =
                   (map renderAlert alerts)
               ]
 
-renderAlert :: { tag :: String, name :: Maybe String, quantity :: Maybe Int, elapsed :: Maybe Int, variance :: Maybe Int | _ } -> Nut
+renderAlert :: ManagerAlert -> Nut
 renderAlert alert =
-  D.div [ DA.klass_ $ "alert-card " <> alertClass alert.tag ]
-    [ D.div [ DA.klass_ "alert-tag" ] [ text_ (alertLabel alert.tag) ]
-    , D.div [ DA.klass_ "alert-detail" ] [ text_ (alertDetail alert) ]
+  D.div [ DA.klass_ $ "alert-card " <> shown.klass ]
+    [ D.div [ DA.klass_ "alert-tag" ] [ text_ shown.label ]
+    , D.div [ DA.klass_ "alert-detail" ] [ text_ shown.detail ]
     ]
   where
-  alertClass "LowInventoryAlert"     = "alert-warning"
-  alertClass "StaleTransactionAlert" = "alert-info"
-  alertClass "RegisterVarianceAlert" = "alert-danger"
-  alertClass _                       = ""
+  shown = case alert of
+    LowInventoryAlert a ->
+      { klass: "alert-warning"
+      , label: "Low Stock"
+      , detail: a.name <> ": " <> show a.quantity
+          <> " remaining (alert at " <> show a.threshold <> " or fewer)"
+      }
+    StaleTransactionAlert a ->
+      { klass: "alert-info"
+      , label: "Stale Transaction"
+      , detail: "Sale " <> show a.saleId <> " has been open for "
+          <> show a.elapsedSecs <> "s"
+      }
+    RegisterVarianceAlert a ->
+      { klass: "alert-danger"
+      , label: "Register Variance"
+      , detail: "Register " <> show a.registerId <> ": " <> variance a.variance
+      }
 
-  alertLabel "LowInventoryAlert"     = "Low Stock"
-  alertLabel "StaleTransactionAlert" = "Stale Transaction"
-  alertLabel "RegisterVarianceAlert" = "Register Variance"
-  alertLabel t                       = t
-
-  alertDetail a = case a.tag of
-    "LowInventoryAlert"     ->
-      fromMaybe "Unknown item" a.name <>
-      " — " <> show (fromMaybe 0 a.quantity) <> " remaining"
-    "StaleTransactionAlert" ->
-      "Open for " <> show (fromMaybe 0 a.elapsed) <> "s"
-    "RegisterVarianceAlert" ->
-      "Variance: $" <> show (fromMaybe 0 a.variance)
-    _ -> ""
+  -- Expected minus counted. A positive figure means cash is missing.
+  variance cents =
+    if cents >= 0 then "short by $" <> formatCentsToDollars cents
+    else "over by $" <> formatCentsToDollars (negate cents)

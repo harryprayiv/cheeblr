@@ -9,20 +9,19 @@ import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot, (<#~>))
-import FRP.Poll (Poll)
 import Pages.Admin.State (AdminTab(..), allTabs)
 import Pages.Admin.Tabs.FeedMonitor (feedMonitor)
 import Pages.Admin.Tabs.LogViewer (logViewer)
 import Pages.Admin.Tabs.Overview (overview)
-import Services.AuthService (AuthState, UserId)
 import Types.RemoteData (RemoteData(..))
+import UI.Leave (OnLeave)
 import UI.Remote (onMount, useRemote)
 import UI.Tabs (tabBar)
 
-page :: Poll AuthState -> UserId -> Nut
-page _authPoll userId = Deku.do
+page :: OnLeave -> Nut
+page onLeave = Deku.do
   setTab /\ tabValue <- useHot TabOverview
-  snapshot <- useRemote Loading (getSnapshot userId)
+  snapshot <- useRemote Loading getSnapshot
 
   D.div
     [ DA.klass_ "admin-dashboard"
@@ -41,8 +40,8 @@ page _authPoll userId = Deku.do
 
     , tabValue <#~> case _ of
         TabOverview     -> overview snapshot.value
-        TabLogViewer    -> logViewer userId
-        TabFeedMonitor  -> feedMonitor userId
+        TabLogViewer    -> logViewer onLeave
+        TabFeedMonitor  -> feedMonitor onLeave
         TabEventStream  -> D.div_ [ text_ "Event stream — coming soon" ]
         TabTransactions -> D.div_ [ text_ "Transactions — coming soon" ]
         TabSessions     -> D.div_ [ text_ "Sessions — coming soon" ]

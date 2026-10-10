@@ -8,6 +8,7 @@ module UI.Inventory.ItemForm
 import Prelude
 
 import API.Inventory (writeInventory, updateInventory)
+import API.Request as Request
 import Data.Either (Either(..))
 import Data.Finance.Money (Discrete(..))
 import Data.Maybe (Maybe(..), maybe)
@@ -22,9 +23,9 @@ import Deku.DOM.Attributes as DA
 import Deku.DOM.Listeners as DL
 import Deku.Do as Deku
 import Deku.Hooks (useHot)
+import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
-import Services.AuthService (UserId)
 import Types.Inventory (ItemCategory(..), MenuItem(..), Species(..), StrainLineage(..))
 import UI.Form (Form, isValid, readOnly, runForm, section, select)
 import UI.Form (text, textArea) as F
@@ -53,7 +54,12 @@ renderError message =
         ]
     ]
 
-data FormMode = CreateMode String | EditMode MenuItem
+-- In create mode the page supplies the SKU and is told when the item has
+-- been created, with the backend's message. The page then supplies a new
+-- SKU. See Pages.CreateItem.
+data FormMode
+  = CreateMode { sku :: String, onCreated :: String -> Effect Unit }
+  | EditMode MenuItem
 
 categoryLabel :: ItemCategory -> String
 categoryLabel = case _ of
@@ -68,8 +74,6 @@ speciesLabel = case _ of
   SativaDominantHybrid -> "Sativa-Dominant Hybrid"
   Sativa -> "Sativa"
 
--- The whole item form. Adding a field means adding one line to the section
--- it belongs in and one name to that section's result record.
 menuItemForm :: FormMode -> Form MenuItem
 menuItemForm mode = ado
   basic <- section "Basic Info" basicInfo
@@ -100,7 +104,7 @@ menuItemForm mode = ado
     in
       sl
 
-  -- Initial text for a field: read from the item being edited, or blank.
+
   item :: forall r. (_ -> r) -> (r -> String) -> String
   item get render = maybe "" (render <<< get) existing
 
@@ -110,7 +114,7 @@ menuItemForm mode = ado
   list = joinWith ", "
 
   skuText = case mode of
-    CreateMode generated -> generated
+    CreateMode create -> create.sku
     EditMode (MenuItem i) -> show i.sku
 
   requiredName = required >=> alphanumeric
@@ -249,8 +253,8 @@ menuItemForm mode = ado
       url
     in { leafly_url, img }
 
-itemForm :: UserId -> FormMode -> Nut
-itemForm userId mode = runForm (menuItemForm mode) \form -> Deku.do
+itemForm :: FormMode -> Nut
+itemForm mode = runForm (menuItemForm mode) \form -> Deku.do
   setStatusMessage /\ statusMessageV <- useHot ""
   setSubmitting /\ submittingV <- useHot false
 
@@ -270,18 +274,21 @@ itemForm userId mode = runForm (menuItemForm mode) \form -> Deku.do
       setStatusMessage "Submitting..."
       launchAff_ do
         result <-
-          if isEdit then updateInventory userId menuItem
-          else writeInventory userId menuItem
+          if isEdit then updateInventory menuItem
+          else writeInventory menuItem
         liftEffect do
           setSubmitting false
           case result of
-            Right { success: true, message: msg } -> do
-              setStatusMessage $ "Success: " <> msg
-              unless isEdit form.reset
+            Right { success: true, message: msg } ->
+              case mode of
+                EditMode _ -> setStatusMessage $ "Success: " <> msg
+                CreateMode create -> do
+                  setStatusMessage ""
+                  create.onCreated msg
             Right { success: false, message: msg } ->
               setStatusMessage $ "Error: " <> msg
             Left err ->
-              setStatusMessage $ "Error: " <> err
+              setStatusMessage $ "Error: " <> Request.describe err
 
   D.div [ DA.klass_ "space-y-4 max-w-2xl mx-auto p-6" ]
     ( [ D.h2 [ DA.klass_ "text-2xl font-bold mb-6" ] [ text_ formTitle ] ]
@@ -315,3 +322,4 @@ itemForm userId mode = runForm (menuItemForm mode) \form -> Deku.do
           , D.div [ DA.klass_ "mt-4 text-center" ] [ text statusMessageV ]
           ]
     )
+

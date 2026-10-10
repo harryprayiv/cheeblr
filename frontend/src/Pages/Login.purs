@@ -3,7 +3,7 @@ module Pages.Login where
 import Prelude
 
 import API.Auth (login)
-import Config.Auth (defaultDevUser, findDevUserByRole)
+import API.Request as Request
 import Data.Either (Either(..))
 import Data.Maybe (Maybe(..))
 import Data.Tuple.Nested ((/\))
@@ -18,21 +18,15 @@ import Deku.Hooks (useState)
 import Effect (Effect)
 import Effect.Aff (launchAff_)
 import Effect.Class (liftEffect)
-import Effect.Class.Console as Console
-import Services.AuthService (AuthState(..))
+import Types.Session (SessionResponse)
 import UI.Form (Form, Style, defaultStyle, isValid, password, runFormWith, textAutofocus)
 import UI.Form.Parser (Parser, required)
-import Web.HTML (window)
-import Web.HTML.Location (setHref)
-import Web.HTML.Window (location)
 
 type Credentials =
   { username :: String
   , password :: String
   }
 
--- The login card has its own stylesheet classes. The hint is hidden because
--- the disabled Sign In button already tells the user both fields are needed.
 loginStyle :: Style
 loginStyle = defaultStyle
   { field = "form-group"
@@ -42,7 +36,6 @@ loginStyle = defaultStyle
   , hint = "hidden"
   }
 
--- Passwords are not trimmed. Leading and trailing spaces can be part of one.
 anyPassword :: Parser String
 anyPassword raw = if raw == "" then Left "Required" else Right raw
 
@@ -56,11 +49,12 @@ credentialsForm = ado
     anyPassword
   in { username, password: password' }
 
-page
-  :: (AuthState -> Effect Unit)
-  -> Effect Unit
-  -> Nut
-page pushAuth _ = runFormWith loginStyle credentialsForm \form -> Deku.do
+-- A successful login hands the session the backend returned to onSignedIn.
+-- A response that does not decode (an unknown role, for example) is an
+-- error on this page and the browser stays signed out. Main decides where
+-- to go after signing in.
+page :: (SessionResponse -> Effect Unit) -> Nut
+page onSignedIn = runFormWith loginStyle credentialsForm \form -> Deku.do
   setErrorMessage /\ errorMessageValue <- useState ""
   setSubmitting   /\ submittingValue   <- useState false
 
@@ -71,23 +65,18 @@ page pushAuth _ = runFormWith loginStyle credentialsForm \form -> Deku.do
       setSubmitting true
       setErrorMessage ""
       launchAff_ do
-        result <- login credentials.username credentials.password Nothing
+        result <- login
+          { loginUsername: credentials.username
+          , loginPassword: credentials.password
+          , loginRegisterId: Nothing
+          }
         liftEffect $ case result of
           Left err -> do
-            setErrorMessage $ "Login failed: " <> err
+            setErrorMessage $ "Login failed: " <> Request.describe err
             setSubmitting false
           Right resp -> do
-            -- An unrecognised role falls back to defaultDevUser. This is the
-            -- open issue AdminFallbackOnUnknownRole and is unchanged here.
-            let devUser = case findDevUserByRole resp.loginUser.sessionRole of
-                  Just u  -> u
-                  Nothing -> defaultDevUser
-            pushAuth (SignedIn devUser (show devUser.userId))
-            Console.log $ "Logged in as: " <> resp.loginUser.sessionUserName
             setSubmitting false
-            w <- window
-            loc <- location w
-            setHref "/#/" loc
+            onSignedIn resp.loginUser
 
   D.div
     [ DA.klass_ "login-container" ]

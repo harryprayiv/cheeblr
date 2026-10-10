@@ -1,9 +1,8 @@
 module Pages.Feed.Monitor where
 
 import Deku.Core (Nut)
-import FRP.Poll (Poll)
 import Pages.Admin.Tabs.FeedMonitor (feedMonitor)
-import Services.AuthService (AuthState, UserId)
+import UI.Leave (OnLeave)
 
-page :: Poll AuthState -> UserId -> Nut
-page _authPoll userId = feedMonitor userId
+page :: OnLeave -> Nut
+page onLeave = feedMonitor onLeave

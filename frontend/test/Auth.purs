@@ -2,52 +2,27 @@ module Test.Auth where
 
 import Prelude
 
-import Config.Auth (allDevUsers, devAdmin, devCashier, devCustomer, devManager, findDevUserById, findDevUserByRole, toAuthenticatedUser)
-import Data.Array (length)
-import Data.Maybe (Maybe(..), isJust)
-import Services.AuthService
-  ( AuthState(..)
-  , canViewInventory
-  , canCreateItem
-  , canEditItem
-  , canDeleteItem
-  , canProcessTransaction
-  , canVoidTransaction
-  , canRefundTransaction
-  , canApplyDiscount
-  , canManageRegisters
-  , canOpenRegister
-  , canCloseRegister
-  , canViewReports
-  , canViewAllLocations
-  , canManageUsers
-  , canViewCompliance
-  , getUserId
-  , userIdFromAuth
-  , isSignedIn
-  , getRole
-  , defaultAuthState
-  )
+import Data.Maybe (Maybe(..))
+import Route (Route, visibleLinks)
+import Route as Route
+import Services.AuthService (AuthState(..), can, capabilities, isSignedIn, session)
 import Test.Spec (Spec, describe, it)
-import Test.Spec.Assertions (shouldEqual, shouldSatisfy)
-import Types.Auth (UserRole(..), capabilitiesForRole)
+import Test.Spec.Assertions (shouldEqual)
+import Types.Auth (UserCapabilities, UserRole(..), capabilitiesForRole, emptyCapabilities)
+import Types.Session (SessionResponse)
+import Types.UUID (UUID(..))
 
--- In tests the token is the UUID string of the dev user, matching what
--- devModeAuthState uses and what Auth.Simple.lookupUser accepts.
-customerState :: AuthState
-customerState = SignedIn devCustomer (show devCustomer.userId)
+-- A session as the backend would send it for a user of this role.
+sessionFor :: UserRole -> SessionResponse
+sessionFor role =
+  { sessionUserId: UUID "0a6f2deb-892b-4411-8025-08c1a4d61229"
+  , sessionUserName: "someone"
+  , sessionRole: role
+  , sessionCapabilities: capabilitiesForRole role
+  }
 
-cashierState :: AuthState
-cashierState = SignedIn devCashier (show devCashier.userId)
-
-managerState :: AuthState
-managerState = SignedIn devManager (show devManager.userId)
-
-adminState :: AuthState
-adminState = SignedIn devAdmin (show devAdmin.userId)
-
-signedOut :: AuthState
-signedOut = SignedOut
+linksFor :: UserCapabilities -> Array Route
+linksFor caps = _.route <$> visibleLinks caps
 
 spec :: Spec Unit
 spec = describe "Auth" do
@@ -197,273 +172,68 @@ spec = describe "Auth" do
     it "can view compliance" do
       caps.capCanViewCompliance `shouldEqual` true
 
-  describe "canViewInventory wiring" do
-    it "customer can" do
-      canViewInventory customerState `shouldEqual` true
-    it "cashier can" do
-      canViewInventory cashierState `shouldEqual` true
-    it "manager can" do
-      canViewInventory managerState `shouldEqual` true
-    it "admin can" do
-      canViewInventory adminState `shouldEqual` true
-    it "signed out cannot" do
-      canViewInventory signedOut `shouldEqual` false
+  describe "AuthState" do
+    it "a browser with a session is signed in" do
+      isSignedIn (SignedIn (sessionFor Admin)) `shouldEqual` true
+    it "a browser without one is signed out" do
+      isSignedIn SignedOut `shouldEqual` false
 
-  describe "canCreateItem wiring" do
-    it "customer cannot" do
-      canCreateItem customerState `shouldEqual` false
-    it "cashier cannot" do
-      canCreateItem cashierState `shouldEqual` false
-    it "manager can" do
-      canCreateItem managerState `shouldEqual` true
-    it "admin can" do
-      canCreateItem adminState `shouldEqual` true
-    it "signed out cannot" do
-      canCreateItem signedOut `shouldEqual` false
+    it "session returns the session held" do
+      (session (SignedIn (sessionFor Cashier)) <#> _.sessionRole)
+        `shouldEqual` Just Cashier
+    it "session is Nothing when signed out" do
+      (session SignedOut <#> _.sessionRole) `shouldEqual` Nothing
 
-  describe "canEditItem wiring" do
-    it "customer cannot" do
-      canEditItem customerState `shouldEqual` false
-    it "cashier can" do
-      canEditItem cashierState `shouldEqual` true
-    it "manager can" do
-      canEditItem managerState `shouldEqual` true
-    it "admin can" do
-      canEditItem adminState `shouldEqual` true
-    it "signed out cannot" do
-      canEditItem signedOut `shouldEqual` false
+    it "a signed-out browser has no capabilities" do
+      capabilities SignedOut `shouldEqual` emptyCapabilities
 
-  describe "canDeleteItem wiring" do
-    it "customer cannot" do
-      canDeleteItem customerState `shouldEqual` false
-    it "cashier cannot" do
-      canDeleteItem cashierState `shouldEqual` false
-    it "manager can" do
-      canDeleteItem managerState `shouldEqual` true
-    it "admin can" do
-      canDeleteItem adminState `shouldEqual` true
-    it "signed out cannot" do
-      canDeleteItem signedOut `shouldEqual` false
+    it "capabilities are the ones the backend sent, not ones derived from the role" do
+      let
+        sent = (sessionFor Customer)
+          { sessionCapabilities = capabilitiesForRole Manager }
+      capabilities (SignedIn sent) `shouldEqual` capabilitiesForRole Manager
 
-  describe "canProcessTransaction wiring" do
-    it "customer cannot" do
-      canProcessTransaction customerState `shouldEqual` false
-    it "cashier can" do
-      canProcessTransaction cashierState `shouldEqual` true
-    it "manager can" do
-      canProcessTransaction managerState `shouldEqual` true
-    it "admin can" do
-      canProcessTransaction adminState `shouldEqual` true
-    it "signed out cannot" do
-      canProcessTransaction signedOut `shouldEqual` false
+    it "can reads one capability of the session" do
+      can _.capCanVoidTransaction (SignedIn (sessionFor Manager))
+        `shouldEqual` true
+      can _.capCanVoidTransaction (SignedIn (sessionFor Cashier))
+        `shouldEqual` false
+    it "can is false for every capability when signed out" do
+      can _.capCanViewInventory SignedOut `shouldEqual` false
 
-  describe "canVoidTransaction wiring" do
-    it "customer cannot" do
-      canVoidTransaction customerState `shouldEqual` false
-    it "cashier cannot" do
-      canVoidTransaction cashierState `shouldEqual` false
-    it "manager can" do
-      canVoidTransaction managerState `shouldEqual` true
-    it "admin can" do
-      canVoidTransaction adminState `shouldEqual` true
-    it "signed out cannot" do
-      canVoidTransaction signedOut `shouldEqual` false
+  describe "Navigation links by capability" do
+    it "a customer sees the live view and the feed" do
+      linksFor (capabilitiesForRole Customer)
+        `shouldEqual` [ Route.LiveView, Route.Feed ]
 
-  describe "canRefundTransaction wiring" do
-    it "customer cannot" do
-      canRefundTransaction customerState `shouldEqual` false
-    it "cashier cannot" do
-      canRefundTransaction cashierState `shouldEqual` false
-    it "manager can" do
-      canRefundTransaction managerState `shouldEqual` true
-    it "admin can" do
-      canRefundTransaction adminState `shouldEqual` true
-    it "signed out cannot" do
-      canRefundTransaction signedOut `shouldEqual` false
+    it "a cashier sees selling, sales, registers and the stock room" do
+      linksFor (capabilitiesForRole Cashier) `shouldEqual`
+        [ Route.LiveView, Route.CreateTransaction, Route.TransactionHistory, Route.Registers, Route.Stock, Route.Feed ]
 
-  describe "canApplyDiscount wiring" do
-    it "customer cannot" do
-      canApplyDiscount customerState `shouldEqual` false
-    it "cashier cannot" do
-      canApplyDiscount cashierState `shouldEqual` false
-    it "manager can" do
-      canApplyDiscount managerState `shouldEqual` true
-    it "admin can" do
-      canApplyDiscount adminState `shouldEqual` true
-    it "signed out cannot" do
-      canApplyDiscount signedOut `shouldEqual` false
+    it "a manager also sees item creation and the manager dashboard" do
+      linksFor (capabilitiesForRole Manager) `shouldEqual`
+        [ Route.LiveView
+        , Route.Create
+        , Route.CreateTransaction
+        , Route.TransactionHistory
+        , Route.Registers
+        , Route.Manager
+        , Route.Stock
+        , Route.Feed
+        ]
 
-  describe "canManageRegisters wiring" do
-    it "customer cannot" do
-      canManageRegisters customerState `shouldEqual` false
-    it "cashier cannot" do
-      canManageRegisters cashierState `shouldEqual` false
-    it "manager can" do
-      canManageRegisters managerState `shouldEqual` true
-    it "admin can" do
-      canManageRegisters adminState `shouldEqual` true
-    it "signed out cannot" do
-      canManageRegisters signedOut `shouldEqual` false
+    it "an admin sees every link" do
+      linksFor (capabilitiesForRole Admin) `shouldEqual`
+        [ Route.LiveView
+        , Route.Create
+        , Route.CreateTransaction
+        , Route.TransactionHistory
+        , Route.Registers
+        , Route.Admin
+        , Route.Manager
+        , Route.Stock
+        , Route.Feed
+        ]
 
-  describe "canOpenRegister wiring" do
-    it "customer cannot" do
-      canOpenRegister customerState `shouldEqual` false
-    it "cashier can" do
-      canOpenRegister cashierState `shouldEqual` true
-    it "manager can" do
-      canOpenRegister managerState `shouldEqual` true
-    it "admin can" do
-      canOpenRegister adminState `shouldEqual` true
-    it "signed out cannot" do
-      canOpenRegister signedOut `shouldEqual` false
-
-  describe "canCloseRegister wiring" do
-    it "customer cannot" do
-      canCloseRegister customerState `shouldEqual` false
-    it "cashier can" do
-      canCloseRegister cashierState `shouldEqual` true
-    it "manager can" do
-      canCloseRegister managerState `shouldEqual` true
-    it "admin can" do
-      canCloseRegister adminState `shouldEqual` true
-    it "signed out cannot" do
-      canCloseRegister signedOut `shouldEqual` false
-
-  describe "canViewReports wiring" do
-    it "customer cannot" do
-      canViewReports customerState `shouldEqual` false
-    it "cashier cannot" do
-      canViewReports cashierState `shouldEqual` false
-    it "manager can" do
-      canViewReports managerState `shouldEqual` true
-    it "admin can" do
-      canViewReports adminState `shouldEqual` true
-    it "signed out cannot" do
-      canViewReports signedOut `shouldEqual` false
-
-  describe "canViewAllLocations wiring" do
-    it "customer cannot" do
-      canViewAllLocations customerState `shouldEqual` false
-    it "cashier cannot" do
-      canViewAllLocations cashierState `shouldEqual` false
-    it "manager cannot" do
-      canViewAllLocations managerState `shouldEqual` false
-    it "admin can" do
-      canViewAllLocations adminState `shouldEqual` true
-    it "signed out cannot" do
-      canViewAllLocations signedOut `shouldEqual` false
-
-  describe "canManageUsers wiring" do
-    it "customer cannot" do
-      canManageUsers customerState `shouldEqual` false
-    it "cashier cannot" do
-      canManageUsers cashierState `shouldEqual` false
-    it "manager cannot" do
-      canManageUsers managerState `shouldEqual` false
-    it "admin can" do
-      canManageUsers adminState `shouldEqual` true
-    it "signed out cannot" do
-      canManageUsers signedOut `shouldEqual` false
-
-  describe "canViewCompliance wiring" do
-    it "customer cannot" do
-      canViewCompliance customerState `shouldEqual` false
-    it "cashier can" do
-      canViewCompliance cashierState `shouldEqual` true
-    it "manager can" do
-      canViewCompliance managerState `shouldEqual` true
-    it "admin can" do
-      canViewCompliance adminState `shouldEqual` true
-    it "signed out cannot" do
-      canViewCompliance signedOut `shouldEqual` false
-
-  describe "AuthState helpers" do
-    it "isSignedIn returns true for signed in" do
-      isSignedIn adminState `shouldEqual` true
-    it "isSignedIn returns false for signed out" do
-      isSignedIn signedOut `shouldEqual` false
-
-    it "getUserId returns Just for signed in" do
-      getUserId adminState `shouldSatisfy` isJust
-    it "getUserId returns Nothing for signed out" do
-      getUserId signedOut `shouldEqual` Nothing
-
-    it "userIdFromAuth returns non-empty for signed in" do
-      (userIdFromAuth adminState /= "") `shouldEqual` true
-    it "userIdFromAuth returns empty for signed out" do
-      userIdFromAuth signedOut `shouldEqual` ""
-
-    it "getRole returns correct role for each user" do
-      getRole customerState `shouldEqual` Just Customer
-      getRole cashierState `shouldEqual` Just Cashier
-      getRole managerState `shouldEqual` Just Manager
-      getRole adminState `shouldEqual` Just Admin
-    it "getRole returns Nothing when signed out" do
-      getRole signedOut `shouldEqual` Nothing
-
-    -- defaultAuthState is SignedOut in production mode so the login page
-    -- is shown on first load. devModeAuthState is SignedIn.
-    it "defaultAuthState is signed out" do
-      isSignedIn defaultAuthState `shouldEqual` false
-
-  describe "Dev user lookup" do
-    it "allDevUsers has 4 users" do
-      length allDevUsers `shouldEqual` 4
-
-    it "finds admin by id" do
-      findDevUserById devAdmin.userId `shouldSatisfy` isJust
-
-    it "finds customer by id" do
-      findDevUserById devCustomer.userId `shouldSatisfy` isJust
-
-    it "finds cashier by role" do
-      findDevUserByRole Cashier `shouldSatisfy` isJust
-
-    it "finds manager by role" do
-      findDevUserByRole Manager `shouldSatisfy` isJust
-
-  describe "toAuthenticatedUser" do
-    it "preserves userId" do
-      let au = toAuthenticatedUser devAdmin
-      au.auUserId `shouldEqual` devAdmin.userId
-
-    it "preserves role for each dev user" do
-      (toAuthenticatedUser devCustomer).auRole `shouldEqual` Customer
-      (toAuthenticatedUser devCashier).auRole `shouldEqual` Cashier
-      (toAuthenticatedUser devManager).auRole `shouldEqual` Manager
-      (toAuthenticatedUser devAdmin).auRole `shouldEqual` Admin
-
-    it "preserves email" do
-      let au = toAuthenticatedUser devManager
-      au.auEmail `shouldEqual` devManager.email
-
-    it "preserves userName" do
-      let au = toAuthenticatedUser devCashier
-      au.auUserName `shouldEqual` devCashier.userName
-    
-  describe "ActorId slot invariants (cookie migration)" do
-    it "SignedIn second slot equals show userId for customer" do
-      case customerState of
-        SignedOut -> false `shouldEqual` true
-        SignedIn _ actorId -> actorId `shouldEqual` show devCustomer.userId
-
-    it "SignedIn second slot equals show userId for cashier" do
-      case cashierState of
-        SignedOut -> false `shouldEqual` true
-        SignedIn _ actorId -> actorId `shouldEqual` show devCashier.userId
-
-    it "SignedIn second slot equals show userId for manager" do
-      case managerState of
-        SignedOut -> false `shouldEqual` true
-        SignedIn _ actorId -> actorId `shouldEqual` show devManager.userId
-
-    it "SignedIn second slot equals show userId for admin" do
-      case adminState of
-        SignedOut -> false `shouldEqual` true
-        SignedIn _ actorId -> actorId `shouldEqual` show devAdmin.userId
-
-    it "userIdFromAuth matches the user's UUID for each role" do
-      userIdFromAuth customerState `shouldEqual` show devCustomer.userId
-      userIdFromAuth cashierState  `shouldEqual` show devCashier.userId
-      userIdFromAuth managerState  `shouldEqual` show devManager.userId
-      userIdFromAuth adminState    `shouldEqual` show devAdmin.userId
+    it "no capabilities leaves only the feed" do
+      linksFor emptyCapabilities `shouldEqual` [ Route.Feed ]
