@@ -59,3 +59,45 @@ for _r in $(seq 1 8); do
   fi
 done
 check "two voids at once always give one 200 and one 409" 0 "$VOID_BAD"
+
+# Remove item decides under the same lock. A line cannot leave a sale that
+# finalize has completed.
+SALE2_LINE=$(sql "select id from transaction_item where transaction_id = '$SALE2' limit 1")
+check "removing a line from a completed sale returns 409" 409 "$(del "/pos/sale/item/$SALE2_LINE")"
+check "the completed sale still has its line after the refused removal" 1 "$(line_count "$SALE2")"
+
+STOCK_BEFORE_RM=$(stock_of "$SKU_MAIN")
+RM_FINALIZED=0
+RM_IMPOSSIBLE=0
+for _r in $(seq 1 8); do
+  RS_=$(start_sale) || { echo "  ✗ could not start a sale"; exit 1; }
+  post /pos/sale/item "$(add_body "$RS_" "$SKU_MAIN" 1)" > /dev/null
+  RLINE=$(sql "select id from transaction_item where transaction_id = '$RS_' limit 1")
+  RTOT=$(sql "select total from transaction where id = '$RS_'")
+  post /pos/sale/payment "$(pay_body "$RS_" "$RTOT")" > /dev/null
+  post "/pos/sale/finalize/$RS_" "" > "$WORK/rfin" &
+  RFIN_PID=$!
+  del "/pos/sale/item/$RLINE" > "$WORK/rdel" &
+  RDEL_PID=$!
+  wait "$RFIN_PID" "$RDEL_PID" 2>/dev/null || true
+  RFIN_CODE=$(cat "$WORK/rfin")
+  RDEL_CODE=$(cat "$WORK/rdel")
+  RSTATUS=$(status_of "$RS_")
+  RLINES=$(line_count "$RS_")
+  RRES=$(live_res "$RS_")
+  if [ "$RSTATUS" = "COMPLETED" ]; then
+    RM_FINALIZED=$((RM_FINALIZED + 1))
+    if [ "$RFIN_CODE" != "200" ] || [ "$RDEL_CODE" != "409" ] || [ "$RLINES" != "1" ]; then
+      RM_IMPOSSIBLE=$((RM_IMPOSSIBLE + 1))
+      echo "  round $_r: COMPLETED with lines=$RLINES finalize=$RFIN_CODE remove=$RDEL_CODE"
+    fi
+  else
+    if [ "$RSTATUS" != "IN_PROGRESS" ] || [ "$RFIN_CODE" != "409" ] || [ "$RDEL_CODE" != "200" ] || [ "$RLINES" != "0" ] || [ "$RRES" != "0" ]; then
+      RM_IMPOSSIBLE=$((RM_IMPOSSIBLE + 1))
+      echo "  round $_r: $RSTATUS with lines=$RLINES reservations=$RRES finalize=$RFIN_CODE remove=$RDEL_CODE"
+    fi
+  fi
+done
+echo "  finalize won $RM_FINALIZED of 8 races against remove item"
+check "no remove race ended in a state the rules forbid" 0 "$RM_IMPOSSIBLE"
+check "stock fell by one for each sale that completed against a remove" "$((STOCK_BEFORE_RM - RM_FINALIZED))" "$(stock_of "$SKU_MAIN")"

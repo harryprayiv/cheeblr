@@ -700,56 +700,79 @@ addTransactionItem pool txId sku addQty newItemId priceLineAt = do
     Left e      -> throwIO e
     Right added -> pure added
 
--- | Releases the one reservation that belongs to this line, deletes the line
--- and updates the sale totals, in one SQL transaction.
+-- | Removes a line from a sale, in one SQL transaction: releases the one
+-- reservation that belongs to the line, deletes the line and updates the
+-- sale totals.
+--
+-- The line's sale is found first, without a lock. Then the sale row is
+-- locked, its status is read under the lock, and the line is read again.
+-- The removal is refused with 'SaleNotOpen' unless the sale is IN_PROGRESS
+-- at that moment. Finalize takes the same lock, so a line cannot be removed
+-- from a sale that was completed in between. A line id that does not
+-- exist, or a line that was removed while this call waited for the lock,
+-- is not an error here. Throws 'InventoryException' after rolling back.
 --
 -- A reservation row does not record which line created it. The match is on
 -- sale, sku, "Reserved" status and quantity, and exactly one matching row is
--- released. 'addTransactionItem' keeps a sale to one line per sku, so the
--- match is normally unique.
+-- released. 'addTransactionItem' keeps a sale to one line per sku, and a
+-- unique index keeps a sale to one live reservation per sku, so the match
+-- is unique.
 deleteTransactionItem :: DBPool -> UUID -> IO ()
-deleteTransactionItem pool itemId =
-  runTransaction_ pool $ do
-    itemRows <- Session.statement () $ run $ Rel8.select $ do
+deleteTransactionItem pool itemId = do
+  outcome <- runTransaction pool $ do
+    owners <- Session.statement () $ run $ Rel8.select $ do
       ti <- each transactionItemSchema
       where_ $ tiId ti ==. lit itemId
-      pure ti
-    case itemRows of
-      [item] -> do
-        let ownerTxId = tiTransactionId item
-        _ <- Session.statement ownerTxId lockTransactionRow
-        candidates <- Session.statement () $ run $ Rel8.select $ do
-          r <- each reservationSchema
-          where_ $
-            resTransactionId r ==. lit ownerTxId
-              &&. resItemSku r ==. lit (tiMenuItemSku item)
-              &&. resStatus r ==. lit "Reserved"
-              &&. resQuantity r ==. lit (tiQuantity item)
-          pure (resId r)
-        case candidates of
-          (reservationId : _) ->
-            Session.statement () $
-              run_ $
-                Rel8.update $
-                  Update
-                    { target      = reservationSchema
-                    , from        = pure ()
-                    , set         = \() row -> row {resStatus = lit "Released"}
-                    , updateWhere = \() row -> resId row ==. lit reservationId
-                    , returning   = NoReturning
-                    }
-          [] -> pure ()
-        Session.statement () $
-          run_ $
-            Rel8.delete $
-              Delete
-                { from        = transactionItemSchema
-                , using       = pure ()
-                , deleteWhere = \() row -> tiId row ==. lit itemId
-                , returning   = NoReturning
-                }
-        updateTotalsS ownerTxId
-      _ -> pure ()
+      pure (tiTransactionId ti)
+    case owners of
+      [ownerTxId] -> do
+        mStatus <- Session.statement ownerTxId lockTransactionStatus
+        if mStatus /= Just "IN_PROGRESS"
+          then pure (Left (SaleNotOpen ownerTxId))
+          else do
+            itemRows <- Session.statement () $ run $ Rel8.select $ do
+              ti <- each transactionItemSchema
+              where_ $ tiId ti ==. lit itemId
+              pure ti
+            case itemRows of
+              [item] -> do
+                candidates <- Session.statement () $ run $ Rel8.select $ do
+                  r <- each reservationSchema
+                  where_ $
+                    resTransactionId r ==. lit ownerTxId
+                      &&. resItemSku r ==. lit (tiMenuItemSku item)
+                      &&. resStatus r ==. lit "Reserved"
+                      &&. resQuantity r ==. lit (tiQuantity item)
+                  pure (resId r)
+                case candidates of
+                  (reservationId : _) ->
+                    Session.statement () $
+                      run_ $
+                        Rel8.update $
+                          Update
+                            { target      = reservationSchema
+                            , from        = pure ()
+                            , set         = \() row -> row {resStatus = lit "Released"}
+                            , updateWhere = \() row -> resId row ==. lit reservationId
+                            , returning   = NoReturning
+                            }
+                  [] -> pure ()
+                Session.statement () $
+                  run_ $
+                    Rel8.delete $
+                      Delete
+                        { from        = transactionItemSchema
+                        , using       = pure ()
+                        , deleteWhere = \() row -> tiId row ==. lit itemId
+                        , returning   = NoReturning
+                        }
+                updateTotalsS ownerTxId
+                pure (Right ())
+              _ -> pure (Right ())
+      _ -> pure (Right ())
+  case outcome of
+    Left e   -> throwIO e
+    Right () -> pure ()
 
 -- | Records a payment on a sale, in one SQL transaction. The sale row is
 -- locked and the payment is refused with 'SaleNotOpen' unless the sale is

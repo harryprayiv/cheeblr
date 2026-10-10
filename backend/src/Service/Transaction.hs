@@ -241,6 +241,11 @@ addItem change = do
       createStockPull sale addedItem addQty now
       pure addedItem
 
+-- | Removes a line from a sale. The state machine check gives an early 409
+-- for a sale that is closed. 'deleteSaleItem' checks the status again when
+-- it writes, under the sale's row lock, so a line cannot be removed from a
+-- sale that was completed in between. No event is emitted and no stock
+-- pull is cancelled for a refused removal.
 removeItem ::
   ( TransactionDb :> es
   , StockDb.StockDb :> es
@@ -257,39 +262,42 @@ removeItem itemId = do
       (evt, _)  = runTxCommand someState (RemoveItemCmd itemId)
   guardSaleTxEvent evt
   let mItem = find (\i -> Sale.itemId i == itemId) (Sale.saleItems sale)
-  deleteSaleItem itemId
-  now <- currentTime
-  case mItem of
-    Just item -> do
-      let itemSku = Sale.itemMenuItemSku item
-          itemQty = saleQuantityCount (Sale.itemQuantity item)
-      emit $
-        TransactionEvt $
-          TransactionItemRemoved
-            { teTxId      = txId
-            , teItemId    = itemId
-            , teItemSku   = itemSku
-            , teQty       = itemQty
-            , teTimestamp = now
-            }
-      pulls <- StockDb.getPullsByTransaction txId
-      let itemPulls =
-            filter
-              ( \pr ->
-                  prItemSku pr == itemSku
-                    && prStatus pr `notElem` [PullFulfilled, PullCancelled]
-              )
-              pulls
-      StockDb.cancelPullsForItem txId itemSku "Item removed from transaction"
-      forM_ itemPulls $ \pr ->
-        emit $
-          StockEvt $
-            PullRequestCancelled
-              { sePullId    = prId pr
-              , seReason    = "Item removed from transaction"
-              , seTimestamp = now
-              }
-    Nothing -> pure ()
+  outcome <- deleteSaleItem itemId
+  case outcome of
+    Left refusal -> refuseWrite refusal
+    Right ()     -> do
+      now <- currentTime
+      case mItem of
+        Just item -> do
+          let itemSku = Sale.itemMenuItemSku item
+              itemQty = saleQuantityCount (Sale.itemQuantity item)
+          emit $
+            TransactionEvt $
+              TransactionItemRemoved
+                { teTxId      = txId
+                , teItemId    = itemId
+                , teItemSku   = itemSku
+                , teQty       = itemQty
+                , teTimestamp = now
+                }
+          pulls <- StockDb.getPullsByTransaction txId
+          let itemPulls =
+                filter
+                  ( \pr ->
+                      prItemSku pr == itemSku
+                        && prStatus pr `notElem` [PullFulfilled, PullCancelled]
+                  )
+                  pulls
+          StockDb.cancelPullsForItem txId itemSku "Item removed from transaction"
+          forM_ itemPulls $ \pr ->
+            emit $
+              StockEvt $
+                PullRequestCancelled
+                  { sePullId    = prId pr
+                  , seReason    = "Item removed from transaction"
+                  , seTimestamp = now
+                  }
+        Nothing -> pure ()
 
 -- | Records a payment. The state machine check gives an early 409 for a
 -- sale that cannot take payments. 'addSalePayment' checks the status again

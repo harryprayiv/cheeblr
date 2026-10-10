@@ -118,7 +118,8 @@ data SaleLineAdded = SaleLineAdded
 -- Every operation that writes to an open sale returns 'Either
 -- InventoryException'. The interpreter checks the sale's status at the
 -- moment of the write and refuses with 'SaleNotOpen' when the sale has
--- closed. 'VoidSale' and 'ClearSale' are refused the same way when the sale
+-- closed. 'DeleteSaleItem' is refused the same way unless the sale is in
+-- progress. 'VoidSale' and 'ClearSale' are refused the same way when the sale
 -- is in a status that cannot be voided or cleared, and 'WriteRefund' when
 -- the original sale is not completed or was already refunded.
 -- 'FinalizeSale' also decides, at the moment of the write, whether the sale
@@ -143,7 +144,7 @@ data TransactionDb :: Effect where
   ClearSale                :: UUID -> TransactionDb m (Either InventoryException ())
   FinalizeSale             :: UUID -> TransactionDb m (Either InventoryException Sale.SaleTransaction)
   AddSaleItem              :: SaleLineAdd -> TransactionDb m (Either InventoryException SaleLineAdded)
-  DeleteSaleItem           :: UUID -> TransactionDb m ()
+  DeleteSaleItem           :: UUID -> TransactionDb m (Either InventoryException ())
   AddSalePayment           :: Sale.Payment -> TransactionDb m (Either InventoryException Sale.Payment)
   DeleteSalePayment        :: UUID -> TransactionDb m (Either InventoryException ())
 
@@ -209,7 +210,10 @@ addSaleItem ::
   Eff es (Either InventoryException SaleLineAdded)
 addSaleItem = send . AddSaleItem
 
-deleteSaleItem :: (TransactionDb :> es) => UUID -> Eff es ()
+deleteSaleItem ::
+  (TransactionDb :> es) =>
+  UUID ->
+  Eff es (Either InventoryException ())
 deleteSaleItem = send . DeleteSaleItem
 
 addSalePayment ::
@@ -378,7 +382,7 @@ runTransactionDbIO stockPolicy pool = interpret $ \_ -> \case
             }
 
   DeleteSaleItem itemId -> liftIO $
-    DBT.deleteTransactionItem pool itemId
+    try @InventoryException $ DBT.deleteTransactionItem pool itemId
 
   AddSalePayment payment -> liftIO $ do
     let legacyPayment = salePaymentToLegacy payment
@@ -800,36 +804,42 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                               }
       _ -> pure $ Left (SaleNotOpen txId)
 
+  -- Mirrors 'DBT.deleteTransactionItem': a line is removed only from a
+  -- sale that is InProgress. Any other sale is refused and nothing
+  -- changes. An item id that belongs to no sale is not an error.
   DeleteSaleItem itemId -> do
     st <- get @TxStore
     case Map.lookup itemId (tsItemToTx st) of
-      Nothing   -> pure ()
-      Just txId -> do
-        let mLegacyItem =
-              Map.lookup txId (tsTxs st) >>= \tx ->
-                lookup itemId
-                  [ (transactionItemId i, i) | i <- transactionItems tx ]
-        case mLegacyItem of
-          Nothing   -> pure ()
-          Just item -> do
-            let sku = transactionItemMenuItemSku item
-                qty = transactionItemQuantity item
-            modify @TxStore $ \s ->
-              s
-                { tsItemToTx     = Map.delete itemId (tsItemToTx s)
-                , tsReservations = releaseOneReservation txId sku qty (tsReservations s)
-                , tsTxs          =
-                    Map.adjust
-                      ( \tx ->
-                          recomputeTotals
-                            tx
-                              { transactionItems =
-                                  filter (\i -> transactionItemId i /= itemId) (transactionItems tx)
-                              }
-                      )
-                      txId
-                      (tsTxs s)
-                }
+      Nothing   -> pure (Right ())
+      Just txId ->
+        case Map.lookup txId (tsTxs st) of
+          Just tx
+            | transactionStatus tx == InProgress -> do
+                let mLegacyItem =
+                      lookup itemId
+                        [ (transactionItemId i, i) | i <- transactionItems tx ]
+                case mLegacyItem of
+                  Nothing   -> pure (Right ())
+                  Just item -> do
+                    let sku = transactionItemMenuItemSku item
+                        qty = transactionItemQuantity item
+                    put @TxStore
+                      st
+                        { tsItemToTx     = Map.delete itemId (tsItemToTx st)
+                        , tsReservations = releaseOneReservation txId sku qty (tsReservations st)
+                        , tsTxs          =
+                            Map.insert
+                              txId
+                              ( recomputeTotals
+                                  tx
+                                    { transactionItems =
+                                        filter (\i -> transactionItemId i /= itemId) (transactionItems tx)
+                                    }
+                              )
+                              (tsTxs st)
+                        }
+                    pure (Right ())
+          _ -> pure $ Left (SaleNotOpen txId)
 
   AddSalePayment payment -> do
     let legacyPayment = salePaymentToLegacy payment
