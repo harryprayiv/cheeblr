@@ -7,7 +7,7 @@
 -- line types, plus the typed refund WRITE path.
 --
 -- The line-level encoders / decoders mirror 'DB.Transaction.Sale'. The
--- aggregate monetary fields are 'RefundMoney' — stored as negative
+-- aggregate monetary fields are 'RefundMoney', stored as negative
 -- 'Int32' values in the DB. 'itemPricePerUnit' is 'SaleMoney' on both
 -- sides (it's a non-negative rate, not a directional flow).
 --
@@ -19,10 +19,11 @@
 --
 -- 'writeTypedRefund' takes a pre-built 'Refund.RefundTransaction' and
 -- writes it in one SQL transaction, under the original sale's row lock,
--- then marks the original sale row as refunded. It does NOT re-load the
--- original sale to re-derive negations; the typed value's pre-computed
--- amounts go straight to the columns. The 'toRefundTransaction'
--- computation is the single source of truth for refund math.
+-- then sets the original sale row's status to REFUNDED. It does NOT
+-- re-load the original sale to re-derive negations; the typed value's
+-- pre-computed amounts go straight to the columns. The
+-- 'toRefundTransaction' computation is the single source of truth for
+-- refund math.
 module DB.Transaction.Refund
   ( -- * Item
     itemDomainToRow
@@ -223,12 +224,16 @@ lockSaleForRefund =
 --
 -- When the refund is allowed, this inserts the refund transaction row, its
 -- items (each with its taxes and discounts) and its payments, then sets
--- the original sale row's @is_refunded@ flag and reason. All of it commits
--- together or not at all. The amounts written are the typed value's
--- pre-computed fields; nothing is re-derived from the original sale.
+-- the original sale row's status to REFUNDED together with its
+-- @is_refunded@ flag and reason. All of it commits together or not at all.
+-- The amounts written are the typed value's pre-computed fields; nothing
+-- is re-derived from the original sale.
 --
--- The original sale's status stays COMPLETED. Only the flag marks it as
--- refunded, as before.
+-- A sale whose status is REFUNDED can be neither voided nor refunded
+-- again: 'DBT.voidTransaction' accepts only CREATED, IN_PROGRESS and
+-- COMPLETED, and this function accepts only COMPLETED. The refund itself
+-- is the separate row of type RETURN and status COMPLETED that carries the
+-- negated amounts.
 --
 -- Return value: the typed refund converted back via
 -- 'refundToLegacyTransaction'. We do not re-read via 'hydrateTx'; the
@@ -300,7 +305,7 @@ writeTypedRefund pool refund = do
                   , returning  = NoReturning
                   }
 
-        -- 4. Mark the original sale as refunded.
+        -- 4. Set the original sale to REFUNDED.
         Session.statement () $
           run_ $
             Rel8.update $
@@ -309,7 +314,8 @@ writeTypedRefund pool refund = do
                 , from        = pure ()
                 , set         = \() row ->
                     row
-                      { txIsRefunded   = lit True
+                      { txStatus       = lit "REFUNDED"
+                      , txIsRefunded   = lit True
                       , txRefundReason = lit (Just reason)
                       }
                 , updateWhere = \() row -> DB.Schema.txId row ==. lit origTxId

@@ -24,8 +24,8 @@ import Types.Events
 import Types.Location (LocationId (..))
 import Types.Transaction (
   Transaction (..),
-  TransactionStatus (Completed, InProgress, Voided),
-  TransactionType (Sale),
+  TransactionStatus (Completed, InProgress, Refunded, Voided),
+  TransactionType (Return, Sale),
  )
 
 testUUID :: UUID
@@ -64,6 +64,21 @@ mkTx status created total =
     , transactionRefundReason = Nothing
     , transactionReferenceTransactionId = Nothing
     , transactionNotes = Nothing
+    }
+
+-- | A sale that was refunded: status Refunded and the flag set.
+mkRefundedSale :: UTCTime -> Int -> Transaction
+mkRefundedSale created total =
+  (mkTx Refunded created total) {transactionIsRefunded = True}
+
+-- | The return row a refund writes for a sale of the given total: type
+-- Return, status Completed, the amounts negated.
+mkReturn :: UTCTime -> Int -> Transaction
+mkReturn created saleTotal =
+  (mkTx Completed created (negate saleTotal))
+    { transactionType = Return
+    , transactionReferenceTransactionId = Just testUUID
+    , transactionRefundReason = Just "refund"
     }
 
 spec :: Spec
@@ -172,6 +187,76 @@ spec = describe "Manager Logic" $ do
       let stats = buildDayStats txs midday
       ldsTxCount stats `shouldBe` 1
       ldsRevenue stats `shouldBe` 1000
+
+  describe "buildDayStats with refunds" $ do
+    it "a sale refunded the same day adds nothing to revenue" $ do
+      let txs =
+            [ mkRefundedSale testTime 1000
+            , mkReturn testTime 1000
+            , mkTx Completed testTime 2000
+            ]
+      let stats = buildDayStats txs midday
+      ldsRevenue stats `shouldBe` 2000
+
+    it "a refunded sale is still counted as a transaction" $ do
+      let txs =
+            [ mkRefundedSale testTime 1000
+            , mkReturn testTime 1000
+            , mkTx Completed testTime 2000
+            ]
+      let stats = buildDayStats txs midday
+      ldsTxCount stats `shouldBe` 2
+
+    it "a return row is not counted as a transaction" $ do
+      let txs = [mkReturn testTime 1000]
+      let stats = buildDayStats txs midday
+      ldsTxCount stats `shouldBe` 0
+
+    it "a return row is not counted as a refunded sale" $ do
+      let txs =
+            [ mkRefundedSale testTime 1000
+            , (mkReturn testTime 1000) {transactionIsRefunded = True}
+            ]
+      let stats = buildDayStats txs midday
+      ldsRefundCount stats `shouldBe` 1
+
+    it "counts a sale with status Refunded as refunded" $ do
+      let txs =
+            [ mkRefundedSale testTime 1000
+            , mkReturn testTime 1000
+            ]
+      let stats = buildDayStats txs midday
+      ldsRefundCount stats `shouldBe` 1
+
+    it "a return for a sale of an earlier day lowers today's revenue" $ do
+      let
+        yesterday = read "2024-06-14 10:00:00 UTC" :: UTCTime
+        txs =
+          [ mkRefundedSale yesterday 1000
+          , mkReturn testTime 1000
+          , mkTx Completed testTime 2500
+          ]
+      let stats = buildDayStats txs midday
+      ldsRevenue stats `shouldBe` 1500
+      ldsTxCount stats `shouldBe` 1
+
+    it "the average is revenue after returns over the number of sales" $ do
+      let txs =
+            [ mkRefundedSale testTime 1000
+            , mkReturn testTime 1000
+            , mkTx Completed testTime 3000
+            ]
+      let stats = buildDayStats txs midday
+      ldsAvgTxValue stats `shouldBe` 1500
+
+    it "a voided sale adds nothing to revenue" $ do
+      let txs =
+            [ (mkTx Voided testTime 1000) {transactionIsVoided = True}
+            , mkTx Completed testTime 2000
+            ]
+      let stats = buildDayStats txs midday
+      ldsRevenue stats `shouldBe` 2000
+      ldsVoidCount stats `shouldBe` 1
 
   describe "isManagerEvent" $ do
     it "passes TransactionEvt" $ do

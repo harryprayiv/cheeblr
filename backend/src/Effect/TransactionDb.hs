@@ -553,7 +553,8 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
 
   -- Mirrors 'DBTRefund.writeTypedRefund': the original sale must be
   -- Completed and not already refunded, or the refund is refused and
-  -- nothing changes.
+  -- nothing changes. An allowed refund sets the original sale's status to
+  -- Refunded, so it can be neither voided nor refunded again.
   WriteRefund refund -> do
     let refundTxId    = Refund.refundId refund
         origTxId      = Refund.refundReferenceTransactionId refund
@@ -583,7 +584,8 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
               error "WriteRefund (pure): refund payment id collides with existing"
             let origUpdated =
                   orig
-                    { transactionIsRefunded   = True
+                    { transactionStatus       = Refunded
+                    , transactionIsRefunded   = True
                     , transactionRefundReason = Just reason
                     }
             put @TxStore

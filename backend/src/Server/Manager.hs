@@ -66,6 +66,7 @@ import qualified Types.Inventory as TI
 import Types.Transaction (
   Transaction (..),
   TransactionStatus (..),
+  TransactionType (Return),
  )
 
 authCtx :: AppEnv -> Maybe Text -> Handler SessionContext
@@ -126,17 +127,46 @@ buildAlerts env txs registers (Inventory invitems) = do
 
   pure (lowStockAlerts <> staleAlerts <> varianceAlerts)
 
+-- | The figures for the day @now@ falls on, in UTC, from every transaction
+-- created on that day.
+--
+-- A refund is stored as its own row of type 'Return' with negated amounts,
+-- and the sale it refunds has status 'Refunded'. So the rows are split by
+-- type:
+--
+-- * A sale counts when its status is 'Completed' or 'Refunded'. A refunded
+--   sale did take place, and the money it took is cancelled by its return
+--   row, not by leaving the sale out.
+-- * A return counts when its status is 'Completed'.
+--
+-- Revenue is the sale totals plus the return totals. The return totals are
+-- negative, so a sale refunded on the same day adds nothing to revenue. A
+-- sale refunded on a later day keeps its revenue on the day of the sale
+-- and the return lowers the revenue of the day of the refund.
+--
+-- The transaction count is the number of sales. A return row is not
+-- counted as a transaction. The average is revenue divided by that count.
+--
+-- A voided sale has status 'Voided' and is in neither list.
 buildDayStats :: [Transaction] -> UTCTime -> LocationDayStats
 buildDayStats allTxs now =
   let
-    today      = utctDay now
-    todayTxs   = filter (\tx -> utctDay (transactionCreated tx) == today) allTxs
-    completed  = filter (\tx -> transactionStatus tx == Completed) todayTxs
-    voided     = filter (\tx -> transactionIsVoided tx) todayTxs
-    refunded   = filter (\tx -> transactionIsRefunded tx) todayTxs
-    revenue    = sum (map transactionTotal completed)
-    count      = length completed
-    avg        = if count == 0 then 0 else revenue `div` count
+    today     = utctDay now
+    todayTxs  = filter (\tx -> utctDay (transactionCreated tx) == today) allTxs
+    isReturn tx = transactionType tx == Return
+    sales     =
+      filter
+        (\tx -> not (isReturn tx) && transactionStatus tx `elem` [Completed, Refunded])
+        todayTxs
+    returns   =
+      filter
+        (\tx -> isReturn tx && transactionStatus tx == Completed)
+        todayTxs
+    voided    = filter transactionIsVoided todayTxs
+    refunded  = filter (\tx -> not (isReturn tx) && transactionIsRefunded tx) todayTxs
+    revenue   = sum (map transactionTotal sales) + sum (map transactionTotal returns)
+    count     = length sales
+    avg       = if count == 0 then 0 else revenue `div` count
    in
     LocationDayStats
       { ldsTxCount     = count
