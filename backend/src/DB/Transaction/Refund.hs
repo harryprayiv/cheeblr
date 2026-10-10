@@ -43,7 +43,7 @@ module DB.Transaction.Refund
   ) where
 
 import Control.Exception (throwIO)
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Scientific (fromFloatDigits)
 import qualified Data.Text as T
@@ -58,6 +58,7 @@ import Rel8
 import DB.Database (DBPool, runTransaction)
 import DB.Schema
 import qualified DB.Transaction as DBT
+import Domain.StockPolicy (RestockPolicy (..))
 import Types.Primitives.Money
   ( refundMoneyCents
   , saleMoneyCents
@@ -235,12 +236,20 @@ lockSaleForRefund =
 -- is the separate row of type RETURN and status COMPLETED that carries the
 -- negated amounts.
 --
+-- Stock: the original sale was COMPLETED, so its quantities were taken out
+-- of stock. Whether the refund puts them back is the caller's @restock@
+-- argument, which comes from configuration: 'ReturnToStock' adds every
+-- line of the original sale back in this same SQL transaction,
+-- 'DoNotRestock' leaves stock alone. A sale is refunded at most once, so
+-- stock is put back at most once.
+--
 -- Return value: the typed refund converted back via
 -- 'refundToLegacyTransaction'. We do not re-read via 'hydrateTx'; the
 -- typed value already has every field that hydrate would produce, by
 -- construction. Throws 'DBT.InventoryException' after rolling back.
-writeTypedRefund :: DBPool -> Refund.RefundTransaction -> IO Legacy.Transaction
-writeTypedRefund pool refund = do
+writeTypedRefund ::
+  DBPool -> RestockPolicy -> Refund.RefundTransaction -> IO Legacy.Transaction
+writeTypedRefund pool restock refund = do
   let origTxId = Refund.refundReferenceTransactionId refund
       reason   = Refund.refundReason refund
 
@@ -321,10 +330,15 @@ writeTypedRefund pool refund = do
                 , updateWhere = \() row -> DB.Schema.txId row ==. lit origTxId
                 , returning   = NoReturning
                 }
+
+        -- 5. Put the original sale's quantities back in stock, when the
+        -- configuration says so.
+        when (restock == ReturnToStock) $
+          DBT.restockSaleS origTxId
         pure (Right ())
       _ -> pure (Left (DBT.SaleNotOpen origTxId))
 
-  -- 5. Return the refund as a legacy 'Legacy.Transaction'.
+  -- 6. Return the refund as a legacy 'Legacy.Transaction'.
   case outcome of
     Left e   -> throwIO e
     Right () -> pure (refundToLegacyTransaction refund)

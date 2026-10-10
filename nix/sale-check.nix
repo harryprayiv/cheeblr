@@ -21,6 +21,9 @@ let
   backendPath = builtins.head (builtins.split "/[^/]*$" (builtins.head config.haskell.codeDirs));
 
   saleBackendPort = "18081";
+  # A second port, used only to start a backend that is expected to refuse
+  # its configuration and exit.
+  saleConfigPort = "18082";
   saleDbPort = "5432";
 
   pg   = pkgs.postgresql;
@@ -44,6 +47,10 @@ let
     export PGDATABASE="${name}"
     export PGHOST="$PGDATA"
     export PORT="${saleBackendPort}"
+    # The backend has no default for these two. The checks start with both
+    # on no-restock. Group M restarts the backend with both on restock.
+    export RESTOCK_ON_VOID="no-restock"
+    export RESTOCK_ON_REFUND="no-restock"
     BASE_URL="http://${host}:${saleBackendPort}"
 
     WORK="$(mktemp -d)"
@@ -62,6 +69,7 @@ let
         kill -9 "$BACKEND_PID" 2>/dev/null || true
       fi
       ${pkgs.lsof}/bin/lsof -ti :${saleBackendPort} 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+      ${pkgs.lsof}/bin/lsof -ti :${saleConfigPort} 2>/dev/null | xargs -r kill -9 2>/dev/null || true
       if [ -d "$TEST_PGDATA" ]; then
         ${pg}/bin/pg_ctl -D "$TEST_PGDATA" stop -m immediate > /dev/null 2>&1 || true
         rm -rf "$TEST_PGDATA"
@@ -116,24 +124,80 @@ EOF
 
     # ── Backend ─────────────────────────────────────────────────────────────
 
-    echo "Starting backend on port ${saleBackendPort} ..."
-    if [ -n "''${BACKEND_BIN:-}" ] && [ -x "''${BACKEND_BIN}" ]; then
-      ("''${BACKEND_BIN}" > "$WORK/backend.log" 2>&1) &
-    else
-      (cd ${backendPath} && cabal run ${name}-backend > "$WORK/backend.log" 2>&1) &
-    fi
-    BACKEND_PID=$!
+    # Runs the backend in the foreground with the environment it is given.
+    run_backend() {
+      if [ -n "''${BACKEND_BIN:-}" ] && [ -x "''${BACKEND_BIN}" ]; then
+        "''${BACKEND_BIN}"
+      else
+        (cd ${backendPath} && cabal run ${name}-backend)
+      fi
+    }
 
-    RETRIES=0
-    while ! ${curl} -s "$BASE_URL/openapi.json" > /dev/null 2>&1; do
-      RETRIES=$((RETRIES + 1))
-      if [ $RETRIES -ge 120 ] || ! kill -0 "$BACKEND_PID" 2>/dev/null; then
-        echo "Backend did not come up. Last lines of its log:"
-        tail -n 40 "$WORK/backend.log" || true
-        exit 1
+    # Starts the backend in the background with the current environment and
+    # waits until it answers. Its output is appended to one log.
+    start_backend() {
+      local retries=0
+      (run_backend >> "$WORK/backend.log" 2>&1) &
+      BACKEND_PID=$!
+      while ! ${curl} -s "$BASE_URL/openapi.json" > /dev/null 2>&1; do
+        retries=$((retries + 1))
+        if [ $retries -ge 120 ] || ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+          echo "Backend did not come up. Last lines of its log:"
+          tail -n 40 "$WORK/backend.log" || true
+          return 1
+        fi
+        sleep 1
+      done
+    }
+
+    # Stops the backend and waits until its port no longer answers.
+    stop_backend() {
+      local waited=0
+      if [ -n "$BACKEND_PID" ] && kill -0 "$BACKEND_PID" 2>/dev/null; then
+        kill -TERM "$BACKEND_PID" 2>/dev/null || true
       fi
       sleep 1
-    done
+      ${pkgs.lsof}/bin/lsof -ti :${saleBackendPort} 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+      while ${curl} -s "$BASE_URL/openapi.json" > /dev/null 2>&1; do
+        waited=$((waited + 1))
+        if [ $waited -ge 15 ]; then
+          return 1
+        fi
+        sleep 1
+      done
+      BACKEND_PID=""
+    }
+
+    # Starts a backend on the second port with one variable unset (second
+    # argument empty) or set to the second argument. Prints "refused" when
+    # the backend exits by itself and its output names the variable, and
+    # says what happened otherwise.
+    config_outcome() {
+      local log="$WORK/config-$1.log" pid waited=0
+      : > "$log"
+      (
+        export PORT="${saleConfigPort}"
+        if [ -z "$2" ]; then unset "$1"; else export "$1=$2"; fi
+        run_backend
+      ) >> "$log" 2>&1 &
+      pid=$!
+      while kill -0 "$pid" 2>/dev/null && [ $waited -lt 120 ]; do
+        sleep 1
+        waited=$((waited + 1))
+      done
+      if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+        ${pkgs.lsof}/bin/lsof -ti :${saleConfigPort} 2>/dev/null | xargs -r kill -9 2>/dev/null || true
+        echo "kept running"
+      elif grep -q "$1" "$log"; then
+        echo "refused"
+      else
+        echo "exited without naming $1"
+      fi
+    }
+
+    echo "Starting backend on port ${saleBackendPort} ..."
+    start_backend || exit 1
     echo "✓ Backend ready at $BASE_URL"
 
     # ── Admin account and seed data ─────────────────────────────────────────
@@ -183,7 +247,7 @@ EOF
       fi
     }
 
-    # POSTs a JSON body as the logged-in user and prints the HTTP status.
+    # POSTs a JSON body as the logged-in admin and prints the HTTP status.
     post() {
       ${curl} -s -o /dev/null -w "%{http_code}" --max-time 30 \
         -H "Cookie: cheeblr_session=$TOKEN" \
@@ -191,7 +255,7 @@ EOF
         -X POST -d "$2" "$BASE_URL$1"
     }
 
-    # Sends a DELETE as the logged-in user and prints the HTTP status.
+    # Sends a DELETE as the logged-in admin and prints the HTTP status.
     del() {
       ${curl} -s -o /dev/null -w "%{http_code}" --max-time 30 \
         -H "Cookie: cheeblr_session=$TOKEN" \
@@ -220,8 +284,7 @@ EOF
         '{addPaymentSaleId: $s, addPaymentMethod: "Cash", addPaymentAmount: $a, addPaymentTendered: null, addPaymentReference: null}'
     }
 
-    # Starts a sale and prints its id. The body always names the admin as the
-    # employee, whoever is logged in.
+    # Starts a sale and prints its id.
     start_sale() {
       local body code
       body=$(${jq} -nc --arg e "$ADMIN_ID" --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
@@ -249,6 +312,7 @@ EOF
     ${builtins.readFile ./sale-checks/constraints.sh}
     ${builtins.readFile ./sale-checks/locks.sh}
     ${builtins.readFile ./sale-checks/refund.sh}
+    ${builtins.readFile ./sale-checks/restock.sh}
     ${builtins.readFile ./sale-checks/rows.sh}
 
     echo ""

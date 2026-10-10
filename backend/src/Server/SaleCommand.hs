@@ -16,6 +16,7 @@ import qualified Servant (throwError)
 
 import API.SaleCommand (SaleCommandAPI)
 import Auth.Session (SessionContext (..))
+import Config.App (cfgStockPolicy)
 import Effect.Clock
 import Effect.EventEmitter
 import Effect.GenUUID
@@ -64,7 +65,7 @@ runSaleEff env action = do
           Nothing
       . runInventoryDbIO (envDbPool env)
       . runStockDbIO (envDbPool env)
-      . runTransactionDbIO (envDbPool env)
+      . runTransactionDbIO (cfgStockPolicy (envConfig env)) (envDbPool env)
       . runClockIO
       . runGenUUIDIO
       . runTaxRulesIO (envDbPool env)

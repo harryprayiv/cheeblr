@@ -1,7 +1,7 @@
-# ── M. Consistency of every row ─────────────────────────────────────────
+# ── N. Consistency of every row ─────────────────────────────────────────
 
 echo ""
-echo "── M. Every row in the database obeys the rules ──"
+echo "── N. Every row in the database obeys the rules ──"
 rule() { check "$1" 0 "$(sql "$2")"; }
 
 rule "stored subtotal equals the sum of line subtotals" \

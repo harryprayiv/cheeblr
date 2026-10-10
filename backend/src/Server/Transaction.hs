@@ -8,6 +8,7 @@ module Server.Transaction where
 
 import API.Transaction
 import Auth.Session (SessionContext (..), resolveSession)
+import Config.App (cfgStockPolicy)
 import Control.Monad (unless, void)
 import Control.Monad.Error.Class (catchError)
 import Control.Monad.IO.Class (liftIO)
@@ -73,7 +74,7 @@ runTxEff env action = do
           Nothing
       . runInventoryDbIO (envDbPool env)
       . runStockDbIO (envDbPool env)
-      . runTransactionDbIO (envDbPool env)
+      . runTransactionDbIO (cfgStockPolicy (envConfig env)) (envDbPool env)
       . runClockIO
       . runGenUUIDIO
       $ action
@@ -307,7 +308,7 @@ reservationServer env =
         err410 {errBody = "Reservations are released by removing the item from its sale"}
 
 -- ---------------------------------------------------------------------------
--- Other servers
+-- Other servers (unchanged)
 -- ---------------------------------------------------------------------------
 
 registerServer :: AppEnv -> Server RegisterAPI

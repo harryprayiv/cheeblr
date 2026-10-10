@@ -71,6 +71,7 @@ library
                    , Domain.Pricing
                    , Domain.TaxRule
                    , Domain.SaleRules
+                   , Domain.StockPolicy
                    , DB.TaxRule
                    , Effect.TaxRules
                    , Types.Transaction.Request

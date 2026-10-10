@@ -6,6 +6,7 @@
 
 let
   appConfig = import ./config.nix { inherit name; };
+  stockPolicy = import ./stock-policy.nix;
 
   psConfig       = appConfig.purescript;
   hsConfig       = appConfig.haskell;
@@ -93,6 +94,8 @@ let
       echo "  Enable cross-compilation in your NixOS config:"
       echo "    boot.binfmt.emulatedSystems = [ \"aarch64-linux\" ];"
   '' else "";
+
+
 
   helpScript = pkgs.writeShellScriptBin "${name}-help" ''
     echo "Copyright (C) ${licenseConfig.years} ${licenseConfig.holder}. Licensed under the ${licenseConfig.name}."
@@ -240,6 +243,8 @@ let
     coreutils bash gnused gnugrep jq perl findutils
   ] ++ containerTools;
 
+
+
   nativeBuildInputs = with pkgs; [
     pkg-config postgresql postgresql.lib zlib openssl.dev libiconv openssl
     lsof tmux
@@ -260,12 +265,15 @@ let
       export PGPORT="${toString dbConfig.port}"
       export PGUSER="${dbConfig.user}"
       export PGDATABASE="${dbConfig.name}"
+      export RESTOCK_ON_VOID="${stockPolicy.restockOnVoid}"
+      export RESTOCK_ON_REFUND="${stockPolicy.restockOnRefund}"
       export PKG_CONFIG_PATH="${pkgs.postgresql.lib}/lib/pkgconfig:$PKG_CONFIG_PATH"
       export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/${name}.txt"
 
       mkdir -p "$(pwd)/script/concat_archive/output" \
                "$(pwd)/script/concat_archive/archive" \
                "$(pwd)/script/concat_archive/.hashes"
+
 
       ${sopsModule.loadSecretsHook}
 

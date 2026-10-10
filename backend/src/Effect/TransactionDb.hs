@@ -68,6 +68,7 @@ import qualified DB.Transaction.Refund as DBTRefund
 import qualified DB.Transaction.Typed as DBTTyped
 import qualified DB.Reservation as DBRes
 import Domain.SaleRules (finalizeProblems)
+import Domain.StockPolicy (RestockPolicy (..), StockPolicy (..))
 import Effect.Clock
 import Effect.GenUUID
 import Types.Location (LocationId)
@@ -122,6 +123,10 @@ data SaleLineAdded = SaleLineAdded
 -- the original sale is not completed or was already refunded.
 -- 'FinalizeSale' also decides, at the moment of the write, whether the sale
 -- has lines and is paid.
+--
+-- 'VoidSale' and 'WriteRefund' of a completed sale put its quantities back
+-- in stock or leave stock alone, according to the 'StockPolicy' the
+-- interpreter was given. The operations themselves carry no policy.
 data TransactionDb :: Effect where
 
   GetSaleById              :: UUID -> TransactionDb m (Either TypedLoadError Sale.SaleTransaction)
@@ -295,8 +300,15 @@ narrowToRefund (Just (Left e))              = Left (TypedDecodeFailed e)
 narrowToRefund (Just (Right (Left _)))      = Left TypedWrongKind
 narrowToRefund (Just (Right (Right r)))     = Right r
 
-runTransactionDbIO :: (IOE :> es) => DBPool -> Eff (TransactionDb : es) a -> Eff es a
-runTransactionDbIO pool = interpret $ \_ -> \case
+-- | The Postgres interpreter. The 'StockPolicy' comes from configuration
+-- and decides what a void and a refund of a completed sale do to stock.
+runTransactionDbIO ::
+  (IOE :> es) =>
+  StockPolicy ->
+  DBPool ->
+  Eff (TransactionDb : es) a ->
+  Eff es a
+runTransactionDbIO stockPolicy pool = interpret $ \_ -> \case
 
   GetSaleById uuid -> liftIO $ do
     r <- DBTTyped.getTransactionByIdTyped pool uuid
@@ -332,11 +344,11 @@ runTransactionDbIO pool = interpret $ \_ -> \case
     DBT.updateTransactionStatus pool txId status
 
   VoidSale txId reason -> liftIO $ do
-    res <- try @InventoryException $ DBT.voidTransaction pool txId reason
+    res <- try @InventoryException $ DBT.voidTransaction pool (restockOnVoid stockPolicy) txId reason
     pure (fmap expectSaleTx res)
 
   WriteRefund refund -> liftIO $ do
-    res <- try @InventoryException $ DBTRefund.writeTypedRefund pool refund
+    res <- try @InventoryException $ DBTRefund.writeTypedRefund pool (restockOnRefund stockPolicy) refund
     pure (fmap expectRefundTx res)
 
   ClearSale txId -> liftIO $
@@ -391,17 +403,37 @@ data ReservationEntry = ReservationEntry
   }
   deriving (Show, Eq)
 
+-- | The in-memory store. 'tsStockPolicy' says what a void and a refund of a
+-- completed sale do to 'tsInventory'. It takes the place of the
+-- configuration the Postgres interpreter is given.
 data TxStore = TxStore
   { tsTxs          :: Map UUID Transaction
   , tsItemToTx     :: Map UUID UUID
   , tsPaymentToTx  :: Map UUID UUID
   , tsReservations :: Map UUID ReservationEntry
   , tsInventory    :: Map UUID Int
+  , tsStockPolicy  :: StockPolicy
   }
   deriving (Show, Eq)
 
+-- | A store with nothing in it. Its stock policy is 'DoNotRestock' for both
+-- void and refund. That value is a fixture for tests, not a default of the
+-- running backend, which reads its policy from configuration. A test of
+-- restocking sets 'tsStockPolicy' itself.
 emptyTxStore :: TxStore
-emptyTxStore = TxStore Map.empty Map.empty Map.empty Map.empty Map.empty
+emptyTxStore =
+  TxStore
+    { tsTxs          = Map.empty
+    , tsItemToTx     = Map.empty
+    , tsPaymentToTx  = Map.empty
+    , tsReservations = Map.empty
+    , tsInventory    = Map.empty
+    , tsStockPolicy  =
+        StockPolicy
+          { restockOnVoid   = DoNotRestock
+          , restockOnRefund = DoNotRestock
+          }
+    }
 
 activeReservedQty :: UUID -> Map UUID ReservationEntry -> Int
 activeReservedQty sku rs =
@@ -453,6 +485,18 @@ releaseOneReservation txId sku qty rs =
        ] of
     (k : _) -> Map.adjust (\r -> r {reStatus = "Released"}) k rs
     []      -> rs
+
+-- | Mirrors 'DBT.restockSaleS': adds the quantity of every line of a sale
+-- back to its item's stock. An item that is not in the inventory map is
+-- left out, as a missing row is in Postgres.
+restockLines :: Transaction -> Map UUID Int -> Map UUID Int
+restockLines tx inventory =
+  foldl
+    ( \m i ->
+        Map.adjust (+ transactionItemQuantity i) (transactionItemMenuItemSku i) m
+    )
+    inventory
+    (transactionItems tx)
 
 -- | The reasons a stored sale cannot be completed, by the same rule
 -- 'DB.Transaction.finalizeTransaction' applies under its lock.
@@ -531,7 +575,8 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
         }
 
   -- Mirrors 'DBT.voidTransaction': a sale that is missing, voided or
-  -- refunded is refused and nothing changes.
+  -- refunded is refused and nothing changes. Voiding a Completed sale puts
+  -- its quantities back in stock when the store's policy says so.
   VoidSale txId reason -> do
     st <- get @TxStore
     case Map.lookup txId (tsTxs st) of
@@ -543,10 +588,17 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                     , transactionIsVoided   = True
                     , transactionVoidReason = Just reason
                     }
+                restocks =
+                  transactionStatus tx == Completed
+                    && restockOnVoid (tsStockPolicy st) == ReturnToStock
             put @TxStore
               st
                 { tsTxs          = Map.insert txId voided (tsTxs st)
                 , tsReservations = releaseReservedForTx txId (tsReservations st)
+                , tsInventory    =
+                    if restocks
+                      then restockLines tx (tsInventory st)
+                      else tsInventory st
                 }
             pure $ Right (expectSaleTx voided)
       _ -> pure $ Left (SaleNotOpen txId)
@@ -554,7 +606,9 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
   -- Mirrors 'DBTRefund.writeTypedRefund': the original sale must be
   -- Completed and not already refunded, or the refund is refused and
   -- nothing changes. An allowed refund sets the original sale's status to
-  -- Refunded, so it can be neither voided nor refunded again.
+  -- Refunded, so it can be neither voided nor refunded again. It puts the
+  -- original sale's quantities back in stock when the store's policy says
+  -- so.
   WriteRefund refund -> do
     let refundTxId    = Refund.refundId refund
         origTxId      = Refund.refundReferenceTransactionId refund
@@ -604,6 +658,10 @@ runTransactionDbPure initial = reinterpret (runState initial) $ \_ -> \case
                       (\m pid -> Map.insert pid refundTxId m)
                       (tsPaymentToTx st)
                       refundPymtIds
+                , tsInventory =
+                    if restockOnRefund (tsStockPolicy st) == ReturnToStock
+                      then restockLines orig (tsInventory st)
+                      else tsInventory st
                 }
             pure (Right refund)
       _ -> pure $ Left (SaleNotOpen origTxId)

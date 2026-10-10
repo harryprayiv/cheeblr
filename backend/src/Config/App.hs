@@ -8,6 +8,7 @@ module Config.App (
 ) where
 
 import Config.Env
+import Control.Exception (throwIO)
 import Data.Aeson (ToJSON)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -16,6 +17,11 @@ import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import GHC.Generics (Generic)
 
+import Domain.StockPolicy (
+  RestockPolicy,
+  StockPolicy (..),
+  parseRestockPolicy,
+ )
 import Types.Location (LocationId (..))
 
 data Environment
@@ -52,8 +58,8 @@ data AppConfig = AppConfig
   , cfgTlsKeyPath  :: FilePath
   , cfgUseTls      :: Bool
 
-  -- cfgCorsOrigins removed: was read from CORS_ORIGINS but never accessed;
-  -- CORS policy uses cfgAllowedOrigin (singular) exclusively.
+
+
   , cfgAllowedOrigin :: Maybe Text
 
   , cfgApiPublicUrl :: Text
@@ -69,12 +75,16 @@ data AppConfig = AppConfig
   , cfgAvailabilityBroadcastSize :: Int
 
   , cfgEnvironment :: Environment
-  -- cfgUseRealAuth removed: was never read after dev-mode auth stub was
-  -- replaced with real session auth. All auth now goes through resolveSession.
+
+
   , cfgLogFile     :: FilePath
 
   , cfgPublicLocationId   :: LocationId
   , cfgPublicLocationName :: Text
+
+  -- Whether voiding and refunding a completed sale put stock back. Read
+  -- from RESTOCK_ON_VOID and RESTOCK_ON_REFUND. Neither has a default.
+  , cfgStockPolicy :: StockPolicy
   }
 
 loadConfig :: IO AppConfig
@@ -122,6 +132,9 @@ loadConfig = do
   pubLocId   <- LocationId <$> envUUID "PUBLIC_LOCATION_ID" nilUUID
   pubLocName <- envText "PUBLIC_LOCATION_NAME" "Main Location"
 
+  restockVoid   <- envRestockPolicy "RESTOCK_ON_VOID"
+  restockRefund <- envRestockPolicy "RESTOCK_ON_REFUND"
+
   pure AppConfig
     { cfgPort        = port
     , cfgBindAddress = bind
@@ -154,7 +167,25 @@ loadConfig = do
     , cfgLogFile     = logFile
     , cfgPublicLocationId   = pubLocId
     , cfgPublicLocationName = pubLocName
+    , cfgStockPolicy =
+        StockPolicy
+          { restockOnVoid   = restockVoid
+          , restockOnRefund = restockRefund
+          }
     }
+
+-- | Reads a restock setting. The variable has to be set, and its value has
+-- to be @restock@ or @no-restock@. A missing or unreadable value stops the
+-- program at startup with a message that names the variable. There is no
+-- default, so whoever deploys the backend has to make the choice.
+envRestockPolicy :: String -> IO RestockPolicy
+envRestockPolicy name = do
+  raw <- envRequired name
+  case parseRestockPolicy raw of
+    Right policy -> pure policy
+    Left problem ->
+      throwIO . userError $
+        "Invalid value for " <> name <> ": " <> T.unpack problem
 
 nilUUID :: UUID
 nilUUID = case UUID.fromString "00000000-0000-0000-0000-000000000000" of

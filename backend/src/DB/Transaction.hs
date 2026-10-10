@@ -15,7 +15,7 @@ module DB.Transaction (
 ) where
 
 import Control.Exception (Exception, throwIO)
-import Control.Monad (forM_)
+import Control.Monad (forM_, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Int (Int32)
 import Data.List (sortOn)
@@ -35,6 +35,7 @@ import DB.Schema
 import DB.Transaction.Rows
 import DB.Transaction.Tables
 import Domain.SaleRules (finalizeProblems)
+import Domain.StockPolicy (RestockPolicy (..))
 import Types.Transaction
 
 -- | Why a write to a sale was refused.
@@ -231,6 +232,34 @@ releaseReservedForTxS txId =
           , returning   = NoReturning
           }
 
+-- | Adds the quantity of every line of a sale back to its item's stock.
+--
+-- The caller holds the sale's row lock and has decided, from the status
+-- read under that lock, that the sale was COMPLETED. That is the only
+-- status in which the sale's quantities have been taken out of stock.
+--
+-- The item rows are updated in ascending sku order, which is the lock
+-- order every other stock write uses. A sale holds at most one line per
+-- sku, so each item is updated once. A line whose item no longer exists
+-- updates nothing.
+restockSaleS :: UUID -> Session.Session ()
+restockSaleS saleId = do
+  soldLines <- Session.statement () $ run $ Rel8.select $ do
+    ti <- each transactionItemSchema
+    where_ $ tiTransactionId ti ==. lit saleId
+    pure (tiMenuItemSku ti, tiQuantity ti)
+  forM_ (sortOn fst (soldLines :: [(UUID, Int32)])) $ \(sku, qty) ->
+    Session.statement () $
+      run_ $
+        Rel8.update $
+          Update
+            { target      = menuItemSchema
+            , from        = pure ()
+            , set         = \() row -> row {menuQuantity = menuQuantity row + lit qty}
+            , updateWhere = \() row -> menuSku row ==. lit sku
+            , returning   = NoReturning
+            }
+
 updateTotalsS :: UUID -> Session.Session ()
 updateTotalsS txId = do
   subtotals <-
@@ -325,16 +354,23 @@ insertPaymentTransaction pool payment = do
 -- sale that does not exist, is refused with 'SaleNotOpen' and nothing
 -- changes. Throws 'InventoryException' after rolling back.
 --
--- Reservations of a completed sale are already "Completed" and are left
--- alone, so voiding a completed sale does not put stock back.
-voidTransaction :: DBPool -> UUID -> Text -> IO Transaction
-voidTransaction pool txId reason = do
+-- Stock: a sale that was CREATED or IN_PROGRESS never left stock, so
+-- releasing its reservations is all there is to do. A COMPLETED sale has
+-- had its quantities taken out of stock. Whether voiding it puts them back
+-- is the caller's @restock@ argument, which comes from configuration:
+-- 'ReturnToStock' adds every line's quantity back in this same SQL
+-- transaction, 'DoNotRestock' leaves stock alone. A voided sale cannot be
+-- voided or refunded again, so stock is put back at most once.
+voidTransaction :: DBPool -> RestockPolicy -> UUID -> Text -> IO Transaction
+voidTransaction pool restock txId reason = do
   outcome <- runTransaction pool $ do
     mStatus <- Session.statement txId lockTransactionStatus
     if mStatus /= Just "CREATED" && mStatus /= Just "IN_PROGRESS" && mStatus /= Just "COMPLETED"
       then pure (Left (SaleNotOpen txId))
       else do
         releaseReservedForTxS txId
+        when (mStatus == Just "COMPLETED" && restock == ReturnToStock) $
+          restockSaleS txId
         Session.statement () $
           run_ $
             Rel8.update $
@@ -669,8 +705,8 @@ addTransactionItem pool txId sku addQty newItemId priceLineAt = do
 --
 -- A reservation row does not record which line created it. The match is on
 -- sale, sku, "Reserved" status and quantity, and exactly one matching row is
--- released. The unique indexes in "DB.Transaction.Tables" hold a sale to one
--- line and one live reservation per sku, so the match is unique.
+-- released. 'addTransactionItem' keeps a sale to one line per sku, so the
+-- match is normally unique.
 deleteTransactionItem :: DBPool -> UUID -> IO ()
 deleteTransactionItem pool itemId =
   runTransaction_ pool $ do
