@@ -119,3 +119,30 @@ if [ "$RM_FINALIZED" -eq 0 ] || [ "$RM_FINALIZED" -eq 8 ]; then
   echo "  note: one side won every remove race, so only one order was tested in this run"
 fi
 check "stock fell by one for each sale that completed against a remove" "$((STOCK_BEFORE_RM - RM_FINALIZED))" "$(stock_of "$SKU_MAIN")"
+
+# The check under the lock, without relying on timing. A second database
+# connection takes the sale's row lock, holds it for two seconds, marks the
+# sale COMPLETED and commits. The remove is sent while the lock is held. At
+# that moment the sale still reads as IN_PROGRESS, so the remove passes the
+# service's early check and then waits at the lock. When the lock is
+# released it must read COMPLETED and refuse. A remove that decided before
+# taking the lock would delete the line here.
+LW=$(start_sale) || { echo "  ✗ could not start a sale"; exit 1; }
+post /pos/sale/item "$(add_body "$LW" "$SKU_MAIN" 1)" > /dev/null
+LW_LINE=$(sql "select id from transaction_item where transaction_id = '$LW' limit 1")
+sql "begin; select id from transaction where id = '$LW' for update; select pg_sleep(2); update transaction set status = 'COMPLETED' where id = '$LW'; commit;" > /dev/null 2>&1 &
+LW_HOLDER=$!
+sleep 0.5
+LW_START=$(date +%s%N)
+LW_CODE=$(del "/pos/sale/item/$LW_LINE")
+LW_MS=$(( ($(date +%s%N) - LW_START) / 1000000 ))
+wait "$LW_HOLDER" 2>/dev/null || true
+if [ "$LW_MS" -ge 1000 ]; then LW_WAITED=yes; else LW_WAITED="no, answered in $LW_MS ms"; fi
+check "a remove sent while the sale row is locked waits for the lock" yes "$LW_WAITED"
+check "the remove that waited finds the sale completed and returns 409" 409 "$LW_CODE"
+check "the line is still on the sale" 1 "$(line_count "$LW")"
+
+# That sale was marked COMPLETED by hand and never finalized, so it is put
+# back to IN_PROGRESS and voided, which releases its reservation.
+sql "update transaction set status = 'IN_PROGRESS' where id = '$LW'" > /dev/null
+check "the hand-completed sale is voided again for cleanup" 200 "$(post "/sale/void/$LW" '"lock wait cleanup"')"
