@@ -75,10 +75,25 @@ for _r in $(seq 1 8); do
   RLINE=$(sql "select id from transaction_item where transaction_id = '$RS_' limit 1")
   RTOT=$(sql "select total from transaction where id = '$RS_'")
   post /pos/sale/payment "$(pay_body "$RS_" "$RTOT")" > /dev/null
-  post "/pos/sale/finalize/$RS_" "" > "$WORK/rfin" &
-  RFIN_PID=$!
-  del "/pos/sale/item/$RLINE" > "$WORK/rdel" &
-  RDEL_PID=$!
+  # The two requests reach the lock a few milliseconds apart, and which one
+  # is first depends on how they are started. Odd rounds start the remove
+  # and then the finalize from a subshell, which in practice lets the
+  # remove through first. Even rounds start the finalize and then the
+  # remove, which in practice lets the finalize through first. Both orders
+  # therefore run in every pass.
+  if [ $((_r % 2)) -eq 1 ]; then
+    RORDER="remove first"
+    del "/pos/sale/item/$RLINE" > "$WORK/rdel" &
+    RDEL_PID=$!
+    ( sleep 0; post "/pos/sale/finalize/$RS_" "" > "$WORK/rfin" ) &
+    RFIN_PID=$!
+  else
+    RORDER="finalize first"
+    post "/pos/sale/finalize/$RS_" "" > "$WORK/rfin" &
+    RFIN_PID=$!
+    del "/pos/sale/item/$RLINE" > "$WORK/rdel" &
+    RDEL_PID=$!
+  fi
   wait "$RFIN_PID" "$RDEL_PID" 2>/dev/null || true
   RFIN_CODE=$(cat "$WORK/rfin")
   RDEL_CODE=$(cat "$WORK/rdel")
@@ -89,15 +104,18 @@ for _r in $(seq 1 8); do
     RM_FINALIZED=$((RM_FINALIZED + 1))
     if [ "$RFIN_CODE" != "200" ] || [ "$RDEL_CODE" != "409" ] || [ "$RLINES" != "1" ]; then
       RM_IMPOSSIBLE=$((RM_IMPOSSIBLE + 1))
-      echo "  round $_r: COMPLETED with lines=$RLINES finalize=$RFIN_CODE remove=$RDEL_CODE"
+      echo "  round $_r ($RORDER): COMPLETED with lines=$RLINES finalize=$RFIN_CODE remove=$RDEL_CODE"
     fi
   else
     if [ "$RSTATUS" != "IN_PROGRESS" ] || [ "$RFIN_CODE" != "409" ] || [ "$RDEL_CODE" != "200" ] || [ "$RLINES" != "0" ] || [ "$RRES" != "0" ]; then
       RM_IMPOSSIBLE=$((RM_IMPOSSIBLE + 1))
-      echo "  round $_r: $RSTATUS with lines=$RLINES reservations=$RRES finalize=$RFIN_CODE remove=$RDEL_CODE"
+      echo "  round $_r ($RORDER): $RSTATUS with lines=$RLINES reservations=$RRES finalize=$RFIN_CODE remove=$RDEL_CODE"
     fi
   fi
 done
 echo "  finalize won $RM_FINALIZED of 8 races against remove item"
 check "no remove race ended in a state the rules forbid" 0 "$RM_IMPOSSIBLE"
+if [ "$RM_FINALIZED" -eq 0 ] || [ "$RM_FINALIZED" -eq 8 ]; then
+  echo "  note: one side won every remove race, so only one order was tested in this run"
+fi
 check "stock fell by one for each sale that completed against a remove" "$((STOCK_BEFORE_RM - RM_FINALIZED))" "$(stock_of "$SKU_MAIN")"
