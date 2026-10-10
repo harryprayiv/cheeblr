@@ -61,3 +61,4 @@ keys.txt
 *.yaml.plain
 *.yaml.tmp
 cheeblr-compliance.log
+backend/cheeblr.log
