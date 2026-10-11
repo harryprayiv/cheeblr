@@ -2306,3 +2306,326 @@ a.text-blue-600:hover,
     display: none;
   }
 }
+
+/* ============================================= */
+/* SESSION-ERA PAGES                             */
+/* Registers, sales history, sale page states    */
+/* ============================================= */
+
+/*
+ * Classes emitted by Pages.Registers, Pages.TransactionHistory,
+ * Pages.CreateTransaction, Route.nav and the "hidden" class that
+ * UI.Form, UI.Transaction.ActionBar and UI.Transaction.InventoryPicker
+ * use to take an element off the page.
+ */
+
+/* ---- Utilities the PureScript code relies on ---- */
+
+.hidden { display: none !important; }
+.gap-2 { gap: 0.5rem; }
+
+/* A status line with no text takes no space. */
+.status-message:empty,
+.register-device:empty { display: none; }
+
+/* ---- Buttons: gaps in the shared .btn rules ---- */
+
+a.btn { text-decoration: none; }
+
+.btn:disabled {
+  background-color: var(--bg-light);
+  color: var(--fg-muted);
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* A button that carries "btn" with no colour class gets the neutral look. */
+.btn:not(.btn-primary):not(.btn-secondary):not(.btn-success):not(.btn-danger):not(.btn-warning):not(.btn-info) {
+  background-color: var(--bg-light);
+  color: var(--fg-light);
+}
+
+.btn:not(.btn-primary):not(.btn-secondary):not(.btn-success):not(.btn-danger):not(.btn-warning):not(.btn-info):hover:not(:disabled) {
+  background-color: var(--green-dark);
+}
+
+.sale-actions .btn:hover:not(:disabled) {
+  background-color: var(--red);
+}
+
+.btn-info { background-color: var(--blue); }
+.btn-info:hover { background-color: var(--blue-bright); color: var(--bg-dark); }
+
+/* ---- Sale screen: header with its Refresh button ---- */
+
+.inventory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+/* ---- Sale screen: the Add column clipped its count badge and button ---- */
+
+.actions-col { flex: 1.2; overflow: visible; }
+.quantity-controls { align-items: center; gap: 8px; }
+
+/* ---- Sale status colours missing from the transaction section ---- */
+
+.status-value.voided { color: var(--red); }
+.status-value.refunded { color: var(--orange); }
+
+/* ---- Navigation: signed-in user name ---- */
+
+.nav-user {
+  align-self: center;
+  margin-left: auto;
+  padding: 0 0.5rem;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+/* ---- Sale page: no register, or no sale in progress ---- */
+
+.no-sale,
+.register-needed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  max-width: 480px;
+  margin: 3rem auto;
+  padding: 2rem;
+  background-color: var(--bg-medium);
+  border: 1px solid var(--bg-light);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-md);
+  text-align: center;
+}
+
+.no-sale p,
+.register-needed p {
+  margin: 0;
+  width: 100%;
+}
+
+.no-sale p { color: var(--fg-dark); }
+
+.no-sale .btn,
+.register-needed .btn {
+  padding: 0.7rem 2rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+/* ---- Registers page ---- */
+
+.registers-page,
+.sale-history {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.registers-page > h1,
+.sale-history .manager-header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--fg-light);
+}
+
+.registers-page > h1 {
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid var(--green-dark);
+}
+
+.registers-page > .status-message,
+.sale-history > .status-message {
+  margin-top: 0;
+}
+
+.register-create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 0.75rem;
+  padding: 0.85rem 1rem;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--bg-light);
+  border-radius: var(--border-radius);
+}
+
+.register-create h3 {
+  flex: 0 0 100%;
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--brown-light);
+}
+
+.register-create > div,
+.register-action > div {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.register-create > .btn,
+.register-action > .btn {
+  flex: 0 0 auto;
+}
+
+.register-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 0.75rem;
+}
+
+.register-row.stat-card {
+  gap: 0.5rem;
+}
+
+.register-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--fg-light);
+}
+
+.register-state {
+  align-self: flex-start;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--bg-light);
+  border-radius: 20px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.register-device {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--aqua);
+}
+
+.register-row > .btn {
+  align-self: flex-start;
+}
+
+.register-drawer {
+  font-size: 0.85rem;
+  color: var(--fg-dark);
+}
+
+.register-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--bg-light);
+}
+
+.register-action .w-36.text-sm.font-medium,
+.register-create .w-36.text-sm.font-medium {
+  width: auto;
+  min-width: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* The hint goes on its own line under the input, clear of the button. */
+.register-action .flex {
+  flex-wrap: wrap;
+}
+
+.register-action .text-red-500.text-xs {
+  flex: 0 0 100%;
+  white-space: normal;
+}
+
+/* ---- Sales history page ---- */
+
+.sale-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.sale-row.stat-card {
+  display: grid;
+  grid-template-columns: 11rem 6rem 5rem 6rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.85rem;
+}
+
+.sale-created {
+  font-size: 0.85rem;
+  color: var(--fg-dark);
+}
+
+.sale-lines {
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+}
+
+.sale-total {
+  font-weight: 600;
+  text-align: right;
+  color: var(--green-light);
+}
+
+.sale-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+
+.sale-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sale-actions .w-36.text-sm.font-medium {
+  width: auto;
+  min-width: 0;
+}
+
+.sale-actions input {
+  width: 14rem;
+}
+
+@media (max-width: 1200px) {
+  .sale-row.stat-card {
+    grid-template-columns: 11rem 6rem 5rem 6rem minmax(0, 1fr);
+  }
+
+  .sale-actions {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .sale-row.stat-card {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .sale-id,
+  .sale-actions {
+    grid-column: 1 / -1;
+  }
+
+  .sale-actions { flex-wrap: wrap; }
+
+  .nav-user { margin-left: 0; }
+}
