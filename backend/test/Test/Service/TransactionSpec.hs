@@ -16,6 +16,7 @@ import Effectful.Error.Static (Error, runErrorNoCallStack, tryError)
 import Servant (ServerError (..))
 import Test.Hspec
 
+import Domain.StockPolicy (RestockPolicy (..), StockPolicy (..))
 import Effect.Clock (Clock, runClockPure)
 import Effect.EventEmitter
 import Effect.GenUUID (GenUUID, runGenUUIDPure)
@@ -106,9 +107,6 @@ testSaleItem =
     , itemTotal         = unsafeMkSaleMoney 1000
     }
 
--- An add request built from a line. It asks for the line's quantity to be
--- added, offers the line's id for a new line, and prices any whole quantity
--- at the line's unit price with no tax.
 lineFor :: Sale.Item -> SaleLineAdd
 lineFor item =
   SaleLineAdd
@@ -178,7 +176,6 @@ storeWithPayment status =
         , tsInventory = Map.singleton skuUUID 10
         }
 
--- A sale with one $10.00 line and one $10.00 payment, in the given status.
 storeWithItemAndPayment :: TransactionStatus -> TxStore
 storeWithItemAndPayment status =
   let tx =
@@ -198,9 +195,19 @@ storeWithItemAndPayment status =
 storeWithItemAndPaymentCompleted :: TxStore
 storeWithItemAndPaymentCompleted = storeWithItemAndPayment Completed
 
--- A paid sale that is ready to be completed.
 storeReadyToFinalize :: TxStore
 storeReadyToFinalize = storeWithItemAndPayment InProgress
+
+-- The store with the given restock settings for void and for refund.
+withPolicy :: RestockPolicy -> RestockPolicy -> TxStore -> TxStore
+withPolicy onVoid onRefund store =
+  store
+    { tsStockPolicy =
+        StockPolicy
+          { restockOnVoid   = onVoid
+          , restockOnRefund = onRefund
+          }
+    }
 
 type TestEffs =
   '[ TransactionDb
@@ -262,15 +269,12 @@ shouldFailWith code io = do
     Left err -> errHTTPCode err `shouldBe` code
     Right _  -> expectationFailure $ "Expected HTTP " <> show code <> " but got success"
 
--- Checks that an interpreter-level write was refused.
 shouldBeRefused :: Either e a -> Expectation
 shouldBeRefused outcome =
   case outcome of
     Left _  -> pure ()
     Right _ -> expectationFailure "Expected the write to be refused"
 
--- Checks that the stored sale holds exactly one line with the given id,
--- quantity and total, and that the sale total matches.
 shouldHoldOneLine ::
   Either TypedLoadError Sale.SaleTransaction ->
   UUID ->
@@ -836,3 +840,132 @@ spec = describe "Service.Transaction (pure interpreter)" $ do
           teTxId  `shouldBe` txUUID
           teReason `shouldBe` "defective"
         _ -> expectationFailure $ "Expected [TransactionRefunded], got " <> show (length evts) <> " events"
+
+  -- Every store used here starts with 10 units of the item on the shelf.
+  -- The completed sale holds one unit, already taken out of stock.
+  describe "stock after a void follows the void setting" $ do
+    it "restock: voiding a completed sale puts its unit back" $ do
+      stock <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock DoNotRestock storeWithItemAndPaymentCompleted) $ do
+            _ <- voidSale txUUID "reason"
+            getInventoryAvailability skuUUID
+      stock `shouldBe` Just (11, 0)
+
+    it "no-restock: voiding a completed sale leaves stock as it is" $ do
+      stock <-
+        shouldSucceed $
+          runTest (withPolicy DoNotRestock ReturnToStock storeWithItemAndPaymentCompleted) $ do
+            _ <- voidSale txUUID "reason"
+            getInventoryAvailability skuUUID
+      stock `shouldBe` Just (10, 0)
+
+    it "restock: voiding a sale that was never completed adds nothing" $ do
+      stock <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock ReturnToStock (storeWithItem InProgress)) $ do
+            _ <- voidSale txUUID "reason"
+            getInventoryAvailability skuUUID
+      stock `shouldBe` Just (10, 0)
+
+    it "restock: a second void is refused and adds nothing" $ do
+      (second, stock) <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock ReturnToStock storeWithItemAndPaymentCompleted) $ do
+            _ <- voidSale txUUID "first"
+            v <- voidSale txUUID "second"
+            q <- getInventoryAvailability skuUUID
+            pure (v, q)
+      shouldBeRefused second
+      stock `shouldBe` Just (11, 0)
+
+  describe "stock after a refund follows the refund setting" $ do
+    it "restock: refunding a completed sale puts its unit back" $ do
+      stock <-
+        shouldSucceed $
+          runTest (withPolicy DoNotRestock ReturnToStock storeWithItemAndPaymentCompleted) $ do
+            _ <- Svc.refundTx txUUID "reason"
+            getInventoryAvailability skuUUID
+      stock `shouldBe` Just (11, 0)
+
+    it "no-restock: refunding a completed sale leaves stock as it is" $ do
+      stock <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock DoNotRestock storeWithItemAndPaymentCompleted) $ do
+            _ <- Svc.refundTx txUUID "reason"
+            getInventoryAvailability skuUUID
+      stock `shouldBe` Just (10, 0)
+
+    it "restock: a second refund is refused and adds nothing" $ do
+      (second, stock) <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock ReturnToStock storeWithItemAndPaymentCompleted) $ do
+            _ <- Svc.refundTx txUUID "first"
+            r <- tryError @ServerError (Svc.refundTx txUUID "second")
+            q <- getInventoryAvailability skuUUID
+            pure (fmap (const ()) r, q)
+      case second of
+        Left (_, err) -> errHTTPCode err `shouldBe` 409
+        Right ()      -> expectationFailure "Expected the second refund to be rejected"
+      stock `shouldBe` Just (11, 0)
+
+    it "restock: a void after a refund is refused and adds nothing" $ do
+      (voided, stock) <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock ReturnToStock storeWithItemAndPaymentCompleted) $ do
+            _ <- Svc.refundTx txUUID "refund"
+            v <- voidSale txUUID "void"
+            q <- getInventoryAvailability skuUUID
+            pure (v, q)
+      shouldBeRefused voided
+      stock `shouldBe` Just (11, 0)
+
+    it "restock: a refund after a void is refused and adds nothing" $ do
+      (refunded, stock) <-
+        shouldSucceed $
+          runTest (withPolicy ReturnToStock ReturnToStock storeWithItemAndPaymentCompleted) $ do
+            _ <- voidSale txUUID "void"
+            r <- tryError @ServerError (Svc.refundTx txUUID "refund")
+            q <- getInventoryAvailability skuUUID
+            pure (fmap (const ()) r, q)
+      case refunded of
+        Left (_, err) -> errHTTPCode err `shouldBe` 409
+        Right ()      -> expectationFailure "Expected the refund to be rejected"
+      stock `shouldBe` Just (11, 0)
+
+  describe "deleteSaleItem checks the sale at the moment of the write" $ do
+    let
+      removeAndLoad store =
+        shouldSucceed $
+          runTest store $ do
+            o <- deleteSaleItem itemUUID
+            s <- getSaleById txUUID
+            pure (o, s)
+      keepsItsLine loaded =
+        case loaded of
+          Right sale -> map Sale.itemId (Sale.saleItems sale) `shouldBe` [itemUUID]
+          Left err   -> expectationFailure ("Expected the sale, got " <> show err)
+
+    it "refuses a completed sale and keeps the line" $ do
+      (outcome, loaded) <- removeAndLoad (storeWithItem Completed)
+      shouldBeRefused outcome
+      keepsItsLine loaded
+
+    it "refuses a voided sale and keeps the line" $ do
+      (outcome, loaded) <- removeAndLoad (storeWithItem Voided)
+      shouldBeRefused outcome
+      keepsItsLine loaded
+
+    it "refuses a refunded sale and keeps the line" $ do
+      (outcome, loaded) <- removeAndLoad (storeWithItem Refunded)
+      shouldBeRefused outcome
+      keepsItsLine loaded
+
+    it "removes the line from a sale in progress" $ do
+      (outcome, loaded) <- removeAndLoad (storeWithItem InProgress)
+      case outcome of
+        Right () -> pure ()
+        Left _   -> expectationFailure "Expected the line to be removed"
+      case loaded of
+        Right sale -> Sale.saleItems sale `shouldBe` []
+        Left err   -> expectationFailure ("Expected the sale, got " <> show err)

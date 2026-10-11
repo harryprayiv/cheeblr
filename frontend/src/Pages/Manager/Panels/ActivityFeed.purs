@@ -8,9 +8,8 @@ import Deku.Core (Nut)
 import Deku.DOM as D
 import Deku.DOM.Attributes as DA
 import FRP.Poll (Poll)
-import Types.Manager (ActivitySummary)
+import Types.Manager (ActivitySummary, TransactionSummary)
 import Types.RemoteData (RemoteData)
-import Types.Transaction (TransactionStatus)
 import UI.Remote (standardView, viewRemote)
 
 activityFeed :: Poll (RemoteData ActivitySummary) -> Nut
@@ -26,7 +25,7 @@ activityFeed =
                  (map renderTxSummary snap.asLiveTransactions)
       ]
 
-renderTxSummary :: { tsId :: _, tsStatus :: TransactionStatus, tsElapsedSecs :: Int, tsItemCount :: Int, tsTotal :: Int, tsIsStale :: Boolean | _ } -> Nut
+renderTxSummary :: TransactionSummary -> Nut
 renderTxSummary tx =
   D.div [ DA.klass_ $ "tx-card" <> if tx.tsIsStale then " stale" else "" ]
     [ D.div [ DA.klass_ "tx-status" ] [ text_ (show tx.tsStatus) ]

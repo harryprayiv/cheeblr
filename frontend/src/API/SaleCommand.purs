@@ -11,12 +11,11 @@ import Types.Transaction (PaymentMethod)
 import Types.Transaction.Sale as Sale
 import Types.UUID (UUID)
 
--- The backend records the session user as the sale's opener and ignores
--- startSaleEmployeeId. The field is still required in the request body.
+-- The backend records the session user as the sale's opener. The request
+-- names no employee.
 
 type StartSaleRequest =
-  { startSaleEmployeeId :: UUID
-  , startSaleRegisterId :: UUID
+  { startSaleRegisterId :: UUID
   , startSaleLocationId :: UUID
   }
 

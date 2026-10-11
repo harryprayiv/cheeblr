@@ -20,36 +20,18 @@ import qualified Types.Transaction.Sale as Sale
 
 type AuthHeader = Header "Authorization" Text
 
--- | Reading sales, and the two manager operations on a finished sale.
---
--- Everything that builds a sale (start, add or remove an item, add or
--- remove a payment, clear, finalize) lives in "API.SaleCommand". Those
--- commands carry no client-computed money. The endpoints that used to
--- accept a whole client-built sale, item or payment were removed.
---
--- The refund-of-a-sale operation lives here (it's an operation against
--- a sale id) but returns a 'Refund.RefundTransaction', not a sale.
--- Direct creation of refunds is intentionally not exposed; refunds are
--- always derivative of an existing sale.
 type SaleAPI =
   "sale" :> AuthHeader :> Get '[JSON] [Sale.SaleTransaction]
     :<|> "sale" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Sale.SaleTransaction
     :<|> "sale" :> "void" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Sale.SaleTransaction
     :<|> "sale" :> "refund" :> AuthHeader :> Capture "id" UUID :> ReqBody '[JSON] Text :> Post '[JSON] Refund.RefundTransaction
 
--- | Refunds are read-only via this API. New refunds come from
--- @POST /sale/refund/:id@.
 type RefundAPI =
   "refund" :> AuthHeader :> Get '[JSON] [Refund.RefundTransaction]
     :<|> "refund" :> AuthHeader :> Capture "id" UUID :> Get '[JSON] Refund.RefundTransaction
 
--- | Inventory reservation endpoints. Carried over from the legacy
--- 'TransactionAPI'. The reservation types are not part of the typed
--- transaction split and have not been refactored.
 type ReservationAPI =
   "inventory" :> "available" :> AuthHeader :> Capture "sku" UUID :> Get '[JSON] AvailableInventory
-    :<|> "inventory" :> "reserve" :> AuthHeader :> ReqBody '[JSON] ReservationRequest :> Post '[JSON] InventoryReservation
-    :<|> "inventory" :> "release" :> AuthHeader :> Capture "id" UUID :> Delete '[JSON] NoContent
 
 type RegisterAPI =
   "register" :> AuthHeader :> Get '[JSON] [Register]
@@ -90,13 +72,6 @@ data AvailableInventory = AvailableInventory
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
-data ReservationRequest = ReservationRequest
-  { reserveItemSku :: UUID
-  , reserveTransactionId :: UUID
-  , reserveQuantity :: Int
-  }
-  deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
-
 data Register = Register
   { registerId :: UUID
   , registerName :: Text
@@ -110,15 +85,15 @@ data Register = Register
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
+-- The employee who opens or closes a register is the session user. Neither
+-- request names one.
 data OpenRegisterRequest = OpenRegisterRequest
-  { openRegisterEmployeeId :: UUID
-  , openRegisterStartingCash :: Int
+  { openRegisterStartingCash :: Int
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 
 data CloseRegisterRequest = CloseRegisterRequest
-  { closeRegisterEmployeeId :: UUID
-  , closeRegisterCountedCash :: Int
+  { closeRegisterCountedCash :: Int
   }
   deriving (Show, Eq, Generic, ToJSON, FromJSON, ToSchema)
 

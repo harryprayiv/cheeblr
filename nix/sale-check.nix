@@ -288,7 +288,7 @@ EOF
     start_sale() {
       local body code
       body=$(${jq} -nc --arg e "$ADMIN_ID" --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
-        '{startSaleEmployeeId: $e, startSaleRegisterId: $r, startSaleLocationId: $l}')
+        '{startSaleRegisterId: $r, startSaleLocationId: $l}')
       code=$(post /pos/sale "$body")
       if [ "$code" != "200" ]; then
         echo ""

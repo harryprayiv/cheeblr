@@ -27,17 +27,19 @@ type Register =
   , registerLastTransactionTime :: Maybe DateTime
   }
 
+-- The employee who opens or closes a register is the session user. Neither
+-- request names one. Amounts are cents.
+
 type OpenRegisterRequest =
-  { openRegisterEmployeeId :: UUID
-  , openRegisterStartingCash :: Int
+  { openRegisterStartingCash :: Int
   }
 
 type CloseRegisterRequest =
-  { closeRegisterEmployeeId :: UUID
-  , closeRegisterCountedCash :: Int
+  { closeRegisterCountedCash :: Int
   }
 
 type CloseRegisterResult =
   { closeRegisterResultRegister :: Register
   , closeRegisterResultVariance :: Int
   }
+

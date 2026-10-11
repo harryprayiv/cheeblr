@@ -38,10 +38,6 @@ import Types.Transaction.Conversion (saleItemToLegacy, salePaymentToLegacy)
 import Types.Transaction.Request
 import qualified Types.Transaction.Sale as Sale
 
--- ---------------------------------------------------------------------------
--- Fixed values
--- ---------------------------------------------------------------------------
-
 txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
 txUUID      = read "11111111-1111-1111-1111-111111111111"
 itemUUID    = read "22222222-2222-2222-2222-222222222222"
@@ -64,11 +60,6 @@ firstSuppliedUUID = read "b0000000-0000-0000-0000-000000000001"
 testTime :: UTCTime
 testTime = read "2024-06-15 10:00:00 UTC"
 
--- ---------------------------------------------------------------------------
--- Fixtures
--- ---------------------------------------------------------------------------
-
--- | A flower item priced at $19.99 on the menu.
 testMenuItem :: MenuItem
 testMenuItem =
   MenuItem
@@ -103,8 +94,6 @@ testMenuItem =
 testMenu :: Map.Map UUID MenuItem
 testMenu = Map.singleton skuUUID testMenuItem
 
--- | A 6.25% tax on everything and a 10.75% tax on flower. Test values, not
--- real rates.
 testRules :: [StoredTaxRule]
 testRules =
   [ stored (rule Nothing RegularSalesTax 62500 "Sales tax")
@@ -154,7 +143,6 @@ mkTx status =
     , transactionNotes = Nothing
     }
 
--- | A $10.00 line already on the sale.
 existingItem :: Sale.Item
 existingItem =
   Sale.Item
@@ -183,8 +171,6 @@ existingPayment cents =
     , Sale.paymentAuthorizationCode = Nothing
     }
 
--- | An empty sale in the given status, with 10 units of the test item in
--- stock.
 emptySale :: TransactionStatus -> TxStore
 emptySale status =
   emptyTxStore
@@ -192,7 +178,6 @@ emptySale status =
     , tsInventory = Map.singleton skuUUID 10
     }
 
--- | A sale holding the $10.00 line, with its stored total set to match.
 saleWithItem :: TransactionStatus -> TxStore
 saleWithItem status =
   let tx =
@@ -207,7 +192,6 @@ saleWithItem status =
         , tsInventory = Map.singleton skuUUID 10
         }
 
--- | The same sale with one payment of the given amount.
 saleWithItemAndPayment :: Int -> TxStore
 saleWithItemAndPayment cents =
   let tx =
@@ -223,10 +207,6 @@ saleWithItemAndPayment cents =
         , tsPaymentToTx = Map.singleton pymtUUID txUUID
         , tsInventory   = Map.singleton skuUUID 10
         }
-
--- ---------------------------------------------------------------------------
--- Effect stack
--- ---------------------------------------------------------------------------
 
 type TestEffs =
   '[ TaxRules
@@ -284,18 +264,12 @@ payment amount tendered =
     , addPaymentReference = Nothing
     }
 
--- | What the store holds after an add: whether the add was refused, the
--- sale as stored, and the (total, reserved) stock figures for the test sku.
 data AfterAdd = AfterAdd
   { afterRefused :: Bool
   , afterSale    :: Either TypedLoadError Sale.SaleTransaction
   , afterStock   :: Maybe (Int, Int)
   }
 
--- | Runs an add, catches its error inside the effect stack so the store
--- survives, then reads the store back. The pure interpreter does not undo
--- writes when a later step throws, so any write made before a refusal is
--- visible here.
 afterAdd :: TxStore -> AddItemRequest -> IO AfterAdd
 afterAdd store req =
   shouldSucceed $ runTest store $ do
@@ -309,7 +283,6 @@ afterAdd store req =
         , afterStock   = stock
         }
 
--- | The stored sale, or a test failure when it cannot be loaded.
 storedSale :: AfterAdd -> IO Sale.SaleTransaction
 storedSale result =
   case afterSale result of
@@ -318,23 +291,18 @@ storedSale result =
       expectationFailure ("Expected the stored sale, got " <> show err)
         >> error "unreachable"
 
--- ---------------------------------------------------------------------------
--- Specs
--- ---------------------------------------------------------------------------
-
 spec :: Spec
 spec = describe "Service.Sale (pure interpreter)" $ do
 
   describe "startSale" $ do
     let request =
           StartSaleRequest
-            { startSaleEmployeeId = empUUID
-            , startSaleRegisterId = regUUID
+            { startSaleRegisterId = regUUID
             , startSaleLocationId = LocationId locUUID
             }
 
     it "opens an empty sale with a backend-generated id" $ do
-      sale <- shouldSucceed $ runTest emptyTxStore (SaleSvc.startSale request)
+      sale <- shouldSucceed $ runTest emptyTxStore (SaleSvc.startSale empUUID request)
       Sale.saleId sale `shouldBe` firstSuppliedUUID
       Sale.saleStatus sale `shouldBe` Created
       Sale.saleCreated sale `shouldBe` testTime
@@ -342,8 +310,8 @@ spec = describe "Service.Sale (pure interpreter)" $ do
       Sale.salePayments sale `shouldBe` []
       saleMoneyCents (Sale.saleTotal sale) `shouldBe` 0
 
-    it "carries the employee, register and location from the request" $ do
-      sale <- shouldSucceed $ runTest emptyTxStore (SaleSvc.startSale request)
+    it "records the given employee as the opener, with the register and location from the request" $ do
+      sale <- shouldSucceed $ runTest emptyTxStore (SaleSvc.startSale empUUID request)
       Sale.saleEmployeeId sale `shouldBe` empUUID
       Sale.saleRegisterId sale `shouldBe` regUUID
       Sale.saleLocationId sale `shouldBe` LocationId locUUID

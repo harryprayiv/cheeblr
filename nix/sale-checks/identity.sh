@@ -26,11 +26,19 @@ check "cashier cannot remove a line from another employee's sale" 403 "$(del "/p
 check "the other employee's sale still has its line" 1 "$(line_qty "$SALE_A")"
 check "the other employee's sale has no payment" 0 "$(sql "select count(*) from payment_transaction where transaction_id = '$SALE_A'")"
 
-# start_sale sends the admin's id as the employee id. Sent by the cashier,
-# that is a forged id.
+# The request names no employee. The sale is recorded under the session user.
 SALE_C=$(start_sale) || { echo "  ✗ cashier could not start a sale"; exit 1; }
-check "a forged employee id is replaced by the caller's id" "$CASHIER_ID" \
+check "a sale is recorded under the caller's id" "$CASHIER_ID" \
   "$(sql "select employee_id from transaction where id = '$SALE_C'")"
+
+# A client that still sends the old employee id field is accepted, and the
+# field is ignored. The sale started here is voided by the admin below.
+FORGED_START=$($JQ -nc --arg e "$ADMIN_ID" --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
+  '{startSaleEmployeeId: $e, startSaleRegisterId: $r, startSaleLocationId: $l}')
+check "a start that still names an employee returns 200" 200 "$(post /pos/sale "$FORGED_START")"
+SALE_F=$(sql "select id from transaction order by created desc limit 1")
+check "the named employee is ignored and the caller is recorded" "$CASHIER_ID" \
+  "$(sql "select employee_id from transaction where id = '$SALE_F'")"
 check "cashier adds 1 to the cashier's own sale" 200 "$(post /pos/sale/item "$(add_body "$SALE_C" "$SKU_MAIN" 1)")"
 check "cashier cannot void, even the cashier's own sale" 403 "$(post "/sale/void/$SALE_C" '"cashier void"')"
 check "the cashier's sale is still IN_PROGRESS" IN_PROGRESS "$(status_of "$SALE_C")"
@@ -42,14 +50,19 @@ check "admin can add to the cashier's sale" 200 "$(post /pos/sale/item "$(add_bo
 check "the cashier's sale now holds 2" 2 "$(line_qty "$SALE_C")"
 check "admin can void the cashier's sale" 200 "$(post "/sale/void/$SALE_C" '"admin void"')"
 check "the cashier's sale is VOIDED" VOIDED "$(status_of "$SALE_C")"
+check "admin can void the cashier's second sale" 200 "$(post "/sale/void/$SALE_F" '"admin void"')"
 
-# ── I. Registers, reservations and the manager's void ───────────────────
+# ── I. Registers and the manager's void ─────────────────────────────────
 
 echo ""
-echo "── I. Registers, reservation routes and the manager's void ──"
+echo "── I. Registers and the manager's void ──"
 TEST_REG="dddddddd-0000-4000-8000-000000000001"
 REG_BODY=$($JQ -nc --arg i "$TEST_REG" --arg l "$LOCATION_ID" \
   '{registerId: $i, registerName: "Test register", registerLocationId: $l, registerIsOpen: false, registerCurrentDrawerAmount: 0, registerExpectedDrawerAmount: 0, registerOpenedAt: null, registerOpenedBy: null, registerLastTransactionTime: null}')
+TOKEN="$CASHIER_TOKEN"
+check "cashier cannot create a register" 403 "$(post /register "$REG_BODY")"
+check "no register was created by the refused request" 0 "$(sql "select count(*) from register where id = '$TEST_REG'")"
+TOKEN="$ADMIN_TOKEN"
 check "admin creates a register" 200 "$(post /register "$REG_BODY")"
 
 CUSTOMER_PASS="customer-test-password-1"
@@ -58,15 +71,11 @@ NEW_CUSTOMER=$($JQ -nc --arg p "$CUSTOMER_PASS" \
 check "admin creates a customer account" 200 "$(post /auth/users "$NEW_CUSTOMER")"
 CUSTOMER_TOKEN=$(login_token customer1 "$CUSTOMER_PASS")
 
-# Both register bodies name the admin as the employee, whoever sends them.
-OPEN_BODY=$($JQ -nc --arg e "$ADMIN_ID" '{openRegisterEmployeeId: $e, openRegisterStartingCash: 10000}')
-CLOSE_BODY=$($JQ -nc --arg e "$ADMIN_ID" '{closeRegisterEmployeeId: $e, closeRegisterCountedCash: 10000}')
-START_BODY=$($JQ -nc --arg e "$ADMIN_ID" --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
-  '{startSaleEmployeeId: $e, startSaleRegisterId: $r, startSaleLocationId: $l}')
-RESERVE_BODY=$($JQ -nc --arg s "$SKU_MAIN" --arg t "$SALE_A" \
-  '{reserveItemSku: $s, reserveTransactionId: $t, reserveQuantity: 1}')
-RES_A=$(sql "select id from inventory_reservation where transaction_id = '$SALE_A' and status = 'Reserved'")
-RES_BEFORE=$(sql "select count(*) from inventory_reservation")
+# The register bodies name no employee. The opener is the session user.
+OPEN_BODY=$($JQ -nc '{openRegisterStartingCash: 10000}')
+CLOSE_BODY=$($JQ -nc '{closeRegisterCountedCash: 10000}')
+START_BODY=$($JQ -nc --arg r "$REGISTER_ID" --arg l "$LOCATION_ID" \
+  '{startSaleRegisterId: $r, startSaleLocationId: $l}')
 
 TOKEN="$CUSTOMER_TOKEN"
 check "customer session is accepted" 200 \
@@ -77,11 +86,8 @@ check "the register is still closed" f "$(sql "select is_open from register wher
 
 TOKEN="$CASHIER_TOKEN"
 check "cashier opens the register" 200 "$(post "/register/open/$TEST_REG" "$OPEN_BODY")"
-check "a forged employee id on the open is replaced by the caller's id" "$CASHIER_ID" \
+check "the register records the caller as its opener" "$CASHIER_ID" \
   "$(sql "select opened_by from register where id = '$TEST_REG'")"
-check "the reserve route refuses" 410 "$(post /inventory/reserve "$RESERVE_BODY")"
-check "the release route refuses" 410 "$(del "/inventory/release/$RES_A")"
-check "no reservation was added" "$RES_BEFORE" "$(sql "select count(*) from inventory_reservation")"
 check "the admin's sale still holds its reservation" 1 "$(live_res "$SALE_A")"
 
 TOKEN="$CUSTOMER_TOKEN"

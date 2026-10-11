@@ -2,16 +2,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
 
--- | The sale operations a register calls. Each one takes a request that
--- says what is wanted, does the money on the server, and returns the whole
--- sale as it now stands.
---
--- State-machine guards, inventory reservation, domain events and stock
--- pulls stay in "Service.Transaction". This module adds what was missing
--- in front of it: the price comes from the menu, tax comes from the tax
--- rules in force, change is computed here, and ids are generated here.
--- Whether a sale may be completed is decided by the database layer under
--- the sale's row lock.
 module Service.Sale (
   startSale,
   addItem,
@@ -83,8 +73,6 @@ pricingErrorText (NonPositiveQuantity q) =
 pricingErrorText (NegativeUnitPrice p) =
   "Menu item has a negative price: " <> T.pack (show p)
 
--- | The stored form of a priced line. The rate is written as a decimal
--- fraction, so 62500 parts per million is stored as 0.0625.
 toSaleItem :: UUID -> UUID -> UUID -> LinePricing -> Sale.Item
 toSaleItem newItemId saleId sku pricing =
   Sale.Item
@@ -107,17 +95,16 @@ toSaleItem newItemId saleId sku pricing =
         , Sale.taxDescription = lineTaxDescription tax
         }
 
--- | Open a new, empty sale. The backend generates the id and the
--- timestamp; totals start at zero.
 startSale ::
   ( TransactionDb :> es
   , EventEmitter :> es
   , Clock :> es
   , GenUUID :> es
   ) =>
+  UUID ->
   StartSaleRequest ->
   Eff es Sale.SaleTransaction
-startSale req = do
+startSale employeeId req = do
   newSaleId <- nextUUID
   now       <- currentTime
   Svc.createSaleSvc
@@ -127,7 +114,7 @@ startSale req = do
       , Sale.saleCreated       = now
       , Sale.saleCompleted     = Nothing
       , Sale.saleCustomerId    = Nothing
-      , Sale.saleEmployeeId    = startSaleEmployeeId req
+      , Sale.saleEmployeeId    = employeeId
       , Sale.saleRegisterId    = startSaleRegisterId req
       , Sale.saleLocationId    = startSaleLocationId req
       , Sale.saleItems         = []
@@ -144,18 +131,6 @@ startSale req = do
       , Sale.saleNotes         = Nothing
       }
 
--- | Add an item. The unit price is the menu price at this moment and the
--- taxes are the rules in force at the sale's location at this moment.
---
--- A sale holds one line per sku. When the sale already has a line for the
--- sku, the requested quantity is added to it and the line is priced again
--- at the combined quantity, keeping its id.
---
--- This function does not work out the combined quantity. It hands the
--- requested quantity and a pricing function to "Service.Transaction", and
--- the database layer reads the current line and prices the whole quantity
--- while it holds the sale's row lock. Two adds of the same sku to the same
--- sale therefore both count.
 addItem ::
   ( TransactionDb :> es
   , StockDb.StockDb :> es
@@ -218,9 +193,6 @@ removeItem itemId = do
   Svc.removeItem itemId
   loadSale saleId
 
--- | Record a payment. The change is computed here, and the payment is
--- marked approved here: there is no payment processor yet, so every
--- recorded payment is treated as taken.
 addPayment ::
   ( TransactionDb :> es
   , EventEmitter :> es
@@ -269,12 +241,6 @@ removePayment paymentId = do
   Svc.removePayment paymentId
   loadSale saleId
 
--- | Remove every item and payment from an open sale and return it empty.
--- A completed, voided or refunded sale cannot be cleared.
---
--- The check here gives an early 409. The database layer checks the status
--- again under the sale's row lock, so a clear cannot land on a sale that
--- was completed in between.
 clear ::
   ( TransactionDb :> es
   , Error ServerError :> es
@@ -292,12 +258,6 @@ clear saleId = do
     Left refusal -> Svc.refuseWrite refusal
     Right ()     -> loadSale saleId
 
--- | Complete a sale. Refused with every reason listed when the sale has no
--- items or its payments do not cover its total.
---
--- This function makes no check of its own. The database layer reads the
--- lines and the payments under the sale's row lock and decides there, so
--- the decision and the write cannot be separated by another request.
 finalize ::
   ( TransactionDb :> es
   , EventEmitter :> es

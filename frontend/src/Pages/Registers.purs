@@ -101,17 +101,13 @@ page user = Deku.do
 
     open register startingCash = run
       ( RegisterApi.openRegister register.registerId
-          { openRegisterEmployeeId: user.sessionUserId
-          , openRegisterStartingCash: startingCash
-          }
+          { openRegisterStartingCash: startingCash }
       )
       (\opened -> pure ("Opened register " <> opened.registerName <> "."))
 
     close register countedCash = run
       ( RegisterApi.closeRegister register.registerId
-          { closeRegisterEmployeeId: user.sessionUserId
-          , closeRegisterCountedCash: countedCash
-          }
+          { closeRegisterCountedCash: countedCash }
       )
       ( \result -> pure
           ( "Closed register "

@@ -46,7 +46,7 @@ data RegisterDb :: Effect where
   GetRegisterById        :: UUID -> RegisterDb m (Maybe Register)
   CreateRegister         :: Register -> RegisterDb m Register
   UpdateRegister         :: UUID -> Register -> RegisterDb m Register
-  OpenRegisterDb         :: UUID -> OpenRegisterRequest -> RegisterDb m Register
+  OpenRegisterDb         :: UUID -> UUID -> OpenRegisterRequest -> RegisterDb m Register
   CloseRegisterDb        :: UUID -> CloseRegisterRequest -> RegisterDb m CloseRegisterResult
 
 type instance DispatchOf RegisterDb = Dynamic
@@ -66,8 +66,8 @@ createRegister = send . CreateRegister
 updateRegister :: (RegisterDb :> es) => UUID -> Register -> Eff es Register
 updateRegister regId reg = send (UpdateRegister regId reg)
 
-openRegisterDb :: (RegisterDb :> es) => UUID -> OpenRegisterRequest -> Eff es Register
-openRegisterDb regId req = send (OpenRegisterDb regId req)
+openRegisterDb :: (RegisterDb :> es) => UUID -> UUID -> OpenRegisterRequest -> Eff es Register
+openRegisterDb regId empId req = send (OpenRegisterDb regId empId req)
 
 closeRegisterDb :: (RegisterDb :> es) => UUID -> CloseRegisterRequest -> Eff es CloseRegisterResult
 closeRegisterDb regId req = send (CloseRegisterDb regId req)
@@ -81,7 +81,7 @@ runRegisterDbIO pool = interpret $ \_ -> \case
   GetRegisterById u      -> liftIO $ DBR.getRegisterById pool u
   CreateRegister r       -> liftIO $ DBR.createRegister pool r
   UpdateRegister u r     -> liftIO $ DBR.updateRegister pool u r
-  OpenRegisterDb u req   -> liftIO $ DBR.openRegister pool u req
+  OpenRegisterDb u e req -> liftIO $ DBR.openRegister pool u e req
   CloseRegisterDb u req  -> liftIO $ DBR.closeRegister pool u req
 
 newtype RegStore = RegStore
@@ -92,9 +92,6 @@ newtype RegStore = RegStore
 emptyRegStore :: RegStore
 emptyRegStore = RegStore Map.empty
 
--- | Pure interpreter for tests.
--- Previously used `error` on missing register IDs; now uses `throwError err404`
--- so test stacks can handle the failure without crashing the process.
 runRegisterDbPure ::
   (Error ServerError :> es) =>
   RegStore ->
@@ -115,7 +112,7 @@ runRegisterDbPure initial = reinterpret (runState initial) $ \_ -> \case
     modify @RegStore $ \st ->
       st {rsRegisters = Map.insert regId reg (rsRegisters st)}
     pure reg
-  OpenRegisterDb regId req -> do
+  OpenRegisterDb regId empId req -> do
     st <- get @RegStore
     case Map.lookup regId (rsRegisters st) of
       Nothing  -> throwError err404
@@ -125,7 +122,7 @@ runRegisterDbPure initial = reinterpret (runState initial) $ \_ -> \case
                 { registerIsOpen               = True
                 , registerCurrentDrawerAmount  = openRegisterStartingCash req
                 , registerExpectedDrawerAmount = openRegisterStartingCash req
-                , registerOpenedBy             = Just (openRegisterEmployeeId req)
+                , registerOpenedBy             = Just empId
                 }
         put @RegStore st {rsRegisters = Map.insert regId opened (rsRegisters st)}
         pure opened

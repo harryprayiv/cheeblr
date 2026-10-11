@@ -49,21 +49,22 @@ openRegister ::
   , Error ServerError :> es
   ) =>
   UUID ->
+  UUID ->
   OpenRegisterRequest ->
   Eff es Register
-openRegister regId req = do
+openRegister regId empId req = do
   (_, someState) <- loadReg regId
   let
-    cmd = OpenRegCmd (openRegisterEmployeeId req) (openRegisterStartingCash req)
+    cmd = OpenRegCmd empId (openRegisterStartingCash req)
     (evt, _) = runRegCommand someState cmd
   guardRegEvent evt
-  result <- openRegisterDb regId req
+  result <- openRegisterDb regId empId req
   now <- currentTime
   emit $
     RegisterEvt $
       RegisterOpened
         { reRegId       = regId
-        , reEmpId       = openRegisterEmployeeId req
+        , reEmpId       = empId
         , reStartingCash = openRegisterStartingCash req
         , reTimestamp   = now
         }
@@ -76,12 +77,13 @@ closeRegister ::
   , Error ServerError :> es
   ) =>
   UUID ->
+  UUID ->
   CloseRegisterRequest ->
   Eff es CloseRegisterResult
-closeRegister regId req = do
+closeRegister regId empId req = do
   (_, someState) <- loadReg regId
   let
-    cmd = CloseRegCmd (closeRegisterEmployeeId req) (closeRegisterCountedCash req)
+    cmd = CloseRegCmd empId (closeRegisterCountedCash req)
     (evt, _) = runRegCommand someState cmd
   guardRegEvent evt
   result <- closeRegisterDb regId req
@@ -90,7 +92,7 @@ closeRegister regId req = do
     RegisterEvt $
       RegisterClosed
         { reRegId      = regId
-        , reEmpId      = closeRegisterEmployeeId req
+        , reEmpId      = empId
         , reCountedCash = closeRegisterCountedCash req
         , reVariance   = closeRegisterResultVariance result
         , reTimestamp  = now

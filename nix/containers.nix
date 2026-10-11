@@ -47,6 +47,7 @@
 let
   appConfig    = import ./config.nix { inherit name; };
   backendPort  = toString appConfig.haskell.port;
+  stockPolicy  = import ./stock-policy.nix;
   frontendPort = toString appConfig.vite.port;
   thisSystem   = pkgs.stdenv.hostPlatform.system;
 
@@ -143,6 +144,8 @@ EOF
         "PGUSER=${name}"
         "USE_TLS=false"
         "USE_REAL_AUTH=true"
+        "RESTOCK_ON_VOID=${stockPolicy.restockOnVoid}"
+        "RESTOCK_ON_REFUND=${stockPolicy.restockOnRefund}"
         "LOG_FILE=/var/log/${name}/${name}-compliance.log"
       ];
       Labels = {
@@ -577,6 +580,8 @@ EOF
             PGUSER        = name;
             USE_TLS       = "false";
             USE_REAL_AUTH = "true";
+            RESTOCK_ON_VOID   = stockPolicy.restockOnVoid;
+            RESTOCK_ON_REFUND = stockPolicy.restockOnRefund;
             LOG_FILE      = "${cfg.dataDir}/compliance.log";
             SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
           };

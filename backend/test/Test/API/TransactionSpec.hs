@@ -9,10 +9,6 @@ import Data.UUID (UUID)
 import Test.Hspec
 import Types.Location (LocationId (..))
 
--- ──────────────────────────────────────────────
--- Fixtures
--- ──────────────────────────────────────────────
-
 testUUID :: UUID
 testUUID = read "33333333-3333-3333-3333-333333333333"
 
@@ -24,9 +20,9 @@ testTime = read "2024-06-15 10:30:00 UTC"
 
 spec :: Spec
 spec = describe "API.Transaction request/response types" $ do
-  -- ──────────────────────────────────────────────
-  -- AvailableInventory
-  -- ──────────────────────────────────────────────
+
+
+
   describe "AvailableInventory JSON" $ do
     it "roundtrips through JSON" $ do
       let ai =
@@ -50,58 +46,37 @@ spec = describe "API.Transaction request/response types" $ do
       let ai = AvailableInventory 0 0 0
       decode (encode ai) `shouldBe` Just ai
 
-  -- ──────────────────────────────────────────────
-  -- ReservationRequest
-  -- ──────────────────────────────────────────────
-  describe "ReservationRequest JSON" $ do
-    it "roundtrips through JSON" $ do
-      let rr =
-            ReservationRequest
-              { reserveItemSku = testUUID
-              , reserveTransactionId = testUUID2
-              , reserveQuantity = 5
-              }
-      decode (encode rr) `shouldBe` Just rr
 
-    it "preserves quantity" $ do
-      let rr = ReservationRequest testUUID testUUID2 3
-      case decode (encode rr) of
-        Just rr' -> reserveQuantity rr' `shouldBe` 3
-        Nothing -> expectationFailure "Failed to decode"
 
-  -- ──────────────────────────────────────────────
-  -- OpenRegisterRequest
-  -- ──────────────────────────────────────────────
+
   describe "OpenRegisterRequest JSON" $ do
     it "roundtrips through JSON" $ do
       let req =
             OpenRegisterRequest
-              { openRegisterEmployeeId = testUUID
-              , openRegisterStartingCash = 50000
+              { openRegisterStartingCash = 50000
               }
       decode (encode req) `shouldBe` Just req
 
     it "preserves starting cash" $ do
-      let req = OpenRegisterRequest testUUID 25000
+      let req = OpenRegisterRequest 25000
       case decode (encode req) of
         Just r -> openRegisterStartingCash r `shouldBe` 25000
         Nothing -> expectationFailure "Failed to decode"
 
-  -- ──────────────────────────────────────────────
-  -- CloseRegisterRequest
-  -- ──────────────────────────────────────────────
+
+
+
   describe "CloseRegisterRequest JSON" $ do
     it "roundtrips through JSON" $ do
       let req =
             CloseRegisterRequest
-              { closeRegisterEmployeeId = testUUID
-              , closeRegisterCountedCash = 48000
+              { closeRegisterCountedCash = 48000
               }
       decode (encode req) `shouldBe` Just req
 
-  -- ──────────────────────────────────────────────
-  -- CloseRegisterResult
-  -- ──────────────────────────────────────────────
+
+
+
   describe "CloseRegisterResult JSON" $ do
     it "roundtrips through JSON" $ do
       let reg =
@@ -130,9 +105,9 @@ spec = describe "API.Transaction request/response types" $ do
         Just r -> closeRegisterResultVariance r `shouldBe` 500
         Nothing -> expectationFailure "Failed to decode"
 
-  -- ──────────────────────────────────────────────
-  -- Register
-  -- ──────────────────────────────────────────────
+
+
+
   describe "Register JSON" $ do
     it "roundtrips through JSON" $ do
       let reg =
@@ -168,9 +143,9 @@ spec = describe "API.Transaction request/response types" $ do
               }
       decode (encode reg) `shouldBe` Just reg
 
-  -- ──────────────────────────────────────────────
-  -- DailyReportRequest
-  -- ──────────────────────────────────────────────
+
+
+
   describe "DailyReportRequest JSON" $ do
     it "roundtrips through JSON" $ do
       let req =
@@ -180,9 +155,9 @@ spec = describe "API.Transaction request/response types" $ do
               }
       decode (encode req) `shouldBe` Just req
 
-  -- ──────────────────────────────────────────────
-  -- DailyReportResult
-  -- ──────────────────────────────────────────────
+
+
+
   describe "DailyReportResult JSON" $ do
     it "roundtrips through JSON" $ do
       let result =
@@ -199,9 +174,9 @@ spec = describe "API.Transaction request/response types" $ do
       let result = DailyReportResult 0 0 0 0 0
       decode (encode result) `shouldBe` Just result
 
-  -- ──────────────────────────────────────────────
-  -- ComplianceReportRequest
-  -- ──────────────────────────────────────────────
+
+
+
   describe "ComplianceReportRequest JSON" $ do
     it "roundtrips through JSON" $ do
       let req =
@@ -212,9 +187,9 @@ spec = describe "API.Transaction request/response types" $ do
               }
       decode (encode req) `shouldBe` Just req
 
-  -- ──────────────────────────────────────────────
-  -- ComplianceReportResult
-  -- ──────────────────────────────────────────────
+
+
+
   describe "ComplianceReportResult JSON" $ do
     it "roundtrips through JSON" $ do
       let result =

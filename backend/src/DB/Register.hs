@@ -84,8 +84,8 @@ updateRegister pool regId reg = do
     Just r  -> pure r
     Nothing -> throwIO $ userError $ "Register not found after update: " <> show regId
 
-openRegister :: DBPool -> UUID -> OpenRegisterRequest -> IO Register
-openRegister pool regId req = do
+openRegister :: DBPool -> UUID -> UUID -> OpenRegisterRequest -> IO Register
+openRegister pool regId empId req = do
   now <- getCurrentTime
   runSession pool $
     Session.statement () $
@@ -100,7 +100,7 @@ openRegister pool regId req = do
                   , regCurrentDrawerAmount  = lit $ fromIntegral (openRegisterStartingCash req)
                   , regExpectedDrawerAmount = lit $ fromIntegral (openRegisterStartingCash req)
                   , regOpenedAt             = lit (Just now)
-                  , regOpenedBy             = lit (Just (openRegisterEmployeeId req))
+                  , regOpenedBy             = lit (Just empId)
                   }
             , updateWhere = \() row -> DB.Schema.regId row ==. lit regId
             , returning   = NoReturning

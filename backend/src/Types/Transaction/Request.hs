@@ -1,14 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 
--- | What a register asks the backend to do to a sale. A request says what
--- is wanted and nothing about money the backend can work out itself: there
--- is no unit price, tax, total, change or approval flag in any of these.
--- The backend looks up the price, applies the tax rules in force, computes
--- the change and generates every id.
---
--- JSON field names are the Haskell record field names, the same convention
--- as "Types.Transaction.Sale".
 module Types.Transaction.Request
   ( StartSaleRequest (..)
   , AddItemRequest (..)
@@ -24,10 +16,10 @@ import GHC.Generics (Generic)
 import Types.Location (LocationId)
 import Types.Transaction (PaymentMethod)
 
--- | Open a new, empty sale.
+-- The sale's opener is the session user. The request does not name an
+-- employee.
 data StartSaleRequest = StartSaleRequest
-  { startSaleEmployeeId :: UUID
-  , startSaleRegisterId :: UUID
+  { startSaleRegisterId :: UUID
   , startSaleLocationId :: LocationId
   }
   deriving stock (Show, Eq, Generic)
@@ -36,7 +28,6 @@ instance ToJSON StartSaleRequest
 instance FromJSON StartSaleRequest
 instance ToSchema StartSaleRequest
 
--- | Add a quantity of one menu item to a sale.
 data AddItemRequest = AddItemRequest
   { addItemSaleId   :: UUID
   , addItemSku      :: UUID
@@ -48,9 +39,6 @@ instance ToJSON AddItemRequest
 instance FromJSON AddItemRequest
 instance ToSchema AddItemRequest
 
--- | Record a payment against a sale. Amounts are cents.
--- 'addPaymentTendered' is what the customer handed over; when it is absent
--- the payment is treated as exact.
 data AddPaymentRequest = AddPaymentRequest
   { addPaymentSaleId    :: UUID
   , addPaymentMethod    :: PaymentMethod

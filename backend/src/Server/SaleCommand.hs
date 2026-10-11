@@ -72,16 +72,6 @@ runSaleEff env action = do
       $ action
   either Servant.throwError pure result
 
--- | Every handler here does three things before it runs its command.
---
--- 1. It resolves the session. No session is a 401.
--- 2. It requires the capability to process transactions. A role without it
---    gets a 403.
--- 3. For a command on an existing sale, it requires that the signed-in user
---    opened the sale, or is a manager or an admin. Anyone else gets a 403.
---
--- The employee recorded on a new sale is the signed-in user. The employee
--- id in the request body is ignored.
 saleCommandServer :: AppEnv -> Server SaleCommandAPI
 saleCommandServer env =
   startHandler
@@ -94,9 +84,9 @@ saleCommandServer env =
   where
     logEnv = envLogEnv env
 
-    -- Authenticates, writes the HTTP log line, requires the capability to
-    -- process transactions, and returns the session with the log context
-    -- for the signed-in user.
+
+
+
     begin :: Maybe Text -> Text -> Text -> Handler (SessionContext, LogCtx)
     begin mHeader method path = do
       ctx <- requireAuth env mHeader
@@ -108,8 +98,7 @@ saleCommandServer env =
     startHandler :: Maybe Text -> StartSaleRequest -> Handler Sale.SaleTransaction
     startHandler mHeader req = do
       (ctx, lctx) <- begin mHeader "POST" "/pos/sale"
-      let asCaller = req {startSaleEmployeeId = auUserId (scUser ctx)}
-      sale <- runSaleEff env (SaleSvc.startSale asCaller)
+      sale <- runSaleEff env (SaleSvc.startSale (auUserId (scUser ctx)) req)
       liftIO $ logTransactionCreate lctx (Sale.saleId sale) LogSuccess
       pure sale
 
@@ -121,8 +110,8 @@ saleCommandServer env =
         (logTransactionAddItem lctx (addItemSaleId req) (addItemSku req) (addItemQuantity req))
         $ runSaleEff env (SaleSvc.addItem req)
 
-    -- An item id that belongs to no sale is passed on, and the command
-    -- answers 404.
+
+
     removeItemHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     removeItemHandler mHeader itemId = do
       (ctx, _) <- begin mHeader "DELETE" ("/pos/sale/item/" <> showT itemId)
@@ -143,8 +132,8 @@ saleCommandServer env =
         )
         $ runSaleEff env (SaleSvc.addPayment req)
 
-    -- A payment id that belongs to no sale is passed on, and the command
-    -- answers 404.
+
+
     removePaymentHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     removePaymentHandler mHeader paymentId = do
       (ctx, _) <- begin mHeader "DELETE" ("/pos/sale/payment/" <> showT paymentId)
@@ -159,9 +148,9 @@ saleCommandServer env =
       withComplianceLog (logTransactionClear lctx saleId) $
         runSaleEff env (SaleSvc.clear saleId)
 
-    -- A refused or failed finalize is logged by withComplianceLog with zero
-    -- amounts. A successful one is logged once with the real total and item
-    -- count.
+
+
+
     finalizeHandler :: Maybe Text -> UUID -> Handler Sale.SaleTransaction
     finalizeHandler mHeader saleId = do
       (ctx, lctx) <- begin mHeader "POST" ("/pos/sale/finalize/" <> showT saleId)
