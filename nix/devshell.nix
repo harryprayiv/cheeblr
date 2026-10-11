@@ -95,7 +95,17 @@ let
       echo "    boot.binfmt.emulatedSystems = [ \"aarch64-linux\" ];"
   '' else "";
 
-
+  backup-project = pkgs.writeShellApplication {
+    name          = "backup-project";
+    runtimeInputs = [ pkgs.rsync ];
+    text = ''
+      rsync -va --delete --exclude-from='.gitignore' --exclude='.git/' \
+        ~/git/${name}/ ~/NAS/plutus/workspace/scdWs/${name}/
+      rsync -va ~/.local/share/${name}/backups/ ~/NAS/plutus/${name}DB/
+      rsync -va script/concat_archive/ \
+        ~/NAS/plutus/workspace/scdWs/${name}/script/concat_archive/
+    '';
+  };
 
   helpScript = pkgs.writeShellScriptBin "${name}-help" ''
     echo "Copyright (C) ${licenseConfig.years} ${licenseConfig.holder}. Licensed under the ${licenseConfig.name}."
@@ -225,7 +235,8 @@ let
     toilet rsync tmux
 
     helpScript
-
+    backup-project 
+    
     manifestModule.generateScript
     devScripts.compile-manifest
     devScripts.compile-archive
