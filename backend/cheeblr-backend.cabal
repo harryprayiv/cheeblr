@@ -249,3 +249,27 @@ test-suite cheeblr-integration-tests
         , hspec
         , hedgehog
         , hspec-hedgehog
+test-suite cheeblr-model-tests
+  type:             exitcode-stdio-1.0
+  main-is:          Main.hs
+  hs-source-dirs:   model-test
+  other-modules:
+    Model.Client
+    Model.Exec
+    Model.Gen
+    Model.Parallel
+    Model.Property
+    Model.Step
+    Model.Types
+  default-language: Haskell2010
+  ghc-options:      -Wall -threaded
+  build-depends:
+      base
+    , aeson
+    , bytestring
+    , containers
+    , hedgehog
+    , http-client
+    , http-types
+    , text
+    , uuid

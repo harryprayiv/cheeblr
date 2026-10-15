@@ -47,6 +47,7 @@ let
   sopsModule      = import ./sops-dev.nix             { inherit pkgs lib name; };
   bootstrapModule = import ./bootstrap-admin-tool.nix { inherit pkgs lib name; };
   saleCheckModule = import ./sale-check.nix           { inherit pkgs lib name; };
+  modelCheckModule = import ./model-check.nix { inherit pkgs lib name; };
 
   manifestModule = import ./scripts/manifest.nix {
     inherit pkgs lib;
@@ -137,6 +138,7 @@ let
     echo "  Frontend:  vite  spago-watch  codegen  dev"
     echo "  Testing:   test-unit  test-integration  test-integration-tls  test-suite  test-smoke"
     echo "             test-sale   - sale path against a throwaway database and backend"
+    echo "             test-model  - random command sequences checked against a model"
     echo ""
     echo "  Auth Bootstrap (run once after first pg-start):"
     echo "    bootstrap-admin         - Create admin user, store password in sops"
@@ -249,6 +251,7 @@ let
     testSuiteModule.test-suite
     testSuiteModule.test-smoke
     saleCheckModule.test-sale
+    modelCheckModule.test-model
     nixd nixfmt
 
     coreutils bash gnused gnugrep jq perl findutils

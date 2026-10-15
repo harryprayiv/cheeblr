@@ -262,6 +262,11 @@ extractCookieToken req = do
   tokenBS   <- lookup "cheeblr_session" (parseCookies cookieHdr)
   mkSessionToken (TE.decodeUtf8 tokenBS)
 
+-- Rotates the session's token once the interval has passed. Of several
+-- requests that arrive together after the interval, exactly one rotates
+-- (DB.Auth.rotateSessionToken) and sends the new cookie; the others get
+-- Nothing and carry on with the token they came with, which stays valid
+-- for DB.Auth.rotationGrace.
 checkAndRotate
   :: DBPool
   -> Data.Time.NominalDiffTime
@@ -274,7 +279,7 @@ checkAndRotate pool threshold token = do
     Nothing -> pure Nothing
     Just (sid, rotatedAt)
       | Data.Time.diffUTCTime now rotatedAt > threshold ->
-          Just <$> rotateSessionToken pool sid
+          rotateSessionToken pool sid rotatedAt
       | otherwise -> pure Nothing
 
 sessionCleanupWorker :: DBPool -> Int -> IO ()

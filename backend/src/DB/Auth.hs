@@ -23,6 +23,7 @@ module DB.Auth (
   clearRateLimitForIp,
   getSessionRotatedAt,
   rotateSessionToken,
+  rotationGrace,
   cleanupExpiredSessions,
 ) where
 
@@ -188,6 +189,14 @@ createAuthTables pool = runSession pool $ do
       \token_rotated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()"
   Session.statement () $
     ddl
+      "ALTER TABLE sessions \
+      \ADD COLUMN IF NOT EXISTS previous_token_hash TEXT"
+  Session.statement () $
+    ddl
+      "ALTER TABLE sessions \
+      \ADD COLUMN IF NOT EXISTS previous_valid_until TIMESTAMPTZ"
+  Session.statement () $
+    ddl
       "CREATE INDEX IF NOT EXISTS sessions_token_hash_idx \
       \ON sessions (token_hash) WHERE NOT revoked"
   Session.statement () $
@@ -288,12 +297,37 @@ createSession pool uid mRegisterId ua ip = do
                       , sessUserAgent      = lit (Just ua)
                       , sessIpAddress      = lit (Just ip)
                       , sessTokenRotatedAt = lit now
+                      , sessPreviousTokenHash  = lit Nothing
+                      , sessPreviousValidUntil = lit Nothing
                       }
                   ]
             , onConflict = Abort
             , returning  = NoReturning
             }
   pure (token, expiresAt)
+
+-- How long the token a rotation replaced stays valid. A page sends several
+-- requests at once with the same cookie; when one of them rotates the
+-- token, the others, already in flight with the old one, must not be
+-- refused. The browser takes the new cookie from the first response that
+-- carries it, so the old token is used only within that instant.
+rotationGrace :: NominalDiffTime
+rotationGrace = 30
+
+-- The session rows a token names: the current token, or the previous one
+-- within its grace.
+sessionsForHash :: UTCTime -> Text -> Query (SessionRow Expr)
+sessionsForHash now tHash = do
+  sess <- each sessionSchema
+  where_ $
+    ( sessTokenHash sess ==. lit tHash
+        ||. ( sessPreviousTokenHash sess ==. lit (Just tHash)
+                &&. sessPreviousValidUntil sess >. lit (Just now)
+            )
+    )
+      &&. Rel8.not_ (sessRevoked sess)
+      &&. sessExpiresAt sess >. lit now
+  pure sess
 
 lookupSession ::
   DBPool ->
@@ -303,14 +337,9 @@ lookupSession pool token = do
   now <- getCurrentTime
   let tHash = sessionTokenHashText (hashSessionToken token)
   sessRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    sess <- each sessionSchema
+    sess <- sessionsForHash now tHash
     user <- each userSchema
-    where_ $
-      sessTokenHash sess ==. lit tHash
-        &&. sessUserId sess ==. userId user
-        &&. Rel8.not_ (sessRevoked sess)
-        &&. sessExpiresAt sess >. lit now
-        &&. isActive user
+    where_ $ sessUserId sess ==. userId user &&. isActive user
     pure (sess, user)
   case sessRows of
     [(sess, user)] -> do
@@ -322,52 +351,64 @@ lookupSession pool token = do
                 { target      = sessionSchema
                 , from        = pure ()
                 , set         = \() row -> row {sessLastSeenAt = lit now}
-                , updateWhere = \() row -> sessTokenHash row ==. lit tHash
+                , updateWhere = \() row -> sessId row ==. lit (sessId sess)
                 , returning   = NoReturning
                 }
       pure (Just (sess, user))
     _ -> pure Nothing
 
+-- The session a token names and when its token was last rotated. A
+-- previous token within its grace names the session too, with the
+-- rotation that replaced it, so that the caller does not rotate again.
 getSessionRotatedAt :: DBPool -> SessionToken -> IO (Maybe (UUID, UTCTime))
 getSessionRotatedAt pool token = do
   now <- getCurrentTime
   let tHash = sessionTokenHashText (hashSessionToken token)
   rotRows <- runSession pool $ Session.statement () $ run $ Rel8.select $ do
-    sess <- each sessionSchema
-    where_ $
-      sessTokenHash sess ==. lit tHash
-        &&. Rel8.not_ (sessRevoked sess)
-        &&. sessExpiresAt sess >. lit now
+    sess <- sessionsForHash now tHash
     pure (sessId sess, sessTokenRotatedAt sess)
   case rotRows of
     [(sid, rotatedAt)] -> pure (Just (sid, rotatedAt))
     _                  -> pure Nothing
 
-rotateSessionToken :: DBPool -> UUID -> IO (SessionToken, UTCTime)
-rotateSessionToken pool sid = do
+-- Replaces the session's token, keeping the old one valid for
+-- rotationGrace. The row is updated only if its token was last rotated
+-- at the time the caller saw (rotatedAt), so that of several requests
+-- that decide to rotate at once exactly one does; the others get Nothing
+-- and carry on with the token they have, which the winner's update has
+-- just made the previous one.
+rotateSessionToken :: DBPool -> UUID -> UTCTime -> IO (Maybe (SessionToken, UTCTime))
+rotateSessionToken pool sid rotatedAt = do
   now   <- getCurrentTime
   token <- generateSessionToken
   let
     tHash     = sessionTokenHashText (hashSessionToken token)
     expiresAt = addUTCTime (8 * 3600) now
-  runSession pool $
-    Session.statement () $
-      run_ $
-        Rel8.update $
-          Update
-            { target = sessionSchema
-            , from   = pure ()
-            , set    = \() row ->
-                row
-                  { sessTokenHash      = lit tHash
-                  , sessExpiresAt      = lit expiresAt
-                  , sessTokenRotatedAt = lit now
-                  , sessLastSeenAt     = lit now
-                  }
-            , updateWhere = \() row -> sessId row ==. lit sid
-            , returning   = NoReturning
-            }
-  pure (token, expiresAt)
+  updated <-
+    runSession pool $
+      Session.statement () $
+        run $
+          Rel8.update $
+            Update
+              { target = sessionSchema
+              , from   = pure ()
+              , set    = \() row ->
+                  row
+                    { sessTokenHash          = lit tHash
+                    , sessExpiresAt          = lit expiresAt
+                    , sessTokenRotatedAt     = lit now
+                    , sessLastSeenAt         = lit now
+                    , sessPreviousTokenHash  = nullify (sessTokenHash row)
+                    , sessPreviousValidUntil = lit (Just (addUTCTime rotationGrace now))
+                    }
+              , updateWhere = \() row ->
+                  sessId row ==. lit sid
+                    &&. sessTokenRotatedAt row ==. lit rotatedAt
+              , returning = Returning sessId
+              }
+  pure $ case (updated :: [UUID]) of
+    [] -> Nothing
+    _  -> Just (token, expiresAt)
 
 cleanupExpiredSessions :: DBPool -> IO ()
 cleanupExpiredSessions pool = runSession pool $ do

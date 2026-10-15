@@ -373,10 +373,6 @@ userSchema =
           }
     }
 
--- sessTokenRotatedAt tracks when the token was last rotated, distinct from
--- sessLastSeenAt (updated every request) and sessCreatedAt (set once).
--- The middleware checks this and issues a fresh token when the threshold
--- is exceeded, limiting the damage window of a stolen cookie.
 data SessionRow f = SessionRow
   { sessId             :: Column f UUID
   , sessUserId         :: Column f UUID
@@ -391,6 +387,8 @@ data SessionRow f = SessionRow
   , sessUserAgent      :: Column f (Maybe Text)
   , sessIpAddress      :: Column f (Maybe Text)
   , sessTokenRotatedAt :: Column f UTCTime
+  , sessPreviousTokenHash  :: Column f (Maybe Text)
+  , sessPreviousValidUntil :: Column f (Maybe UTCTime)
   }
   deriving stock (Generic)
   deriving anyclass (Rel8able)
@@ -416,6 +414,8 @@ sessionSchema =
           , sessUserAgent      = "user_agent"
           , sessIpAddress      = "ip_address"
           , sessTokenRotatedAt = "token_rotated_at"
+          , sessPreviousTokenHash  = "previous_token_hash"
+          , sessPreviousValidUntil = "previous_valid_until"
           }
     }
 
