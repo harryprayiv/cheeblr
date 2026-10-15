@@ -25,6 +25,8 @@ module Model.Types
 import Data.Kind (Type)
 import Data.Map.Strict (Map)
 
+import Model.Observe (StreamReport)
+
 -- The session a command is sent with. Anonymous sends no session cookie.
 data Actor
   = Admin
@@ -166,5 +168,8 @@ data Observed = Observed
   , obsAllSales     :: Maybe (Map Int SaleView)
   , obsAllRegisters :: Maybe (Map Int RegisterView)
     -- ^ both filled only by Audit
+  , obsStream       :: Maybe StreamReport
+    -- ^ the events an accepted command put on the streams, when the
+    -- streams are observed
   }
   deriving (Eq, Show)

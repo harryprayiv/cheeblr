@@ -33,6 +33,7 @@ import qualified Hedgehog.Range as Range
 
 import Model.Exec
 import Model.Gen
+import Model.Observe
 import Model.Property (answersWithSale, commandName, registerOf, saleOf)
 import Model.Step
 import Model.Types
@@ -100,7 +101,7 @@ judge rules model cmd observed
     -- the model given. For a contended add that is the model before the
     -- command: the sale must be as it was.
     firstWrong after =
-      case concat [bodySale after, readSale after, readRegister after, variance] of
+      case concat [bodySale after, readSale after, readRegister after, variance, streams] of
         []          -> Nothing
         (wrong : _) -> Just wrong
 
@@ -128,6 +129,13 @@ judge rules model cmd observed
         Just slot ->
           differ "the register, read back after the command" (obsRegister observed)
             (registerView <$> Map.lookup slot (modelRegisters after))
+        Nothing -> []
+
+    streams =
+      case obsStream observed of
+        Just report ->
+          differ "events missing from the streams after the command" (srMissing report) []
+            ++ differ "stream frames that did not decode, or streams that closed" (srBad report) []
         Nothing -> []
 
     variance =

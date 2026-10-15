@@ -29,7 +29,7 @@ runAvailabilityRelay env = do
   populateFromDb env
   sub <- subscribe (envDomainBroadcaster env)
   forever $ do
-    evt  <- atomically $ readTChan (subChan sub)
+    (_, evt) <- atomically $ readTChan (subChan sub)
     now  <- getCurrentTime
     mUpd <- atomically $ updateAvailability (envAvailabilityState env) evt now
     case mUpd of

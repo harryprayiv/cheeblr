@@ -27,7 +27,6 @@ import Control.Monad (when)
 import Infrastructure.Broadcast (
   Broadcaster,
   Subscription (..),
-  currentSeq,
   historyFrom,
   subscribe,
  )
@@ -46,13 +45,17 @@ sseStream broadcaster mCursor _req respond = do
       , (CI.mk (B8.pack "Connection"), B8.pack "keep-alive")
       ]
 
+    -- Every event is flushed as it is sent. Without the flush Warp holds
+    -- the frames in its 16 KB output buffer and a client sees nothing
+    -- until that many bytes of events have accumulated.
     sseBody :: Seq (Int64, a) -> Subscription a -> StreamingBody
-    sseBody history sub write _flush = do
+    sseBody history sub write flush = do
       mapM_ (uncurry (sendEvent write)) (toList history)
+      flush
       let loop = do
-            evt <- atomically $ readTChan (subChan sub)
-            seq' <- currentSeq broadcaster
+            (seq', evt) <- atomically $ readTChan (subChan sub)
             sendEvent write seq' evt
+            flush
             loop
       loop
 
@@ -88,12 +91,14 @@ filteredSseStream predicate broadcaster mCursor _req respond = do
       ]
 
     filteredBody :: Seq (Int64, a) -> Subscription a -> StreamingBody
-    filteredBody history sub write _flush = do
+    filteredBody history sub write flush = do
       mapM_ (uncurry (sendEvent write)) $
         filter (predicate . snd) (toList history)
+      flush
       let loop = do
-            evt <- atomically $ readTChan (subChan sub)
-            seq' <- currentSeq broadcaster
-            when (predicate evt) $ sendEvent write seq' evt
+            (seq', evt) <- atomically $ readTChan (subChan sub)
+            when (predicate evt) $ do
+              sendEvent write seq' evt
+              flush
             loop
       loop

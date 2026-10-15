@@ -12,7 +12,7 @@ module Model.Property
   ) where
 
 import Control.Exception (throwIO)
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, unless, when)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
 import Data.Kind (Type)
 import Data.String (fromString)
@@ -23,6 +23,7 @@ import qualified Hedgehog.Range as Range
 
 import Model.Exec
 import Model.Gen
+import Model.Observe
 import Model.Step
 import Model.Types
 
@@ -134,6 +135,11 @@ verify rules before after cmd observed = do
   -- Stock after every command.
   expect "stock on hand and reserved, per menu item" (obsStock observed) (stockView after)
 
+  -- The events the command put on the streams.
+  forM_ (obsStream observed) $ \report -> do
+    expect "events missing from the streams after the command (stream, expected event)" (srMissing report) []
+    expect "stream frames that did not decode, or streams that closed" (srBad report) []
+
   -- Audit: every sale and register of the sequence.
   forM_ (obsAllSales observed) $ \sales ->
     expect "audit: every sale of the sequence" sales (Map.map (saleView rules) (modelSales after))
@@ -156,5 +162,27 @@ prop_backendMatchesModel shared tests size =
         Gen.sequential (Range.linear 1 size) (initialModel rules) [command rules runRef]
     run <- evalIO (newRun shared)
     evalIO (writeIORef runRef (Just run))
+    marks <- evalIO (maybe (pure Map.empty) watermark (sharedObservers shared))
     executeSequential (initialModel rules) actions
+    adminToken <- evalIO (currentToken shared Admin)
+    forM_ (sharedObservers shared) $ \observers -> do
+      -- Every stream numbers its frames in increasing order.
+      forM_ [minBound .. maxBound] $ \stream -> do
+        frames <- evalIO (framesSince observers marks stream)
+        let ids = map frameId frames
+        unless (strictlyIncreasing ids) $ do
+          annotate ("frame ids on " <> show stream <> " are not strictly increasing: " <> show ids)
+          failure
+      -- A client that reconnects with the id it last saw gets the same
+      -- events again. The backend keeps a bounded history, so this is
+      -- checked only for sequences that fit in it.
+      adminFrames <- evalIO (framesSince observers marks AdminEvents)
+      when (length adminFrames <= 150) $ do
+        replay <- evalIO (replayCheck (sharedHttp shared) adminToken observers marks)
+        forM_ replay $ \difference -> do
+          annotate ("reconnecting with a cursor did not replay the live events:\n" <> difference)
+          failure
     evalIO (endRun run)
+
+strictlyIncreasing :: [Integer] -> Bool
+strictlyIncreasing ids = and (zipWith (<) ids (drop 1 ids))

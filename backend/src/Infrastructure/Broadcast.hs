@@ -15,14 +15,14 @@ import Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
 
 data Broadcaster a = Broadcaster
-  { bChan :: TChan a
+  { bChan :: TChan (Int64, a)
   , bHistory :: TVar (Seq (Int64, a))
   , bMaxHistory :: Int
   , bNextSeq :: TVar Int64
   }
 
 data Subscription a = Subscription
-  { subChan :: TChan a
+  { subChan :: TChan (Int64, a)
   , subInitSeq :: Int64
   }
 
@@ -38,7 +38,7 @@ publish :: Broadcaster a -> a -> IO ()
 publish b evt = atomically $ do
   seq' <- readTVar (bNextSeq b)
   writeTVar (bNextSeq b) (seq' + 1)
-  writeTChan (bChan b) evt
+  writeTChan (bChan b) (seq', evt)
   modifyTVar' (bHistory b) $ \h ->
     let h' = h Seq.|> (seq', evt)
      in if Seq.length h' > bMaxHistory b then Seq.drop 1 h' else h'

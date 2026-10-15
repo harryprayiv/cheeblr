@@ -1,10 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- Requires in cheeblr-backend.cabal build-depends:
---   websockets
---   wai-websockets
-
 module Server.Feed (feedServerImpl) where
 
 import Control.Concurrent.STM (atomically, readTChan, readTVarIO)
@@ -93,8 +89,7 @@ wsHandler env cursor pending = do
   sub <- subscribe (envAvailabilityBroadcaster env)
   WS.withPingThread conn 30 (pure ()) $
     let loop = do
-          upd <- atomically (readTChan (subChan sub))
-          seq' <- currentSeq (envAvailabilityBroadcaster env)
+          (seq', upd) <- atomically (readTChan (subChan sub))
           sendFrame seq' upd
           loop
      in loop `catch` (\(_ :: WS.ConnectionException) -> pure ())

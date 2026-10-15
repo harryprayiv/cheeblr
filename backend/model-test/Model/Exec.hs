@@ -18,6 +18,7 @@ module Model.Exec
   , execute
   , executeWith
   , readStock
+  , currentToken
   , catalogue
   ) where
 
@@ -35,10 +36,12 @@ import qualified Data.Text as T
 import Data.UUID (UUID)
 import qualified Data.UUID as UUID
 import Data.UUID.V4 (nextRandom)
+import Data.Time (getCurrentTime)
 import System.Environment (getEnv, lookupEnv)
 import Text.Read (readMaybe)
 
 import Model.Client
+import Model.Observe
 import Model.Types
 
 data Shared = Shared
@@ -47,6 +50,8 @@ data Shared = Shared
   , sharedUsers    :: Map Actor UUID
   , sharedRules    :: Rules
   , sharedLocation :: UUID
+  , sharedObservers :: Maybe Observers
+    -- ^ the three event streams, open for the whole run
   }
 
 data Run = Run
@@ -100,9 +105,11 @@ signIn http username password = do
 --   MODEL_ADMIN_PASSWORD  the admin account's password
 --   MODEL_ADMIN_USERNAME  default admin
 --   MODEL_TAX_PPM         default 80000, the placeholder rule of a new database
+--   MODEL_STREAMS         off to leave the event streams unobserved; default on
 --   RESTOCK_ON_VOID, RESTOCK_ON_REFUND   as given to the backend
 setup :: IO Shared
 setup = do
+  streams   <- envOr "MODEL_STREAMS" "on"
   base      <- getEnv "MODEL_BASE_URL"
   adminName <- T.pack <$> envOr "MODEL_ADMIN_USERNAME" "admin"
   adminPass <- T.pack <$> getEnv "MODEL_ADMIN_PASSWORD"
@@ -136,6 +143,10 @@ setup = do
   tokens <-
     newIORef . Map.fromList $
       (Admin, adminToken) : [(actor, token) | (actor, token, _) <- others]
+  observers <-
+    if streams == "off"
+      then pure Nothing
+      else Just <$> openObservers http adminToken
   pure
     Shared
       { sharedHttp     = http
@@ -150,7 +161,12 @@ setup = do
             , rulesStock           = Map.fromList (zip [0 ..] (map snd catalogue))
             }
       , sharedLocation = location
+      , sharedObservers = observers
       }
+
+-- An actor's session token as it is now; empty for Anonymous.
+currentToken :: Shared -> Actor -> IO Text
+currentToken shared actor = Map.findWithDefault "" actor <$> readIORef (sharedTokens shared)
 
 -- A request with an actor's session. Anonymous sends no cookie. When the
 -- backend rotates the session token, the new one is kept.
@@ -264,6 +280,7 @@ executeWith :: Bool -> Run -> Cmd -> IO Observed
 executeWith withStock run cmd = do
   registers <- readIORef (runRegisters run)
   sales     <- readIORef (runSales run)
+  marks     <- maybe (pure Map.empty) watermark (sharedObservers (runShared run))
   let shared   = runShared run
       skus     = runSkus run
       regId    = idAt registers
@@ -379,9 +396,18 @@ executeWith withStock run cmd = do
       reply <- as shared Admin "GET" "/auth/me" Nothing
       pure (Sent reply Nothing Nothing False)
 
+  answeredAt <- getCurrentTime
+
   -- The lists as they are after the command.
   registersNow <- readIORef (runRegisters run)
   salesNow     <- readIORef (runSales run)
+
+  -- The events an accepted command must put on the streams.
+  streamReport <-
+    case sharedObservers shared of
+      Just observers | replyStatus (sentReply sent) == 200 ->
+        Just <$> awaitExpected observers marks answeredAt (expectedEvents cmd registersNow salesNow)
+      _ -> pure Nothing
   let users = sharedUsers shared
       ownerOf userId = lookup userId [(uid, actor) | (actor, uid) <- Map.toList users]
       toSaleView raw =
@@ -437,4 +463,29 @@ executeWith withStock run cmd = do
       , obsStock        = stock
       , obsAllSales     = allSales
       , obsAllRegisters = allRegisters
+      , obsStream       = streamReport
       }
+
+-- The events the backend emits for an accepted command, read from
+-- Service.Sale, Service.Transaction and Service.Register. A clear and a
+-- register creation emit nothing. An add also cancels and re-creates the
+-- stock pull when it replaces a line, and a remove cancels pulls; those
+-- extra events are not required here.
+expectedEvents :: Cmd -> [UUID] -> [UUID] -> [Expect]
+expectedEvents cmd registers sales = case cmd of
+  OpenRegister _ reg _     -> [register "RegisterOpened" reg]
+  CloseRegister _ reg _    -> [register "RegisterClosed" reg]
+  StartSale {}             -> [sale "TransactionCreated" (length sales - 1)]
+  AddItem _ s _ _          -> [sale "TransactionItemAdded" s, Expect "StockEvt" "PullRequestCreated" (T.pack (idAt sales s))]
+  RemoveItem _ s _         -> [sale "TransactionItemRemoved" s]
+  AddPayment _ s _ _ _     -> [sale "TransactionPaymentAdded" s]
+  RemovePayment _ s _ _    -> [sale "TransactionPaymentRemoved" s]
+  Finalize _ s             -> [sale "TransactionFinalized" s]
+  Void _ s                 -> [sale "TransactionVoided" s]
+  Refund _ s               -> [sale "TransactionRefunded" s]
+  CreateRegister _         -> []
+  Clear _ _                -> []
+  Audit                    -> []
+  where
+    sale inner slot     = Expect "TransactionEvt" inner (T.pack (idAt sales slot))
+    register inner slot = Expect "RegisterEvt" inner (T.pack (idAt registers slot))

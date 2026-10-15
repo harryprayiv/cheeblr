@@ -13,7 +13,7 @@
 -- The other settings are listed at Model.Exec.setup.
 module Main (main) where
 
-import Control.Monad (unless)
+import Control.Monad (forM_, unless)
 import Data.Maybe (fromMaybe)
 import Hedgehog (Group (..), checkSequential)
 import System.Environment (lookupEnv)
@@ -21,7 +21,8 @@ import System.Exit (exitFailure)
 import System.IO (BufferMode (..), hSetBuffering, hSetEncoding, stderr, stdout, utf8)
 import Text.Read (readMaybe)
 
-import Model.Exec (setup)
+import Model.Exec (Shared (..), setup)
+import Model.Observe (closeObservers, lagSummary)
 import Model.Parallel (prop_puppetsAgree)
 import Model.Property (prop_backendMatchesModel)
 
@@ -52,4 +53,13 @@ main = do
           , prop_puppetsAgree shared rounds puppets size
           )
         ]
+  forM_ (sharedObservers shared) $ \observers -> do
+    summary <- lagSummary observers
+    putStrLn ""
+    putStrLn "Event lag, from the command's answer to the event's arrival (negative: the event came first):"
+    forM_ summary $ \(stream, count, median, worst) ->
+      putStrLn ("  " <> show stream <> ": " <> show count <> " events, median " <> ms median <> ", worst " <> ms worst)
+    closeObservers observers
   unless passed exitFailure
+  where
+    ms x = show (round x :: Int) <> " ms"

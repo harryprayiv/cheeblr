@@ -257,6 +257,7 @@ test-suite cheeblr-model-tests
     Model.Client
     Model.Exec
     Model.Gen
+    Model.Observe
     Model.Parallel
     Model.Property
     Model.Step
@@ -272,4 +273,5 @@ test-suite cheeblr-model-tests
     , http-client
     , http-types
     , text
+    , time
     , uuid
