@@ -1,0 +1,1657 @@
+%bundle chase v1
+%generated 2026-10-04T19:17:59Z
+%roots /home/bismuth/git/cheeblr/backend/test/
+%files 48 ok, 0 failed
+
+# This file is a chase bundle: structural skeletons of multiple
+# Haskell and PureScript source files concatenated into one document.
+# Each block begins with === BEGIN <path> === on its own line.
+# Blocks contain the rendered .chase format: %file, %mod, %lang,
+# %ext (Haskell only), %fixity, %uses, %const, %topology, data decls,
+# %foreign (PureScript only), %pattern, type signatures with
+# attached invariants and consumers, ? tested-by lines (when test
+# coverage analysis was enabled), %decision blocks, %open_issue
+# blocks (known problems with blocking/affects targets), and parse
+# errors. Function bodies are deliberately omitted; the lines
+# beginning with ! after a signature are the behavioral facts you
+# would otherwise have to infer from reading the source.
+
+
+=== BEGIN Spec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Spec.hs
+%mod Main
+
+%uses Test.Hspec
+%uses qualified Test.API.AdminSpec
+%uses qualified Test.API.OpenApiSpec
+%uses qualified Test.API.TransactionSpec
+%uses qualified Test.App.CspSpec
+%uses qualified Test.App.MiddlewareSpec
+%uses qualified Test.DB.PureFunctionsSpec
+%uses qualified Test.Domain.PricingSpec
+%uses qualified Test.Domain.SaleRulesSpec
+%uses qualified Test.Domain.TaxRuleSpec
+%uses qualified Test.Effect.EventEmitterSpec
+%uses qualified Test.Effect.InventoryDbSpec
+%uses qualified Test.Effect.StockDbSpec
+%uses qualified Test.GraphQL.ResolversSpec
+%uses qualified Test.GraphQL.SchemaSpec
+%uses qualified Test.Infrastructure.AvailabilityRelaySpec
+%uses qualified Test.Manager.LogicSpec
+%uses qualified Test.Manager.TypesSpec
+%uses qualified Test.Props.JsonRoundtripSpec
+%uses qualified Test.Props.NegateSpec
+%uses qualified Test.Props.ParseShowSpec
+%uses qualified Test.Props.StateMachineSpec
+%uses qualified Test.Server.CookieSpec
+%uses qualified Test.Server.Middleware.TracingSpec
+%uses qualified Test.Service.RegisterSpec
+%uses qualified Test.Service.SaleSpec
+%uses qualified Test.Service.StockSpec
+%uses qualified Test.Service.TransactionSpec
+%uses qualified Test.State.RegisterMachineSpec
+%uses qualified Test.State.StockPullMachineSpec
+%uses qualified Test.State.TransactionMachineSpec
+%uses qualified Test.Types.AuthSpec
+%uses qualified Test.Types.InventorySpec
+%uses qualified Test.Types.Public.AvailableItemSpec
+%uses qualified Test.Types.Public.FeedFrameSpec
+%uses qualified Test.Types.Public.FeedPrivacySpec
+%uses qualified Test.Types.TraceSpec
+%uses qualified Test.Types.TransactionSpec
+%uses qualified Test.Types.Primitives.MoneySpec
+%uses qualified Test.Types.Primitives.QuantitySpec
+%uses qualified Test.Types.Transaction.ConversionSpec
+%uses qualified Test.DB.Transaction.SaleSpec
+%uses qualified Test.DB.Transaction.RefundSpec
+
+main :: IO ()
+
+
+=== BEGIN SpecIntegration.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/SpecIntegration.hs
+%mod Main
+
+%uses Test.Hspec
+%uses qualified Test.GraphQL.IntegrationSpec
+%uses qualified Test.Integration.JsonContractSpec
+
+main :: IO ()
+
+
+=== BEGIN Test/API/AdminSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/API/AdminSpec.hs
+%mod Test.API.AdminSpec
+
+%ext OverloadedStrings
+
+%uses Data.Aeson
+%uses Data.Maybe
+%uses Data.UUID
+%uses Test.Hspec
+%uses Data.Int
+%uses Types.Admin
+
+testUUID :: UUID
+
+spec :: Spec
+
+
+=== BEGIN Test/API/OpenApiSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/API/OpenApiSpec.hs
+%mod Test.API.OpenApiSpec
+
+%ext OverloadedStrings
+
+%uses Control.Lens
+%uses Data.Maybe
+%uses Data.OpenApi
+%uses Data.Text
+%uses Test.Hspec
+%uses API.OpenApi
+
+hasPath :: FilePath -> Bool
+
+hasSchema :: Text -> Bool
+
+spec :: Spec
+
+
+=== BEGIN Test/API/TransactionSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/API/TransactionSpec.hs
+%mod Test.API.TransactionSpec
+
+%ext OverloadedStrings
+
+%uses API.Transaction
+%uses Data.Aeson
+%uses Data.Time
+%uses Data.UUID
+%uses Test.Hspec
+%uses Types.Location
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+testTime :: UTCTime
+
+spec :: Spec
+
+
+=== BEGIN Test/App/CspSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/App/CspSpec.hs
+%mod Test.App.CspSpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.Text as T
+%uses Test.Hspec
+%uses App
+
+spec :: Spec
+
+
+=== BEGIN Test/App/MiddlewareSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/App/MiddlewareSpec.hs
+%mod Test.App.MiddlewareSpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.ByteString.Char8 as B8
+%uses Data.Maybe
+%uses Data.Text
+%uses qualified Data.Text.Encoding as TE
+%uses Network.HTTP.Types
+%uses Network.Wai
+%uses Network.Wai.Test
+%uses Test.Hspec
+%uses App
+%uses Types.Primitives.Token
+
+sampleToken :: SessionToken
+
+sampleTokenText :: Text
+
+sampleTokenBS :: B8.ByteString
+
+authEchoApp :: Application
+
+noCookieMiddleware :: Application -> Application
+
+spec :: Spec
+
+
+=== BEGIN Test/Auth/SimpleSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Auth/SimpleSpec.hs
+%mod Test.Auth.SimpleSpec
+
+%ext OverloadedStrings
+
+%uses Auth.Simple
+%uses qualified Data.Map.Strict as Map
+%uses Data.Maybe
+%uses Test.Hspec
+%uses Types.Auth
+
+spec :: Spec
+
+
+=== BEGIN Test/DB/PureFunctionsSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/DB/PureFunctionsSpec.hs
+%mod Test.DB.PureFunctionsSpec
+
+%ext OverloadedStrings
+
+%uses DB.Transaction
+%uses Data.Scientific
+%uses Data.UUID
+%uses Test.Hspec
+%uses Types.Transaction
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+mkItem :: TransactionItem
+
+mkDiscount :: DiscountRecord
+
+mkTax :: TaxRecord
+
+mkPayment :: PaymentTransaction
+
+spec :: Spec
+
+
+=== BEGIN Test/DB/Transaction/RefundSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/DB/Transaction/RefundSpec.hs
+%mod Test.DB.Transaction.RefundSpec
+
+%ext DisambiguateRecordFields, OverloadedStrings
+
+%uses Data.Scientific
+%uses Data.UUID
+%uses Test.Hspec
+%uses DB.Schema
+%uses qualified DB.Transaction.Refund as RefundDb
+%uses Rel8
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses qualified Types.Transaction.Refund as Refund
+
+testItemId, testTxId, testSkuId :: UUID
+
+testItemId, testTxId, testSkuId :: UUID
+
+testItemId, testTxId, testSkuId :: UUID
+
+testApproverId :: UUID
+
+testDiscId, testTaxId, testPaymentId :: UUID
+
+testDiscId, testTaxId, testPaymentId :: UUID
+
+testDiscId, testTaxId, testPaymentId :: UUID
+
+testItemRow :: TransactionItemRow Result
+
+testDiscountRow :: DiscountRow Result
+
+testTaxRow :: TaxRow Result
+
+testPaymentRow :: PaymentRow Result
+
+spec :: Spec
+
+
+=== BEGIN Test/DB/Transaction/SaleSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/DB/Transaction/SaleSpec.hs
+%mod Test.DB.Transaction.SaleSpec
+
+%ext DisambiguateRecordFields, OverloadedStrings
+
+%uses Data.Scientific
+%uses Data.UUID
+%uses Test.Hspec
+%uses DB.Schema
+%uses qualified DB.Transaction.Sale as SaleDb
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses Rel8
+%uses qualified Types.Transaction.Sale as Sale
+
+testItemId, testTxId, testSkuId :: UUID
+
+testItemId, testTxId, testSkuId :: UUID
+
+testItemId, testTxId, testSkuId :: UUID
+
+testApproverId :: UUID
+
+testDiscId, testTaxId, testPaymentId :: UUID
+
+testDiscId, testTaxId, testPaymentId :: UUID
+
+testDiscId, testTaxId, testPaymentId :: UUID
+
+testItemRow :: TransactionItemRow Result
+
+testDiscountRow :: DiscountRow Result
+
+testTaxRow :: TaxRow Result
+
+testPaymentRow :: PaymentRow Result
+
+spec :: Spec
+
+
+=== BEGIN Test/Domain/PricingSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Domain/PricingSpec.hs
+%mod Test.Domain.PricingSpec
+
+%ext OverloadedStrings
+
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses Domain.Pricing
+%uses Types.Inventory
+%uses Types.Transaction
+
+rate :: Int -> TaxRate
+
+rule :: Maybe ItemCategory -> TaxCategory -> Int -> RoundingMode -> TaxRule
+
+genMode :: Gen RoundingMode
+
+genCategory :: Gen ItemCategory
+
+genRule :: Gen TaxRule
+
+genRules :: Gen [TaxRule]
+
+genPrice :: Gen Int
+
+genQuantity :: Gen Int
+
+spec :: Spec
+
+
+=== BEGIN Test/Domain/SaleRulesSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Domain/SaleRulesSpec.hs
+%mod Test.Domain.SaleRulesSpec
+
+%ext OverloadedStrings
+
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses Domain.SaleRules
+
+spec :: Spec
+
+
+=== BEGIN Test/Domain/TaxRuleSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Domain/TaxRuleSpec.hs
+%mod Test.Domain.TaxRuleSpec
+
+%ext OverloadedStrings
+
+%uses Data.Maybe
+%uses Data.Time
+%uses Data.UUID
+%uses qualified Data.UUID as UUID
+%uses Test.Hspec
+%uses Domain.Pricing
+%uses Domain.TaxRule
+%uses Types.Inventory
+%uses Types.Location
+%uses Types.Transaction
+
+uuid :: String -> UUID
+
+storeA :: LocationId
+
+storeB :: LocationId
+
+day :: Integer -> Int -> Int -> UTCTime
+
+pricingRule :: TaxCategory -> Int -> TaxRule
+
+stored :: Maybe LocationId -> UTCTime -> Maybe UTCTime -> TaxRule -> StoredTaxRule
+
+spec :: Spec
+
+
+=== BEGIN Test/Effect/EventEmitterSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Effect/EventEmitterSpec.hs
+%mod Test.Effect.EventEmitterSpec
+
+%ext DataKinds, OverloadedStrings
+
+%uses Data.IORef
+%uses Data.Time
+%uses Data.UUID
+%uses Effectful
+%uses Test.Hspec
+%uses Effect.EventEmitter
+%uses Types.Auth
+%uses Types.Events
+%uses Types.Events.Domain
+
+testUUID :: UUID
+
+testTime :: UTCTime
+
+evt1 :: DomainEvent
+
+evt2 :: DomainEvent
+
+evt3 :: DomainEvent
+
+spec :: Spec
+
+
+=== BEGIN Test/Effect/InventoryDbSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Effect/InventoryDbSpec.hs
+%mod Test.Effect.InventoryDbSpec
+
+%ext DataKinds, OverloadedStrings
+
+%uses Data.Map.Strict
+%uses qualified Data.Map.Strict as Map
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Effectful
+%uses Test.Hspec
+%uses Effect.InventoryDb
+%uses Types.Inventory
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+testStrainLineage :: StrainLineage
+
+mkItem :: UUID -> String -> MenuItem
+
+testItem :: MenuItem
+
+runPure :: Map UUID MenuItem -> Eff '[InventoryDb] a -> IO (a, Map UUID MenuItem)
+
+runPure_ :: Map UUID MenuItem -> Eff '[InventoryDb] a -> IO a
+
+spec :: Spec
+
+
+=== BEGIN Test/Effect/StockDbSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Effect/StockDbSpec.hs
+%mod Test.Effect.StockDbSpec
+
+%ext DataKinds, OverloadedStrings
+
+%uses Data.Time
+%uses Data.UUID
+%uses Effectful
+%uses Test.Hspec
+%uses Effect.StockDb
+%uses State.StockPullMachine
+%uses Types.Location
+%uses Types.Stock
+
+pullId1, pullId2, pullId3 :: UUID
+
+pullId1, pullId2, pullId3 :: UUID
+
+pullId1, pullId2, pullId3 :: UUID
+
+txId1, txId2 :: UUID
+
+txId1, txId2 :: UUID
+
+itemSku1, itemSku2 :: UUID
+
+itemSku1, itemSku2 :: UUID
+
+msgId1 :: UUID
+
+senderId :: UUID
+
+locId :: LocationId
+
+otherLocId :: LocationId
+
+testTime :: UTCTime
+
+mkPull :: UUID -> UUID -> UUID -> LocationId -> PullVertex -> PullRequest
+
+mkMsg :: UUID -> UUID -> PullMessage
+
+run :: StockStore -> Eff '[StockDb, IOE] a -> IO a
+
+spec :: Spec
+
+
+=== BEGIN Test/Gen.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Gen.hs
+%mod Test.Gen
+
+%uses Data.Scientific
+%uses Data.Text
+%uses Data.Time.Calendar
+%uses Data.Time.Clock
+%uses Data.UUID
+%uses qualified Data.UUID as UUID
+%uses qualified Data.Vector as V
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Types.Inventory
+%uses Types.Location
+%uses Types.Transaction
+
+genUUID :: Gen UUID
+
+genText :: Gen Text
+
+genMaybeText :: Gen (Maybe Text)
+
+genUTCTime :: Gen UTCTime
+
+genMaybeUTCTime :: Gen (Maybe UTCTime)
+
+genTransactionStatus :: Gen TransactionStatus
+
+genTransactionType :: Gen TransactionType
+
+genPaymentMethod :: Gen PaymentMethod
+
+genTaxCategory :: Gen TaxCategory
+
+genScientific :: Gen Scientific
+
+genDiscountType :: Gen DiscountType
+
+genTaxRecord :: Gen TaxRecord
+
+genDiscountRecord :: Gen DiscountRecord
+
+genTransactionItem :: Gen TransactionItem
+
+genPaymentTransaction :: Gen PaymentTransaction
+
+genTransaction :: Gen Transaction
+
+genSpecies :: Gen Species
+
+genItemCategory :: Gen ItemCategory
+
+genVectorText :: Gen (V.Vector Text)
+
+genStrainLineage :: Gen StrainLineage
+
+genMenuItem :: Gen MenuItem
+
+genInventory :: Gen Inventory
+
+
+=== BEGIN Test/GraphQL/IntegrationSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/GraphQL/IntegrationSpec.hs
+%mod Test.GraphQL.IntegrationSpec
+
+%ext DuplicateRecordFields, OverloadedRecordDot, OverloadedStrings, ScopedTypeVariables
+
+%uses Data.Aeson
+%uses Data.Aeson.KeyMap
+%uses Data.Morpheus.Types
+%uses qualified Data.Text as T
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses GraphQL.Resolvers
+%uses GraphQL.Schema
+%uses qualified Types.Inventory as TI
+
+testUUID :: UUID
+
+testStrainLineage :: TI.StrainLineage
+
+testMenuItem :: TI.MenuItem
+
+mkGQLRequest :: T.Text -> Maybe Value -> GQLRequest
+
+spec :: Spec
+
+
+=== BEGIN Test/GraphQL/ResolversSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/GraphQL/ResolversSpec.hs
+%mod Test.GraphQL.ResolversSpec
+
+%ext DuplicateRecordFields, OverloadedRecordDot, OverloadedStrings, ScopedTypeVariables
+
+%uses Control.Exception
+%uses qualified Data.Text as T
+%uses Data.UUID
+%uses qualified Data.UUID as UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses GraphQL.Resolvers
+%uses GraphQL.Schema
+%uses Types.Auth
+%uses qualified Types.Inventory as TI
+
+testUUID :: UUID
+
+testStrainLineage :: TI.StrainLineage
+
+testMenuItem :: TI.MenuItem
+
+testStrainLineageInputGql :: StrainLineageInputGql
+
+testMenuItemInputGql :: MenuItemInputGql
+
+spec :: Spec
+
+mkInput :: T.Text -> MenuItemInputGql
+
+mkInputWith :: (MenuItemInputGql -> MenuItemInputGql) -> MenuItemInputGql
+
+expectRight :: MenuItemInputGql -> (TI.MenuItem -> IO ()) -> IO ()
+
+
+=== BEGIN Test/GraphQL/SchemaSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/GraphQL/SchemaSpec.hs
+%mod Test.GraphQL.SchemaSpec
+
+%ext DuplicateRecordFields, OverloadedRecordDot, OverloadedStrings
+
+%uses GraphQL.Schema
+%uses Test.Hspec
+
+testStrainLineageGql :: StrainLineageGql
+
+testStrainLineageInputGql :: StrainLineageInputGql
+
+testMenuItemGql :: MenuItemGql
+
+testMenuItemInputGql :: MenuItemInputGql
+
+spec :: Spec
+
+mkSL :: StrainLineageGql -> (StrainLineageGql -> StrainLineageGql) -> StrainLineageGql
+
+mkMI :: MenuItemGql -> (MenuItemGql -> MenuItemGql) -> MenuItemGql
+
+
+=== BEGIN Test/Infrastructure/AvailabilityRelaySpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Infrastructure/AvailabilityRelaySpec.hs
+%mod Test.Infrastructure.AvailabilityRelaySpec
+
+%ext OverloadedStrings
+
+%uses Control.Concurrent.STM
+%uses qualified Data.Map.Strict as Map
+%uses Data.Maybe
+%uses Data.Time
+%uses Data.Time.Calendar
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses Infrastructure.AvailabilityRelay
+%uses Infrastructure.AvailabilityState
+%uses Types.Auth
+%uses Types.Events.Domain
+%uses Types.Events
+%uses Types.Inventory
+%uses Types.Public.AvailableItem
+%uses Types.Transaction
+
+testTime :: UTCTime
+
+testSku :: UUID
+
+testLocId :: PublicLocationId
+
+testActorId :: UUID
+
+txUUID :: UUID
+
+itemUUID :: UUID
+
+regUUID :: UUID
+
+userUUID :: UUID
+
+testItemQty :: Int
+
+testMenuItem :: MenuItem
+
+testTxItem :: TransactionItem
+
+mkStVar :: IO (TVar AvailabilityState)
+
+spec :: Spec
+
+
+=== BEGIN Test/Integration/JsonContractSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Integration/JsonContractSpec.hs
+%mod Test.Integration.JsonContractSpec
+
+%ext OverloadedStrings, ScopedTypeVariables
+
+%uses Data.Aeson
+%uses Data.Aeson.KeyMap
+%uses qualified Data.Aeson.KeyMap as KM
+%uses Data.Scientific
+%uses qualified Data.Text as T
+%uses Data.Time
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses Types.Location
+%uses API.Transaction
+%uses DB.Transaction
+%uses Types.Auth
+%uses Types.Inventory
+%uses Types.Transaction
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+testTime :: UTCTime
+
+spec :: Spec
+
+
+=== BEGIN Test/Manager/LogicSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Manager/LogicSpec.hs
+%mod Test.Manager.LogicSpec
+
+%ext OverloadedStrings
+
+%uses Data.Time
+%uses Data.UUID
+%uses Test.Hspec
+%uses Server.Manager
+%uses Types.Admin
+%uses Types.Auth
+%uses Types.Events.Domain
+%uses Types.Events
+%uses Types.Location
+%uses Types.Transaction
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+testTime :: UTCTime
+
+midday :: UTCTime
+
+mkTx :: TransactionStatus -> UTCTime -> Int -> Transaction
+
+spec :: Spec
+
+
+=== BEGIN Test/Manager/TypesSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Manager/TypesSpec.hs
+%mod Test.Manager.TypesSpec
+
+%ext OverloadedStrings
+
+%uses Data.Aeson
+%uses Data.Maybe
+%uses Data.Time
+%uses Data.UUID
+%uses Test.Hspec
+%uses Types.Admin
+%uses Types.Transaction
+
+testUUID :: UUID
+
+testTime :: UTCTime
+
+spec :: Spec
+
+
+=== BEGIN Test/Props/JsonRoundtripSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Props/JsonRoundtripSpec.hs
+%mod Test.Props.JsonRoundtripSpec
+
+%ext OverloadedStrings
+
+%uses Data.Aeson
+%uses Hedgehog
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses Test.Gen
+
+spec :: Spec
+
+
+=== BEGIN Test/Props/NegateSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Props/NegateSpec.hs
+%mod Test.Props.NegateSpec
+
+%ext OverloadedStrings
+
+%uses Hedgehog
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses DB.Transaction
+%uses Test.Gen
+%uses Types.Transaction
+
+spec :: Spec
+
+
+=== BEGIN Test/Props/ParseShowSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Props/ParseShowSpec.hs
+%mod Test.Props.ParseShowSpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.Text as T
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses DB.Transaction
+%uses Test.Gen
+%uses Types.Transaction
+
+spec :: Spec
+
+
+=== BEGIN Test/Props/StateMachineSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Props/StateMachineSpec.hs
+%mod Test.Props.StateMachineSpec
+
+%ext GADTs, OverloadedStrings
+
+%uses Data.Time.Clock
+%uses Data.UUID
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses API.Transaction
+%uses State.RegisterMachine
+%uses State.TransactionMachine
+%uses Test.Gen
+%uses Types.Location
+%uses qualified Types.Transaction as T
+
+fixedUUID :: UUID
+
+fixedUUID2 :: UUID
+
+fixedTime :: UTCTime
+
+baseTx :: T.TransactionStatus -> T.Transaction
+
+baseReg :: Bool -> Register
+
+txVertexOf :: SomeTxState -> TxVertex
+
+regVertexOf :: SomeRegState -> RegVertex
+
+genTxCommand :: Gen TxCommand
+
+someTxState :: T.TransactionStatus -> SomeTxState
+
+spec :: Spec
+
+
+=== BEGIN Test/Server/CookieSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Server/CookieSpec.hs
+%mod Test.Server.CookieSpec
+
+%ext OverloadedStrings
+
+%uses Data.Maybe
+%uses Data.Text
+%uses qualified Data.Text as T
+%uses Test.Hspec
+%uses Server.Cookie
+%uses Types.Primitives.Token
+
+sampleToken1, sampleToken2 :: SessionToken
+
+sampleToken1, sampleToken2 :: SessionToken
+
+sampleTokenText1 :: Text
+
+spec :: Spec
+
+
+=== BEGIN Test/Server/Middleware/TracingSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Server/Middleware/TracingSpec.hs
+%mod Test.Server.Middleware.TracingSpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.ByteString.Char8 as B8
+%uses Data.Maybe
+%uses Data.Text
+%uses Network.HTTP.Types
+%uses Network.Wai
+%uses Network.Wai.Test
+%uses Test.Hspec
+%uses Server.Middleware.Tracing
+%uses Types.Trace
+
+testApp :: Application
+
+traceEchoApp :: Application
+
+wrappedApp :: Application
+
+wrappedEchoApp :: Application
+
+spec :: Spec
+
+
+=== BEGIN Test/Service/RegisterSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Service/RegisterSpec.hs
+%mod Test.Service.RegisterSpec
+
+%ext DataKinds, NamedFieldPuns, OverloadedStrings, TypeApplications
+
+%uses Control.Monad
+%uses Data.IORef
+%uses qualified Data.Map.Strict as Map
+%uses Data.Time
+%uses Data.UUID
+%uses Effectful
+%uses Effectful.Error.Static
+%uses Servant
+%uses Test.Hspec
+%uses Types.Location
+%uses API.Transaction
+%uses Effect.Clock
+%uses Effect.EventEmitter
+%uses Effect.RegisterDb
+%uses qualified Service.Register as Svc
+%uses Types.Events.Domain
+%uses Types.Events
+
+type TestEffs =
+  '[ RegisterDb
+   , Clock
+   , EventEmitter
+   , Error ServerError
+   , IOE
+   ]
+
+regUUID, empUUID, locUUID :: UUID
+
+regUUID, empUUID, locUUID :: UUID
+
+regUUID, empUUID, locUUID :: UUID
+
+testTime :: UTCTime
+
+closedReg :: Register
+
+openReg :: Register
+
+openReq :: OpenRegisterRequest
+
+closeReq :: CloseRegisterRequest
+
+storeWith :: Register -> RegStore
+
+runTest :: RegStore -> Eff TestEffs a -> IO (Either ServerError a)
+
+runTestWithEvents ::
+  RegStore ->
+  Eff TestEffs a ->
+  IO (Either ServerError a, [DomainEvent])
+
+shouldSucceed :: IO (Either ServerError a) -> IO a
+
+shouldFailWith :: Int -> IO (Either ServerError a) -> IO ()
+
+spec :: Spec
+
+
+=== BEGIN Test/Service/SaleSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Service/SaleSpec.hs
+%mod Test.Service.SaleSpec
+
+%ext DataKinds, OverloadedStrings, TypeApplications
+
+%uses qualified Data.Map.Strict as Map
+%uses Data.Maybe
+%uses Data.Time
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Effectful
+%uses Effectful.Error.Static
+%uses Servant
+%uses Test.Hspec
+%uses Domain.Pricing
+%uses Domain.TaxRule
+%uses Effect.Clock
+%uses Effect.EventEmitter
+%uses Effect.GenUUID
+%uses Effect.InventoryDb
+%uses Effect.StockDb
+%uses Effect.TaxRules
+%uses Effect.TransactionDb
+%uses qualified Service.Sale as SaleSvc
+%uses Types.Inventory
+%uses Types.Location
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses Types.Transaction.Conversion
+%uses Types.Transaction.Request
+%uses qualified Types.Transaction.Sale as Sale
+
+type TestEffs =
+  '[ TaxRules
+   , TransactionDb
+   , StockDb
+   , InventoryDb
+   , Clock
+   , GenUUID
+   , EventEmitter
+   , Error ServerError
+   , IOE
+   ]
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID, unknownUUID :: UUID
+
+uuidSupply :: [UUID]
+
+firstSuppliedUUID :: UUID
+
+testTime :: UTCTime
+
+testMenuItem :: MenuItem
+
+testMenu :: Map.Map UUID MenuItem
+
+testRules :: [StoredTaxRule]
+
+mkTx :: TransactionStatus -> Transaction
+
+existingItem :: Sale.Item
+
+existingPayment :: Int -> Sale.Payment
+
+emptySale :: TransactionStatus -> TxStore
+
+saleWithItem :: TransactionStatus -> TxStore
+
+saleWithItemAndPayment :: Int -> TxStore
+
+runTest :: TxStore -> Eff TestEffs a -> IO (Either ServerError a)
+
+shouldSucceed :: IO (Either ServerError a) -> IO a
+
+shouldFailWith :: Int -> IO (Either ServerError a) -> IO ()
+
+addTwo :: AddItemRequest
+
+payment :: Int -> Maybe Int -> AddPaymentRequest
+
+spec :: Spec
+
+
+=== BEGIN Test/Service/StockSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Service/StockSpec.hs
+%mod Test.Service.StockSpec
+
+%ext DataKinds, LambdaCase, OverloadedStrings, TypeApplications
+
+%uses Control.Monad
+%uses Data.IORef
+%uses qualified Data.Map.Strict as Map
+%uses Data.Time
+%uses Data.UUID
+%uses Effectful
+%uses Effectful.Error.Static
+%uses Servant
+%uses Test.Hspec
+%uses Effect.Clock
+%uses Effect.EventEmitter
+%uses Effect.StockDb
+%uses qualified Service.Stock as Svc
+%uses State.StockPullMachine
+%uses Types.Events.Domain
+%uses Types.Events
+%uses Types.Location
+%uses Types.Stock
+
+type TestEffs =
+  '[ StockDb
+   , Clock
+   , EventEmitter
+   , Error ServerError
+   , IOE
+   ]
+
+pullId, txId, actorId :: UUID
+
+pullId, txId, actorId :: UUID
+
+pullId, txId, actorId :: UUID
+
+locId :: LocationId
+
+testTime :: UTCTime
+
+mkPull :: PullVertex -> PullRequest
+
+storeWith :: PullVertex -> StockStore
+
+runTest :: StockStore -> Eff TestEffs a -> IO (Either ServerError a)
+
+runTestWithEvents ::
+  StockStore ->
+  Eff TestEffs a ->
+  IO (Either ServerError a, [DomainEvent])
+
+shouldSucceed :: IO (Either ServerError a) -> IO a
+
+shouldFailWith :: Int -> IO (Either ServerError a) -> IO ()
+
+hasStatusChangedEvent :: [DomainEvent] -> Bool
+
+spec :: Spec
+
+
+=== BEGIN Test/Service/TransactionSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Service/TransactionSpec.hs
+%mod Test.Service.TransactionSpec
+
+%ext DataKinds, DuplicateRecordFields, NamedFieldPuns, OverloadedStrings, TypeApplications
+
+%uses Control.Monad
+%uses Data.IORef
+%uses qualified Data.Map.Strict as Map
+%uses Data.Time
+%uses Data.UUID
+%uses Effectful
+%uses Effectful.Error.Static
+%uses Servant
+%uses Test.Hspec
+%uses Effect.Clock
+%uses Effect.EventEmitter
+%uses Effect.GenUUID
+%uses Effect.InventoryDb
+%uses Effect.StockDb
+%uses Effect.TransactionDb
+%uses qualified Service.Transaction as Svc
+%uses Types.Events.Domain
+%uses Types.Events
+%uses Types.Location
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses Types.Transaction.Conversion
+%uses qualified Types.Transaction.Refund as Refund
+%uses qualified Types.Transaction.Sale as Sale
+%uses Types.Transaction.Sale
+
+type TestEffs =
+  '[ TransactionDb
+   , StockDb
+   , InventoryDb
+   , Clock
+   , GenUUID
+   , EventEmitter
+   , Error ServerError
+   , IOE
+   ]
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+txUUID, itemUUID, pymtUUID, skuUUID, empUUID, regUUID, locUUID :: UUID
+
+freshUUID :: UUID
+
+uuidSupply :: [UUID]
+
+testTime :: UTCTime
+
+mkTx :: TransactionStatus -> Transaction
+
+testSaleItem :: Sale.Item
+
+testItem :: TransactionItem
+
+testSalePayment :: Sale.Payment
+
+testPayment :: PaymentTransaction
+
+storeWith :: TransactionStatus -> TxStore
+
+storeWithItem :: TransactionStatus -> TxStore
+
+storeWithPayment :: TransactionStatus -> TxStore
+
+storeWithItemAndPaymentCompleted :: TxStore
+
+runTest :: TxStore -> Eff TestEffs a -> IO (Either ServerError a)
+
+runTestWithEvents ::
+  TxStore ->
+  Eff TestEffs a ->
+  IO (Either ServerError a, [DomainEvent])
+
+shouldSucceed :: IO (Either ServerError a) -> IO a
+
+shouldFailWith :: Int -> IO (Either ServerError a) -> IO ()
+
+spec :: Spec
+
+
+=== BEGIN Test/State/RegisterMachineSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/State/RegisterMachineSpec.hs
+%mod Test.State.RegisterMachineSpec
+
+%ext GADTs, OverloadedStrings, ScopedTypeVariables
+
+%uses Data.UUID
+%uses Test.Hspec
+%uses API.Transaction
+%uses State.RegisterMachine
+%uses Types.Location
+
+empUUID :: UUID
+
+closedReg :: Register
+
+openReg :: Register
+
+vertexOf :: SomeRegState -> RegVertex
+
+regOf :: SomeRegState -> Register
+
+spec :: Spec
+
+
+=== BEGIN Test/State/StockPullMachineSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/State/StockPullMachineSpec.hs
+%mod Test.State.StockPullMachineSpec
+
+%ext OverloadedStrings
+
+%uses Data.UUID
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses State.StockPullMachine
+
+actorId :: UUID
+
+step :: PullVertex -> PullCommand -> (PullEvent, PullVertex)
+
+isInvalid :: PullEvent -> Bool
+
+genCommand :: Gen PullCommand
+
+spec :: Spec
+
+
+=== BEGIN Test/State/TransactionMachineSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/State/TransactionMachineSpec.hs
+%mod Test.State.TransactionMachineSpec
+
+%ext GADTs, OverloadedStrings, ScopedTypeVariables
+
+%uses Data.Time
+%uses Data.UUID
+%uses Test.Hspec
+%uses State.TransactionMachine
+%uses Types.Location
+%uses qualified Types.Transaction as T
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+testUUID3 :: UUID
+
+testTime :: UTCTime
+
+baseTx :: T.TransactionStatus -> T.Transaction
+
+testItem :: T.TransactionItem
+
+testPayment :: T.PaymentTransaction
+
+vertexOf :: SomeTxState -> TxVertex
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/AuthSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/AuthSpec.hs
+%mod Test.Types.AuthSpec
+
+%ext OverloadedStrings
+
+%uses Data.Aeson
+%uses Test.Hspec
+%uses Types.Auth
+%uses Types.Location
+
+mkTestUser :: UserRole -> AuthenticatedUser
+
+mkTestSession :: UserRole -> SessionResponse
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/InventorySpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/InventorySpec.hs
+%mod Test.Types.InventorySpec
+
+%ext OverloadedStrings
+
+%uses Data.Aeson
+%uses Data.Maybe
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses Types.Inventory
+
+testSku :: UUID
+
+testStrainLineage :: StrainLineage
+
+testMenuItem :: MenuItem
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/Primitives/MoneySpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/Primitives/MoneySpec.hs
+%mod Test.Types.Primitives.MoneySpec
+
+%ext OverloadedStrings
+
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses Types.Primitives.Money
+
+genSaleMoney :: Gen SaleMoney
+
+genRefundMoney :: Gen RefundMoney
+
+genScalar :: Gen Int
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/Primitives/QuantitySpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/Primitives/QuantitySpec.hs
+%mod Test.Types.Primitives.QuantitySpec
+
+%ext OverloadedStrings
+
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses Types.Primitives.Quantity
+
+genSaleQuantity :: Gen SaleQuantity
+
+genRefundQuantity :: Gen RefundQuantity
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/Public/AvailableItemSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/Public/AvailableItemSpec.hs
+%mod Test.Types.Public.AvailableItemSpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.Map.Strict as Map
+%uses Data.Maybe
+%uses Data.Time
+%uses Data.Time.Calendar
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses Infrastructure.AvailabilityState
+%uses Types.Inventory
+%uses Types.Public.AvailableItem
+
+testTime :: UTCTime
+
+testSku :: UUID
+
+testLocId :: PublicLocationId
+
+testMenuItem :: MenuItem
+
+testState :: AvailabilityState
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/Public/FeedFrameSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/Public/FeedFrameSpec.hs
+%mod Test.Types.Public.FeedFrameSpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.Aeson as Aeson
+%uses qualified Data.ByteString.Lazy.Char8 as LBS
+%uses Data.Time
+%uses Data.Time.Calendar
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses Types.Events.Availability
+%uses Types.Inventory
+%uses Types.Public.AvailableItem
+%uses Types.Public.FeedFrame
+
+testTime :: UTCTime
+
+testSku :: UUID
+
+testLocId :: PublicLocationId
+
+testMenuItem :: MenuItem
+
+testAvailableItem :: AvailableItem
+
+testUpdate :: AvailabilityUpdate
+
+testFrame :: FeedFrame
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/Public/FeedPrivacySpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/Public/FeedPrivacySpec.hs
+%mod Test.Types.Public.FeedPrivacySpec
+
+%ext OverloadedStrings
+
+%uses qualified Data.Aeson as Aeson
+%uses qualified Data.ByteString.Lazy.Char8 as LBS
+%uses Data.Time
+%uses Data.Time.Calendar
+%uses Data.UUID
+%uses qualified Data.Vector as V
+%uses Test.Hspec
+%uses Types.Events.Availability
+%uses Types.Inventory
+%uses Types.Public.AvailableItem
+%uses Types.Public.FeedFrame
+
+testTime :: UTCTime
+
+testSku :: UUID
+
+testLocId :: PublicLocationId
+
+testMenuItem :: MenuItem
+
+testAvailableItem :: AvailableItem
+
+testFrame :: FeedFrame
+
+frameJson :: String
+
+payloadJson :: String
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/TraceSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/TraceSpec.hs
+%mod Test.Types.TraceSpec
+
+%ext OverloadedStrings
+
+%uses Data.Maybe
+%uses Data.Text
+%uses qualified Data.Text as T
+%uses Test.Hspec
+%uses Types.Trace
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/Transaction/ConversionSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/Transaction/ConversionSpec.hs
+%mod Test.Types.Transaction.ConversionSpec
+
+%ext OverloadedStrings
+
+%uses Data.Scientific
+%uses Data.Text
+%uses Data.UUID
+%uses qualified Data.UUID as UUID
+%uses Hedgehog
+%uses qualified Hedgehog.Gen as Gen
+%uses qualified Hedgehog.Range as Range
+%uses Test.Hspec
+%uses Test.Hspec.Hedgehog
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses Types.Transaction.Conversion
+%uses qualified Types.Transaction.Refund as Refund
+%uses qualified Types.Transaction.Sale as Sale
+
+genUUID :: Gen UUID
+
+genText :: Gen Text
+
+genRate :: Gen Scientific
+
+genSaleMoney :: Gen SaleMoney
+
+genSaleQuantity :: Gen SaleQuantity
+
+genDiscountType :: Gen DiscountType
+
+genTaxCategory :: Gen TaxCategory
+
+genPaymentMethod :: Gen PaymentMethod
+
+genSaleDiscount :: Gen Sale.Discount
+
+genSaleTax :: Gen Sale.Tax
+
+genSaleItem :: Gen Sale.Item
+
+genSalePayment :: Gen Sale.Payment
+
+spec :: Spec
+
+
+=== BEGIN Test/Types/TransactionSpec.hs ===
+
+%file /home/bismuth/git/cheeblr/backend/test/Test/Types/TransactionSpec.hs
+%mod Test.Types.TransactionSpec
+
+%ext OverloadedStrings, ScopedTypeVariables
+
+%uses DB.Transaction
+%uses Data.Aeson
+%uses Data.Scientific
+%uses Data.Time
+%uses Data.UUID
+%uses Test.Hspec
+%uses Types.Location
+%uses Types.Transaction
+
+testUUID :: UUID
+
+testUUID2 :: UUID
+
+testTime :: UTCTime
+
+mkTestTaxRecord :: TaxRecord
+
+mkTestDiscount :: DiscountRecord
+
+mkTestTransactionItem :: TransactionItem
+
+mkTestPayment :: PaymentTransaction
+
+mkTestTransaction :: Transaction
+
+spec :: Spec
+

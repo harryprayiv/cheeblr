@@ -1,0 +1,656 @@
+%bundle chase v1
+%generated 2026-10-04T19:17:59Z
+%roots /home/bismuth/git/cheeblr/frontend/test
+%files 25 ok, 0 failed
+
+# This file is a chase bundle: structural skeletons of multiple
+# Haskell and PureScript source files concatenated into one document.
+# Each block begins with === BEGIN <path> === on its own line.
+# Blocks contain the rendered .chase format: %file, %mod, %lang,
+# %ext (Haskell only), %fixity, %uses, %const, %topology, data decls,
+# %foreign (PureScript only), %pattern, type signatures with
+# attached invariants and consumers, ? tested-by lines (when test
+# coverage analysis was enabled), %decision blocks, %open_issue
+# blocks (known problems with blocking/affects targets), and parse
+# errors. Function bodies are deliberately omitted; the lines
+# beginning with ! after a signature are the behavioral facts you
+# would otherwise have to infer from reading the source.
+
+
+=== BEGIN AdminTypes.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/AdminTypes.purs
+%mod Test.AdminTypes
+
+%uses Prelude
+%uses Data.Array
+%uses Data.Maybe
+%uses Data.String
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Admin
+%uses Types.UUID
+%uses Yoga.JSON
+
+snapshotJson :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN Auth.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Auth.purs
+%mod Test.Auth
+
+%uses Prelude
+%uses Config.Auth
+%uses Data.Array
+%uses Data.Maybe
+%uses Services.AuthService
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Auth
+
+customerState :: AuthState
+
+cashierState :: AuthState
+
+managerState :: AuthState
+
+adminState :: AuthState
+
+signedOut :: AuthState
+
+spec :: Spec Unit
+
+
+=== BEGIN AuthCookie.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/AuthCookie.purs
+%mod Test.AuthCookie
+
+%uses Prelude
+%uses Config.Auth
+%uses Data.Maybe
+%uses Data.String
+%uses Data.String as String
+%uses Effect.Class
+%uses Services.AuthService
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.UUID
+
+looksLikeUUID :: String -> Boolean
+
+spec :: Spec Unit
+
+
+=== BEGIN Cart.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Cart.purs
+%mod Test.Cart
+
+%uses Prelude
+%uses Data.Finance.Money
+%uses Data.Maybe
+%uses Services.Cart
+%uses Services.TransactionService
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Inventory
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses Types.Transaction.Sale as Sale
+%uses Types.UUID
+
+mkUUID :: String -> UUID
+
+skuA :: UUID
+
+skuB :: UUID
+
+itemIdA :: UUID
+
+itemIdB :: UUID
+
+txId :: UUID
+
+mkMenuItem :: UUID -> String -> Int -> Int -> MenuItem
+
+mkSaleItem :: UUID -> UUID -> UUID -> Int -> Int -> Sale.Item
+
+mkPayment :: UUID -> UUID -> Int -> Sale.Payment
+
+spec :: Spec Unit
+
+
+=== BEGIN EnumInstances.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/EnumInstances.purs
+%mod Test.EnumInstances
+
+%uses Prelude
+%uses Data.Array as Array
+%uses Data.Enum
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Config.LiveView
+%uses Types.Auth
+%uses Types.Inventory
+%uses Utils.Formatting
+
+spec :: Spec Unit
+
+
+=== BEGIN FeedTypes.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/FeedTypes.purs
+%mod Test.FeedTypes
+
+%uses Prelude
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Feed
+%uses Yoga.JSON
+
+inStockFrameJson :: String
+
+outOfStockFrameJson :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN FormParser.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/FormParser.purs
+%mod Test.FormParser
+
+%uses Prelude
+%uses Data.Either
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses UI.Form.Parser
+
+spec :: Spec Unit
+
+
+=== BEGIN Formatting.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Formatting.purs
+%mod Test.Formatting
+
+%uses Prelude
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Utils.Formatting
+
+spec :: Spec Unit
+
+
+=== BEGIN GraphQL.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/GraphQL.purs
+%mod Test.GraphQL
+
+%uses Prelude
+%uses Data.Finance.Money
+%uses Data.Maybe
+%uses Data.String
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Inventory
+%uses Types.UUID
+%uses Yoga.JSON
+
+type GqlResponse a = { data :: a }
+
+type InventoryData = { inventory :: Inventory }
+
+type CreateMenuItemData = { createMenuItem :: MutationResponse }
+
+type UpdateMenuItemData = { updateMenuItem :: MutationResponse }
+
+type DeleteMenuItemData = { deleteMenuItem :: MutationResponse }
+
+-- ─── String helper ────────────────────────────────────────────────────────────
+
+includes :: String -> String -> Boolean
+
+singleItemGqlJson :: String
+
+emptyInventoryGqlJson :: String
+
+multiItemGqlJson :: String
+
+createSuccessGqlJson :: String
+
+createFailureGqlJson :: String
+
+updateSuccessGqlJson :: String
+
+updateFailureGqlJson :: String
+
+deleteSuccessGqlJson :: String
+
+deleteNotFoundGqlJson :: String
+
+gqlErrorJson :: String
+
+testMenuItem :: MenuItem
+
+inventoryQuery :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN GraphQLIntegration.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/GraphQLIntegration.purs
+%mod Test.GraphQLIntegration
+
+%uses Prelude
+%uses Data.Maybe
+%uses Data.String
+%uses Effect.Aff
+%uses Effect.Class
+%uses Fetch
+%uses Node.Process as Process
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Inventory
+%uses Yoga.JSON
+
+type GqlResponse a = { data :: a }
+
+type InventoryData = { inventory :: Inventory }
+
+type CreateMenuItemData = { createMenuItem :: MutationResponse }
+
+type UpdateMenuItemData = { updateMenuItem :: MutationResponse }
+
+type DeleteMenuItemData = { deleteMenuItem :: MutationResponse }
+
+-- ─── Helpers ─────────────────────────────────────────────────────────────────
+
+type GqlResult =
+  { status :: Int
+  , body   :: String
+  }
+
+-- POST a raw GraphQL query string to /graphql/inventory
+
+adminUUID :: String
+
+cashierUUID :: String
+
+getBaseUrl :: Aff String
+
+gqlPost :: String -> String -> Aff GqlResult
+
+inventoryQuery :: String
+
+includes :: String -> String -> Boolean
+
+spec :: Spec Unit
+
+
+=== BEGIN HttpIntegration.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/HttpIntegration.purs
+%mod Test.HttpIntegration
+
+%uses Prelude
+%uses Data.Maybe
+%uses Effect.Aff
+%uses Effect.Class
+%uses Fetch
+%uses Node.Process as Process
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Inventory
+%uses Yoga.JSON
+
+type FetchResult =
+  { status :: Int
+  , body :: String
+  }
+
+baseUrl :: String
+
+adminUUID :: String
+
+cashierUUID :: String
+
+managerUUID :: String
+
+customerUUID :: String
+
+getBaseUrl :: Aff String  
+
+httpGet :: String -> Maybe String -> Aff FetchResult
+
+httpPost :: String -> String -> Maybe String -> Aff FetchResult
+
+spec :: Spec Unit
+
+
+=== BEGIN IntegrationMain.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/IntegrationMain.purs
+%mod Test.IntegrationMain
+
+%uses Prelude
+%uses Effect
+%uses Test.GraphQLIntegration as GraphQLIntegration
+%uses Test.HttpIntegration as HttpIntegration
+%uses Test.Spec
+%uses Test.Spec.Reporter.Console
+%uses Test.Spec.Runner.Node
+
+main :: Effect Unit
+
+
+=== BEGIN Inventory.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Inventory.purs
+%mod Test.Inventory
+
+%uses Prelude
+%uses Config.LiveView
+%uses Data.Finance.Money
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Inventory
+%uses Types.UUID
+%uses Yoga.JSON
+
+mkUUID :: String -> UUID
+
+testSku :: UUID
+
+testStrainLineage :: StrainLineage
+
+testMenuItem :: MenuItem
+
+spec :: Spec Unit
+
+
+=== BEGIN JsonContract.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/JsonContract.purs
+%mod Test.JsonContract
+
+%uses Prelude
+%uses Data.Finance.Money
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Auth
+%uses Types.Inventory
+%uses Types.Session
+%uses Types.Transaction
+%uses Types.UUID
+%uses Yoga.JSON
+
+adminUUID :: String
+
+customerUUID :: String
+
+cashierUUID :: String
+
+managerUUID :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN Location.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Location.purs
+%mod Test.Location
+
+%uses Prelude
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Location
+%uses Types.UUID
+%uses Yoga.JSON
+
+validUuidStr :: String
+
+anotherUuidStr :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN Main.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Main.purs
+%mod Test.Main
+
+%uses Prelude
+%uses Effect
+%uses Test.AdminTypes as AdminTypes
+%uses Test.Auth as Auth
+%uses Test.AuthCookie as AuthCookie
+%uses Test.Cart as Cart
+%uses Test.EnumInstances as EnumInstances
+%uses Test.FeedTypes as FeedTypes
+%uses Test.FormParser as FormParser
+%uses Test.Formatting as Formatting
+%uses Test.GraphQL as GraphQL
+%uses Test.Inventory as Inventory
+%uses Test.JsonContract as JsonContract
+%uses Test.Location as Location
+%uses Test.ManagerTypes as ManagerTypes
+%uses Test.Money as Money
+%uses Test.Session as Session
+%uses Test.ShowInstances as ShowInstances
+%uses Test.Spec
+%uses Test.Spec.Reporter.Console
+%uses Test.Spec.Runner.Node
+%uses Test.Stock as Stock
+%uses Test.TransactionJson as TransactionJson
+%uses Test.TransactionModel as TransactionModel
+%uses Test.UUID as UUID
+%uses Test.WebUtils as WebUtils
+
+main :: Effect Unit
+
+
+=== BEGIN ManagerTypes.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/ManagerTypes.purs
+%mod Test.ManagerTypes
+
+%uses Prelude
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Manager
+%uses Yoga.JSON
+
+spec :: Spec Unit
+
+
+=== BEGIN Money.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Money.purs
+%mod Test.Money
+
+%uses Prelude
+%uses Data.Finance.Money
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Utils.Money
+
+spec :: Spec Unit
+
+
+=== BEGIN Session.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Session.purs
+%mod Test.Session
+
+%uses Prelude
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Auth
+%uses Types.Session
+%uses Types.UUID
+%uses Yoga.JSON
+
+adminSessionJson :: String
+
+cashierSessionJson :: String
+
+managerSessionJson :: String
+
+customerSessionJson :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN ShowInstances.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/ShowInstances.purs
+%mod Test.ShowInstances
+
+%uses Prelude
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Auth
+%uses Types.Inventory
+%uses Types.Transaction
+
+spec :: Spec Unit
+
+
+=== BEGIN Stock.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/Stock.purs
+%mod Test.Stock
+
+%uses Prelude
+%uses Data.Array as Array
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Stock
+%uses Yoga.JSON
+
+spec :: Spec Unit
+
+
+=== BEGIN TransactionJson.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/TransactionJson.purs
+%mod Test.TransactionJson
+
+%uses Prelude
+%uses Data.Maybe
+%uses Data.String
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Transaction
+%uses Types.UUID
+%uses Yoga.JSON
+
+minimalTransactionJson :: String
+
+fullTransactionJson :: String
+
+transactionItemJson :: String
+
+cashPaymentJson :: String
+
+creditPaymentJson :: String
+
+spec :: Spec Unit
+
+
+=== BEGIN TransactionModel.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/TransactionModel.purs
+%mod Test.TransactionModel
+
+%uses Prelude
+%uses Data.Finance.Money
+%uses Data.Maybe
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.Inventory
+%uses Types.Primitives.Money
+%uses Types.Primitives.Quantity
+%uses Types.Transaction
+%uses Types.UUID
+%uses UI.Transaction.Model
+
+type Line = { itemMenuItemSku :: UUID, itemQuantity :: SaleQuantity }
+
+type Pay = { paymentAmount :: SaleMoney }
+
+skuA :: UUID
+
+skuB :: UUID
+
+skuC :: UUID
+
+mkItem :: UUID -> String -> ItemCategory -> Int -> MenuItem
+
+ogKush :: MenuItem
+
+gummies :: MenuItem
+
+blueDream :: MenuItem
+
+inventory :: Inventory
+
+names :: Array MenuItem -> Array String
+
+line :: UUID -> Int -> Line
+
+payment :: Int -> Pay
+
+spec :: Spec Unit
+
+
+=== BEGIN UUID.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/UUID.purs
+%mod Test.UUID
+
+%uses Prelude
+%uses Data.Maybe
+%uses Data.String as String
+%uses Effect.Class
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Types.UUID
+%uses Data.Validation.Semigroup
+%uses Data.Either
+%uses Yoga.JSON
+
+spec :: Spec Unit
+
+
+=== BEGIN WebUtils.purs ===
+
+%file /home/bismuth/git/cheeblr/frontend/test/WebUtils.purs
+%mod Test.WebUtils
+
+%uses Prelude
+%uses Test.Spec
+%uses Test.Spec.Assertions
+%uses Utils.SSE
+%uses Utils.WebSocket
+
+spec :: Spec Unit
+
