@@ -1,0 +1,17 @@
+# Documentation lags the code, so answers come from the code alone.
+Docs/
+*.md
+# Compiled output from purs and the backend tooling.
+output/
+# Generated from the backend's types by nix/codegen.nix; the Haskell
+# types it is generated from are indexed.
+autogen/
+# Dependency locks, sample data, mockups and logs.
+package-lock.json
+inventory.json
+cart_mockup.html
+*.log
+# Batches, manifests and patches from the concat tooling.
+script/
+# Encrypted secrets; the content check catches them too.
+secrets/
