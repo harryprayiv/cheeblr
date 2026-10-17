@@ -6,6 +6,10 @@ output/
 # Generated from the backend's types by nix/codegen.nix; the Haskell
 # types it is generated from are indexed.
 autogen/
+# Old chase runs. llmq-ingest sends fresh bundles to their own folder, and
+# the annotations are already in them.
+*.chase
+*-chase-annotations.json
 # Dependency locks, sample data, mockups and logs.
 package-lock.json
 inventory.json
