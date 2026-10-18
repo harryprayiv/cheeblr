@@ -1,0 +1,8 @@
+{
+  "runs": [
+    { "src": "backend/src", "tests": ["backend/test"], "annotations": "backend-chase-annotations.json" },
+    { "src": "backend/test", "tests": [] },
+    { "src": "frontend/src", "tests": [] },
+    { "src": "frontend/test", "tests": [] }
+  ]
+}
