@@ -19,6 +19,7 @@ import qualified Test.GraphQL.SchemaSpec
 import qualified Test.Infrastructure.AvailabilityRelaySpec
 import qualified Test.Manager.LogicSpec
 import qualified Test.Manager.TypesSpec
+import qualified Test.ProbeSpec
 import qualified Test.Props.JsonRoundtripSpec
 import qualified Test.Props.NegateSpec
 import qualified Test.Props.ParseShowSpec
@@ -48,6 +49,7 @@ import qualified Test.DB.Transaction.RefundSpec
 main :: IO ()
 main = hspec $ do
   describe "Cheeblr Backend" $ do
+    Test.ProbeSpec.spec
     Test.Types.AuthSpec.spec
     Test.Types.TraceSpec.spec
     Test.Types.TransactionSpec.spec

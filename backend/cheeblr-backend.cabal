@@ -195,6 +195,7 @@ test-suite cheeblr-unit-tests
         Test.Domain.PricingSpec
         Test.Domain.TaxRuleSpec
         Test.Domain.SaleRulesSpec
+        Test.ProbeSpec
         Test.Service.SaleSpec
         Test.DB.Transaction.SaleSpec
         Test.DB.Transaction.RefundSpec
