@@ -1,38 +1,91 @@
 -- allium: 3
 -- cheeblr.allium
 --
--- Distilled from cheeblr, branch delta (8e193fa, 2026-10-17), backend only.
--- Revised 2026-10-24: every open question from the first draft is now a
--- decision, recorded in the "Decisions" section at the bottom (D1..D21).
+-- The whole of cheeblr in one specification: the backend's entities and
+-- rules, and the frontend's screens as surfaces over them. Written against
+-- branch delta at 7c3b8cb (2026-10-24). Replaces the backend-only
+-- specification of 2026-10-17, which the Allium checker rejected with 107
+-- errors; this file passes `allium check` (allium-tools 3.6.1) with no
+-- errors or warnings.
 --
--- Scope
---   Includes: sales and their lines and payments, price overrides, pricing
---             and tax, void, partial refunds, stock reservations and restock
---             policy, registers and drawers, roles and capabilities,
---             sessions and passwords.
---   Excludes: the frontend, GraphQL, the dashboards' read paths, logging
---             format, stock pull fulfilment, the ledger and compliance
---             features themselves (they return 501 until built, D14),
---             regulated cannabis rules (deferred, D21).
+-- One file rather than a backend file and a frontend file, because every
+-- screen exists to fire backend rules, and a reader asking how a sale moves
+-- from the screen to the database needs the surface that offers the action
+-- and the rule that decides it side by side. A surface's provides clause
+-- names the same trigger as the rule that handles it: SaleScreen provides
+-- WriterFinalizesSale, and rule FinalizeSale is when: WriterFinalizesSale.
 --
 -- How to read this file
---   Rules describe what the system must do. Where delta does something else
---   the rule carries an `@guidance` line beginning "CODE:" saying what it
---   does now; each of those is a fix to make. Invariants marked VIOLATED are
---   ones delta breaks today. Probe ids (C1..C5) refer to
---   backend/test/Test/ProbeSpec.hs.
---   Tax and retail-practice decisions follow Massachusetts and general US
---   practice and should be confirmed with an accountant before filing.
+--   Entities and rules say what the system must do, after the decisions at
+--   the end (D1..D21). Where the code on delta does something else, the
+--   declaration has a @guidance line starting "CODE:" that says what it does
+--   today; each one is a fix to make. Backend notes describe the Haskell
+--   under backend/src; frontend notes describe the PureScript under
+--   frontend/src. Invariants marked VIOLATED are broken by the code today.
+--   Probe ids (C1..C5) refer to backend/test/Test/ProbeSpec.hs.
+--
+-- How the frontend works, end to end
+--   Main asks GET /auth/me once at boot. Until the answer arrives nothing
+--   renders. Signed out, every route shows LoginScreen. Signed in, the route
+--   picks a screen and the navigation bar shows the links the session's
+--   capabilities allow. Every screen reads its own data when it mounts and
+--   reads it again after every write, accepted or refused. Screens never
+--   compute money or change a sale locally: they show the sale exactly as
+--   the backend last returned it. The session is an HttpOnly cookie; the
+--   browser never sees the token.
+--
+--   Selling: RegistersScreen picks the register this browser sells on
+--   (DeviceChoosesRegister, kept in localStorage) and opens it.
+--   SaleScreenEntry checks that the register exists and is open, then
+--   resumes the sale this user left open on it (DeviceResumesSale) or
+--   offers Start Sale. SaleScreen fires one rule per button: add item,
+--   remove item, add payment, remove payment, clear, finalize. Each write is one request to /pos/sale/...; the backend
+--   answers with the whole sale, which replaces the one on screen.
+--
+-- Money is integer cents throughout. Tax rates are parts per million.
 
 ----------------------------------------------------------------------
--- Value types
+-- Value Types
 ----------------------------------------------------------------------
 
-value Cents { amount: Integer }
+value PasswordHash {
+    parameters: String
+    salt: String
+    digest: String
+}
 
-value TaxRate {
-    parts_per_million: Integer
-    invariant NonNegative { parts_per_million >= 0 }
+value PriceOverride {
+    menu_price: Integer
+    reason: String
+    requested_by: Employee
+    approved_by: Employee
+}
+
+value Discount {
+    funder: DiscountFunder
+    amount: Integer
+    reason: String
+    approved_by: Employee?
+}
+
+value LineTax {
+    tax_category: String
+    rate_ppm: Integer
+    amount: Integer
+}
+
+value RefundLine {
+    sale_line: SaleLine
+    quantity: Integer
+    subtotal: Integer
+    discount_total: Integer
+    tax_total: Integer
+}
+
+value RefundPayment {
+    original_payment: Payment
+    method: PaymentMethod
+    amount: Integer
 }
 
 ----------------------------------------------------------------------
@@ -41,7 +94,7 @@ value TaxRate {
 
 enum Role { customer | cashier | manager | admin }
 
-enum PaymentMethod { cash | debit | credit | ach | other }
+enum PaymentMethod { cash | debit | credit | ach | gift_card | stored_value | mixed | other }
 
 enum Rounding { half_up | half_even | down }
 
@@ -50,7 +103,7 @@ enum RestockPolicy { return_to_stock | do_not_restock }
 enum DiscountFunder { store | manufacturer }
 
 ----------------------------------------------------------------------
--- Entities
+-- Entities: people, sessions and devices
 ----------------------------------------------------------------------
 
 entity Employee {
@@ -60,19 +113,36 @@ entity Employee {
     sessions: Session with employee = this
 }
 
-value PasswordHash {
-    algorithm: String
-    parameters: Argon2Parameters
-    salt: Bytes
-    digest: Bytes
-}
-
 entity Session {
     employee: Employee
     expires_at: Timestamp
     revoked: Boolean
+    device: Device with signed_in = this
+
     active: not revoked and expires_at > now
 }
+
+-- A browser running the frontend. Everything here lives in the browser:
+-- the session it is signed in with (an HttpOnly cookie), the register it
+-- sells on and the sales its users left open (both in localStorage).
+entity Device {
+    signed_in: Session?
+    chosen_register: Register?
+    remembered: RememberedSale with device = this
+}
+
+-- localStorage key "current_sale_id:<employee id>". One per employee per
+-- browser, so a second user of the same browser never resumes the first
+-- user's sale.
+entity RememberedSale {
+    device: Device
+    employee: Employee
+    sale: Sale
+}
+
+----------------------------------------------------------------------
+-- Entities: stock and tax
+----------------------------------------------------------------------
 
 entity Location {
     registers: Register with location = this
@@ -80,13 +150,16 @@ entity Location {
 }
 
 entity MenuItem {
+    name: String
+    brand: String
     category: String
-    price: Cents
+    price: Integer
     on_hand: Integer
     reservations: Reservation with item = this
     adjustments: StockAdjustment with item = this
 
-    reserved: sum(reservations where status = reserved, r => r.quantity)
+    held: reservations where status = reserved
+    reserved: total_quantity(held)
     available: on_hand - reserved
 
     invariant NeverNegative { on_hand >= 0 }
@@ -102,20 +175,27 @@ entity StockAdjustment {
 }
 
 entity TaxRule {
-    location: Location?
+    location: Location
     item_category: String?
     tax_category: String
-    rate: TaxRate
+    rate_ppm: Integer
     rounding: Rounding
     effective_from: Timestamp
     effective_to: Timestamp?
+
+    invariant NonNegativeRate { rate_ppm >= 0 }
 }
 
+----------------------------------------------------------------------
+-- Entities: registers
+----------------------------------------------------------------------
+
 entity Register {
+    name: String
     location: Location
     status: closed | open
+    current: RegisterSession when status = open
     sessions: RegisterSession with register = this
-    current: RegisterSession? when status = open
 
     transitions status {
         closed -> open
@@ -127,35 +207,52 @@ entity RegisterSession {
     register: Register
     opened_by: Employee
     opened_at: Timestamp
-    starting_cash: Cents
-    closed_by: Employee?
-    closed_at: Timestamp?
-    counted_cash: Cents?
+    starting_cash: Integer
+    status: active | settled
+    closed_by: Employee when status = settled
+    closed_at: Timestamp when status = settled
+    counted_cash: Integer when status = settled
 
-    cash_in: sum(payments_here where method = cash, p => p.amount)
-    cash_out: sum(cash_refunds_here, r => r.amount) + sum(cash_voids_here, v => v.amount)
+    cash_in: cash_taken(this)
+    cash_out: cash_paid_out(this)
     expected_cash: starting_cash + cash_in - cash_out
-    variance: expected_cash - counted_cash
+
+    transitions status {
+        active -> settled
+        terminal: settled
+    }
 }
+
+----------------------------------------------------------------------
+-- Entities: sales
+----------------------------------------------------------------------
 
 entity Sale {
     employee: Employee
     register: Register
     register_session: RegisterSession
-    location: register.location
+    location: Location
     status: created | in_progress | completed | voided | refunded | partially_refunded
-    completed_at: Timestamp? when status in {completed, voided, refunded, partially_refunded}
+    completed_at: Timestamp?
+    voided_by: Employee?
+    void_reason: String?
 
     lines: SaleLine with sale = this
     payments: Payment with sale = this
     reversals: PaymentReversal with sale = this
     refunds: Refund with original = this
+    pulls: StockPull with sale = this
+    reservations: Reservation with sale = this
+    override_requests: PriceOverrideRequest with sale = this
 
-    subtotal: sum(lines, l => l.subtotal)
-    discount_total: sum(lines, l => l.discount_total)
-    tax_total: sum(lines, l => l.tax_total)
+    open_pulls: pulls where status in {pending, accepted, pulling, issue}
+    live_payments: payments where reversed = false
+    subtotal: sum_subtotals(lines)
+    discount_total: sum_discounts(lines)
+    tax_total: sum_taxes(lines)
     total: subtotal - discount_total + tax_total
-    paid: sum(payments, p => p.amount)
+    paid: sum_amounts(live_payments)
+    remaining: total - paid
 
     transitions status {
         created -> in_progress
@@ -171,59 +268,54 @@ entity Sale {
         terminal: voided, refunded
     }
 
-    invariant OneLinePerItem { lines.unique(l => l.item).count = lines.count }
-    invariant PaidEqualsTotalWhenClosed {
-        status not in {completed, partially_refunded, refunded} or paid = total
-    }
+    invariant LocationIsTheRegisters { location = register.location }
 }
 
 entity SaleLine {
     sale: Sale
     item: MenuItem
     quantity: Integer
-    unit_price: Cents
+    unit_price: Integer
     price_override: PriceOverride?
     discounts: Set<Discount>
     taxes: Set<LineTax>
     refunded_quantity: Integer
 
     subtotal: unit_price * quantity
-    discount_total: sum(discounts, d => d.amount)
-    tax_total: sum(taxes, t => t.amount)
+    discount_total: discount_sum(discounts)
+    tax_total: tax_sum(taxes)
     refundable_quantity: quantity - refunded_quantity
 
     invariant PositiveQuantity { quantity > 0 }
     invariant RefundedWithinSold { refunded_quantity >= 0 and refunded_quantity <= quantity }
 }
 
-value PriceOverride {
-    menu_price: Cents
-    reason: String
+entity PriceOverrideRequest {
+    sale: Sale
+    line: SaleLine
     requested_by: Employee
-    approved_by: Employee
-}
-
-value Discount {
-    funder: DiscountFunder
-    amount: Cents
+    new_price: Integer
     reason: String
-    approved_by: Employee?
-}
+    status: requested | approved | declined
 
-value LineTax {
-    tax_category: String
-    rate: TaxRate
-    amount: Cents
+    transitions status {
+        requested -> approved
+        requested -> declined
+        terminal: approved, declined
+    }
 }
 
 entity Payment {
     sale: Sale
     method: PaymentMethod
-    amount: Cents
-    tendered: Cents
-    change: tendered - amount
+    amount: Integer
+    tendered: Integer
     reference: String?
     authorisation: String?
+    reversed: Boolean
+    reversal: PaymentReversal with payment = this
+
+    change: tendered - amount
 
     invariant PositiveAmount { amount > 0 }
     invariant TenderCoversAmount { tendered >= amount }
@@ -236,7 +328,6 @@ entity PaymentReversal {
     actor: Employee
     register_session: RegisterSession
     at: Timestamp
-    amount: payment.amount
 }
 
 entity Reservation {
@@ -244,6 +335,7 @@ entity Reservation {
     item: MenuItem
     quantity: Integer
     status: reserved | released | completed
+
     transitions status {
         reserved -> released
         reserved -> completed
@@ -261,23 +353,46 @@ entity Refund {
     payments: Set<RefundPayment>
     past_window_override: Employee?
 
-    total: sum(lines, l => l.subtotal - l.discount_total + l.tax_total)
+    total: refund_total(lines)
+    paid_back: refund_paid(payments)
 
-    invariant PaysBackItsTotal { sum(payments, p => p.amount) = total }
+    invariant PaysBackItsTotal { paid_back = total }
 }
 
-value RefundLine {
-    sale_line: SaleLine
+----------------------------------------------------------------------
+-- Entities: the stock room
+----------------------------------------------------------------------
+
+-- A request to the stock room to bring an item to the counter, made by the
+-- backend each time an item is added to a sale.
+entity StockPull {
+    sale: Sale
+    item: MenuItem
     quantity: Integer
-    subtotal: Cents
-    discount_total: Cents
-    tax_total: Cents
+    status: pending | accepted | pulling | fulfilled | cancelled | issue
+    cancel_reason: String?
+    issue_note: String?
+    fulfilled_at: Timestamp?
+    messages: PullMessage with pull = this
+
+    transitions status {
+        pending -> accepted
+        pending -> cancelled
+        accepted -> pulling
+        accepted -> cancelled
+        pulling -> fulfilled
+        pulling -> issue
+        issue -> accepted
+        issue -> cancelled
+        terminal: fulfilled, cancelled
+    }
 }
 
-value RefundPayment {
-    original_payment: Payment
-    method: PaymentMethod
-    amount: Cents
+entity PullMessage {
+    pull: StockPull
+    author: Employee
+    body: String
+    at: Timestamp
 }
 
 ----------------------------------------------------------------------
@@ -285,212 +400,546 @@ value RefundPayment {
 ----------------------------------------------------------------------
 
 config {
-    restock_on_void: RestockPolicy = deferred
-    restock_on_refund: RestockPolicy = deferred
-    refund_window: Duration = deferred
+    -- No defaults: the backend refuses to start until these are set.
+    restock_on_void: RestockPolicy
+    restock_on_refund: RestockPolicy
+    refund_window: Duration
     session_length: Duration = 8.hours
     login_failure_window: Duration = 10.minutes
+    low_stock_threshold: Integer = 5
 }
 
 ----------------------------------------------------------------------
--- Rules: who may do what (D2, D3, D6, D16)
+-- Who may do what, and the black boxes (D2, D3, D5, D16)
+----------------------------------------------------------------------
+--
+-- Capabilities by role, as decided. Customer: views public inventory only.
+-- Cashier: starts and rings sales, opens a register, requests price
+-- overrides, fulfils stock pulls, reads its own sales in the current
+-- register session. Manager: everything a cashier does, plus void, refund,
+-- override approval, register create and close, stock adjustments, menu
+-- edits, reading every sale, reports. Admin: everything, plus sessions,
+-- tax rules and admin actions.
+-- CODE (backend): Types.Auth.capabilitiesForRole gives cashiers
+-- capCanEditItem and capCanCloseRegister (C4, C5). GET /sale, /sale/{id},
+-- /refund and /refund/{id} need only a session.
+--
+-- Functions the rules call whose working is code, not specification:
+--   may_write(session, sale)     the session's employee opened the sale, or
+--                                is a manager or admin. CODE: matches; a
+--                                sale id that does not load skips the check.
+--   cash_taken(drawer)           cash payment amounts rung in that register
+--                                session, less reversals
+--   cash_paid_out(drawer)        cash refunds and voided cash sales paid out
+--                                of that drawer (D5)
+--   price_line(rules, taxable)   one LineTax per applicable rule (D13)
+--   applicable_rules(location, category, at)  the tax rules in force
+--   open_sales_on(register)      sales on it still created or in progress
+--   open_lines_of(item)          lines for it on sales still open
+--   authorised(method, amount)   the card or ACH processor approved it
+--   password_matches(hash, pw)   Argon2id with the stored parameters,
+--                                compared in constant time (D15)
+--   to_original_tenders(sale, lines)  refund money per original tender (D19)
+--   fully_refunded(sale)         every line's refundable quantity is zero
+
+----------------------------------------------------------------------
+-- Rules: signing in and out (D15)
 ----------------------------------------------------------------------
 
-rule AuthorisedRequest {
-    when: AnyRequest(session, action)
-    requires: session.active
-    requires: allowed(session.employee.role, action)
-    @guidance "Capabilities: customer views public inventory only. Cashier
-               starts and rings sales, opens a register, requests price
-               overrides, fulfils pulls, reads own sales in the current
-               register session. Manager adds void, refund, override
-               approval, register close, stock adjustments, menu edits,
-               reading all sales and reports. Admin everything."
-    @guidance "CODE: cashier has capCanEditItem and capCanCloseRegister (C4).
-               GET /sale, /sale/{id}, /refund and /refund/{id} need only a
-               session, so a customer account reads every sale."
+rule EmployeeLogsIn {
+    when: EmployeeLogsIn(device, employee, password)
+    requires: password_matches(employee.password_hash, password)
+    ensures:
+        let session = Session.created(employee: employee,
+                                      expires_at: now + config.session_length,
+                                      revoked: false)
+        device.signed_in = session
+        if needs_rehash(employee.password_hash):
+            employee.password_hash = rehash(password)
+    @guidance
+        -- password_matches recomputes Argon2id with the parameters and salt
+        -- stored in the hash and compares digests in constant time. Failed
+        -- attempts are rate limited per login_failure_window.
+        -- CODE (backend): compares with ByteString (==) and hashes with the
+        -- current argonOpts instead of the stored parameters, so changing
+        -- argonOpts locks everyone out. No rehash on login.
+        -- CODE (frontend): Pages.Login sends loginRegisterId: Nothing; the
+        -- backend accepts a register on login and the page never sends one.
 }
 
-rule SaleWriter {
-    when: AnySaleWrite(session, sale)
-    requires: session.employee = sale.employee
-              or session.employee.role in {manager, admin}
-    @guidance "CODE: matches. A sale id that does not load skips the check."
+rule DeviceRestoresSession {
+    when: DeviceStarts(device)
+    requires: device.signed_in != null
+    ensures: DeviceShowsScreens(device)
+    @guidance
+        -- Main asks GET /auth/me once at boot and renders nothing until it
+        -- answers. A missing or expired cookie, or a session whose role
+        -- does not decode, is signed out (device.signed_in = null) and
+        -- every route shows LoginScreen.
+}
+
+rule EmployeeLogsOut {
+    when: EmployeeLogsOut(device, session)
+    requires: device.signed_in = session
+    ensures:
+        session.revoked = true
+        device.signed_in = null
+}
+
+rule AdminRevokesSession {
+    when: AdminRevokesSession(admin_session, session)
+    requires: admin_session.employee.role = admin
+    ensures: session.revoked = true
 }
 
 ----------------------------------------------------------------------
--- Rules: registers (D4, D5, D6, D20)
+-- Rules: registers (D4, D5, D16, D20)
 ----------------------------------------------------------------------
+
+rule ManagerCreatesRegister {
+    when: ManagerCreatesRegister(session, name, location)
+    requires: session.employee.role in {manager, admin}
+    ensures: Register.created(name: name, location: location, status: closed)
+    @guidance
+        -- CODE (frontend): every register is filed under the one configured
+        -- location, Config.Entity.dummyLocationId; the session carries no
+        -- location. A comment in API.Register says the backend does not
+        -- enforce manager-only creation; it does (capCanManageRegisters).
+}
+
+rule DeviceChoosesRegister {
+    when: DeviceChoosesRegister(device, register)
+    requires: device.signed_in != null
+    ensures: device.chosen_register = register
+    @guidance
+        -- Frontend only: localStorage key "register_id". Choosing a register
+        -- does not open it and makes no request.
+}
 
 rule OpenRegister {
-    when: EmployeeOpensRegister(session, register, starting_cash)
+    when: CashierOpensRegister(session, register, starting_cash)
+    requires: session.employee.role in {cashier, manager, admin}
     requires: register.status = closed
-    ensures: RegisterSession.created(register: register,
-                                     opened_by: session.employee,
-                                     opened_at: now,
-                                     starting_cash: starting_cash)
-    ensures: register.status = open
+    requires: starting_cash >= 0
+    ensures:
+        RegisterSession.created(register: register,
+                                opened_by: session.employee,
+                                opened_at: now,
+                                starting_cash: starting_cash,
+                                status: active)
+        register.status = open
+}
+
+rule DrawerBecomesCurrent {
+    when: drawer: RegisterSession.created
+    ensures: drawer.register.current = drawer
 }
 
 rule CloseRegister {
     when: ManagerClosesRegister(session, register, counted)
     requires: session.employee.role in {manager, admin}
     requires: register.status = open
-    requires: not exists Sale where register = register
-              and status in {created, in_progress}
-    ensures: register.current.closed_by = session.employee
-    ensures: register.current.closed_at = now
-    ensures: register.current.counted_cash = counted
-    ensures: register.status = closed
-    @guidance "Blind count (D20): the close request carries only the counted
-               amount. Expected cash and variance are returned in the
-               response to the close, never before it."
-    @guidance "CODE: any employee with capCanCloseRegister closes any
-               register; the machine ignores who (C5). Open sales are not
-               checked. expected_drawer_amount never changes after open, so
-               every close reports variance = starting cash - counted. The
-               register record shows expected before the count."
+    requires: open_sales_on(register) = 0
+    ensures: DrawerCounted(register.current, session.employee, counted)
+    @guidance
+        -- Blind count (D20): the close request carries only the counted
+        -- amount. Expected cash and the variance (expected minus counted)
+        -- come back in the response to the close, never before it.
+        -- CODE (backend): any employee with capCanCloseRegister closes any
+        -- register, and cashiers have it (C5, D16). Open sales are not
+        -- checked. expected_drawer_amount never changes after open, so every
+        -- close reports variance = starting cash - counted.
+        -- CODE (frontend): RegistersScreen shows "Expected in drawer" on an
+        -- open register before the count, and offers Close to anyone with
+        -- capCanCloseRegister, cashiers included.
+}
+
+rule CloseDrawer {
+    when: DrawerCounted(register_session, employee, counted)
+    requires: register_session.status = active
+    ensures:
+        register_session.status = settled
+        register_session.closed_by = employee
+        register_session.closed_at = now
+        register_session.counted_cash = counted
+        RegisterClosed(register_session.register)
+}
+
+rule RegisterCloses {
+    when: RegisterClosed(register)
+    requires: register.status = open
+    ensures:
+        register.current = null
+        register.status = closed
 }
 
 ----------------------------------------------------------------------
--- Rules: the sale lifecycle (D1, D4, D9, D10)
+-- Rules: the sale lifecycle (D1, D4, D7, D10, D11)
 ----------------------------------------------------------------------
 
 rule StartSale {
     when: CashierStartsSale(session, register)
+    requires: session.employee.role in {cashier, manager, admin}
     requires: register.status = open
-    ensures: Sale.created(employee: session.employee, register: register,
-                          register_session: register.current,
-                          status: created)
-    @guidance "Location is the register's (D4); the request carries only the
-               register id."
-    @guidance "CODE: register id and location id both come from the request
-               body, unchecked; the location picks the tax rules."
+    ensures:
+        let sale = Sale.created(employee: session.employee,
+                                register: register,
+                                register_session: register.current,
+                                location: register.location,
+                                status: created)
+        SaleStarted(session: session, sale: sale)
+    @guidance
+        -- D4: the location is the register's; the request carries only the
+        -- register id. The opener is the session's employee.
+        -- CODE (backend): register id and location id both come from the
+        -- request body, unchecked, so a sale can start on a closed register
+        -- or another store's register, and the location picks the tax rules.
+        -- CODE (frontend): Services.CurrentSale sends the register's
+        -- registerLocationId as startSaleLocationId.
+}
+
+rule DeviceRemembersSale {
+    when: SaleStarted(session, sale)
+    requires: session.device != null
+    ensures: RememberedSale.created(device: session.device,
+                                    employee: session.employee,
+                                    sale: sale)
+}
+
+rule DeviceResumesSale {
+    when: DeviceResumesSale(device, remembered)
+    requires: remembered.device = device
+    requires: device.signed_in != null
+    requires: remembered.employee = device.signed_in.employee
+    requires: device.chosen_register != null
+    requires: remembered.sale.register = device.chosen_register
+    requires: remembered.sale.status in {created, in_progress}
+    ensures: SaleShown(device: device, sale: remembered.sale)
+    @guidance
+        -- Services.CurrentSale.resume reads the remembered sale with
+        -- GET /sale/{id}. A sale that is gone (404) or can no longer be
+        -- resumed is forgotten; any other error keeps it, since the sale may
+        -- still be open. The backend has no route that finds a user's open
+        -- sale, so a sale started in another browser is not found.
+}
+
+rule DeviceForgetsSale {
+    when: DeviceForgetsSale(device, remembered)
+    requires: remembered.device = device
+    ensures: not exists remembered
 }
 
 rule AddItem {
-    when: WriterAddsItem(sale, item, quantity)
+    when: WriterAddsItem(session, sale, item, quantity)
+    requires: may_write(session, sale)
     requires: sale.status in {created, in_progress}
     requires: quantity > 0
-    requires: item.available + held_by(sale, item) >= line_quantity(sale, item) + quantity
-    let rules = in_force(sale.location, now)
-    ensures: line(sale, item).quantity = line_quantity(sale, item) + quantity
-    ensures: line(sale, item) is priced by price_line(rules, item, line_price(sale, item))
-    ensures: one Reservation for the whole line quantity, status reserved
+    requires: item.available >= quantity
+    ensures:
+        let line = SaleLine.created(sale: sale, item: item, quantity: quantity,
+                                    unit_price: item.price,
+                                    discounts: {}, taxes: {},
+                                    refunded_quantity: 0)
+        line.taxes = price_line(applicable_rules(sale.location, item.category, now),
+                                line.subtotal)
+        Reservation.created(sale: sale, item: item, quantity: quantity,
+                            status: reserved)
+        StockPull.created(sale: sale, item: item, quantity: quantity,
+                          status: pending)
+        ItemAdded(sale)
+    @guidance
+        -- Adding an item already on the sale replaces its line with one for
+        -- the summed quantity (OneLinePerItem); the replaced line's
+        -- reservation is released. The frontend sends only the SKU and the
+        -- quantity; the backend prices the line.
+        -- CODE (frontend): InventoryPicker blocks an add above item.quantity,
+        -- which is on_hand, not available, so it allows adds the backend
+        -- then refuses with 400.
+}
+
+rule FirstItemStartsTheSale {
+    when: ItemAdded(sale)
+    requires: sale.status = created
     ensures: sale.status = in_progress
-    @guidance "line_price is the line's approved override if it has one,
-               otherwise the item's menu price."
+    @guidance
+        -- The crem edge created -> in_progress, taken by the first AddItem.
+}
+
+rule ReleaseReservation {
+    when: ReservationReleased(reservation)
+    requires: reservation.status = reserved
+    ensures: reservation.status = released
+}
+
+rule CompleteReservation {
+    when: ReservationTaken(reservation)
+    requires: reservation.status = reserved
+    ensures:
+        reservation.status = completed
+        reservation.item.on_hand = reservation.item.on_hand - reservation.quantity
+}
+
+rule RemoveItem {
+    when: WriterRemovesItem(session, line)
+    requires: may_write(session, line.sale)
+    requires: line.sale.status = in_progress
+    ensures:
+        for r in line.sale.reservations where item = line.item:
+            ReservationReleased(r)
+        for p in line.sale.open_pulls where item = line.item:
+            p.status = cancelled
+            p.cancel_reason = "Item removed from transaction"
+        not exists line
 }
 
 rule RequestPriceOverride {
     when: CashierRequestsOverride(session, line, new_price, reason)
+    requires: may_write(session, line.sale)
     requires: line.sale.status = in_progress
     requires: new_price >= 0
-    @guidance "Raises an approval request; nothing changes until a manager
-               approves."
+    ensures: PriceOverrideRequest.created(sale: line.sale,
+                                          line: line,
+                                          requested_by: session.employee,
+                                          new_price: new_price,
+                                          reason: reason,
+                                          status: requested)
+    @guidance
+        -- D7. CODE: not implemented in the backend or the frontend.
 }
 
 rule ApprovePriceOverride {
     when: ManagerApprovesOverride(session, request)
     requires: session.employee.role in {manager, admin}
+    requires: request.status = requested
     requires: request.line.sale.status = in_progress
-    ensures: request.line.price_override = PriceOverride(
-                 menu_price: request.line.item.price, reason: request.reason,
-                 requested_by: request.requested_by,
-                 approved_by: session.employee)
-    ensures: request.line.unit_price = request.new_price
-    ensures: request.line is re-taxed at the new price
-    ensures: the item's menu price is unchanged
-    @guidance "D7: any amount, up or down, logged with reason and approver."
-    @guidance "CODE: not implemented."
+    ensures:
+        request.status = approved
+        request.line.price_override = PriceOverride(
+            menu_price: request.line.item.price,
+            reason: request.reason,
+            requested_by: request.requested_by,
+            approved_by: session.employee)
+        request.line.unit_price = request.new_price
+        request.line.taxes = price_line(
+            applicable_rules(request.line.sale.location, request.line.item.category, now),
+            request.new_price * request.line.quantity)
+    @guidance
+        -- D7: any amount, up or down, logged with reason and approver. The
+        -- item's menu price does not change.
+        -- CODE: not implemented.
 }
 
-rule RemoveItem {
-    when: WriterRemovesItem(sale, line)
-    requires: sale.status = in_progress
-    ensures: not exists line
-    ensures: line's reservation is released
-    ensures: open stock pulls for line.item on this sale are cancelled
+rule DeclinePriceOverride {
+    when: ManagerDeclinesOverride(session, request)
+    requires: session.employee.role in {manager, admin}
+    requires: request.status = requested
+    ensures: request.status = declined
 }
 
 rule AddPayment {
-    when: WriterAddsPayment(sale, method, amount, tendered)
+    when: WriterAddsPayment(session, sale, method, amount, tendered)
+    requires: may_write(session, sale)
     requires: sale.status = in_progress
     requires: amount > 0 and tendered >= amount
     requires: method = cash or tendered = amount
     requires: sale.paid + amount <= sale.total
     requires: authorised(method, amount)
     ensures: Payment.created(sale: sale, method: method, amount: amount,
-                             tendered: tendered)
-    @guidance "D1. Overtender is cash-only and shows up as change, never as
-               extra amount."
-    @guidance "CODE: no upper bound on the sum of amounts (C1); approved is
-               hard-coded True with no authorisation code."
+                             tendered: tendered, reversed: false)
+    @guidance
+        -- D1: overtender is cash only and shows up as change, never as extra
+        -- amount. The frontend sends no tendered amount for a non-cash
+        -- payment, which the backend reads as exact.
+        -- CODE (backend): no upper bound on the sum of amounts (C1);
+        -- approved is hard-coded True with no authorisation code.
+        -- CODE (frontend): UI.Transaction.Model.remainingCents clamps at
+        -- zero, so an overpaid sale shows nothing remaining and Process
+        -- Payment stays enabled.
 }
 
 rule RemovePayment {
     when: WriterRemovesPayment(session, payment)
+    requires: may_write(session, payment.sale)
     requires: payment.sale.status = in_progress
-    ensures: PaymentReversal.created(sale: payment.sale, payment: payment,
-                                     actor: session.employee,
-                                     register_session: payment.sale.register_session,
-                                     at: now)
-    @guidance "D10: payments are reversed, never deleted. The reversal stays
-               on the record next to the payment."
-    @guidance "CODE: the payment row is deleted."
+    requires: payment.reversed = false
+    ensures:
+        payment.reversed = true
+        PaymentReversal.created(sale: payment.sale, payment: payment,
+                                actor: session.employee,
+                                register_session: payment.sale.register_session,
+                                at: now)
+    @guidance
+        -- D10: payments are reversed, never deleted. The reversal stays on
+        -- the record next to the payment.
+        -- CODE (backend): the payment row is deleted.
+        -- CODE (frontend): the payment list offers a remove button on every
+        -- payment, and the sale shows no reversals.
 }
 
 rule ClearSale {
-    when: WriterClearsSale(sale)
-    requires: sale.status in {created, in_progress}
+    when: WriterClearsSale(session, sale)
+    requires: may_write(session, sale)
+    requires: sale.status = in_progress
     requires: sale.paid = 0
-    ensures: not exists sale.lines
-    ensures: sale's reservations are released
-    ensures: sale.status = created
-    @guidance "D10: refused while any unreversed payment exists. The
-               in_progress -> created edge is added to the crem topology and
-               clear runs through the machine."
-    @guidance "CODE: payments are deleted; the status is written directly
-               and the topology has no such edge."
+    ensures:
+        for r in sale.reservations:
+            ReservationReleased(r)
+        for p in sale.open_pulls:
+            p.status = cancelled
+            p.cancel_reason = "Sale cleared"
+        for l in sale.lines:
+            not exists l
+        sale.status = created
+    @guidance
+        -- D10: refused while any unreversed payment exists. The
+        -- in_progress -> created edge is added to the crem topology and
+        -- clear runs through the machine.
+        -- CODE (backend): payments are deleted; the status is written
+        -- directly and the topology has no such edge.
+        -- CODE (frontend): Clear Items is enabled with payments on the sale.
 }
 
 rule FinalizeSale {
-    when: WriterFinalizesSale(sale)
+    when: WriterFinalizesSale(session, sale)
+    requires: may_write(session, sale)
     requires: sale.status = in_progress
     requires: sale.lines.count > 0
     requires: sale.paid = sale.total
     requires: sale.lines.all(l => l.item.on_hand >= l.quantity)
-    ensures: each reserved Reservation of sale becomes completed and its
-             item.on_hand decreases by its quantity
-    ensures: sale.status = completed
-    ensures: sale.completed_at = now
-    @guidance "CODE: requires paid >= total (C1); no floor on on_hand."
+    ensures:
+        for r in sale.reservations:
+            ReservationTaken(r)
+        sale.status = completed
+        sale.completed_at = now
+    @guidance
+        -- The frontend's Process Payment button is enabled when
+        -- finalizeBlockers is empty: the sale is open, has lines and nothing
+        -- remains to pay. After a completed sale the button becomes New Sale,
+        -- which starts the next sale on the same register.
+        -- CODE (backend): requires paid >= total (C1); no floor on on_hand
+        -- (D11); stock pulls are not checked, so a sale completes with its
+        -- pulls still pending.
 }
 
 ----------------------------------------------------------------------
--- Rules: stock (D2, D11)
+-- Rules: the menu and stock (D2, D11)
 ----------------------------------------------------------------------
+
+rule ManagerCreatesItem {
+    when: ManagerCreatesItem(session, name, brand, category, price)
+    requires: session.employee.role in {manager, admin}
+    requires: price >= 0
+    ensures: MenuItem.created(name: name, brand: brand, category: category,
+                              price: price, on_hand: 0)
+    @guidance
+        -- CODE (backend): POST /inventory takes the whole item, on-hand count
+        -- included, so an item is created with any stock and no adjustment.
+}
+
+rule EditMenuItem {
+    when: ManagerEditsItem(session, item, name, brand, category, price)
+    requires: session.employee.role in {manager, admin}
+    requires: price >= 0
+    requires: open_lines_of(item) = 0
+    ensures:
+        item.name = name
+        item.brand = brand
+        item.category = category
+        item.price = price
+    @guidance
+        -- D2: blocked while the item is on an open sale. A shelf-tag mismatch
+        -- on an open sale is fixed with ApprovePriceOverride. On-hand counts
+        -- change only through AdjustStock.
+        -- CODE (backend): PUT /inventory overwrites the whole item, quantity
+        -- included, with no adjustment record and no reservation check, and
+        -- cashiers have capCanEditItem (C4).
+        -- CODE (frontend): EditItem is reachable by URL for any signed-in
+        -- user and its form edits the quantity.
+}
+
+rule ManagerDeletesItem {
+    when: ManagerDeletesItem(session, item)
+    requires: session.employee.role in {manager, admin}
+    requires: open_lines_of(item) = 0
+    ensures: not exists item
+}
 
 rule AdjustStock {
     when: ManagerAdjustsStock(session, item, delta, reason)
     requires: session.employee.role in {manager, admin}
     requires: item.on_hand + delta >= item.reserved
-    ensures: StockAdjustment.created(item: item, actor: session.employee,
-                                     reason: reason, delta: delta, at: now)
-    ensures: item.on_hand = item.on_hand + delta
-    @guidance "The only way on_hand changes outside sales, voids and refunds."
-    @guidance "CODE: PUT /inventory overwrites the whole item, quantity
-               included, with no adjustment record and no reservation check."
+    ensures:
+        StockAdjustment.created(item: item, actor: session.employee,
+                                reason: reason, delta: delta, at: now)
+        item.on_hand = item.on_hand + delta
+    @guidance
+        -- The only way on_hand changes outside sales, voids and refunds.
+        -- CODE: no route exists; stock changes through PUT /inventory.
 }
 
-rule EditMenuPrice {
-    when: ManagerEditsPrice(session, item, price)
-    requires: session.employee.role in {manager, admin}
-    requires: not exists SaleLine where item = item
-              and sale.status in {created, in_progress}
-    ensures: item.price = price
-    @guidance "D2: blocked while the item is on an open sale. A shelf-tag
-               mismatch on an open sale is fixed with ApprovePriceOverride."
+----------------------------------------------------------------------
+-- Rules: the stock room
+----------------------------------------------------------------------
+
+rule AcceptPull {
+    when: StaffAcceptsPull(session, pull)
+    requires: session.employee.role in {cashier, manager, admin}
+    requires: pull.status = pending
+    ensures: pull.status = accepted
+}
+
+rule StartPulling {
+    when: StaffStartsPull(session, pull)
+    requires: session.employee.role in {cashier, manager, admin}
+    requires: pull.status = accepted
+    ensures: pull.status = pulling
+}
+
+rule FulfillPull {
+    when: StaffFulfillsPull(session, pull)
+    requires: session.employee.role in {cashier, manager, admin}
+    requires: pull.status = pulling
+    ensures:
+        pull.status = fulfilled
+        pull.fulfilled_at = now
+    @guidance
+        -- Fulfilment moves no stock: the sale's reservation already holds
+        -- the units and FinalizeSale takes them off on_hand.
+}
+
+rule ReportPullIssue {
+    when: StaffReportsIssue(session, pull, note)
+    requires: session.employee.role in {cashier, manager, admin}
+    requires: pull.status = pulling
+    ensures:
+        pull.status = issue
+        pull.issue_note = note
+}
+
+rule RetryPull {
+    when: StaffRetriesPull(session, pull)
+    requires: session.employee.role in {cashier, manager, admin}
+    requires: pull.status = issue
+    ensures: pull.status = accepted
+}
+
+rule CancelPull {
+    when: StaffCancelsPull(session, pull, reason)
+    requires: session.employee.role in {cashier, manager, admin}
+    requires: pull.status in {pending, accepted, issue}
+    ensures:
+        pull.status = cancelled
+        pull.cancel_reason = reason
+    @guidance
+        -- CODE (frontend): the stock room sends the fixed reasons
+        -- "Cancelled" and "Issue reported"; it has no field for a reason.
+}
+
+rule PostPullMessage {
+    when: StaffPostsMessage(session, pull, body)
+    requires: session.employee.role in {cashier, manager, admin}
+    ensures: PullMessage.created(pull: pull, author: session.employee,
+                                 body: body, at: now)
 }
 
 ----------------------------------------------------------------------
@@ -501,31 +950,54 @@ rule VoidOpenSale {
     when: ManagerVoids(session, sale, reason)
     requires: session.employee.role in {manager, admin}
     requires: sale.status in {created, in_progress}
-    ensures: every unreversed payment of sale gets a PaymentReversal by
-             session.employee
-    ensures: sale's reservations are released
-    ensures: sale.status = voided
+    ensures:
+        for p in sale.live_payments:
+            p.reversed = true
+            PaymentReversal.created(sale: sale, payment: p,
+                                    actor: session.employee,
+                                    register_session: sale.register_session,
+                                    at: now)
+        for r in sale.reservations:
+            ReservationReleased(r)
+        for p in sale.open_pulls:
+            p.status = cancelled
+            p.cancel_reason = reason
+        sale.status = voided
+        sale.voided_by = session.employee
+        sale.void_reason = reason
 }
 
 rule VoidCompletedSale {
     when: ManagerVoids(session, sale, reason)
     requires: session.employee.role in {manager, admin}
     requires: sale.status = completed
-    requires: sale.register_session.closed_at = null
-    ensures: every payment of sale gets a PaymentReversal by session.employee
-    ensures: if config.restock_on_void = return_to_stock then every line's
-             quantity returns to on_hand
-    ensures: sale.status = voided
-    @guidance "D6: a completed sale is voidable only while the register
-               session that rang it is still open (before the drawer and the
-               card batch close). After that it is refunded."
-    @guidance "CODE: voidable at any time; payments are left untouched; the
-               event's actor is sale.employee; the manager override route
-               writes no compliance log entry."
+    requires: sale.register_session.status = active
+    ensures:
+        for p in sale.live_payments:
+            p.reversed = true
+            PaymentReversal.created(sale: sale, payment: p,
+                                    actor: session.employee,
+                                    register_session: sale.register_session,
+                                    at: now)
+        if config.restock_on_void = return_to_stock:
+            for l in sale.lines:
+                l.item.on_hand = l.item.on_hand + l.quantity
+        sale.status = voided
+        sale.voided_by = session.employee
+        sale.void_reason = reason
+    @guidance
+        -- D6: a completed sale is voidable only while the register session
+        -- that rang it is still open, before the drawer and the card batch
+        -- close. After that it is refunded.
+        -- CODE (backend): voidable at any time; payments are left untouched;
+        -- the event's actor is sale.employee; the manager override route
+        -- (POST /manager/override/void) writes no compliance log entry.
+        -- CODE (frontend): SalesHistory offers Void on every completed sale
+        -- (UI.Transaction.Model.voidable).
 }
 
 ----------------------------------------------------------------------
--- Rules: refund (D8, D9, D17, D18)
+-- Rules: refund (D8, D9, D17, D18, D19)
 ----------------------------------------------------------------------
 
 rule RefundLines {
@@ -533,135 +1005,544 @@ rule RefundLines {
     requires: session.employee.role in {manager, admin}
     requires: register.status = open
     requires: sale.status in {completed, partially_refunded}
-    requires: selections.all(s => s.quantity > 0
-                                  and s.quantity <= s.line.refundable_quantity)
-    requires: now - sale.completed_at <= config.refund_window
-              or past_window_approved(session)
-    let refund_lines = selections.map(s => RefundLine(
-            sale_line: s.line, quantity: s.quantity,
-            subtotal: prorate(s.line.subtotal, s.quantity, s.line.quantity),
-            discount_total: prorate(s.line.discount_total, s.quantity, s.line.quantity),
-            tax_total: prorate_tax(s.line, s.quantity)))
-    ensures: Refund.created(original: sale, issued_by: session.employee,
-                            register_session: register.current,
-                            issued_at: now, reason: reason,
-                            lines: refund_lines,
-                            payments: to_original_tenders(sale, refund_lines))
-    ensures: each selected line's refunded_quantity increases by its quantity
-    ensures: if config.restock_on_refund = return_to_stock then each refunded
-             quantity returns to on_hand
-    ensures: sale.status = refunded when every line is fully refunded,
-             otherwise partially_refunded
-    @guidance "D9: line and quantity refunds, repeatable until nothing is
-               left. D17: past the configured window only with a logged
-               manager override (past_window_override). D18: every refund
-               references a sale; there are no receipt-less returns."
-    @guidance "Money (decided): the tax refunded is the tax actually
-               collected on those units (prorate_tax uses the stored line
-               tax, so a refund never returns more tax than was charged).
-               Money goes back to the original tenders, card to the same
-               card, cash as cash; cash comes out of the refunding register's
-               drawer. The refund's actor is the refunding manager and its
-               register session is the one where it happens."
-    @guidance "CODE: whole-sale refunds only; actor and register are copied
-               from the original sale (C3); refund payments are the negated
-               sale payments, so an overpaid sale refunds more than its
-               total (C2); no window."
+    requires: selections_valid(selections, sale)
+    requires: within_window(sale, config.refund_window) or past_window_approved(session)
+    ensures:
+        let refund_lines = refund_lines_for(selections)
+        Refund.created(original: sale, issued_by: session.employee,
+                       register_session: register.current,
+                       issued_at: now, reason: reason,
+                       lines: refund_lines,
+                       payments: to_original_tenders(sale, refund_lines))
+        for s in selections:
+            s.line.refunded_quantity = s.line.refunded_quantity + s.quantity
+        if config.restock_on_refund = return_to_stock:
+            for s in selections:
+                s.line.item.on_hand = s.line.item.on_hand + s.quantity
+        RefundBooked(sale)
+    @guidance
+        -- D9: line and quantity refunds, repeatable until nothing is left.
+        -- D17: past the configured window only with a logged manager
+        -- override. D18: every refund references a sale.
+        -- D19: the tax refunded is the tax collected on those units, from the
+        -- stored line tax. Money goes back to the original tenders, card to
+        -- the same card, cash as cash; cash comes out of the refunding
+        -- register's drawer. The refund's actor is the refunding manager and
+        -- its register session is the one where it happens.
+        -- CODE (backend): whole-sale refunds only; actor and register are
+        -- copied from the original sale (C3); refund payments are the
+        -- negated sale payments, so an overpaid sale refunds more than its
+        -- total (C2); no window.
+        -- CODE (frontend): SalesHistory offers Refund on a completed sale
+        -- with a reason and nothing else: no line or quantity selection, no
+        -- register.
+}
+
+rule FirstRefund {
+    when: RefundBooked(sale)
+    requires: sale.status = completed
+    ensures:
+        if fully_refunded(sale):
+            sale.status = refunded
+        else:
+            sale.status = partially_refunded
+}
+
+rule LaterRefund {
+    when: RefundBooked(sale)
+    requires: sale.status = partially_refunded
+    ensures:
+        if fully_refunded(sale):
+            sale.status = refunded
+        else:
+            sale.status = partially_refunded
 }
 
 ----------------------------------------------------------------------
 -- Rules: tax (D12, D13)
 ----------------------------------------------------------------------
 
-rule PriceLine {
-    when: line: SaleLine.created
-    let rules = applicable(in_force(line.sale.location, now), line.item.category)
-    let taxable = line.subtotal - sum(line.discounts where funder = store, d => d.amount)
-    ensures: line.taxes = rules.map(r => LineTax(r.tax_category, r.rate,
-             round(r.rounding, taxable * r.rate.parts_per_million / 1000000)))
-    @guidance "D13: store-funded discounts reduce the taxable amount;
-               manufacturer coupons do not (MA rule, also most US states)."
-    @guidance "CODE: tax on the full subtotal; discounts not implemented."
-}
-
 rule StoreTaxRule {
-    when: AdminStoresTaxRule(session, rule)
+    when: AdminStoresTaxRule(session, location, item_category, tax_category,
+                             rate_ppm, rounding, effective_from)
     requires: session.employee.role = admin
-    requires: not exists TaxRule where location = rule.location
-              and item_category = rule.item_category
-              and tax_category = rule.tax_category
-              and ranges_overlap(this, rule)
-    ensures: TaxRule.created(rule)
-    @guidance "D12. CODE: no overlap check; overlapping rules are both
-               charged."
-}
-
-----------------------------------------------------------------------
--- Rules: authentication (D15)
-----------------------------------------------------------------------
-
-rule VerifyPassword {
-    when: EmployeeLogsIn(name, password)
-    let stored = employee(name).password_hash
-    requires: constant_time_equal(
-                argon2(stored.parameters, stored.salt, password), stored.digest)
-    ensures: Session.created(employee: employee(name),
-                             expires_at: now + config.session_length)
-    ensures: if stored.parameters != current_parameters() then
-             employee(name).password_hash = rehash(password)
-    @guidance "CODE: compares with ByteString (==) and hashes with the current
-               argonOpts instead of the stored parameters."
+    requires: rate_ppm >= 0
+    requires: overlapping_rules(location, item_category, tax_category,
+                                effective_from) = 0
+    ensures: TaxRule.created(location: location, item_category: item_category,
+                             tax_category: tax_category, rate_ppm: rate_ppm,
+                             rounding: rounding, effective_from: effective_from)
+    @guidance
+        -- D12: overlapping rules are refused when stored.
+        -- D13: price_line taxes the line's subtotal less store-funded
+        -- discounts; manufacturer coupons do not reduce the taxable amount.
+        -- Each rule's tax is round(rounding, taxable * rate_ppm / 1000000).
+        -- CODE (backend): no overlap check, so overlapping rules are both
+        -- charged; tax on the full subtotal; discounts not implemented.
 }
 
 ----------------------------------------------------------------------
 -- Invariants
 ----------------------------------------------------------------------
 
+-- VIOLATED (C1).
 invariant CompletedSalesBalance {
-    -- VIOLATED (C1).
-    Sale.all(s => s.status != completed or s.paid = s.total)
+    for s in Sales:
+        s.status = completed implies s.paid = s.total
 }
 
+-- VIOLATED (C2).
 invariant RefundsPayBackTheirTotal {
-    -- VIOLATED (C2).
-    Refund.all(r => sum(r.payments, p => p.amount) = r.total)
+    for r in Refunds:
+        r.paid_back = r.total
 }
 
-invariant ExpectedDrawerTracksCash {
-    -- VIOLATED: expected_cash never changes after open.
-    RegisterSession.all(s => s.expected_cash = s.starting_cash + s.cash_in - s.cash_out)
-}
-
+-- VIOLATED by finalize after an inventory edit.
 invariant StockNeverNegative {
-    -- VIOLATED by finalize after an inventory edit.
-    MenuItem.all(i => i.on_hand >= 0)
+    for i in MenuItems:
+        i.on_hand >= 0
 }
 
-invariant ActorsAreRecorded {
-    -- VIOLATED (C3).
-    Refund.all(r => r.issued_by.role in {manager, admin})
+-- VIOLATED (C3): refunds record the original cashier.
+invariant RefundsAreIssuedByManagers {
+    for r in Refunds:
+        r.issued_by.role in {manager, admin}
 }
 
-invariant PaymentsAreNeverDeleted {
-    -- VIOLATED by remove payment and clear.
-    true
+invariant OneLinePerItem {
+    for a in SaleLines:
+        for b in SaleLines:
+            a != b and a.sale = b.sale implies a.item != b.item
+}
+
+invariant RegistersOpenWithASession {
+    for r in Registers:
+        r.status = open implies r.current != null
 }
 
 ----------------------------------------------------------------------
--- Deferred
+-- Actor Declarations
 ----------------------------------------------------------------------
 
-deferred allowed(role, action)
-deferred authorised(method, amount)
-deferred in_force(location, at)
-deferred prorate(amount, part, whole)
-deferred prorate_tax(line, quantity)
-deferred to_original_tenders(sale, refund_lines)
-deferred past_window_approved(session)
-deferred RegulatedCannabis
-    -- D21: CANNABIS_TAX stays as a tax category. Age and ID checks, daily
-    -- purchase limits and seed-to-sale (Metrc) reporting are specified when
-    -- regulated sales are in scope.
+actor Visitor {
+    identified_by: Device where signed_in = null
+}
+
+actor SignedIn {
+    identified_by: Session where active
+}
+
+actor Seller {
+    identified_by: Session where active and employee.role in {cashier, manager, admin}
+}
+
+actor Manager {
+    identified_by: Session where active and employee.role in {manager, admin}
+}
+
+actor Admin {
+    identified_by: Session where active and employee.role = admin
+}
+
+----------------------------------------------------------------------
+-- Surfaces
+----------------------------------------------------------------------
+
+surface AppShell {
+    facing device: Device
+
+    provides:
+        DeviceStarts(device)
+
+    @guidance
+        -- Main: the page load. Asks GET /auth/me, then renders the route
+        -- for the session it gets back, or LoginScreen. Leaving a page runs
+        -- the cleanup the page registered (closing its SSE streams).
+}
+
+surface LoginScreen {
+    facing visitor: Visitor
+
+    provides:
+        EmployeeLogsIn(visitor, employee, password)
+
+    @guidance
+        -- Pages.Login. Shown for every route while the device is signed out.
+        -- A successful login sets the HttpOnly cookie and returns the
+        -- session (user id, name, role, capabilities); the device renders
+        -- the route it was on, or LiveView if it was on /login. A response
+        -- that does not decode (an unknown role) keeps the device signed out.
+}
+
+surface Navigation {
+    facing session: SignedIn
+
+    exposes:
+        session.employee.name
+        session.employee.role
+
+    provides:
+        EmployeeLogsOut(session.device, session)
+
+    @guidance
+        -- Route.navLinks. Each link is shown when the session's capabilities,
+        -- as the backend sent them, pass the check the backend applies to
+        -- that area: LiveView capCanViewInventory, Create Item
+        -- capCanCreateItem, New Transaction and Sales
+        -- capCanProcessTransaction, Registers capCanOpenRegister or
+        -- capCanManageRegisters, Admin capCanViewAdminDashboard, Manager
+        -- capCanViewReports, Stock Room capCanFulfillOrders, Feed always.
+        -- The links decide what is shown; the backend decides every request.
+        -- CODE (frontend): routes are not guarded, only links. Every page
+        -- renders for any signed-in user who types its URL, and its requests
+        -- are then refused by the backend.
+}
+
+surface InventoryLiveView {
+    facing session: SignedIn
+
+    let items = MenuItems
+
+    exposes:
+        for item in items:
+            item.name
+            item.brand
+            item.category
+            item.price
+            item.available
+
+    @guidance
+        -- Pages.LiveView over GET /inventory, read when the page mounts.
+        -- Config.LiveView can switch the source to a static inventory.json
+        -- or to GraphQL.
+}
+
+surface ItemEditor {
+    facing session: Manager
+
+    let items = MenuItems
+
+    provides:
+        ManagerCreatesItem(session, name, brand, category, price)
+        for item in items:
+            ManagerEditsItem(session, item, name, brand, category, price)
+            ManagerDeletesItem(session, item)
+            ManagerAdjustsStock(session, item, delta, reason)
+
+    @guidance
+        -- Pages.CreateItem, Pages.EditItem and Pages.DeleteItem, reached at
+        -- /create, /edit/<sku> and /delete/<sku>. CreateItem draws a fresh
+        -- SKU after each create so a second item never reuses the first's.
+        -- DeleteItem asks for confirmation.
+        -- CODE: there is no stock adjustment screen or route
+        -- (ManagerAdjustsStock).
+        -- CODE (frontend): the item form includes the on-hand quantity, so
+        -- creating and editing set stock directly (see EditMenuItem).
+}
+
+surface RegistersScreen {
+    facing session: SignedIn
+
+    let registers = Registers
+
+    exposes:
+        for register in registers:
+            register.name
+            register.status
+
+    provides:
+        ManagerCreatesRegister(session, name, location)
+            when session.employee.role in {manager, admin}
+        for register in registers:
+            DeviceChoosesRegister(session.device, register)
+            CashierOpensRegister(session, register, starting_cash)
+                when register.status = closed
+                and session.employee.role in {cashier, manager, admin}
+            ManagerClosesRegister(session, register, counted)
+                when register.status = open
+                and session.employee.role in {manager, admin}
+
+    @guarantee BlindCount
+        -- The expected cash in an open register's drawer is not shown
+        -- before the count is submitted.
+
+    @guidance
+        -- Pages.Registers: the only place registers are created, opened and
+        -- closed, and where the device picks its register. Each action reads
+        -- the list again afterwards, refusals included, because a 409 means
+        -- the list on screen is out of date. Close answers with the
+        -- variance, expected minus counted: positive is short.
+        -- CODE (frontend): shows "Expected in drawer" before the count
+        -- (breaks BlindCount) and offers Close with capCanCloseRegister,
+        -- which cashiers have.
+}
+
+surface SaleScreenEntry {
+    facing session: Seller
+
+    let device = session.device
+
+    provides:
+        for remembered in device.remembered:
+            DeviceResumesSale(device, remembered)
+            DeviceForgetsSale(device, remembered)
+                when remembered.sale.status not in {created, in_progress}
+        CashierStartsSale(session, device.chosen_register)
+            when device.chosen_register != null
+            and device.chosen_register.status = open
+
+    @guidance
+        -- Pages.CreateTransaction, before a sale is on screen. It loads the
+        -- inventory and the chosen register in parallel. No register chosen,
+        -- a register that is gone (404) or a closed register each show a
+        -- link to RegistersScreen. Otherwise the remembered sale is resumed
+        -- (DeviceResumesSale), or the page shows Start Sale. Loading the page
+        -- creates nothing on the backend; only the Start Sale button starts
+        -- a sale.
+}
+
+surface SaleScreen {
+    facing session: Seller
+    context sale: Sale where employee = session.employee
+
+    exposes:
+        sale.status
+        sale.subtotal
+        sale.discount_total
+        sale.tax_total
+        sale.total
+        sale.paid
+        sale.remaining
+        for line in sale.lines:
+            line.item.name
+            line.quantity
+            line.unit_price
+            line.subtotal
+            line.tax_total
+        for payment in sale.live_payments:
+            payment.method
+            payment.amount
+            payment.change
+            payment.reference
+        for reversal in sale.reversals:
+            reversal.payment.amount
+            reversal.actor.name
+
+    provides:
+        WriterAddsItem(session, sale, item, quantity)
+            when sale.status in {created, in_progress}
+        WriterAddsPayment(session, sale, method, amount, tendered)
+            when sale.status = in_progress
+        WriterClearsSale(session, sale)
+            when sale.status = in_progress and sale.paid = 0
+        WriterFinalizesSale(session, sale)
+            when sale.status = in_progress and sale.remaining = 0
+            and sale.lines.count > 0
+        CashierStartsSale(session, sale.register)
+            when sale.status = completed
+        for line in sale.lines:
+            WriterRemovesItem(session, line)
+                when sale.status = in_progress
+            CashierRequestsOverride(session, line, new_price, reason)
+                when sale.status = in_progress
+        for payment in sale.live_payments:
+            WriterRemovesPayment(session, payment)
+                when sale.status = in_progress
+
+    @guarantee ScreenNeverComputesMoney
+        -- Totals, tax, payments and the remaining balance on screen are the
+        -- backend's figures from the last response. The screen edits no sale
+        -- locally.
+
+    @guarantee OneRequestPerAction
+        -- Every button is one request to /pos/sale/...; the backend answers
+        -- with the whole sale, which replaces the one on screen.
+
+    @guidance
+        -- UI.Transaction.CreateTransaction. Routes: start POST /pos/sale;
+        -- add item POST /pos/sale/item (SKU and quantity only); remove item
+        -- DELETE /pos/sale/item/{line}; add payment POST /pos/sale/payment;
+        -- remove payment DELETE /pos/sale/payment/{id}; clear POST
+        -- /pos/sale/clear/{id}; finalize POST /pos/sale/finalize/{id}.
+        -- Refusals: 400 insufficient stock or a line the pricing rules
+        -- reject; 403 another employee's sale; 404 sale, item, line or
+        -- payment gone; 409 the sale is no longer open, or finalize refused
+        -- with the backend's list of problems. After a 409 or 404 the sale
+        -- is read again (GET /sale/{id}); the inventory is read again after
+        -- every write, accepted or refused. While a request runs, every
+        -- button is disabled and the status line names the activity.
+        -- The payment form shows Tendered for cash only and Auth Code for
+        -- credit only. Process Payment is enabled when finalizeBlockers is
+        -- empty; once the sale is completed it becomes New Sale, which
+        -- starts the next sale on the same register.
+        -- CODE (frontend): no price override control (D7). Clear Items is
+        -- enabled with payments on the sale (D10). Remaining clamps at zero,
+        -- so an overpayment is not flagged (C1). Remove payment deletes
+        -- rather than reverses, following the backend (D10).
+}
+
+surface SalesHistory {
+    facing session: Manager
+
+    let sales = Sales
+
+    exposes:
+        for sale in sales:
+            sale.status
+            sale.total
+            sale.lines.count
+            for line in sale.lines:
+                line.item.name
+                line.refundable_quantity
+
+    provides:
+        for sale in sales:
+            ManagerVoids(session, sale, reason)
+                when sale.status in {created, in_progress}
+                or (sale.status = completed and sale.register_session.status = active)
+            ManagerRefunds(session, sale, register, selections, reason)
+                when sale.status in {completed, partially_refunded}
+
+    @guidance
+        -- Pages.TransactionHistory over GET /sale, newest first. Void and
+        -- Refund each need a reason, and the list is read again after every
+        -- attempt so a sale changed elsewhere shows its real status.
+        -- D3: managers and admins read every sale; cashiers read their own
+        -- sales in the current register session; customers read none.
+        -- CODE (frontend): the page is linked for capCanProcessTransaction,
+        -- so cashiers see every sale; Void is offered on every completed
+        -- sale; Refund refunds the whole sale.
+        -- CODE (backend): GET /sale, /sale/{id}, /refund and /refund/{id}
+        -- need only a session, so a customer account reads every sale.
+}
+
+surface StockRoom {
+    facing session: Seller
+
+    let pulls = StockPulls
+
+    exposes:
+        for pull in pulls:
+            pull.item.name
+            pull.quantity
+            pull.status
+            pull.issue_note
+            for message in pull.messages:
+                message.author.name
+                message.body
+
+    provides:
+        for pull in pulls:
+            StaffAcceptsPull(session, pull) when pull.status = pending
+            StaffStartsPull(session, pull) when pull.status = accepted
+            StaffFulfillsPull(session, pull) when pull.status = pulling
+            StaffReportsIssue(session, pull, note) when pull.status = pulling
+            StaffRetriesPull(session, pull) when pull.status = issue
+            StaffCancelsPull(session, pull, reason)
+                when pull.status in {pending, accepted, issue}
+            StaffPostsMessage(session, pull, body)
+
+    @guidance
+        -- Pages.Stock.Interface over GET /stock/queue for the configured
+        -- location, reloaded on every event from /stock/queue/stream (SSE,
+        -- authenticated by the session cookie). Each pull card shows the
+        -- actions its status allows and a message thread
+        -- (GET/POST /stock/pull/{id}/messages).
+}
+
+surface ManagerDashboard {
+    facing session: Manager
+
+    let open_registers = Registers where status = open
+
+    exposes:
+        for register in open_registers:
+            register.name
+            register.current.expected_cash
+
+    provides:
+        for sale in Sales where status in {created, in_progress}:
+            ManagerVoids(session, sale, reason)
+        for request in PriceOverrideRequests where status = requested:
+            ManagerApprovesOverride(session, request)
+            ManagerDeclinesOverride(session, request)
+
+    @guidance
+        -- Pages.Manager.Dashboard: activity (GET /manager/activity and its
+        -- SSE stream), alerts (GET /manager/alerts: low stock under
+        -- low_stock_threshold, stale sales, drawer variance), the daily
+        -- report (POST /manager/reports/daily) and the override void
+        -- (POST /manager/override/void/{id}). Approving and declining price
+        -- overrides (D7) belongs here; neither exists yet.
+        -- CODE (backend): the daily report and the ledger and compliance
+        -- routes return zeros or echo the request (D14 says 501). The
+        -- report ignores the date and location it is sent and reports the
+        -- backend's own UTC day.
+        -- CODE (frontend): the override void sends orActorId, which the
+        -- backend ignores in favour of the session.
+}
+
+surface AdminDashboard {
+    facing session: Admin
+
+    let sessions = Sessions where active
+
+    exposes:
+        for s in sessions:
+            s.employee.name
+            s.expires_at
+
+    provides:
+        for s in sessions:
+            AdminRevokesSession(session, s)
+        AdminStoresTaxRule(session, location, item_category, tax_category,
+                           rate_ppm, rounding, effective_from)
+
+    @guidance
+        -- Pages.Admin.Dashboard: snapshot, sessions with revoke, the log
+        -- stream (SSE), the public feed monitor, and admin actions
+        -- (POST /admin/actions).
+        -- CODE (backend): ForceCloseRegister, SetLowStockThreshold and
+        -- TriggerSnapshotExport answer "Not yet implemented".
+        -- CODE (frontend): the Event Stream and Domain Events tabs are
+        -- placeholders. No screen stores tax rules.
+}
+
+surface PublicFeedMonitor {
+    facing session: SignedIn
+
+    let items = MenuItems
+
+    exposes:
+        for item in items:
+            item.name
+            item.brand
+            item.category
+            item.available
+
+    @guidance
+        -- Pages.Feed.Monitor over the public feed at
+        -- /xrpc/app.cheeblr.feed.subscribe, a WebSocket of FeedFrames, one
+        -- per stock change. The feed needs no session; anyone who can reach
+        -- the backend can subscribe.
+}
+
+----------------------------------------------------------------------
+-- Deferred Specifications
+----------------------------------------------------------------------
+
+deferred Ledger.post        -- see: backend/src/API/Transaction.hs (LedgerAPI), D14
+deferred Compliance.verify  -- see: backend/src/API/Transaction.hs (ComplianceAPI), D14
+deferred RegulatedCannabis.check  -- see: Decisions, D21
+
+----------------------------------------------------------------------
+-- Open Questions
+----------------------------------------------------------------------
+
+open question "Which payment methods take authorisation, and what does authorised(method, amount) check for each?"
+open question "Should the routes be guarded on the frontend as well as the links, so a cashier who types /admin sees a refusal page rather than empty panels?"
+open question "Should a sale be finalizable while its stock pulls are still pending?"
+open question "Does a device sign in with a register (loginRegisterId), or is the chosen register purely local?"
 
 ----------------------------------------------------------------------
 -- Decisions (2026-10-24)
