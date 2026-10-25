@@ -6,32 +6,45 @@
 # Haskell and PureScript source files concatenated into one document.
 # Each block begins with === BEGIN <path> === on its own line.
 # Blocks contain the rendered .chase format: %file, %mod, %lang,
-# %ext (Haskell only), %fixity, %uses, %const, %const_candidate,
-# %topology, %abstract, data decls, %foreign (PureScript only),
-# %pattern, type signatures with attached lines, %decision blocks,
-# %open_issue blocks (known problems with blocking/affects targets),
-# and parse errors. Function bodies are deliberately omitted.
+# %ext (Haskell only), %ghc, %fixity, %uses, %const, %const_candidate,
+# %topology, %abstract, %untested, data decls, %foreign (PureScript
+# only), %pattern, type signatures with attached lines, %decision
+# blocks, %open_issue blocks (known problems with blocking/affects
+# targets), %open_question lines (undecided design questions), and
+# parse errors. Function bodies are deliberately omitted.
 #
 # Lines under a signature, by sigil:
-#   !  a hand-written invariant: a behavioral fact the type does not carry
+#   !  a hand-written invariant: a behavioral fact the type does not carry.
+#      intent:, requires:, ensures:, fails: and effects: prefixes are the
+#      author's structured claims; the rest are free notes
 #   >  a hand-written consumer of the function or its side effects
-#   ~  a fact read from the parsed body by chase itself. These are
+#   ~  a fact chase read from the code itself. From the parse these are
 #      may-facts: a clause may be unreachable, a failure may be on a
-#      dead path, a literal may be harmless, a caller may be test-only.
+#      dead path, a literal may be harmless.
 #      clause: the constructor or literal patterns and guards of one clause
 #      fails: error constructors or strings raised under throwError,
 #        throwIO, throwM, throw, throwE, Left, fail, error, exitWith
 #      literals: literals in the body other than 0, 1 and ""
-#      called by: functions in the scanned roots that reference this one
+#      uses: functions from outside the project that the body references,
+#        resolved by the compiler (HIE); the side effects the type may hide
+#      unreferenced: not exported and nothing in the project references it (HIE)
+#      ghc: the compiler's own warning at this function, from the build log:
+#        unhandled constructors, unreachable alternatives, partial fields
+#      called by: functions that reference this one; resolved by the
+#        compiler when HIE files were read, by import rules otherwise
 #   ?  test functions that reference the name (when test roots were scanned)
 #
+# %untested lists the names no test references. %ghc at the top of a
+# block is a compiler warning above every signature of the file.
 # %abstract names a data type exported without all its constructors and
 # the exported functions that return it: build values of it through
 # those functions, since the constructors are not reachable from outside.
 # %const_candidate is a zero-argument literal binding with no %const note.
 # A === DERIVED TRANSITIONS === block at the end lists, per sum type,
 # the constructor-to-constructor edges found in clauses and case
-# alternatives, each with the function that witnesses it.
+# alternatives, each with the function that witnesses it. A
+# === CONSTRUCTOR USAGE === block lists constructors nothing builds and
+# constructors of sum types nothing matches, from the HIE files.
 
 
 === BEGIN API/Admin.purs ===
@@ -49,49 +62,42 @@
 %uses Types.Inventory
 %uses Types.UUID
 
+%untested getSnapshot, getSessions, revokeSession, getLogs, getTransactions, getRegisters, getDomainEvents, performAction
+%untested logStreamUrl, eventStreamUrl
+
 getSnapshot :: Aff (Either ApiError AdminSnapshot)
   ~ called by: Pages.Admin.Dashboard.page
-  ? no test references
 
 getSessions :: Aff (Either ApiError (Array SessionInfo))
   ~ no callers in scanned roots
-  ? no test references
 
 revokeSession :: UUID -> Aff (Either ApiError Unit)
   ~ no callers in scanned roots
-  ? no test references
 
 getLogs :: Aff (Either ApiError LogPage)
   ! Takes no filter arguments. The backend route accepts severity, component, traceId, limit and cursor query parameters and this function sends none of them.
   ~ no callers in scanned roots
-  ? no test references
 
 getTransactions :: Aff (Either ApiError TransactionPage)
   ! Sends no status or limit filter, although the backend route accepts both.
   ~ no callers in scanned roots
-  ? no test references
 
 getRegisters :: Aff (Either ApiError (Array Register))
   ~ no callers in scanned roots
-  ? no test references
 
 getDomainEvents :: Aff (Either ApiError DomainEventPage)
   ~ no callers in scanned roots
-  ? no test references
 
 performAction :: AdminAction -> Aff (Either ApiError MutationResponse)
   ~ no callers in scanned roots
-  ? no test references
 
 logStreamUrl :: String
   ! The stream URL with no credential in it. Utils.SSE opens it with credentials so the session cookie is sent.
   ! Used by Pages.Admin.Tabs.LogViewer.
   ~ called by: Pages.Admin.Tabs.LogViewer.logViewer
-  ? no test references
 
 eventStreamUrl :: String
   ~ no callers in scanned roots
-  ? no test references
 
 
 === BEGIN API/Auth.purs ===
@@ -107,6 +113,8 @@ eventStreamUrl :: String
 %uses Effect.Aff
 %uses Types.Session
 %uses Types.UUID
+
+%untested login, logout, validateSession
 
 type LoginRequest =
   { loginUsername :: String
@@ -127,18 +135,15 @@ login :: LoginRequest -> Aff (Either ApiError LoginResponse)
   ! A wrong username or password is Refused 401 with the text 'Invalid username or password'. Too many attempts is refused with its own text.
   ! loginRegisterId is always sent as Nothing by Pages.Login.
   ~ called by: Pages.Login.page
-  ? no test references
 
 logout :: Aff (Either ApiError Unit)
   ! POST /auth/logout, which answers with no body. Main.signOut ignores the result and signs the browser out locally either way.
   ~ called by: Main.main
-  ? no test references
 
 validateSession :: Aff (Either ApiError SessionResponse)
   ! GET /auth/me. Refused 401 when the browser holds no valid session cookie.
   ! Called once, by Main at boot.
   ~ called by: Main.main
-  ? no test references
 
 %decision AuthCallsUseTheSharedRequestCore
   what:    login, logout and validateSession go through API.Request like every other call
@@ -165,39 +170,34 @@ validateSession :: Aff (Either ApiError SessionResponse)
 %uses GraphQL.API.Inventory
 %uses Types.Inventory
 
+%untested writeInventory, readInventory, updateInventory, deleteInventory, fetchInventoryFromJson, fetchInventoryFromHttp, fetchInventory
+
 writeInventory :: MenuItem -> Aff (Either ApiError MutationResponse)
   ~ called by: UI.Inventory.ItemForm.itemForm
-  ? no test references
 
 readInventory :: Aff (Either ApiError Inventory)
   ~ called by: Pages.DeleteItem.page, Pages.EditItem.page
-  ? no test references
 
 updateInventory :: MenuItem -> Aff (Either ApiError MutationResponse)
   ~ called by: UI.Inventory.ItemForm.itemForm
-  ? no test references
 
 deleteInventory :: String -> Aff (Either ApiError MutationResponse)
   ! The backend answers 404 'Item not found' for an unknown SKU, which arrives as Refused 404.
   ~ called by: UI.Inventory.DeleteItem.deleteItem
-  ? no test references
 
 fetchInventoryFromJson :: FetchConfig -> Aff (Either ApiError Inventory)
   ! Reads ./inventory.json from the same origin; relative path means it is served by the same web server as the app.
   ! Appends ?t=<currentTimestamp> for cache-busting; the file might be updated out-of-band.
   ! No auth headers; the file is assumed to be public on the same origin.
   ~ called by: API.Inventory.fetchInventory
-  ? no test references
 
 fetchInventoryFromHttp :: FetchConfig -> Aff (Either ApiError Inventory)
   ~ called by: API.Inventory.fetchInventory
-  ? no test references
 
 fetchInventory :: FetchConfig -> QueryMode -> Aff (Either ApiError Inventory)
   ! Three-way dispatch on QueryMode; the default is GqlMode per Config.LiveView.defaultViewConfig.
   ! JsonMode and HttpMode are alternatives for development or fallback; the production path is GqlMode.
   ~ called by: Pages.CreateTransaction.load, UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 %decision QueryModeDispatchInFetchInventory
   what:    fetchInventory dispatches between three data sources by QueryMode: JsonMode (static file), HttpMode (REST API), GqlMode (GraphQL)
@@ -220,31 +220,28 @@ fetchInventory :: FetchConfig -> QueryMode -> Aff (Either ApiError Inventory)
 %uses Types.Manager
 %uses Types.UUID
 
+%untested getActivity, getAlerts, getDailyReport, overrideVoid, activityStreamUrl
+
 getActivity :: Aff (Either ApiError ActivitySummary)
   ~ called by: Pages.Manager.Dashboard.page
-  ? no test references
 
 getAlerts :: Aff (Either ApiError (Array ManagerAlert))
   ! Decodes Types.Manager.ManagerAlert, the tagged shape the backend writes.
   ~ no callers in scanned roots
-  ? no test references
 
 getDailyReport :: DailyReportRequest -> Aff (Either ApiError DailyReportResult)
   ! Takes Types.Manager.DailyReportRequest: a DateTime and a location UUID. The backend decodes both and reads neither.
   ! The earlier version sent the text "today" and an empty location id, which the backend could not decode.
   ~ called by: Pages.Manager.Panels.ReportsPanel.reportsPanel
-  ? no test references
 
 overrideVoid :: UUID -> UUID -> String -> Aff (Either ApiError MutationResponse)
   ! Has no caller. Pages.TransactionHistory voids through API.Sale.voidSale.
   ! orActorId is required by the backend's decoder and is not read by the handler.
   ~ no callers in scanned roots
-  ? no test references
 
 activityStreamUrl :: String
   ! The stream URL with no credential in it. Has no caller yet.
   ~ no callers in scanned roots
-  ? no test references
 
 
 === BEGIN API/Refund.purs ===
@@ -260,16 +257,16 @@ activityStreamUrl :: String
 %uses Types.Transaction.Refund as Refund
 %uses Types.UUID
 
+%untested getAllRefunds, getRefund
+
 getAllRefunds :: Aff (Either ApiError (Array Refund.RefundTransaction))
   ! Has no caller. The sales history page lists sales, not refund rows.
   ~ no callers in scanned roots
-  ? no test references
 
 getRefund :: UUID -> Aff (Either ApiError Refund.RefundTransaction)
   ! GET /refund/<id>.
   ! Money fields are RefundMoney (zero or negative cents). Line quantities are RefundQuantity (zero or more).
   ~ no callers in scanned roots
-  ? no test references
 
 
 === BEGIN API/Register.purs ===
@@ -285,26 +282,24 @@ getRefund :: UUID -> Aff (Either ApiError Refund.RefundTransaction)
 %uses Types.Register
 %uses Types.UUID
 
+%untested getRegisters, getRegister, createRegister, openRegister, closeRegister
+
 getRegisters :: Aff (Either ApiError (Array Register))
   ! GET /register returns every register. Any signed-in user may call it.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 getRegister :: UUID -> Aff (Either ApiError Register)
   ! Refused 404 'Register not found' for an unknown id.
   ~ called by: Pages.CreateTransaction.load
-  ? no test references
 
 createRegister :: Register -> Aff (Either ApiError Register)
   ! POST /register with a whole Register record. Refused 403 without capCanManageRegisters.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 openRegister :: UUID -> OpenRegisterRequest -> Aff (Either ApiError Register)
   ! POST /register/open/<id> with the starting cash in cents. The opener is the session user.
   ! Refused 409 'Register is already open' for an open register.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 closeRegister
   :: UUID -> CloseRegisterRequest -> Aff (Either ApiError CloseRegisterResult)
@@ -312,7 +307,6 @@ closeRegister
   ! The result's variance is the expected drawer amount minus the counted cash. A positive variance means cash is missing.
   ! Refused 409 for a register that is already closed.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 %decision RegisterCallsHaveOneCallerEach
   what:    createRegister, openRegister and closeRegister are called only by Pages.Registers; getRegister only by Pages.CreateTransaction.load
@@ -335,6 +329,9 @@ closeRegister
 %uses Fetch.Yoga.Json
 %uses Foreign
 %uses Yoga.JSON
+
+%untested request, url, get, getAbsolute, post, postEmpty, postUnit, put
+%untested delete, deleteUnit
 
 type URL = String
 
@@ -366,7 +363,7 @@ isRefusal :: Int -> ApiError -> Boolean
 describe :: ApiError -> String
   ! A refusal shows the response body as the backend wrote it. A refusal with an empty body names the HTTP status instead.
   ! Used for every error message the screens show.
-  ~ called by: UI.Inventory.DeleteItem.deleteItem, UI.Remote.useRemote, Pages.Stock.Interface.page, Pages.CreateTransaction.load, Main.main, Pages.TransactionHistory.page, Pages.Login.page, Pages.Registers.page, UI.Transaction.CreateTransaction.saleScreen, Pages.CreateTransaction.begin, UI.Inventory.ItemForm.itemForm
+  ~ called by: UI.Inventory.DeleteItem.deleteItem, UI.Remote.useRemote, Pages.Stock.Interface.page, Pages.CreateTransaction.load, Main.main, Pages.TransactionHistory.page, Pages.Login.page, Pages.Registers.page, +3 more
   ? tested by: Test.Wire.spec
 
 request
@@ -377,20 +374,16 @@ request
   -> (Aff Foreign -> Aff a)
   -> Aff (Either ApiError a)
   ~ called by: API.Request.get, API.Request.getAbsolute, API.Request.post, API.Request.postEmpty, API.Request.postUnit, API.Request.put, API.Request.delete, API.Request.deleteUnit
-  ? no test references
 
 url :: URL -> String
   ~ called by: API.Request.get, API.Request.post, API.Request.postEmpty, API.Request.postUnit, API.Request.put, API.Request.delete, API.Request.deleteUnit
-  ? no test references
 
 get :: forall a. ReadForeign a => URL -> Aff (Either ApiError a)
-  ~ called by: API.Register.getRegisters, API.Refund.getAllRefunds, API.Sale.getAllSales, API.Manager.getActivity, API.Admin.getSnapshot, API.Refund.getRefund, API.Register.getRegister, API.Sale.getSale, API.Manager.getAlerts, API.Admin.getSessions, API.Stock.getQueue, API.Inventory.readInventory, API.Admin.getLogs, API.Admin.getTransactions, API.Admin.getRegisters, API.Auth.validateSession, API.Admin.getDomainEvents, API.Stock.getMessages
-  ? no test references
+  ~ called by: API.Register.getRegisters, API.Refund.getAllRefunds, API.Sale.getAllSales, API.Manager.getActivity, API.Admin.getSnapshot, API.Refund.getRefund, API.Register.getRegister, API.Sale.getSale, +10 more
 
 getAbsolute :: forall a. ReadForeign a => String -> Aff (Either ApiError a)
   ! Takes a full URL instead of a path under apiBaseUrl. Used for the configured inventory endpoint in HttpMode.
   ~ called by: API.Inventory.fetchInventoryFromHttp
-  ? no test references
 
 post
   :: forall req res
@@ -399,18 +392,15 @@ post
   => URL
   -> req
   -> Aff (Either ApiError res)
-  ~ called by: API.Inventory.writeInventory, GraphQL.API.Inventory.gqlPost, API.Manager.getDailyReport, API.Sale.voidSale, API.Register.createRegister, API.Stock.cancelPull, API.Manager.overrideVoid, API.Auth.login, API.Register.openRegister, API.Sale.refundSale, API.Register.closeRegister, API.Admin.performAction, API.Stock.reportIssue, API.SaleCommand.startSale, API.SaleCommand.addItem, API.Stock.sendMessage, API.SaleCommand.addPayment
-  ? no test references
+  ~ called by: API.Inventory.writeInventory, GraphQL.API.Inventory.gqlPost, API.Manager.getDailyReport, API.Sale.voidSale, API.Register.createRegister, API.Stock.cancelPull, API.Manager.overrideVoid, API.Auth.login, +9 more
 
 postEmpty :: forall a. ReadForeign a => URL -> Aff (Either ApiError a)
   ! POST with no request body and a decoded response. Used by clear, finalize and the stock pull actions.
   ~ called by: API.Stock.acceptPull, API.Stock.startPull, API.Stock.fulfillPull, API.Stock.retryPull, API.SaleCommand.clear, API.SaleCommand.finalize
-  ? no test references
 
 postUnit :: URL -> Aff (Either ApiError Unit)
   ! For routes that answer with no body (POST /auth/logout answers 204). The response body is not read.
   ~ called by: API.Auth.logout
-  ? no test references
 
 put
   :: forall req res
@@ -420,15 +410,12 @@ put
   -> req
   -> Aff (Either ApiError res)
   ~ called by: API.Inventory.updateInventory
-  ? no test references
 
 delete :: forall a. ReadForeign a => URL -> Aff (Either ApiError a)
   ~ called by: API.Inventory.deleteInventory, API.SaleCommand.removeItem, API.SaleCommand.removePayment
-  ? no test references
 
 deleteUnit :: URL -> Aff (Either ApiError Unit)
   ~ called by: API.Admin.revokeSession
-  ? no test references
 
 %decision OneStatusCheckingCore
   what:    Every request goes through one private function, request, which checks the HTTP status before decoding the body
@@ -465,27 +452,25 @@ deleteUnit :: URL -> Aff (Either ApiError Unit)
 %uses Types.Transaction.Sale as Sale
 %uses Types.UUID
 
+%untested getAllSales, getSale, voidSale, refundSale
+
 getAllSales :: Aff (Either ApiError (Array Sale.SaleTransaction))
   ! GET /sale returns every sale of every status. Refund rows are not included.
   ! Any signed-in user may call it.
   ~ called by: Pages.TransactionHistory.page
-  ? no test references
 
 getSale :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: UI.Transaction.CreateTransaction.saleScreen, Services.CurrentSale.resume
-  ? no test references
 
 voidSale :: UUID -> String -> Aff (Either ApiError Sale.SaleTransaction)
   ! POST /sale/void/<id> with the reason as a JSON string.
   ! Refused 403 without capCanVoidTransaction. Refused 409 for a sale already voided or refunded. The backend checks no ownership.
   ~ called by: Pages.TransactionHistory.page
-  ? no test references
 
 refundSale :: UUID -> String -> Aff (Either ApiError Refund.RefundTransaction)
   ! POST /sale/refund/<id> with the reason as a JSON string. The answer is the refund row.
   ! Refused 403 without capCanRefundTransaction. Refused 409 unless the sale is completed and not yet refunded.
   ~ called by: Pages.TransactionHistory.page
-  ? no test references
 
 %decision ReadsAndManagerOpsOnly
   what:    Only getAllSales, getSale, voidSale and refundSale are here; sale building is in API.SaleCommand
@@ -512,6 +497,8 @@ refundSale :: UUID -> String -> Aff (Either ApiError Refund.RefundTransaction)
 %uses Types.Transaction
 %uses Types.Transaction.Sale as Sale
 %uses Types.UUID
+
+%untested startSale, addItem, removeItem, addPayment, removePayment, clear, finalize
 
 type StartSaleRequest =
   { startSaleRegisterId :: UUID
@@ -542,31 +529,24 @@ type AddPaymentRequest =
 
 startSale :: StartSaleRequest -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.CurrentSale.start
-  ? no test references
 
 addItem :: AddItemRequest -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.SaleActions.addItem
-  ? no test references
 
 removeItem :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.SaleActions.removeItem
-  ? no test references
 
 addPayment :: AddPaymentRequest -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.SaleActions.addPayment
-  ? no test references
 
 removePayment :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.SaleActions.removePayment
-  ? no test references
 
 clear :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.SaleActions.clear
-  ? no test references
 
 finalize :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.SaleActions.finalize
-  ? no test references
 
 %decision MirrorsBackendRequestTypes
   what:    Request record field names match backend Types.Transaction.Request exactly; every command returns Sale.SaleTransaction
@@ -602,54 +582,46 @@ finalize :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
 %uses Types.Stock
 %uses Types.UUID
 
+%untested pullUrl, getQueue, cancelPull, acceptPull, startPull, fulfillPull, retryPull, reportIssue
+%untested getMessages, sendMessage, queueStreamUrl
+
 pullUrl :: UUID -> String -> String
   ~ called by: API.Stock.cancelPull, API.Stock.acceptPull, API.Stock.startPull, API.Stock.fulfillPull, API.Stock.retryPull, API.Stock.reportIssue, API.Stock.getMessages, API.Stock.sendMessage
-  ? no test references
 
 getQueue :: Maybe LocationId -> Aff (Either ApiError (Array PullRequest))
   ! Pages.Stock.Interface passes Just (LocationId dummyLocationId) so it sees only the configured location's queue. See Config.Entity.DummyIdsUsedInProductionCodePaths.
   ! With no locationId and no location on the user account the backend answers 400.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 cancelPull :: UUID -> String -> Aff (Either ApiError MutationResponse)
   ! POST with body {irNote: reason}; the backend records the reason as the cancellation note.
   ! Cancellation is terminal; the pull cannot be reopened, only a fresh pull request created.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 acceptPull :: UUID -> Aff (Either ApiError MutationResponse)
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 startPull :: UUID -> Aff (Either ApiError MutationResponse)
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 fulfillPull :: UUID -> Aff (Either ApiError MutationResponse)
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 retryPull :: UUID -> Aff (Either ApiError MutationResponse)
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 reportIssue :: UUID -> String -> Aff (Either ApiError MutationResponse)
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 getMessages :: UUID -> Aff (Either ApiError (Array PullMessage))
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 sendMessage :: UUID -> String -> Aff (Either ApiError MutationResponse)
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 queueStreamUrl :: String
   ! The stream URL with no credential in it. Utils.SSE opens it with credentials. The backend requires capCanFulfillOrders.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 %decision StockCallsUseTheSharedRequestCore
   what:    Every stock call goes through API.Request; the module's own fetch helpers are gone
@@ -664,30 +636,26 @@ queueStreamUrl :: String
 
 %uses Types.UUID
 
+%untested dummyAccountId, dummyPaymentId, dummyTransactionId, dummyEmployeeId, dummyRegisterId, dummyLocationId
+
 dummyAccountId :: UUID
   ~ no callers in scanned roots
-  ? no test references
 
 dummyPaymentId :: UUID
   ~ no callers in scanned roots
-  ? no test references
 
 dummyTransactionId :: UUID
   ~ no callers in scanned roots
-  ? no test references
 
 dummyEmployeeId :: UUID
   ~ no callers in scanned roots
-  ? no test references
 
 dummyRegisterId :: UUID
   ~ no callers in scanned roots
-  ? no test references
 
 dummyLocationId :: UUID
   ! The one configured location. Used by Pages.Registers (new registers), Pages.Stock.Interface (queue filter) and Pages.Manager.Panels.ReportsPanel (report request).
   ~ called by: Pages.Manager.Panels.ReportsPanel.reportsPanel, Pages.Stock.Interface.page, Pages.Registers.page
-  ? no test references
 
 %open_issue DummyIdsUsedInProductionCodePaths
   what:     dummyLocationId is a hardcoded UUID that every register, queue read and report request uses as the location; the other dummy ids have no user
@@ -705,6 +673,8 @@ dummyLocationId :: UUID
 %uses Data.Tuple
 %uses Data.Tuple.Nested
 %uses Config.Network
+
+%untested defaultConfig
 
 data QueryMode = JsonMode | HttpMode | GqlMode
 
@@ -751,7 +721,6 @@ type SortConfig =
 
 defaultConfig :: FetchConfig
   ~ called by: Config.LiveView.defaultViewConfig
-  ? no test references
 
 defaultViewConfig :: LiveViewConfig
   ! Default sort: Quantity descending, then Category ascending, then Species descending. Multi-field comparator from Types.Inventory.compareMenuItems.
@@ -771,6 +740,8 @@ defaultViewConfig :: LiveViewConfig
 %file /home/bismuth/git/cheeblr/frontend/src/Config/Network.purs
 %mod Config.Network
 
+%untested localConfig, networkConfig, currentConfig
+
 type EnvironmentConfig =
   { apiBaseUrl :: String
   , appOrigin :: String
@@ -780,17 +751,14 @@ type EnvironmentConfig =
 
 localConfig :: EnvironmentConfig
   ~ called by: Config.Network.currentConfig
-  ? no test references
 
 networkConfig :: EnvironmentConfig
   ~ no callers in scanned roots
-  ? no test references
 
 currentConfig :: EnvironmentConfig
   ! Always returns localConfig in the current source. Edit this binding to switch environments.
   ! Other modules import currentConfig and use it for apiBaseUrl and appOrigin (sent as the CORS Origin header).
   ~ called by: Config.LiveView.defaultConfig, Config.LiveView.defaultViewConfig, API.Manager.activityStreamUrl, Pages.Admin.Tabs.FeedMonitor.feedMonitor, API.Admin.logStreamUrl, API.Admin.eventStreamUrl, API.Stock.queueStreamUrl, API.Request.url
-  ? no test references
 
 %open_issue CurrentConfigIsHardcodedNoEnvSelection
   what:     currentConfig = localConfig is a hardcoded source-level binding; switching to networkConfig requires editing this file
@@ -818,33 +786,29 @@ currentConfig :: EnvironmentConfig
 %uses Types.Inventory
 %uses Yoga.JSON
 
+%untested gqlPost, inventoryQuery, readInventoryGql, writeInventoryGql, updateInventoryGql, deleteInventoryGql
+
 type GqlResponse a = { data :: a }
 
 gqlPost :: forall a. ReadForeign a => String -> Aff (Either ApiError a)
   ~ called by: GraphQL.API.Inventory.readInventoryGql, GraphQL.API.Inventory.writeInventoryGql, GraphQL.API.Inventory.updateInventoryGql, GraphQL.API.Inventory.deleteInventoryGql
-  ? no test references
 
 inventoryQuery :: String
   ! Hardcoded query string requesting every field on every menu item; no field selection or pagination.
   ! Fine because inventories are small; would need rework for thousands of items.
   ~ called by: GraphQL.API.Inventory.readInventoryGql
-  ? no test references
 
 readInventoryGql :: Aff (Either ApiError Inventory)
   ~ called by: Pages.LiveView.page, API.Inventory.fetchInventory
-  ? no test references
 
 writeInventoryGql :: MenuItem -> Aff (Either ApiError MutationResponse)
   ~ no callers in scanned roots
-  ? no test references
 
 updateInventoryGql :: MenuItem -> Aff (Either ApiError MutationResponse)
   ~ no callers in scanned roots
-  ? no test references
 
 deleteInventoryGql :: String -> Aff (Either ApiError MutationResponse)
   ~ no callers in scanned roots
-  ? no test references
 
 %decision GqlPostUsesTheSharedRequestCore
   what:    gqlPost is API.Request.post to /graphql/inventory with {query}, and returns the data field of the answer
@@ -903,13 +867,14 @@ deleteInventoryGql :: String -> Aff (Either ApiError MutationResponse)
 %uses Types.Session
 %uses Types.UUID
 
+%untested main
+
 main :: Effect Unit
   ! authPoll starts as SignedOut. setAuth writes the Ref and pushes the Poll.
   ! The auth push comes before the route push. Route.nav rebuilds on an auth change and its links learn the current route from the route push that follows.
   ! pageFor draws a fresh SKU for the Create route on every render of that route.
   ! The Login route while signed in shows the live view.
   ~ no callers in scanned roots
-  ? no test references
 
 %decision SessionDecidesWhatIsRendered
   what:    Every render reads the auth state first: signed out shows the login page whatever the route says; signed in shows the page for the route
@@ -946,11 +911,12 @@ main :: Effect Unit
 %uses FRP.Poll
 %uses Utils.SSE
 
+%untested sseStatus
+
 sseStatus :: Poll SSEStatus -> Nut
   ! Renders an SSEStatus poll as a span with a color-coded class and a label.
   ! Pure presentation; consumes only the status poll exposed by Utils.SSE.openSSE.
   ~ called by: Pages.Admin.Tabs.LogViewer.logViewer, Pages.Stock.Interface.page
-  ? no test references
 
 
 === BEGIN Pages/Admin/Dashboard.purs ===
@@ -976,11 +942,12 @@ sseStatus :: Poll SSEStatus -> Nut
 %uses UI.Remote
 %uses UI.Tabs
 
+%untested page
+
 page :: OnLeave -> Nut
   ! snapshot is a useRemote cell loaded by onMount and by the Refresh button; tabs come from UI.Tabs.tabBar
   ! Takes OnLeave and passes it to the log viewer and the feed monitor.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/Admin/State.purs ===
@@ -989,6 +956,8 @@ page :: OnLeave -> Nut
 %mod Pages.Admin.State
 
 %uses Prelude
+
+%untested allTabs
 
 data AdminTab
   = TabOverview
@@ -1007,7 +976,6 @@ instance showAdminTab :: Show AdminTab where
 
 allTabs :: Array AdminTab
   ~ called by: Pages.Admin.Dashboard.page
-  ? no test references
 
 %decision AdminTabOnly
   what:    This module now holds only AdminTab and allTabs; the snapshot state is Types.RemoteData
@@ -1042,13 +1010,13 @@ allTabs :: Array AdminTab
 %uses Utils.WebSocket
 %uses Yoga.JSON
 
+%untested maxFrames, formatPrice, feedMonitor, renderFrame
+
 maxFrames :: Int
   ~ called by: Pages.Admin.Tabs.FeedMonitor.feedMonitor
-  ? no test references
 
 formatPrice :: Int -> String
   ~ called by: Pages.Admin.Tabs.FeedMonitor.renderFrame
-  ? no test references
 
 feedMonitor :: OnLeave -> Nut
   ! intent: Subscribe to the public inventory feed via WebSocket, render frames as they arrive
@@ -1059,11 +1027,9 @@ feedMonitor :: OnLeave -> Nut
   ! Each connection's close action is registered with onLeave, so leaving the page closes the socket.
   ! Pressing Connect twice opens two sockets. Both are closed on leave.
   ~ called by: Pages.Feed.Monitor.page, Pages.Admin.Dashboard.page
-  ? no test references
 
 renderFrame :: FeedFrame -> Nut
   ~ called by: Pages.Admin.Tabs.FeedMonitor.feedMonitor
-  ? no test references
 
 %decision InMemoryFeedFrameRingBuffer
   what:    Feed frames are accumulated in component state up to maxFrames (100); older frames are dropped
@@ -1102,9 +1068,10 @@ renderFrame :: FeedFrame -> Nut
 %uses Utils.SSE
 %uses Yoga.JSON
 
+%untested maxLogEntries, logViewer, renderEntry
+
 maxLogEntries :: Int
   ~ called by: Pages.Admin.Tabs.LogViewer.logViewer
-  ? no test references
 
 logViewer :: OnLeave -> Nut
   ! Opens API.Admin.logStreamUrl through Utils.SSE; the session cookie is the credential.
@@ -1113,11 +1080,9 @@ logViewer :: OnLeave -> Nut
   ! The connection's close action is registered with onLeave.
   ! A message that does not decode is logged to the console and skipped.
   ~ called by: Pages.Admin.Dashboard.page
-  ? no test references
 
 renderEntry :: LogEvent -> Nut
   ~ called by: Pages.Admin.Tabs.LogViewer.logViewer
-  ? no test references
 
 %decision LogStreamUsesSSENotWebSocket
   what:    Logs stream over SSE (Server-Sent Events) rather than WebSocket
@@ -1141,17 +1106,16 @@ renderEntry :: LogEvent -> Nut
 %uses Types.RemoteData
 %uses UI.Remote
 
+%untested snapshotView, overview, statCard
+
 snapshotView :: RemoteView
   ~ called by: Pages.Admin.Tabs.Overview.overview
-  ? no test references
 
 overview :: Poll (RemoteData AdminSnapshot) -> Nut
   ~ called by: Pages.Admin.Dashboard.page
-  ? no test references
 
 statCard :: String -> String -> Nut
   ~ called by: Pages.Admin.Tabs.Overview.overview
-  ? no test references
 
 
 === BEGIN Pages/CreateItem.purs ===
@@ -1170,12 +1134,13 @@ statCard :: String -> String -> Nut
 %uses Types.UUID
 %uses UI.Inventory.ItemForm
 
+%untested page
+
 page :: String -> Nut
   ! Owns the SKU of the item being created, starting from the one Main passes in.
   ! After a successful create it shows the backend's message above the form and draws a new SKU, which rebuilds the form empty.
   ! A second item created from the same page therefore gets its own SKU.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/CreateTransaction.purs ===
@@ -1213,6 +1178,8 @@ page :: String -> Nut
 %uses UI.Remote
 %uses UI.Transaction.CreateTransaction as TransactionUI
 
+%untested load, begin, page
+
 data TxPageStatus
   = TxPageLoading
   | TxPageNeedsRegister String
@@ -1239,18 +1206,15 @@ load :: SessionResponse -> Aff TxPageStatus
   ! A failed register fetch other than 404 gives TxPageError with the backend's text.
   ! On an open register: a resumable sale gives TxPageReady, none gives TxPageNoSale, and a remembered sale that could not be read gives TxPageError 'Could not load the open sale: ...'.
   ~ called by: Pages.CreateTransaction.page
-  ? no test references
 
 begin :: RemoteData Inventory -> Register -> Aff TxPageStatus
   ! Calls Services.CurrentSale.startOn. Success gives TxPageReady with the inventory load already fetched; failure gives TxPageError 'Could not start a sale: ...'.
   ~ called by: Pages.CreateTransaction.page
-  ? no test references
 
 page :: SessionResponse -> Nut
   ! Holds the status in a useHot cell and runs load from onMount.
   ! Start Sale sets TxPageStarting before the request, so the button is gone while the request runs and cannot be pressed twice.
   ~ called by: Main.main
-  ? no test references
 
 %decision SalePageNeedsAChosenOpenRegister
   what:    load shows the sale screen only when this browser has a chosen register that the backend knows and that is open
@@ -1281,11 +1245,12 @@ page :: SessionResponse -> Nut
 %uses UI.Inventory.ItemForm
 %uses UI.Remote
 
+%untested page
+
 page :: String -> Nut
   ! Reads the whole inventory when mounted and shows UI.Inventory.DeleteItem.renderDeleteConfirmation for the item whose SKU is in the route.
   ! Uses findItem, itemView and resolveSku from Pages.EditItem.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/EditItem.purs ===
@@ -1307,29 +1272,26 @@ page :: String -> Nut
 %uses UI.Inventory.ItemForm
 %uses UI.Remote
 
+%untested testItemUUID, resolveSku, findItem, itemView, page
+
 testItemUUID :: String
   ~ called by: Pages.EditItem.resolveSku
-  ? no test references
 
 resolveSku :: String -> String
   ! The route segment 'test' stands for testItemUUID. Shared with Pages.DeleteItem.
   ~ called by: Pages.DeleteItem.page, Pages.EditItem.page
-  ? no test references
 
 findItem :: String -> Inventory -> Maybe MenuItem
   ! Compares the shown form of each item's SKU with the given text.
   ~ called by: Pages.DeleteItem.page, Pages.EditItem.page
-  ? no test references
 
 itemView :: RemoteView
   ~ called by: Pages.DeleteItem.page, Pages.EditItem.page
-  ? no test references
 
 page :: String -> Nut
   ! Reads the whole inventory through API.Inventory.readInventory when mounted and edits the item whose SKU is in the route.
   ! An unknown SKU and a failed fetch both use UI.Inventory.ItemForm.renderError, with different text.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/Feed/Monitor.purs ===
@@ -1341,11 +1303,12 @@ page :: String -> Nut
 %uses Pages.Admin.Tabs.FeedMonitor
 %uses UI.Leave
 
+%untested page
+
 page :: OnLeave -> Nut
   ! Wrapper around Pages.Admin.Tabs.FeedMonitor.feedMonitor, passing OnLeave through.
   ! Route.navLinks shows the Feed link to every signed-in user.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/LiveView.purs ===
@@ -1365,15 +1328,15 @@ page :: OnLeave -> Nut
 %uses UI.Inventory.MenuLiveView
 %uses UI.Remote
 
+%untested inventoryView, page
+
 inventoryView :: RemoteView
   ~ called by: Pages.LiveView.page
-  ? no test references
 
 page :: Nut
   ! Reads the inventory through GraphQL.API.Inventory.readInventoryGql when mounted and draws it with UI.Inventory.MenuLiveView.renderInventory.
   ! Takes no arguments. It has no live updates; a reload or a return to the route reads again.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/Login.purs ===
@@ -1402,6 +1365,8 @@ page :: Nut
 %uses UI.Form
 %uses UI.Form.Parser
 
+%untested loginStyle, anyPassword, credentialsForm, page
+
 type Credentials =
   { username :: String
   , password :: String
@@ -1409,15 +1374,12 @@ type Credentials =
 
 loginStyle :: Style
   ~ called by: Pages.Login.page
-  ? no test references
 
 anyPassword :: Parser String
   ~ called by: Pages.Login.credentialsForm
-  ? no test references
 
 credentialsForm :: Form Credentials
   ~ called by: Pages.Login.page
-  ? no test references
 
 page :: (SessionResponse -> Effect Unit) -> Nut
   ! built on UI.Form with loginStyle (hints hidden); Sign In is disabled until both fields are non-blank
@@ -1425,7 +1387,6 @@ page :: (SessionResponse -> Effect Unit) -> Nut
   ! On success hands the session the backend returned to onSignedIn. Main decides where to go next.
   ! A refusal shows 'Login failed: ' and the backend's text. A response that does not decode, such as an unknown role, is also an error here and the browser stays signed out.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/Manager/Dashboard.purs ===
@@ -1451,11 +1412,12 @@ page :: (SessionResponse -> Effect Unit) -> Nut
 %uses UI.Remote
 %uses UI.Tabs
 
+%untested page
+
 page :: Nut
   ! activity is a useRemote cell loaded by onMount and by the Refresh button; the Override tab is a placeholder
   ! Takes no arguments.
   ~ called by: Main.main
-  ? no test references
 
 
 === BEGIN Pages/Manager/Panels/ActivityFeed.purs ===
@@ -1474,13 +1436,13 @@ page :: Nut
 %uses Types.RemoteData
 %uses UI.Remote
 
+%untested activityFeed, renderTxSummary
+
 activityFeed :: Poll (RemoteData ActivitySummary) -> Nut
   ~ called by: Pages.Manager.Dashboard.page
-  ? no test references
 
 renderTxSummary :: TransactionSummary -> Nut
   ~ called by: Pages.Manager.Panels.ActivityFeed.activityFeed
-  ? no test references
 
 
 === BEGIN Pages/Manager/Panels/AlertsPanel.purs ===
@@ -1500,15 +1462,15 @@ renderTxSummary :: TransactionSummary -> Nut
 %uses UI.Remote
 %uses Utils.Formatting
 
+%untested alertsPanel, renderAlert
+
 alertsPanel :: Poll (RemoteData ActivitySummary) -> Nut
   ~ called by: Pages.Manager.Dashboard.page
-  ? no test references
 
 renderAlert :: ManagerAlert -> Nut
   ! Draws one Types.Manager.ManagerAlert by constructor: low stock with item name, quantity and threshold; stale sale with its id and seconds open; register variance with its id.
   ! Variance is expected minus counted. A positive figure is shown as short, a negative one as over.
   ~ called by: Pages.Manager.Panels.AlertsPanel.alertsPanel
-  ? no test references
 
 
 === BEGIN Pages/Manager/Panels/ReportsPanel.purs ===
@@ -1531,11 +1493,12 @@ renderAlert :: ManagerAlert -> Nut
 %uses UI.Remote
 %uses Utils.Formatting
 
+%untested reportsPanel
+
 reportsPanel :: Nut
   ! the report is a useRemote cell starting NotAsked; it is fetched only when Generate Report is pressed
   ! The request carries the current time and Config.Entity.dummyLocationId, because the backend decodes both fields.
   ~ called by: Pages.Manager.Dashboard.page
-  ? no test references
 
 %open_issue DailyReportFiguresAreNotReal
   what:     reportsPanel shows dailyReportCash, dailyReportCard and dailyReportOther as if they were takings by payment method; the backend does not compute them from payments
@@ -1560,13 +1523,13 @@ reportsPanel :: Nut
 %uses UI.Remote
 %uses Utils.Formatting
 
+%untested statsPanel, statRow
+
 statsPanel :: Poll (RemoteData ActivitySummary) -> Nut
   ~ called by: Pages.Manager.Dashboard.page
-  ? no test references
 
 statRow :: String -> String -> Nut
   ~ called by: Pages.Manager.Panels.StatsPanel.statsPanel
-  ? no test references
 
 
 === BEGIN Pages/Manager/State.purs ===
@@ -1575,6 +1538,8 @@ statRow :: String -> String -> Nut
 %mod Pages.Manager.State
 
 %uses Prelude
+
+%untested allManagerTabs
 
 data ManagerTab
   = TabActivity
@@ -1589,7 +1554,6 @@ instance showManagerTab :: Show ManagerTab where
 
 allManagerTabs :: Array ManagerTab
   ~ called by: Pages.Manager.Dashboard.page
-  ? no test references
 
 %decision ManagerTabOnly
   what:    This module now holds only ManagerTab and allManagerTabs; the activity state is Types.RemoteData
@@ -1633,23 +1597,21 @@ allManagerTabs :: Array ManagerTab
 %uses UI.Remote
 %uses Utils.Formatting
 
+%untested formStyle, nameForm, cashForm, describeVariance, page, submit
+
 formStyle :: Style
   ~ called by: Pages.Registers.page
-  ? no test references
 
 nameForm :: Form String
   ~ called by: Pages.Registers.page
-  ? no test references
 
 cashForm :: String -> Form Int
   ! One dollar-amount field parsed by UI.Form.Parser.cents.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 describeVariance :: Int -> String
   ! Variance is expected minus counted, in cents. Zero matches, positive is short, negative is over.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 page :: SessionResponse -> Nut
   ! The list comes from API.Register.getRegisters and is read again after every action, accepted or refused.
@@ -1657,7 +1619,6 @@ page :: SessionResponse -> Nut
   ! A user who cannot manage registers and finds none is told to ask a manager.
   ! Every register is created under Config.Entity.dummyLocationId.
   ~ called by: Main.main
-  ? no test references
 
 submit
   :: forall a
@@ -1668,7 +1629,6 @@ submit
   -> Nut
   ! Runs the action with the form's value only when the form is valid and no request is running.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 %decision RegistersAreManagedOnOnePage
   what:    Registers are created, opened, closed and chosen for this device here and nowhere else
@@ -1699,14 +1659,14 @@ submit
 %uses Types.Stock
 %uses Types.UUID
 
+%untested alertBanner, showPullNotification, requestNotificationPermission
+
 %foreign
 foreign import showPullNotification :: String -> String -> Effect Unit
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 foreign import requestNotificationPermission :: Effect Unit
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 alertBanner
   :: Poll (Maybe PullRequest)
@@ -1718,7 +1678,6 @@ alertBanner
   ! Uses foreign imports showPullNotification and requestNotificationPermission to integrate with the browser Notification API.
   ! If the user denies notification permission, the banner still works; only the OS-level notification is skipped.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 
 === BEGIN Pages/Stock/Components/MessageThread.purs ===
@@ -1743,6 +1702,8 @@ alertBanner
 %uses Web.Event.Event
 %uses Web.HTML.HTMLInputElement as Input
 
+%untested messageThread, renderMsg
+
 messageThread
   :: Poll (Array PullMessage)
   -> (String -> Effect Unit)
@@ -1751,11 +1712,9 @@ messageThread
   ! Send button is gated on non-empty draft; pressing Send clears the draft on success (whether or not the message actually delivered).
   ! Roles are styled via class names ('role-cashier', 'role-stocker', etc.); presentation only.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 renderMsg :: PullMessage -> Nut
   ~ called by: Pages.Stock.Components.MessageThread.messageThread
-  ? no test references
 
 
 === BEGIN Pages/Stock/Components/PullCard.purs ===
@@ -1773,6 +1732,8 @@ renderMsg :: PullMessage -> Nut
 %uses Types.Stock
 %uses Types.UUID
 
+%untested pullCard, actionBtnClass
+
 pullCard
   :: PullRequest
   -> (UUID -> PullAction -> Effect Unit)
@@ -1782,13 +1743,11 @@ pullCard
   ! Action buttons are computed from prStatus via Types.Stock.validActions; an unrecognized status produces zero buttons (see Types.Stock.PullVertexAndStringStatusInParallel).
   ! Messages button is always rendered regardless of status; selecting it opens the MessageThread for this pull.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 actionBtnClass :: PullAction -> String
   ! Maps PullAction to a button-style class (success/danger/warning/primary).
   ! Used for visual distinction of destructive (Cancel) vs constructive (Fulfill) vs ambiguous (Report Issue) actions.
   ~ called by: Pages.Stock.Components.PullCard.pullCard
-  ? no test references
 
 
 === BEGIN Pages/Stock/Interface.purs ===
@@ -1829,18 +1788,18 @@ actionBtnClass :: PullAction -> String
 %uses Config.Entity
 %uses Types.Location
 
+%untested useRef, page
+
 useRef :: forall a. a -> (Ref.Ref a -> Nut) -> Nut
   ! unsafePerformEffect-based Ref creation; safe because Ref.new is idempotent and the Ref is captured in the continuation's closure.
   ! Workaround for not having a useRef hook in Deku; revisit if Deku adds one.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 page :: OnLeave -> Nut
   ! Loads the queue and opens the stream from UI.Remote.onMount.
   ! The stream is API.Stock.queueStreamUrl with the session cookie as the credential. Its close action is registered with onLeave.
   ! Request errors are shown in the status bar with the backend's text.
   ~ called by: Main.main
-  ? no test references
 
 %decision SSEPushTriggersFullQueueReload
   what:    The SSE stream from /stock/queue/stream is used purely as a 'queue changed' notification; the handler ignores the event payload and calls loadQueue to refetch
@@ -1894,20 +1853,19 @@ page :: OnLeave -> Nut
 %uses Utils.Formatting
 %uses Utils.Money
 
+%untested reasonStyle, reasonForm, page
+
 reasonStyle :: Style
   ~ called by: Pages.TransactionHistory.page
-  ? no test references
 
 reasonForm :: Form String
   ~ called by: Pages.TransactionHistory.page
-  ? no test references
 
 page :: SessionResponse -> Nut
   ! Lists every sale from API.Sale.getAllSales, newest first, with time (UTC), status, line count, total and id.
   ! One request runs at a time; buttons are disabled while busy and until a reason is typed.
   ! Uses formatStatus and statusClass from UI.Transaction.CreateTransaction.
   ~ called by: Main.main
-  ? no test references
 
 %decision VoidAndRefundFollowTheBackendRules
   what:    Void is offered with capCanVoidTransaction on a sale UI.Transaction.Model.voidable accepts; refund with capCanRefundTransaction on a sale refundable accepts
@@ -1942,6 +1900,8 @@ page :: SessionResponse -> Nut
 %uses Routing.Duplex.Generic.Syntax
 %uses Services.AuthService
 %uses Types.Auth
+
+%untested route, navLinks, nav, navItem
 
 data Route
   = Login
@@ -1980,11 +1940,9 @@ route :: RouteDuplex' Route
   ! RouteDuplex' definition: bidirectional parser/printer between Route and URL hash strings.
   ! Registers is /#/register. Edit and Delete take a (string segment) parameter; Pages.EditItem.resolveSku special-cases the slug 'test'.
   ~ called by: Main.main
-  ? no test references
 
 navLinks :: Array NavLink
   ~ called by: Route.visibleLinks
-  ? no test references
 
 visibleLinks :: UserCapabilities -> Array NavLink
   ! Pure, and covered by test/Auth.purs for each role.
@@ -1994,11 +1952,9 @@ visibleLinks :: UserCapabilities -> Array NavLink
 nav :: Poll Route -> Poll AuthState -> Effect Unit -> Nut
   ! Rebuilds on every auth change. Logout calls the signOut action Main passes in.
   ~ called by: Main.main
-  ? no test references
 
 navItem :: Route -> String -> String -> Poll Route -> Nut
   ~ called by: Route.nav
-  ? no test references
 
 %decision NavLinksAreShownByCapability
   what:    navLinks pairs each link with the capability check the backend applies to that area; visibleLinks filters by the session's capabilities
@@ -2072,27 +2028,24 @@ can :: (UserCapabilities -> Boolean) -> AuthState -> Boolean
 %uses Web.HTML.Window
 %uses Web.Storage.Storage
 
+%untested saleKey, remembered, remember, forget, start, resume, startOn, startNext
+
 saleKey :: UUID -> String
   ~ called by: Services.CurrentSale.remembered, Services.CurrentSale.remember, Services.CurrentSale.forget
-  ? no test references
 
 remembered :: UUID -> Effect (Maybe UUID)
   ~ called by: Services.CurrentSale.resume
-  ? no test references
 
 remember :: UUID -> UUID -> Effect Unit
   ~ called by: Services.CurrentSale.start
-  ? no test references
 
 forget :: UUID -> Effect Unit
   ~ called by: Services.CurrentSale.resume
-  ? no test references
 
 start
   :: { registerId :: UUID, locationId :: UUID }
   -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: Services.CurrentSale.startOn, Services.CurrentSale.startNext
-  ? no test references
 
 resume
   :: SessionResponse
@@ -2104,19 +2057,16 @@ resume
   ! Any other failure to read the remembered sale gives Left and keeps the remembered id, because the sale may still be open.
   ! Another user on the same browser has a different key and never reads the first user's sale.
   ~ called by: Pages.CreateTransaction.load
-  ? no test references
 
 startOn :: Register -> Aff (Either ApiError Sale.SaleTransaction)
   ! Starts a sale on the given register and its location and remembers it. The backend records the session user as the opener.
   ~ called by: Pages.CreateTransaction.begin
-  ? no test references
 
 startNext
   :: Sale.SaleTransaction
   -> Aff (Either ApiError Sale.SaleTransaction)
   ! Starts a sale on the register and location of the given sale and remembers it. The backend records the session user as the opener.
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 %decision OpenSaleIsRememberedPerUser
   what:    The id of the sale a user is working on is kept in localStorage under 'current_sale_id:<user id>'
@@ -2154,24 +2104,22 @@ startNext
 %uses Web.HTML.Window
 %uses Web.Storage.Storage
 
+%untested registerKey, chosenRegisterId, chooseRegister, newRegister
+
 registerKey :: String
   ~ called by: Services.RegisterService.chosenRegisterId, Services.RegisterService.chooseRegister
-  ? no test references
 
 chosenRegisterId :: Effect (Maybe UUID)
   ! Nothing when the key is absent or does not parse as a UUID.
   ! Does not check that the register is known to the backend; Pages.CreateTransaction.load does.
   ~ called by: Pages.CreateTransaction.load, Pages.Registers.page
-  ? no test references
 
 chooseRegister :: UUID -> Effect Unit
   ~ called by: Pages.Registers.page
-  ? no test references
 
 newRegister :: String -> UUID -> Effect Register
   ! Builds a closed register with a fresh id and zero drawer amounts for API.Register.createRegister. Makes no request.
   ~ called by: Pages.Registers.page
-  ? no test references
 
 %decision RegisterIdInLocalStorage
   what:    The id of the register this browser sells on is kept in localStorage under the key 'register_id'
@@ -2194,6 +2142,8 @@ newRegister :: String -> UUID -> Effect Register
 %uses Types.Transaction.Sale as Sale
 %uses Types.UUID
 
+%untested addItem, removeItem, addPayment, removePayment, clear, finalize
+
 type PaymentInput =
   { method :: PaymentMethod
   , amount :: Int
@@ -2210,30 +2160,24 @@ addItem
   -> Aff (Either ApiError Sale.SaleTransaction)
   ! Sends the sale id, the SKU and the quantity. The backend prices the line.
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 removeItem :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 addPayment
   :: UUID
   -> PaymentInput
   -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 removePayment :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 clear :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 finalize :: UUID -> Aff (Either ApiError Sale.SaleTransaction)
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 %decision ServerIsTheOnlyPricer
   what:    Every action sends ids and quantities only and replaces the sale on screen with the SaleTransaction the backend returns
@@ -2391,6 +2335,8 @@ instance WriteForeign AdminAction where
 %uses Types.UUID
 %uses Yoga.JSON
 
+%untested customerCapabilities, cashierCapabilities, managerCapabilities, adminCapabilities, hasCapability
+
 data UserRole
   = Customer
   | Cashier
@@ -2454,19 +2400,15 @@ emptyCapabilities :: UserCapabilities
 
 customerCapabilities :: UserCapabilities
   ~ called by: Types.Auth.capabilitiesForRole
-  ? no test references
 
 cashierCapabilities :: UserCapabilities
   ~ called by: Types.Auth.capabilitiesForRole
-  ? no test references
 
 managerCapabilities :: UserCapabilities
   ~ called by: Types.Auth.capabilitiesForRole
-  ? no test references
 
 adminCapabilities :: UserCapabilities
   ~ called by: Types.Auth.capabilitiesForRole
-  ? no test references
 
 capabilitiesForRole :: UserRole -> UserCapabilities
   ! Total function over UserRole; no Maybe or Either needed.
@@ -2476,7 +2418,6 @@ capabilitiesForRole :: UserRole -> UserCapabilities
 
 hasCapability :: (UserCapabilities -> Boolean) -> UserCapabilities -> Boolean
   ~ no callers in scanned roots
-  ? no test references
 
 %decision FourRoleHierarchyWithMonotonicCapabilities
   what:    UserRole has a strict ordering Customer < Cashier < Manager < Admin; each higher role's capabilities are a strict superset of the next-lower role's
@@ -2569,6 +2510,8 @@ type FeedStatus =
 %uses Types.UUID
 %uses Utils.Formatting
 %uses Yoga.JSON
+
+%untested isWholeNumber, isInt, toClassName
 
 type MutationResponse =
   { success :: Boolean
@@ -2697,11 +2640,9 @@ instance showStrainLineage :: Show StrainLineage where
 
 isWholeNumber :: Number -> Boolean
   ~ no callers in scanned roots
-  ? no test references
 
 isInt :: Number -> Boolean
   ~ no callers in scanned roots
-  ? no test references
 
 getItemName :: MenuItem -> String
   ~ no callers in scanned roots
@@ -2729,7 +2670,6 @@ generateClassName
 
 toClassName :: String -> String
   ~ called by: Types.Inventory.generateClassName
-  ? no test references
 
 compareMenuItems :: LiveViewConfig -> MenuItem -> MenuItem -> Ordering
   ! Multi-field comparison driven by LiveViewConfig.sortFields; first non-EQ result wins.
@@ -2887,6 +2827,10 @@ type DailyReportResult =
 %uses Foreign
 %uses Yoga.JSON
 
+%untested mkSaleMoney, saleMoneyDiscrete, zeroSale, addSale, subtractSale, scaleSale, sumSale, mkRefundMoney
+%untested unsafeMkRefundMoney, refundMoneyDiscrete, zeroRefund, addRefund, scaleRefund, sumRefund, negateToRefund, negateFromRefund
+%untested discreteToSaleMoney
+
 newtype SaleMoney = SaleMoney (Discrete USD)
 
 derive instance newtypeSaleMoney :: Newtype SaleMoney _
@@ -2917,7 +2861,6 @@ instance readForeignRefundMoney :: ReadForeign RefundMoney where
 
 mkSaleMoney :: Int -> Maybe SaleMoney
   ~ called by: Types.Primitives.Money.subtractSale, Types.Primitives.Money.scaleSale, Types.Primitives.Money.discreteToSaleMoney
-  ? no test references
 
 unsafeMkSaleMoney :: Int -> SaleMoney
   ! Skips the >= 0 check; caller must guarantee non-negativity.
@@ -2927,7 +2870,6 @@ unsafeMkSaleMoney :: Int -> SaleMoney
 
 saleMoneyDiscrete :: SaleMoney -> Discrete USD
   ~ called by: UI.Transaction.CartView.money, UI.Transaction.ActionBar.actionBar, Pages.TransactionHistory.page, UI.Transaction.PaymentPanel.paymentPanel
-  ? no test references
 
 saleMoneyCents :: SaleMoney -> Int
   ~ called by: UI.Transaction.Model.totals, UI.Transaction.Model.paidCents, UI.Transaction.Model.remainingCents
@@ -2935,37 +2877,29 @@ saleMoneyCents :: SaleMoney -> Int
 
 zeroSale :: SaleMoney
   ~ called by: Types.Primitives.Money.sumSale
-  ? no test references
 
 addSale :: SaleMoney -> SaleMoney -> SaleMoney
   ~ called by: Types.Primitives.Money.sumSale
-  ? no test references
 
 subtractSale :: SaleMoney -> SaleMoney -> Maybe SaleMoney
   ! Returns Maybe SaleMoney; subtracting a larger amount yields Nothing (would violate the non-negative invariant).
   ! Use case: discount application can't reduce a price below zero.
   ~ no callers in scanned roots
-  ? no test references
 
 scaleSale :: SaleMoney -> Int -> Maybe SaleMoney
   ~ no callers in scanned roots
-  ? no test references
 
 sumSale :: forall f. Foldable f => f SaleMoney -> SaleMoney
   ~ no callers in scanned roots
-  ? no test references
 
 mkRefundMoney :: Int -> Maybe RefundMoney
   ~ called by: Types.Primitives.Money.scaleRefund
-  ? no test references
 
 unsafeMkRefundMoney :: Int -> RefundMoney
   ~ no callers in scanned roots
-  ? no test references
 
 refundMoneyDiscrete :: RefundMoney -> Discrete USD
   ~ no callers in scanned roots
-  ? no test references
 
 refundMoneyCents :: RefundMoney -> Int
   ~ no callers in scanned roots
@@ -2973,34 +2907,27 @@ refundMoneyCents :: RefundMoney -> Int
 
 zeroRefund :: RefundMoney
   ~ called by: Types.Primitives.Money.sumRefund
-  ? no test references
 
 addRefund :: RefundMoney -> RefundMoney -> RefundMoney
   ~ called by: Types.Primitives.Money.sumRefund
-  ? no test references
 
 scaleRefund :: RefundMoney -> Int -> Maybe RefundMoney
   ~ no callers in scanned roots
-  ? no test references
 
 sumRefund :: forall f. Foldable f => f RefundMoney -> RefundMoney
   ~ no callers in scanned roots
-  ? no test references
 
 negateToRefund :: SaleMoney -> RefundMoney
   ! Converts SaleMoney -> RefundMoney by negating the cents.
   ! If applied to SaleMoney 0, returns RefundMoney 0 (which is valid in both sign domains).
   ! Inverse: negateFromRefund.
   ~ no callers in scanned roots
-  ? no test references
 
 negateFromRefund :: RefundMoney -> SaleMoney
   ~ no callers in scanned roots
-  ? no test references
 
 discreteToSaleMoney :: Discrete USD -> Maybe SaleMoney
   ~ no callers in scanned roots
-  ? no test references
 
 %decision SaleMoneyNonNegativeRefundMoneyNonPositive
   what:    SaleMoney is a smart-constructor newtype requiring cents >= 0; RefundMoney requires cents <= 0
@@ -3019,6 +2946,9 @@ discreteToSaleMoney :: Discrete USD -> Maybe SaleMoney
 %uses Data.Newtype
 %uses Foreign
 %uses Yoga.JSON
+
+%untested mkSaleQuantity, zeroSaleQuantity, oneSaleQuantity, addSaleQuantity, subtractSaleQuantity, sumSaleQuantity, mkRefundQuantity, unsafeMkRefundQuantity
+%untested zeroRefundQuantity, addRefundQuantity, subtractRefundQuantity, sumRefundQuantity, toRefundQuantity, toSaleQuantity
 
 newtype SaleQuantity = SaleQuantity Int
 
@@ -3050,7 +2980,6 @@ instance readForeignRefundQuantity :: ReadForeign RefundQuantity where
 
 mkSaleQuantity :: Int -> Maybe SaleQuantity
   ~ called by: Types.Primitives.Quantity.subtractSaleQuantity
-  ? no test references
 
 unsafeMkSaleQuantity :: Int -> SaleQuantity
   ~ no callers in scanned roots
@@ -3062,34 +2991,27 @@ saleQuantityCount :: SaleQuantity -> Int
 
 zeroSaleQuantity :: SaleQuantity
   ~ called by: Types.Primitives.Quantity.sumSaleQuantity
-  ? no test references
 
 oneSaleQuantity :: SaleQuantity
   ! Defined as SaleQuantity 1 for ergonomic comparison; the most common single-unit cart addition value.
   ~ no callers in scanned roots
-  ? no test references
 
 addSaleQuantity :: SaleQuantity -> SaleQuantity -> SaleQuantity
   ~ called by: Types.Primitives.Quantity.sumSaleQuantity
-  ? no test references
 
 subtractSaleQuantity :: SaleQuantity -> SaleQuantity -> Maybe SaleQuantity
   ! Returns Maybe SaleQuantity; subtracting more than available yields Nothing.
   ! Use case: removing items from a cart line cannot reduce qty below zero.
   ~ no callers in scanned roots
-  ? no test references
 
 sumSaleQuantity :: forall f. Foldable f => f SaleQuantity -> SaleQuantity
   ~ no callers in scanned roots
-  ? no test references
 
 mkRefundQuantity :: Int -> Maybe RefundQuantity
   ~ called by: Types.Primitives.Quantity.subtractRefundQuantity
-  ? no test references
 
 unsafeMkRefundQuantity :: Int -> RefundQuantity
   ~ no callers in scanned roots
-  ? no test references
 
 refundQuantityCount :: RefundQuantity -> Int
   ~ no callers in scanned roots
@@ -3097,28 +3019,22 @@ refundQuantityCount :: RefundQuantity -> Int
 
 zeroRefundQuantity :: RefundQuantity
   ~ called by: Types.Primitives.Quantity.sumRefundQuantity
-  ? no test references
 
 addRefundQuantity :: RefundQuantity -> RefundQuantity -> RefundQuantity
   ~ called by: Types.Primitives.Quantity.sumRefundQuantity
-  ? no test references
 
 subtractRefundQuantity
   :: RefundQuantity -> RefundQuantity -> Maybe RefundQuantity
   ~ no callers in scanned roots
-  ? no test references
 
 sumRefundQuantity :: forall f. Foldable f => f RefundQuantity -> RefundQuantity
   ~ no callers in scanned roots
-  ? no test references
 
 toRefundQuantity :: SaleQuantity -> RefundQuantity
   ~ no callers in scanned roots
-  ? no test references
 
 toSaleQuantity :: RefundQuantity -> SaleQuantity
   ~ no callers in scanned roots
-  ? no test references
 
 %decision RefundQuantityIsNotNegated
   what:    SaleQuantity and RefundQuantity both require a count of zero or more; only refund money is negative
@@ -3197,6 +3113,8 @@ type CloseRegisterResult =
 %uses Prelude
 %uses Data.Either
 
+%untested fromEither
+
 data RemoteData a
   = NotAsked
   | Loading
@@ -3209,7 +3127,6 @@ derive instance Functor RemoteData
 
 fromEither :: forall a. Either String a -> RemoteData a
   ~ no callers in scanned roots
-  ? no test references
 
 %decision OneRemoteDataType
   what:    RemoteData a = NotAsked | Loading | Failure String | Success a replaces the per-page SnapshotStatus, ActivityStatus and ReportStatus ADTs
@@ -3520,6 +3437,8 @@ type SaleTransaction =
 %uses Types.UUID
 %uses Yoga.JSON
 
+%untested maybeToNullable
+
 data TransactionStatus
   = Created
   | InProgress
@@ -3812,7 +3731,6 @@ maybeToNullable :: forall a. Maybe a -> Nullable a
   ! Wrapper around Data.Nullable.toNullable; named for use-site clarity in the WriteForeign instances that need to emit JSON null for Nothing fields.
   ! Used pervasively in writeForeignTransaction and writeForeignPaymentTransaction to convert Maybe fields to Nullable before serialization.
   ~ no callers in scanned roots
-  ? no test references
 
 %decision DualCaseFormatForReadForeignInstances
   what:    ReadForeign instances accept BOTH PascalCase and SCREAMING_SNAKE_CASE; WriteForeign emits only PascalCase; Show emits SCREAMING_SNAKE_CASE
@@ -3853,6 +3771,8 @@ maybeToNullable :: forall a. Maybe a -> Nullable a
 %uses Yoga.JSON
 %uses Data.Validation.Semigroup
 
+%untested randomInt, padStart
+
 newtype UUID = UUID String
 
 derive instance genericUUID :: Generic UUID _
@@ -3871,11 +3791,9 @@ instance readForeignUUID :: ReadForeign UUID where
 
 randomInt :: Int -> Int -> Effect Int
   ~ called by: Types.UUID.genUUID
-  ? no test references
 
 padStart :: Int -> String -> String
   ~ called by: Types.UUID.genUUID
-  ? no test references
 
 uuidToString :: UUID -> String
   ~ no callers in scanned roots
@@ -3929,95 +3847,77 @@ validateUUID :: String -> String -> V (Array String) UUID
 %uses FRP.Poll
 %uses Types.Auth
 
+%untested whenCapable, whenCanViewInventory, whenCanCreateItem, whenCanEditItem, whenCanDeleteItem, whenCanProcessTransaction, whenCanVoidTransaction, whenCanRefundTransaction
+%untested whenCanApplyDiscount, whenCanManageRegisters, whenCanOpenRegister, whenCanCloseRegister, whenCanViewReports, whenCanViewAllLocations, whenCanManageUsers, whenCanViewCompliance
+%untested whenRoleAtLeast, whenCashierOrAbove, whenManagerOrAbove, whenAdmin, withFallback, disabledUnless
+
 whenCapable :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut
-  ~ called by: UI.Components.AuthGuard.whenCanViewInventory, UI.Components.AuthGuard.whenCanCreateItem, UI.Components.AuthGuard.whenCanEditItem, UI.Components.AuthGuard.whenCanDeleteItem, UI.Components.AuthGuard.whenCanProcessTransaction, UI.Components.AuthGuard.whenCanVoidTransaction, UI.Components.AuthGuard.whenCanRefundTransaction, UI.Components.AuthGuard.whenCanApplyDiscount, UI.Components.AuthGuard.whenCanManageRegisters, UI.Components.AuthGuard.whenCanOpenRegister, UI.Components.AuthGuard.whenCanCloseRegister, UI.Components.AuthGuard.whenCanViewReports, UI.Components.AuthGuard.whenCanViewAllLocations, UI.Components.AuthGuard.whenCanManageUsers, UI.Components.AuthGuard.whenCanViewCompliance
-  ? no test references
+  ~ called by: UI.Components.AuthGuard.whenCanViewInventory, UI.Components.AuthGuard.whenCanCreateItem, UI.Components.AuthGuard.whenCanEditItem, UI.Components.AuthGuard.whenCanDeleteItem, UI.Components.AuthGuard.whenCanProcessTransaction, UI.Components.AuthGuard.whenCanVoidTransaction, UI.Components.AuthGuard.whenCanRefundTransaction, UI.Components.AuthGuard.whenCanApplyDiscount, +7 more
 
 whenCanViewInventory :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanCreateItem :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanEditItem :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanDeleteItem :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanProcessTransaction :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanVoidTransaction :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanRefundTransaction :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanApplyDiscount :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanManageRegisters :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanOpenRegister :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanCloseRegister :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanViewReports :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanViewAllLocations :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanManageUsers :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenCanViewCompliance :: Poll UserCapabilities -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenRoleAtLeast :: Poll UserRole -> UserRole -> Nut -> Nut
   ! Compares the user's role to a minimum via the Ord instance; relies on Types.Auth.FourRoleHierarchyWithMonotonicCapabilities.
   ! Cleanest gate for 'manager or higher' checks; the per-capability gates are more granular but require knowing the right cap name.
   ~ called by: UI.Components.AuthGuard.whenCashierOrAbove, UI.Components.AuthGuard.whenManagerOrAbove, UI.Components.AuthGuard.whenAdmin
-  ? no test references
 
 whenCashierOrAbove :: Poll UserRole -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenManagerOrAbove :: Poll UserRole -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 whenAdmin :: Poll UserRole -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 withFallback :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 disabledUnless :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut -> Nut
   ~ no callers in scanned roots
-  ? no test references
 
 %decision WhenCapableUsesGuardForReactiveGating
   what:    whenCapable wraps children in Deku.Hooks.guard so the children are only mounted (not just hidden) when the capability is true
@@ -4052,15 +3952,16 @@ disabledUnless :: Poll UserCapabilities -> (UserCapabilities -> Boolean) -> Nut 
 %uses Data.Number as Number
 %uses Types.UUID
 
+%untested anyText, trimmed, alphanumericRe, extendedAlphanumericRe, extendedAlphanumeric, centsRe, percentageRe, measurementUnits
+%untested urlRe
+
 type Parser a = String -> Either String a
 
 anyText :: Parser String
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 trimmed :: Parser String
   ~ no callers in scanned roots
-  ? no test references
 
 required :: Parser String
   ! trims; Left "Required" when blank
@@ -4074,7 +3975,6 @@ optional :: forall a. Parser a -> Parser (Maybe a)
 
 alphanumericRe :: Regex
   ~ called by: UI.Form.Parser.alphanumeric
-  ? no test references
 
 alphanumeric :: Parser String
   ~ called by: UI.Inventory.ItemForm.menuItemForm
@@ -4082,11 +3982,9 @@ alphanumeric :: Parser String
 
 extendedAlphanumericRe :: Regex
   ~ called by: UI.Form.Parser.extendedAlphanumeric
-  ? no test references
 
 extendedAlphanumeric :: Parser String
   ~ no callers in scanned roots
-  ? no test references
 
 maxLen :: Int -> Parser String
   ~ no callers in scanned roots
@@ -4102,7 +4000,6 @@ positiveInt :: Parser Int
 
 centsRe :: Regex
   ~ called by: UI.Form.Parser.cents
-  ? no test references
 
 cents :: Parser Int
   ! digit arithmetic only: "19.99" -> 1999. The old path floored a float and produced 1998.
@@ -4112,7 +4009,6 @@ cents :: Parser Int
 
 percentageRe :: Regex
   ~ called by: UI.Form.Parser.percentage
-  ? no test references
 
 percentage :: Parser String
   ! requires the trailing % and returns the string unchanged, because StrainLineage stores thc/cbg as text with the sign
@@ -4121,7 +4017,6 @@ percentage :: Parser String
 
 measurementUnits :: Array String
   ~ called by: UI.Form.Parser.measurementUnit
-  ? no test references
 
 measurementUnit :: Parser String
   ~ called by: UI.Inventory.ItemForm.menuItemForm
@@ -4129,7 +4024,6 @@ measurementUnit :: Parser String
 
 urlRe :: Regex
   ~ called by: UI.Form.Parser.url
-  ? no test references
 
 url :: Parser String
   ~ called by: UI.Inventory.ItemForm.menuItemForm
@@ -4181,6 +4075,10 @@ commaList :: Parser (Array String)
 %uses Web.HTML.HTMLSelectElement as Select
 %uses Web.HTML.HTMLTextAreaElement as TextArea
 
+%untested defaultStyle, runForm, runFormWith, withStyle, isValid, toV, row, inputField
+%untested text, textAutofocus, password, textArea, readOnly, select, choice, section
+%untested visibleWhen, dependent
+
 type Built a =
   { view :: Array Nut
   , result :: Poll (V.V (Array String) a)
@@ -4223,29 +4121,23 @@ type TextSpec =
 
 defaultStyle :: Style
   ~ called by: Pages.Login.loginStyle, UI.Transaction.PaymentPanel.paymentStyle, Pages.TransactionHistory.reasonStyle, Pages.Registers.formStyle, UI.Form.runForm
-  ? no test references
 
 runForm :: forall a. Form a -> (Built a -> Nut) -> Nut
   ~ called by: UI.Inventory.ItemForm.itemForm
-  ? no test references
 
 runFormWith :: forall a. Style -> Form a -> (Built a -> Nut) -> Nut
   ~ called by: Pages.TransactionHistory.page, Pages.Login.page, Pages.Registers.page, UI.Transaction.CreateTransaction.saleScreen, UI.Form.runForm
-  ? no test references
 
 withStyle :: forall a. Style -> Form a -> Form a
   ~ no callers in scanned roots
-  ? no test references
 
 isValid :: forall a. Built a -> Poll Boolean
   ! maps Data.Validation.Semigroup.isValid over Built.result; ItemForm and Login use it to style and disable their submit buttons
   ! a sub-form hidden by visibleWhen yields Nothing and never makes it false
   ~ called by: Pages.Login.page, UI.Inventory.ItemForm.itemForm
-  ? no test references
 
 toV :: forall a. String -> Either String a -> V.V (Array String) a
   ~ called by: UI.Form.inputField, UI.Form.textArea, UI.Form.readOnly, UI.Form.select
-  ? no test references
 
 row
   :: forall a
@@ -4256,35 +4148,28 @@ row
   -> Poll (Either String a)
   -> Nut
   ~ called by: UI.Form.inputField, UI.Form.textArea, UI.Form.readOnly, UI.Form.select
-  ? no test references
 
 inputField :: forall a. Boolean -> String -> TextSpec -> Parser a -> Form a
   ! stores untrimmed text; parsers trim. Trimming on every keystroke would eat the space while typing a multi-word value.
   ~ called by: UI.Form.text, UI.Form.textAutofocus, UI.Form.password
-  ? no test references
 
 text :: forall a. TextSpec -> Parser a -> Form a
   ~ called by: Pages.TransactionHistory.reasonForm, Pages.Registers.nameForm, Pages.Registers.cashForm, UI.Transaction.PaymentPanel.paymentForm, UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 textAutofocus :: forall a. TextSpec -> Parser a -> Form a
   ~ called by: Pages.Login.credentialsForm
-  ? no test references
 
 password :: forall a. TextSpec -> Parser a -> Form a
   ~ called by: Pages.Login.credentialsForm
-  ? no test references
 
 textArea :: forall a. TextSpec -> Parser a -> Form a
   ! Deku's textarea row has no value attribute, so the binding uses attributeAtYourOwnRisk "value"
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 readOnly :: forall a. { label :: String, value :: String } -> Parser a -> Form a
   ! allocates no useHot cell: result is pure (toV label (parse value)) and reset is pure unit
   ! renders a disabled input with " bg-gray-100" appended to Style.input; ItemForm uses it for the SKU with Parser.uuid
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 select
   :: forall a
@@ -4297,7 +4182,6 @@ select
   -> Form a
   ! option values are BoundedEnum indices, not Show strings; the prompt option has value "" and parses to Left
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 choice
   :: forall a
@@ -4310,15 +4194,12 @@ choice
   -> Form a
   ! button group over an explicit list for types that are not BoundedEnum (PaymentMethod has Other String); always valid; ignores Style and takes its classes from the spec
   ~ called by: UI.Transaction.PaymentPanel.paymentForm
-  ? no test references
 
 section :: forall a. String -> Form a -> Form a
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 visibleWhen :: forall a. Poll Boolean -> Form a -> Form (Maybe a)
   ~ called by: UI.Transaction.PaymentPanel.paymentForm
-  ? no test references
 
 dependent
   :: forall k a
@@ -4326,7 +4207,6 @@ dependent
   -> (Poll (Maybe k) -> Form a)
   -> Form (Tuple k a)
   ~ called by: UI.Transaction.PaymentPanel.paymentForm
-  ? no test references
 
 %decision ApplicativeFormOverDekuHooks
   what:    Form a is a newtype over Style -> (Built a -> Nut) -> Nut with Functor/Apply/Applicative only; each field owns one useHot cell of raw text and validity is the parser mapped over it
@@ -4365,17 +4245,17 @@ dependent
 %uses Effect.Class
 %uses Effect.Class.Console as Console
 
+%untested deleteItem, renderDeleteConfirmation
+
 deleteItem :: String -> String -> Nut
   ! Two-state UI: confirmation prompt -> success or error message after submit.
   ! On success, displays a 'Return to Inventory' link; the user must click it (no auto-redirect).
   ! Submit button is disabled while submitting to prevent double-clicks.
   ! An error shows the backend's text; an unknown SKU is 'Item not found'.
   ~ called by: UI.Inventory.DeleteItem.renderDeleteConfirmation
-  ? no test references
 
 renderDeleteConfirmation :: String -> String -> Nut
   ~ called by: Pages.DeleteItem.page
-  ? no test references
 
 
 === BEGIN UI/Inventory/ItemForm.purs ===
@@ -4409,33 +4289,30 @@ renderDeleteConfirmation :: String -> String -> Nut
 %uses UI.Form.Parser
 %uses Utils.Formatting
 
+%untested renderError, categoryLabel, speciesLabel, menuItemForm, itemForm
+
 data FormMode
   = CreateMode { sku :: String, onCreated :: String -> Effect Unit }
   | EditMode MenuItem
 
 renderError :: String -> Nut
   ~ called by: Pages.DeleteItem.page, Pages.EditItem.itemView, Pages.EditItem.page, Pages.CreateTransaction.page
-  ? no test references
 
 categoryLabel :: ItemCategory -> String
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 speciesLabel :: Species -> String
   ~ called by: UI.Inventory.ItemForm.menuItemForm
-  ? no test references
 
 menuItemForm :: FormMode -> Form MenuItem
   ! price field uses Parser.cents and wraps in Discrete; category and species use the enum select
   ! initial text comes from the item in EditMode and is blank in CreateMode
   ~ called by: UI.Inventory.ItemForm.itemForm
-  ? no test references
 
 itemForm :: FormMode -> Nut
   ! submit button is styled disabled while invalid and the click handler ignores invalid results
   ! On a successful create it calls the mode's onCreated with the backend's message; Pages.CreateItem then supplies a new SKU and the form is rebuilt. On a successful edit it shows the message and keeps the form.
   ~ called by: Pages.CreateItem.page, Pages.EditItem.page
-  ? no test references
 
 %decision ItemFormOnUIForm
   what:    menuItemForm is one applicative Form MenuItem built from four section sub-forms; itemForm runs it and owns only the status message and submitting flag
@@ -4464,19 +4341,19 @@ itemForm :: FormMode -> Nut
 %uses Types.Inventory
 %uses Utils.Formatting
 
+%untested renderInventory, renderItem
+
 renderInventory :: LiveViewConfig -> Inventory -> Nut
   ! Filters out-of-stock items if config.hideOutOfStock is true; then sorts via Types.Inventory.compareMenuItems.
   ! Empty inventory shows an 'empty-inventory' message; otherwise renders a grid via renderItem.
   ! Stats footer shows total item count BEFORE filtering.
   ~ called by: Pages.LiveView.page
-  ? no test references
 
 renderItem :: MenuItem -> Nut
   ! Renders one MenuItem as a card with image, brand, name, category, species, strain, price, description, quantity, and edit/delete action links.
   ! Description is summarized via Utils.Formatting.summarizeLongText (100-char limit with ellipsis).
   ! Action links are <a> tags using URL hashes (/#/edit/<sku>, /#/delete/<sku>); no JS handler, the router catches the hash change.
   ~ called by: UI.Inventory.MenuLiveView.renderInventory
-  ? no test references
 
 %open_issue EditAndDeleteLinksShownToEveryone
   what:     renderItem draws Edit and Delete links on every card whatever the user's capabilities are
@@ -4524,6 +4401,8 @@ type OnLeave = Effect Unit -> Effect Unit
 %uses FRP.Poll
 %uses Types.RemoteData
 
+%untested useRemote, onMount, viewRemote, standardView, quietView
+
 type Remote a =
   { value :: Poll (RemoteData a)
   , reload :: Effect Unit
@@ -4545,14 +4424,12 @@ useRemote
   ! Takes an Aff (Either ApiError a) and holds RemoteData a in a useHot cell.
   ! reload sets Loading and then fetches; refresh fetches and keeps the current value on screen until the answer arrives.
   ! A Left becomes Failure with API.Request.describe of the error.
-  ~ called by: Pages.DeleteItem.page, Pages.Manager.Dashboard.page, Pages.Admin.Dashboard.page, Pages.Manager.Panels.ReportsPanel.reportsPanel, Pages.LiveView.page, Pages.EditItem.page, Pages.TransactionHistory.page, Pages.Registers.page, UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
+  ~ called by: Pages.DeleteItem.page, Pages.Manager.Dashboard.page, Pages.Admin.Dashboard.page, Pages.Manager.Panels.ReportsPanel.reportsPanel, Pages.LiveView.page, Pages.EditItem.page, Pages.TransactionHistory.page, Pages.Registers.page, +1 more
 
 onMount :: forall r. Effect Unit -> Poll (Attribute r)
   ! uses Deku.DOM.Self.self_. DL.load_ on a div or span never fires because browsers do not raise load on those elements.
   ! The effect can run before the element's children subscribe, so state it sets must be in a useHot cell, which replays.
-  ~ called by: Pages.DeleteItem.page, Pages.Manager.Dashboard.page, Pages.Admin.Dashboard.page, Pages.LiveView.page, Pages.EditItem.page, Pages.Stock.Interface.page, Pages.TransactionHistory.page, Pages.Registers.page, UI.Transaction.CreateTransaction.saleScreen, Pages.CreateTransaction.page
-  ? no test references
+  ~ called by: Pages.DeleteItem.page, Pages.Manager.Dashboard.page, Pages.Admin.Dashboard.page, Pages.LiveView.page, Pages.EditItem.page, Pages.Stock.Interface.page, Pages.TransactionHistory.page, Pages.Registers.page, +2 more
 
 viewRemote
   :: forall a
@@ -4561,16 +4438,13 @@ viewRemote
   -> Poll (RemoteData a)
   -> Nut
   ! one <#~> over the RemoteData Poll; RemoteView says how to draw NotAsked, Loading and Failure
-  ~ called by: Pages.Manager.Panels.StatsPanel.statsPanel, Pages.Manager.Panels.ActivityFeed.activityFeed, Pages.Manager.Panels.AlertsPanel.alertsPanel, Pages.DeleteItem.page, Pages.Admin.Tabs.Overview.overview, Pages.Manager.Panels.ReportsPanel.reportsPanel, Pages.LiveView.page, Pages.EditItem.page, UI.Transaction.InventoryPicker.inventoryPicker, Pages.TransactionHistory.page, Pages.Registers.page
-  ? no test references
+  ~ called by: Pages.Manager.Panels.StatsPanel.statsPanel, Pages.Manager.Panels.ActivityFeed.activityFeed, Pages.Manager.Panels.AlertsPanel.alertsPanel, Pages.DeleteItem.page, Pages.Admin.Tabs.Overview.overview, Pages.Manager.Panels.ReportsPanel.reportsPanel, Pages.LiveView.page, Pages.EditItem.page, +3 more
 
 standardView :: String -> RemoteView
   ~ called by: Pages.Manager.Panels.ActivityFeed.activityFeed, Pages.Admin.Tabs.Overview.snapshotView, Pages.LiveView.inventoryView, Pages.Manager.Panels.ReportsPanel.reportsPanel, UI.Transaction.InventoryPicker.inventoryPicker, Pages.TransactionHistory.page, Pages.Registers.page
-  ? no test references
 
 quietView :: RemoteView
   ~ called by: Pages.Manager.Panels.StatsPanel.statsPanel, Pages.Manager.Panels.AlertsPanel.alertsPanel
-  ? no test references
 
 
 === BEGIN UI/Tabs.purs ===
@@ -4586,6 +4460,8 @@ quietView :: RemoteView
 %uses Deku.DOM.Listeners as DL
 %uses Effect
 %uses FRP.Poll
+
+%untested tabBar
 
 type TabStyle =
   { bar :: String
@@ -4606,7 +4482,6 @@ tabBar
   ! one D.button per tab labelled with show; the selected one gets " active" appended to TabStyle.tab and a click calls the select callback
   ! the transaction screen's category tabs are divs keyed by Maybe ItemCategory and deliberately do not use this
   ~ called by: Pages.Manager.Dashboard.page, Pages.Admin.Dashboard.page
-  ? no test references
 
 
 === BEGIN UI/Transaction/ActionBar.purs ===
@@ -4629,6 +4504,8 @@ tabBar
 %uses UI.Transaction.Model
 %uses Utils.Money
 
+%untested actionBar
+
 type ActionProps =
   { sale :: Poll Sale.SaleTransaction
   , activity :: Poll Activity
@@ -4646,7 +4523,6 @@ actionBar :: ActionProps -> Nut
   ! Process Payment is hidden and New Sale shown once the sale is not open
   ! Clear Items is enabled only for an open sale with items
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 
 === BEGIN UI/Transaction/CartView.purs ===
@@ -4674,6 +4550,8 @@ actionBar :: ActionProps -> Nut
 %uses UI.Transaction.Model
 %uses Utils.Money
 
+%untested money, cartView
+
 type CartProps =
   { sale :: Poll Sale.SaleTransaction
   , inventory :: Poll (RemoteData Inventory)
@@ -4683,13 +4561,11 @@ type CartProps =
 
 money :: SaleMoney -> String
   ~ called by: UI.Transaction.CartView.cartView
-  ? no test references
 
 cartView :: CartProps -> Nut
   ! item names are looked up in the inventory; with no inventory, lines show the 'Unknown Item' fallback
   ! totals are the sale's stored saleSubtotal / saleTaxTotal / saleTotal
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 %open_issue NoQuantityControlOnALine
   what:     cartView offers only remove for a line; changing a quantity means removing the line and adding it again
@@ -4737,18 +4613,17 @@ cartView :: CartProps -> Nut
 %uses UI.Transaction.Model
 %uses UI.Transaction.PaymentPanel
 
+%untested formatStatus, statusClass, saleIsStale, createTransaction, saleScreen
+
 formatStatus :: TransactionStatus -> String
   ~ called by: Pages.TransactionHistory.page, UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 statusClass :: TransactionStatus -> String
   ~ called by: Pages.TransactionHistory.page, UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 saleIsStale :: ApiError -> Boolean
   ! True for Refused 409 and Refused 404. A 400 and a 403 leave the sale on screen as it is.
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 createTransaction
   :: RemoteData Inventory
@@ -4756,7 +4631,6 @@ createTransaction
   -> Register
   -> Nut
   ~ called by: Pages.CreateTransaction.page
-  ? no test references
 
 saleScreen
   :: RemoteData Inventory
@@ -4770,7 +4644,6 @@ saleScreen
   ! New Sale calls Services.CurrentSale.startNext with the finished sale
   ! inventory is refreshed on mount and after every action, accepted or refused
   ~ called by: UI.Transaction.CreateTransaction.createTransaction
-  ? no test references
 
 %decision OneSaleScreenPerSale
   what:    createTransaction holds which sale is on screen; saleScreen is rebuilt from scratch when New Sale swaps it, so filters, the payment form and the message start clean
@@ -4813,6 +4686,8 @@ saleScreen
 %uses Web.Event.Event
 %uses Web.HTML.HTMLInputElement as Input
 
+%untested inventoryPicker
+
 type PickerProps =
   { inventory :: Remote Inventory
   , sale :: Poll Sale.SaleTransaction
@@ -4831,7 +4706,6 @@ inventoryPicker :: PickerProps -> Nut
   ! category filter is Maybe ItemCategory compared by Eq, not by Show string
   ! Refresh calls inventory.reload
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 
 === BEGIN UI/Transaction/Model.purs ===
@@ -5035,6 +4909,8 @@ finalizeBlockers
 %uses UI.Transaction.Model
 %uses Utils.Money
 
+%untested paymentStyle, optionalText, methodOptions, paymentForm, paymentPanel
+
 type PaymentProps =
   { form :: Built PaymentInput
   , sale :: Poll Sale.SaleTransaction
@@ -5049,26 +4925,21 @@ type PaymentProps =
 
 paymentStyle :: Style
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 optionalText :: Parser (Maybe String)
   ~ called by: UI.Transaction.PaymentPanel.paymentForm
-  ? no test references
 
 methodOptions :: Array { value :: PaymentMethod, label :: String }
   ~ called by: UI.Transaction.PaymentPanel.paymentForm
-  ? no test references
 
 paymentForm :: Form PaymentInput
   ! method is a choice button group; Tendered is visible only for Cash and Auth Code only for Credit; a hidden field yields Nothing
   ! amount uses Parser.cents; tendered is optional cents
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 paymentPanel :: PaymentProps -> Nut
   ! Add Payment is disabled while busy, while the form is invalid, or when the sale is not open
   ~ called by: UI.Transaction.CreateTransaction.saleScreen
-  ? no test references
 
 
 === BEGIN Utils/Audio.purs ===
@@ -5086,6 +4957,8 @@ paymentPanel :: PaymentProps -> Nut
 %uses Web.HTML.HTMLMediaElement
 %uses Web.HTML.Window
 
+%untested soundPath, playSound
+
 data AlertSound
   = SoundError
   | SoundInfo
@@ -5094,14 +4967,12 @@ data AlertSound
 
 soundPath :: AlertSound -> String
   ~ called by: Utils.Audio.playSound
-  ? no test references
 
 playSound :: AlertSound -> Effect Unit
   ! Creates a fresh <audio> element on every call; the element is not added to the DOM and is garbage-collected after the play completes.
   ! Sound paths are hardcoded under /assets/sounds/; the web server must serve them.
   ! Browser autoplay policies may silently block playback if no user gesture has occurred; this is a browser-level behavior, not handled here.
   ~ called by: Pages.Stock.Interface.page
-  ? no test references
 
 
 === BEGIN Utils/Formatting.purs ===
@@ -5195,9 +5066,10 @@ formatDateTime :: DateTime -> String
 %uses Data.Number as Number
 %uses Data.String
 
+%untested formatPrice, formatMoney, formatMoney', formatDiscreteUSD, formatDiscreteUSD', formatDenseMoney, fromDiscrete
+
 formatPrice :: DiscreteMoney USD -> String
   ~ no callers in scanned roots
-  ? no test references
 
 formatDiscretePrice :: Discrete USD -> String
   ! Uses numeric (no currency symbol) format from purescript-money.
@@ -5217,27 +5089,21 @@ toDollars :: Discrete USD -> Number
 
 formatMoney :: DiscreteMoney USD -> String
   ~ no callers in scanned roots
-  ? no test references
 
 formatMoney' :: DiscreteMoney USD -> String
   ~ called by: Utils.Money.formatPrice, Utils.Money.formatDiscretePrice
-  ? no test references
 
 formatDiscreteUSD :: Discrete USD -> String
   ~ no callers in scanned roots
-  ? no test references
 
 formatDiscreteUSD' :: Discrete USD -> String
   ~ no callers in scanned roots
-  ? no test references
 
 formatDenseMoney :: Dense USD -> String
   ~ no callers in scanned roots
-  ? no test references
 
 fromDiscrete :: Discrete USD -> DiscreteMoney USD
   ~ no callers in scanned roots
-  ? no test references
 
 parseMoneyString :: String -> Maybe (Discrete USD)
   ! Trims input then calls Number.fromString; non-numeric input returns Nothing.
@@ -5259,6 +5125,8 @@ parseMoneyString :: String -> Maybe (Discrete USD)
 %uses FRP.Poll as Poll
 %uses Control.Alt
 %uses Control.Monad.ST.Class
+
+%untested openSSE, openSSEImpl
 
 data SSEStatus
   = SSEConnecting
@@ -5282,7 +5150,6 @@ foreign import openSSEImpl
   -> (String -> Effect Unit)
   -> Effect (Effect Unit)
   ~ called by: Utils.SSE.openSSE
-  ? no test references
 
 openSSE
   :: String
@@ -5293,7 +5160,6 @@ openSSE
   ! Status starts as SSEConnecting (via the pure SSEConnecting <|> statusRef.poll combinator).
   ! Unknown status strings from the JS layer fall through to SSEConnecting; this is permissive by design so future JS-side status types don't break the type checker.
   ~ called by: Pages.Admin.Tabs.LogViewer.logViewer, Pages.Stock.Interface.page
-  ? no test references
 
 %decision SSEStatusViaForeignImportPushedIntoPoll
   what:    openSSEImpl is a foreign import that takes both an onMessage and an onStatus callback; the PureScript wrapper translates status strings into SSEStatus and pushes them into a Poll
@@ -5315,6 +5181,8 @@ openSSE
 %uses Data.String as S
 %uses Effect
 
+%untested openWebSocket, closeWebSocket, WSConnection, _openWebSocket, _closeWebSocket
+
 type WSCallbacks =
   { onMessage :: String -> Effect Unit
   , onOpen    :: Effect Unit
@@ -5325,7 +5193,6 @@ type WSCallbacks =
 %foreign
 foreign import data WSConnection :: Type
   ~ no callers in scanned roots
-  ? no test references
 
 foreign import _openWebSocket
   :: String                  -- URL
@@ -5335,22 +5202,18 @@ foreign import _openWebSocket
   -> Effect Unit             -- onError
   -> Effect WSConnection
   ~ called by: Utils.WebSocket.openWebSocket
-  ? no test references
 
 foreign import _closeWebSocket :: WSConnection -> Effect Unit
   ~ called by: Utils.WebSocket.closeWebSocket
-  ? no test references
 
 openWebSocket :: String -> WSCallbacks -> Effect WSConnection
   ! Foreign import _openWebSocket takes individual callbacks (onMessage, onOpen, onClose, onError); the PS wrapper bundles them as WSCallbacks for ergonomics.
   ! WSConnection is opaque (foreign import data); the only operation is closeWebSocket.
   ! No automatic reconnect; consumers must observe onClose / onError and reopen if desired.
   ~ called by: Pages.Admin.Tabs.FeedMonitor.feedMonitor
-  ? no test references
 
 closeWebSocket :: WSConnection -> Effect Unit
   ~ called by: Pages.Admin.Tabs.FeedMonitor.feedMonitor
-  ? no test references
 
 toWsUrl :: String -> String
   ! Rewrites https:// -> wss:// and http:// -> ws://; otherwise passes through unchanged.
