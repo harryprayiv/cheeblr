@@ -14,7 +14,7 @@ A full-stack cannabis dispensary point-of-sale and inventory management system b
 - [To Do list](./Docs/TODO.md) -- Planned features and optimizations
 - [Security](./Docs/SecurityStrategies.md) -- Authentication architecture, security headers, rate limiting, deployment checklist
 
-## Features
+## Features 
 
 ### Inventory Management
 
