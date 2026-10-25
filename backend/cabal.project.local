@@ -1,0 +1,2 @@
+program-options
+  ghc-options: -fwrite-ide-info -hiedir .inference/hie
